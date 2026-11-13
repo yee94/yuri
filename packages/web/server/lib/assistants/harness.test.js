@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
   CLEAR_CHAT_HISTORY_TOOL_NAME,
@@ -26,6 +27,39 @@ const toolCall = (name, args, id) => toolBatch([[name, args, id]])
 const notifyCall = (text, id) => ['notify_user', { text }, id]
 
 describe('createContactStreamFn', () => {
+  it.each([false, true])('enforces the deadline through the real Agent for readOnly=%s without retrying', async (readOnly) => {
+    vi.useFakeTimers();
+    let started;
+    const began = new Promise((resolve) => { started = resolve; });
+    let executionSignal;
+    const execute = vi.fn((_id, _params, signal) => {
+      executionSignal = signal;
+      started();
+      return new Promise(() => {});
+    });
+    const name = readOnly ? 'read_session' : 'register_project';
+    let round = 0;
+    const pending = runContactTurn({ assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: 'Run the operation once.', readOnly,
+      tools: [{ name, description: 'Fixture operation', parameters: { type: 'object', properties: {} }, execute }],
+      createChatCompletion: async ({ body }) => {
+        round++;
+        if (!readOnly && round === 1) return toolCall('load_tools', { domain: 'yuri.projects' });
+        if (round === (readOnly ? 1 : 2)) return toolCall(name, {});
+        expect(body.tools).toEqual([]);
+        expect(JSON.stringify(body.messages)).toContain('timed out after 300 seconds');
+        return { text: 'The operation timed out; its result is not confirmed.' };
+      },
+    });
+    try {
+      await began;
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect((await pending).text).toContain('timed out');
+      expect(executionSignal.aborted).toBe(true);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(round).toBe(readOnly ? 2 : 3);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('explains Markdown image delivery in the model prompt and publishes the image reply unchanged', async () => {
     const image = '![Photo](https://example.com/photo.png)';
     const result = await runContactTurn({ assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: '找张图片发我',
@@ -65,11 +99,50 @@ describe('createContactStreamFn', () => {
     const seen = [];
     const tools = createContactTools({ listScheduledTasks: vi.fn(), updateScheduledTask: vi.fn() });
     await runContactTurn({ assistant: { providerID: 'p', modelID: 'm' }, history: [], userText: '后台复盘', tools, readOnly: true,
-      createChatCompletion: async ({ body }) => { seen.push(...body.tools.map(tool => tool.function.name)); return { text: '已检查。' }; },
+      createChatCompletion: async ({ body }) => {
+        seen.push(...body.tools.map(tool => tool.function.name));
+        expect(body.messages.find((message) => message.role === 'system').content).not.toContain('Built-in skills (progressive instructions)');
+        return { text: '已检查。' };
+      },
     });
     expect(seen).toContain('list_scheduled_tasks');
     expect(seen).not.toContain('update_scheduled_task');
     expect(seen).not.toContain('bash');
+  });
+
+  it('progressively reads the shared Yuri skill and its matching reference through real pi tools', async () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-builtin-skill-'));
+    const skill = fileURLToPath(new URL('../gui-customization/skill/SKILL.md', import.meta.url));
+    const reference = path.join(path.dirname(skill), 'references', 'plugin-styles.md');
+    let round = 0;
+    try {
+      const result = await runContactTurn({
+        assistant: { providerID: 'p', modelID: 'm', workspacePath: workspace },
+        history: [], userText: '看看 Yuri 插件可以用哪些样式变量，不要修改。', skillHomeDir: workspace,
+        createChatCompletion: async ({ body }) => {
+          round++;
+          const system = body.messages.find((message) => message.role === 'system').content;
+          expect(system).toContain('- yuri-customization:');
+          expect(system).toContain(JSON.stringify(skill));
+          expect(system).toContain('no bound local desktop helper');
+          expect(system).not.toContain('## Workflow');
+          if (round === 1) {
+            expect(body.messages.some((message) => message.role === 'tool')).toBe(false);
+            return toolCall('read', { path: skill }, 'read-yuri-skill');
+          }
+          const loaded = body.messages.find((message) => message.tool_call_id === 'read-yuri-skill');
+          expect(loaded.content).toContain('## Workflow');
+          expect(loaded.content).toContain('references/plugin-styles.md');
+          if (round === 2) return toolCall('read', { path: reference, limit: 30 }, 'read-yuri-reference');
+          const styles = body.messages.find((message) => message.tool_call_id === 'read-yuri-reference');
+          expect(styles.content).toContain(fs.readFileSync(reference, 'utf8').split('\n')[0]);
+          return { text: '可以使用 Yuri 提供的 CSS 变量；未做修改。' };
+        },
+      });
+      expect(result.text).toContain('未做修改');
+      expect(round).toBe(3);
+      expect(fs.readdirSync(workspace)).toEqual([]);
+    } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
   });
   it('runs scheduled-task listing and updating through native schemas and the real pi loop', async () => {
     const listScheduledTasks = vi.fn(async () => ({ tasks: [{ id: 'task1', projectID: 'project1' }] }));

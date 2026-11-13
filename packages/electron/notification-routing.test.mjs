@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { expect, test, vi } from 'vitest';
+import { nativeNotificationIdentity } from './notification-identity.mjs';
 
 const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
 
@@ -23,6 +24,7 @@ const setup = () => {
     show() {}
   }
   const context = vm.createContext({
+    nativeNotificationIdentity,
     Notification, BrowserWindow: { getAllWindows: () => [main, owner] },
     state: { mainWindow: main, sidecarUrl: 'http://127.0.0.1:3901' },
     process: { platform: 'linux' },
@@ -89,4 +91,22 @@ test('a relay window using local UI is not mistaken for the local backend', () =
   notifications[0].handlers.click();
   expect(owner.focus).toHaveBeenCalledOnce();
   expect(main.focus).not.toHaveBeenCalled();
+});
+
+test('the same remote instance/session/event notifies once across aggregate and whole-instance windows', () => {
+  const { main, owner, notifications, notify } = setup();
+  notify({ instanceId: 'physical-b', sessionId: 'same-id', kind: 'complete', title: 'Done', hostId: 'host-b', hubId: 'hub-a' }, owner);
+  notify({ instanceId: 'physical-b', sessionId: 'same-id', kind: 'complete', title: 'Another display title' }, main);
+  expect(notifications).toHaveLength(1);
+  notifications[0].handlers.click();
+  expect(owner.webContents.send).toHaveBeenCalledWith('yuri:open-session', {
+    sessionId: 'same-id', directory: null, hostId: 'host-b', hubId: 'hub-a',
+  });
+});
+
+test('different physical instances never suppress the same session id or event', () => {
+  const { main, owner, notifications, notify } = setup();
+  notify({ instanceId: 'physical-b', sessionId: 'same-id', kind: 'complete' }, main);
+  notify({ instanceId: 'physical-c', sessionId: 'same-id', kind: 'complete' }, owner);
+  expect(notifications).toHaveLength(2);
 });

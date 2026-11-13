@@ -6,20 +6,7 @@ Sorted compaction Activity uses localized Compacting / Compaction complete label
 
 This folder contains renderers for chat message parts (text, tools, reasoning, placeholders) and shared tool presentation helpers.
 
-NSH consumes the same pure turn/activity, process/Skill grouping and header identity
-helpers. `reasoningPresentation.ts` owns reasoning cleanup, the 80-character plain
-Markdown preview, initial expansion and automatic-expansion reconciliation for
-both React and Native. These helpers must not import React, browser stores,
-transport or Node runtime modules. The Native dependency-boundary test enforces
-that closure; `nativeProjectionParity.test.ts` compares raw-message prefixes
-against the Web projection. Rendering/animation and scroll geometry still require
-separate UIKit/Web evidence.
-
-`activityHeaderModel.ts` owns child-session avatar deduplication and slim-message
-ID selection for both renderers. The import-free `lib/slimActivityPart.ts`
-predicate is also used by Native exact reads, so Chat state does not pull task
-rendering helpers into its runtime dependency closure. Native's queue belongs to
-the Chat owner; React keeps using its existing transcript materialization owner.
+`UserTextPart` also provides `variant="preview"` for the prompt navigator's compact question. It shares the normal Markdown/reference-chip pipeline and citation hints, but omits transcript search markers, interactive chip wrappers, and message collapse/expansion behavior. The enclosing preview owns clipping and turn-selection clicks; ordinary message rendering is unchanged.
 
 Tool grouping operates on visible Activity items: hidden reasoning and empty Thought placeholders do not split adjacent tools. Nonempty visible reasoning, narration, questions and other visible boundaries still retain their original positions. The source transcript and materialization inputs keep the original parts.
 
@@ -37,7 +24,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
   - **Skill tools** (`skill`) -> consecutive calls collapse into `SkillToolGroup` ("Load Skill" plus original names on one line, including a lone skill so later names can flip-animate)
   - **Other static tools** -> single `StaticToolRow` in `ProgressiveGroup.tsx` (no consecutive merge)
   - **Expandable leftovers** (task / question / todowrite / todoread) -> `ToolPart.tsx`. Todo calls, like Skill calls, stay outside the process fold and its call counts; each retains its own expandable task-list row in source order and splits surrounding process runs.
-- Shared tool artwork and native size mapping live in the import-type-only `toolIconModel.ts`; `toolPresentation.tsx` (`getToolIcon`) renders the React node, retaining the custom Todo progress mark. NSH consumes the same mapping without importing React.
+- Shared tool icon mapping is centralized in `toolPresentation.tsx` (`getToolIcon`).
 
 ## Which file controls what
 
@@ -165,8 +152,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
   - Part-level metadata and output parsing exist only for older persisted records and never override state metadata.
   - `readTaskStatusFromRecord` / `readTaskRunningFromOutput` detect the background-subagent
     running hint (settled output that still says `status: running`) — hint only, not live proof.
-  - `parseSubagentNotification` parses the synthetic `<subagent sessionID state description>`
-    completion notification injected into the parent session; non-matching text returns undefined.
+   - `parseSubagentNotification` re-exports the shared `lib/opencode/subagent-notification.ts` parser for synthetic `<subagent sessionID state description>` reports. It accepts `running` as well as `completed/error/cancelled`; non-matching text returns undefined. A `running` report uses the existing running label and delegated-task fallback title, with no new UI copy. The tag's state takes precedence over message metadata: OpenCode 2.3 can retain period-level `metadata.state=completed` while the tag says outstanding work is still running.
   - `parseShellNotification` parses official `<shell id state command>` completion notices
     (`core/shell/result.ts`); non-matching text returns undefined.
 
@@ -177,9 +163,10 @@ Use this doc when you ask an agent to change tool/header/description behavior.
     `state.status` still running/pending/started.
   - `hasSettledBackgroundRunningHint` = tool settled (`completed`) while metadata still says
     `running` (official shell/subagent background return shape). Never alone drives permanent busy.
-  - `collectBackgroundCompletions` + `resolveBackgroundToolActivity` project terminal facts from
-    synthetic notices and (for subagent) live child session status; background-running only while
-    those authorities have not settled.
+   - `collectBackgroundCompletions` + `resolveBackgroundToolActivity` project terminal facts from
+     synthetic notices and (for subagent) live child session status; background-running only while
+     those authorities have not settled.
+   - `running` subagent reports never enter the terminal completion index and clear an earlier period's terminal fact for that child. Later final reports settle normally; live child status retains its existing precedence.
   - Move action calls official `session.background({ sessionID })` on the **parent** session
     (whole-session detach of every currently blocking backgroundable tool). Idle is a no-op.
   - `ToolPart` shows a "Move to background" control only while that row is blocking; failures
@@ -224,7 +211,9 @@ Use this doc when you ask an agent to change tool/header/description behavior.
 
 ## Current important behavior
 
-- Tool rows, process folds, and the transcript StatusRow share `getToolRowBlockClass` for vertical spacing. StatusRow offsets the latest turn's existing `pb-1` with `-mt-1` so that boundary does not add a second gap. A ProgressiveGroup without a painted disclosure header is only a `flow-root`: its child rows own the padding, without another outer layer. StatusRow's content height follows its icon slot plus chip padding rather than a shorter fixed height.
+- Tool rows, process folds, and the transcript StatusRow share `getToolRowBlockClass` for vertical spacing. The transcript StatusRow uses `-mt-2` and `mb-1`; the bottom margin matches its outer wrapper so a collapsing child margin cannot leave an extra 4px of scrollable height during live work. A ProgressiveGroup without a painted disclosure header is only a `flow-root`: its child rows own the padding, without another outer layer. StatusRow's content height follows its icon slot plus chip padding rather than a shorter fixed height.
+- The non-embedded transcript StatusRow overrides bottom padding to 14px to match the completed footer's total occupancy; the tool-row default left an 8px desktop / 10px mobile completion jump. This is normal-flow padding, not a retained placeholder; embedded composer rows do not use it. See chat `DOCUMENTATION.md#turn-completion-spacing`.
+- `WorkingPlaceholder` keeps its normal status text and elapsed timer together in one persistent, content-sized group. Motion mini fades that group out, replaces the text, then fades it in; rapid changes during fade-out coalesce to the latest label without restarting the exit. The timer stays next to the text with the shared gap, moves only with the hidden text replacement, and uses `tabular-nums` so equal-length digit changes keep the same width. Clock ticks alone do not animate. Text length must not move the orb, row height, or adjacent composer. The accessible label updates immediately; reduced motion replaces text synchronously, and settlement/unmount cancels pending animation. Retry countdown and authoritative status/linger rules remain unchanged.
 
 - When assistant text is the first content directly below the model header, `MessageBody` adds 6px mobile / 8px desktop top padding, matching the Activity block's top padding plus chip inset. Text after Activity or in continuation messages does not receive this header gap.
 

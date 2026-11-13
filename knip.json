@@ -14,6 +14,7 @@
       "entry": [
         "src/**/*.{test,spec}.{js,cjs,mjs,jsx,ts,tsx}",
         "src/lib/gui-plugins/native.electron.fixture.ts",
+        "src/sync/fixtures/remote-projects-indexeddb-renderer.ts",
         "src/**/__tests__/**/*.{js,cjs,mjs,jsx,ts,tsx}"
       ],
       "project": [
@@ -26,6 +27,7 @@
         "src/mini-chat-main.tsx",
         "src/sw.ts",
         "server/**/*.{test,spec}.{js,cjs,mjs,ts,tsx}",
+        "server/lib/gui-customization/*-client.mjs",
         "src/**/*.{test,spec}.{ts,tsx}"
       ],
       "project": [

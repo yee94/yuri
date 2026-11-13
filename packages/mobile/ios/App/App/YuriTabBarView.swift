@@ -160,6 +160,10 @@ final class YuriTabBarView: UIView, UITabBarControllerDelegate {
             page.tabBarItem.accessibilityIdentifier = item.id
             page.tabBarItem.accessibilityLabel = item.label
             page.tabBarItem.badgeValue = Self.badgeValue(item.badge)
+            // Same calibrated sRGB fill as the shared --assistant-unread-fill token.
+            page.tabBarItem.badgeColor = Self.parseHex("#F95252")
+            page.tabBarItem.setBadgeTextAttributes([.foregroundColor: UIColor.white], for: .normal)
+            page.tabBarItem.setBadgeTextAttributes([.foregroundColor: UIColor.white], for: .selected)
             return page
         }
         applySelectedItem()

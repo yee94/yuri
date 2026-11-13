@@ -1,7 +1,10 @@
 import { snapdom } from '@zumer/snapdom';
 import { getFontEmbedCSS, toJpeg } from 'html-to-image';
 import { invokeDesktop } from '@/lib/desktop';
-import { runtimeFetch } from '@/lib/runtime-fetch';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { hostApiPath } from '@/lib/remote-projects/location';
+import { isNormalizedPreviewProxyPath } from './relay-preview-frame-src';
 
 export type PreviewElementMetadata = {
   frame: 'top';
@@ -97,7 +100,10 @@ export const formatPreviewAnnotationMarkdown = ({
 export const renderPreviewScreenshot = async (
   iframe: HTMLIFrameElement,
   target: PreviewElementMetadata,
+  entry?: HostRuntimeEntry,
 ): Promise<File | null> => {
+  const scope = captureProjectScope(entry);
+  scope.assertCurrent();
   if (typeof window !== 'undefined') {
     try {
       const rect = iframe.getBoundingClientRect();
@@ -107,6 +113,7 @@ export const renderPreviewScreenshot = async (
         width: rect.width,
         height: rect.height,
       });
+      scope.assertCurrent();
       if (!capture) throw new Error('Desktop screenshot capture is not available');
       const image = new Image();
       await new Promise<void>((resolve, reject) => {
@@ -136,6 +143,7 @@ export const renderPreviewScreenshot = async (
       context.strokeRect(target.bounds.x * xScale, target.bounds.y * yScale, target.bounds.width * xScale, target.bounds.height * yScale);
 
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+      scope.assertCurrent();
       if (!blob) return null;
       return new File([blob], `preview-annotation-${Date.now()}.jpg`, { type: 'image/jpeg' });
     } catch (error) {
@@ -143,7 +151,9 @@ export const renderPreviewScreenshot = async (
       return null;
     }
   }
-  return await captureIframeDomScreenshot(iframe, target);
+  const screenshot = await captureIframeDomScreenshot(iframe, target, entry);
+  scope.assertCurrent();
+  return screenshot;
 };
 
 export const desktopAnnotationToFile = async (
@@ -213,14 +223,6 @@ export const getCachedProxyTarget = (url: string): CachedProxyTarget | null => {
     return null;
   }
   return entry;
-};
-
-export const getBrowserProxyTargetKey = (url: string): string => {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return url;
-  }
 };
 
 function getCaptureBackgroundColor(document: Document): string {
@@ -463,19 +465,25 @@ const fetchUrlAsDataUrl = async (url: string, credentials: RequestCredentials): 
   }
 };
 
-const getExternalResourceProxyUrl = async (url: URL): Promise<string> => {
+const getExternalResourceProxyUrl = async (url: URL, entry?: HostRuntimeEntry): Promise<string> => {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
 
-  const targetKey = url.origin;
+  const targetKey = entry ? JSON.stringify([entry.queryScope, url.origin]) : url.origin;
+  const resourceUrl = (target: CachedProxyTarget) => {
+    const query = new URLSearchParams(url.search);
+    if (target.previewToken) query.set('yuri_preview_token', target.previewToken);
+    return `${target.proxyBasePath}${url.pathname}${query.size ? `?${query}` : ''}${url.hash}`;
+  };
   const cached = getCachedProxyTarget(targetKey);
   if (cached) {
-    return `${cached.proxyBasePath}${url.pathname}${url.search}${url.hash}`;
+    return resourceUrl(cached);
   }
 
   const existingRequest = previewProxyTargetRequests.get(targetKey);
   const request = existingRequest ?? (async () => {
     try {
-      const response = await runtimeFetch('/api/preview/targets', {
+      const scope = captureProjectScope(entry);
+      const response = await scope.fetch('/api/preview/targets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -487,15 +495,21 @@ const getExternalResourceProxyUrl = async (url: URL): Promise<string> => {
         return null;
       }
 
-      const body = await response.json() as { proxyBasePath?: unknown; expiresAt?: unknown };
+      const body = await response.json() as { proxyBasePath?: unknown; expiresAt?: unknown; previewToken?: unknown };
+      scope.assertCurrent();
       const proxyBasePath = typeof body.proxyBasePath === 'string' ? body.proxyBasePath : '';
       const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : 0;
-      if (!proxyBasePath) {
+      if (!proxyBasePath || (entry && (!isNormalizedPreviewProxyPath(proxyBasePath)
+        || (proxyBasePath.startsWith('/api/hosts/') && !proxyBasePath.startsWith(hostApiPath(entry.location.hostId, '/api/preview/proxy/')))))) {
         previewProxyTargetCache.delete(targetKey);
         return null;
       }
 
-      const target = { proxyBasePath, expiresAt };
+      const target = { proxyBasePath, expiresAt, ...(typeof body.previewToken === 'string' ? { previewToken: body.previewToken } : {}) };
+      if (entry) {
+        for (const [key, cached] of previewProxyTargetCache) if (cached.expiresAt <= Date.now()) previewProxyTargetCache.delete(key);
+        while (previewProxyTargetCache.size >= 64) previewProxyTargetCache.delete(previewProxyTargetCache.keys().next().value!);
+      }
       previewProxyTargetCache.set(targetKey, target);
       return target;
     } catch {
@@ -511,14 +525,31 @@ const getExternalResourceProxyUrl = async (url: URL): Promise<string> => {
   }
 
   const target = await request;
-  return target ? `${target.proxyBasePath}${url.pathname}${url.search}${url.hash}` : '';
+  return target ? resourceUrl(target) : '';
 };
 
-const fetchFrameResourceAsDataUrl = async (rawUrl: string, document: Document): Promise<string> => {
+const fetchFrameResourceAsDataUrl = async (rawUrl: string, document: Document, entry?: HostRuntimeEntry): Promise<string> => {
   if (!rawUrl || rawUrl.startsWith('data:')) return rawUrl;
 
   try {
     const url = new URL(rawUrl, document.baseURI);
+    if (entry && ['http:', 'https:'].includes(url.protocol)) {
+      const scope = captureProjectScope(entry);
+      const ownPrefix = hostApiPath(entry.location.hostId, '/api').slice(0, -4);
+      let route: string;
+      if (url.pathname.startsWith(`${ownPrefix}/api/`)) route = `${url.pathname.slice(ownPrefix.length)}${url.search}`;
+      else if (url.origin === window.location.origin && url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/hosts/')) route = `${url.pathname}${url.search}`;
+      else {
+        const proxy = await getExternalResourceProxyUrl(url, entry);
+        if (!proxy) return TRANSPARENT_IMAGE_PLACEHOLDER;
+        route = proxy.startsWith(`${ownPrefix}/api/`) ? proxy.slice(ownPrefix.length) : proxy;
+      }
+      const response = await scope.fetch(route);
+      if (!response.ok) return TRANSPARENT_IMAGE_PLACEHOLDER;
+      const result = await blobToDataUrl(await response.blob());
+      scope.assertCurrent();
+      return result;
+    }
     if (url.origin === window.location.origin || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
       return await fetchUrlAsDataUrl(url.toString(), 'include') ?? TRANSPARENT_IMAGE_PLACEHOLDER;
     }
@@ -533,7 +564,7 @@ const fetchFrameResourceAsDataUrl = async (rawUrl: string, document: Document): 
   }
 };
 
-const inlineCssImageUrls = async (value: string, document: Document): Promise<string> => {
+const inlineCssImageUrls = async (value: string, document: Document, entry?: HostRuntimeEntry): Promise<string> => {
   if (!value || value === 'none' || !value.includes('url(')) return value;
 
   const matches = Array.from(value.matchAll(/url\((['"]?)(.*?)\1\)/g));
@@ -541,7 +572,7 @@ const inlineCssImageUrls = async (value: string, document: Document): Promise<st
   for (const match of matches) {
     const rawUrl = match[2] || '';
     if (!rawUrl || rawUrl.startsWith('data:')) continue;
-    const dataUrl = await fetchFrameResourceAsDataUrl(rawUrl, document);
+    const dataUrl = await fetchFrameResourceAsDataUrl(rawUrl, document, entry);
     nextValue = nextValue.replace(match[0], `url("${dataUrl}")`);
   }
   return nextValue;
@@ -669,7 +700,7 @@ const inlineIframeCaptureAssets = async (
   document: Document,
   viewportWidth: number,
   viewportHeight: number,
-  options: { applyLayoutWorkarounds?: boolean } = {},
+  options: { applyLayoutWorkarounds?: boolean; entry?: HostRuntimeEntry } = {},
 ): Promise<() => void> => {
   const restoreCallbacks: Array<() => void> = [];
   const view = document.defaultView ?? window;
@@ -723,7 +754,7 @@ const inlineIframeCaptureAssets = async (
     const sourceUrl = imageSourceUrls.get(image) || image.currentSrc || image.src || image.getAttribute('src') || '';
     if (!sourceUrl) return;
     await waitForImage(image);
-    const dataUrl = await fetchFrameResourceAsDataUrl(sourceUrl, document);
+    const dataUrl = await fetchFrameResourceAsDataUrl(sourceUrl, document, options.entry);
     const previous = {
       src: image.getAttribute('src'),
       srcset: image.getAttribute('srcset'),
@@ -747,7 +778,7 @@ const inlineIframeCaptureAssets = async (
   await Promise.all(elements.map(async (element) => {
     const backgroundImage = view.getComputedStyle(element).backgroundImage;
     if (!backgroundImage || backgroundImage === 'none' || !backgroundImage.includes('url(')) return;
-    const nextBackgroundImage = await inlineCssImageUrls(backgroundImage, document);
+    const nextBackgroundImage = await inlineCssImageUrls(backgroundImage, document, options.entry);
     if (nextBackgroundImage === backgroundImage) return;
     const previous = element.style.backgroundImage;
     restoreCallbacks.push(() => { element.style.backgroundImage = previous; });
@@ -764,6 +795,7 @@ const inlineIframeCaptureAssets = async (
 async function captureIframeSnapdomScreenshot(
   iframe: HTMLIFrameElement,
   target: PreviewElementMetadata,
+  entry?: HostRuntimeEntry,
 ): Promise<File | null> {
   try {
     const frameWindow = iframe.contentWindow;
@@ -817,7 +849,7 @@ async function captureIframeSnapdomScreenshot(
     let restoreFixedElements = () => { /* no-op until fixed elements are tagged */ };
     try {
       await document.fonts?.ready.catch(() => undefined);
-      restoreAssets = await inlineIframeCaptureAssets(document, viewportWidth, viewportHeight, { applyLayoutWorkarounds: false });
+      restoreAssets = await inlineIframeCaptureAssets(document, viewportWidth, viewportHeight, { applyLayoutWorkarounds: false, entry });
       frameWindow.scrollTo(scrollX, scrollY);
       // Tag-only (no style mutation), so the sidebar's scroll is never disturbed; the
       // pinning happens on the clone via snapdomFixedPinPlugin.afterClone.
@@ -895,8 +927,9 @@ async function captureIframeSnapdomScreenshot(
 async function captureIframeDomScreenshot(
   iframe: HTMLIFrameElement,
   target: PreviewElementMetadata,
+  entry?: HostRuntimeEntry,
 ): Promise<File | null> {
-  const snapdomScreenshot = await captureIframeSnapdomScreenshot(iframe, target);
+  const snapdomScreenshot = await captureIframeSnapdomScreenshot(iframe, target, entry);
   if (snapdomScreenshot) return snapdomScreenshot;
 
   try {
@@ -922,7 +955,7 @@ async function captureIframeDomScreenshot(
     let restoreAssets = () => { /* no-op until capture preparation mutates DOM */ };
     try {
       await document.fonts?.ready.catch(() => undefined);
-      restoreAssets = await inlineIframeCaptureAssets(document, viewportWidth, viewportHeight, { applyLayoutWorkarounds: true });
+      restoreAssets = await inlineIframeCaptureAssets(document, viewportWidth, viewportHeight, { applyLayoutWorkarounds: true, entry });
       frameWindow.scrollTo(scrollX, scrollY);
       const fontEmbedCSS = await getFontEmbedCSS(root).catch(() => '');
 

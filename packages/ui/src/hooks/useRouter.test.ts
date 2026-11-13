@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, mock } from 'bun:test';
-import { test } from 'vitest';
+import { test, vi, expect as viExpect } from 'vitest';
+
+const remoteRouteBridge = vi.hoisted(() => ({ apply: vi.fn(async () => {}) }));
+vi.mock('@/lib/remote-projects/navigation', () => ({ applyRemoteProjectRoute: remoteRouteBridge.apply }));
+vi.mock('@/stores/useProjectsStore', () => ({ useProjectsStore: { getState: () => ({ projects: [], setActiveProjectIdOnly: () => {} }) } }));
+vi.mock('@/stores/useSessionNavigationStore', () => ({ useSessionNavigationStore: {
+  getState: () => ({ remoteSession: null, clearRemoteSession: () => {} }),
+  subscribe: () => () => {},
+} }));
 
 type EffectSlot = {
   cleanup?: () => void;
@@ -17,6 +25,7 @@ const createHookHarness = () => {
   const effectSlots: EffectSlot[] = [];
   let hookIndex = 0;
   let mounted = false;
+  let renderCount = 0;
   let renderHook: (() => void) | null = null;
 
   const react = {
@@ -59,8 +68,12 @@ const createHookHarness = () => {
       if (!(index in stateSlots)) {
         stateSlots[index] = typeof initial === 'function' ? (initial as () => T)() : initial;
       }
-      const setState = (value: T) => {
-        stateSlots[index] = value;
+      const setState = (value: T | ((previous: T) => T)) => {
+        const previous = stateSlots[index] as T;
+        const next = typeof value === 'function' ? (value as (previous: T) => T)(previous) : value;
+        if (Object.is(previous, next)) return;
+        stateSlots[index] = next;
+        renderCount += 1;
         if (mounted) {
           renderHook?.();
         }
@@ -71,7 +84,10 @@ const createHookHarness = () => {
 
   return {
     react,
+    /** State commits that would schedule a React re-render. */
+    get renderCount() { return renderCount; },
     reset() {
+      renderCount = 0;
       effectSlots.forEach((slot) => slot.cleanup?.());
       stateSlots.length = 0;
       memoSlots.length = 0;
@@ -138,7 +154,7 @@ let globalSessionsState = {
   archivedSessions: [] as Array<{ id: string }>,
 };
 let resolvedSessionDirectory = '/repo';
-let urlRoute = {
+let urlRoute: import('@/lib/router').RouteState = {
   sessionId: 'session-1' as string | null,
   isNewSession: false,
   tab: null as 'chat' | 'assistant' | 'schedule' | null,
@@ -203,9 +219,13 @@ mock.module('@/lib/router', () => ({
     tab?: typeof uiState.activeMainTab;
     assistantId?: string | null;
     focusSessionId?: string | null;
+    hostId?: string | null;
+    hubId?: string | null;
+    directory?: string | null;
   }) => {
     urlRoute = {
       sessionId: state.sessionId,
+      ...(state.hostId ? { hostId: state.hostId, hubId: state.hubId, directory: state.directory } : {}),
       isNewSession: Boolean((state as { isNewSession?: boolean }).isNewSession),
       tab: state.tab ?? null,
       settingsPath: state.isSettingsOpen ? state.settingsPath : null,
@@ -293,7 +313,18 @@ mock.module('@/router/sessionLookup', () => ({
 const { useRouter } = await import('./useRouter');
 
 describe('useRouter', () => {
+  test('remote same-id deep links bypass all local selection and retain their Host scope', async () => {
+    urlRoute = { ...urlRoute, sessionId: 'session-1', hostId: 'remote-host', hubId: 'hub', directory: '/remote/raw', isNewSession: false };
+    harness.render(useRouter);
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    viExpect(remoteRouteBridge.apply).toHaveBeenCalledWith(viExpect.objectContaining({ hostId: 'remote-host', hubId: 'hub', directory: '/remote/raw', sessionId: 'session-1' }), viExpect.any(Function));
+    expect(setCurrentSessionCalls).toEqual([]);
+    expect(notifySessionOpenFailedCalls).toEqual([]);
+    expect(urlRoute.hostId).toBe('remote-host');
+  });
+
   beforeEach(() => {
+    remoteRouteBridge.apply.mockClear();
     harness.reset();
     sessionSubscribers.clear();
     uiSubscribers.clear();
@@ -391,6 +422,23 @@ describe('useRouter', () => {
     window.dispatchEvent(new PopStateEvent('popstate'));
     expect(selectedAssistantID).toBe('assistant-b');
     expect(setCurrentSessionCalls).toEqual([]);
+  });
+
+  test('overlay history pops with an unchanged path do not re-render the app root', async () => {
+    harness.render(useRouter);
+    await Promise.resolve();
+    // Adopt the normalized initial URL first; only identical pops are measured.
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    const before = harness.renderCount;
+
+    for (let index = 0; index < 20; index += 1) {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+    expect(harness.renderCount).toBe(before);
+
+    urlRoute = { ...urlRoute, tab: 'schedule' };
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(harness.renderCount).toBe(before + 1);
   });
 
   test('does not carry another assistant focus or revive a cleared assistant selection', async () => {

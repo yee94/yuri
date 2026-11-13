@@ -50,6 +50,7 @@ import { createThemeRuntime } from './lib/opencode/theme-runtime.js';
 import { createFeatureRoutesRuntime } from './lib/opencode/feature-routes-runtime.js';
 import { parseServeCliOptions } from './lib/opencode/cli-options.js';
 import {
+  redactRequestPathForLog,
   registerAuthAndAccessRoutes,
   registerCommonRequestMiddleware,
   registerServerStatusRoutes,
@@ -94,7 +95,7 @@ import {
   projectSessionLifecyclePayload,
   projectSessionWithStoredMap,
 } from './lib/session-metadata/session-projection.js';
-import { createScheduledTasksRuntime } from './lib/scheduled-tasks/runtime.js';
+import { createScheduledTasksRuntime, isScheduledTasksRuntimeEnabled } from './lib/scheduled-tasks/runtime.js';
 import { createScheduledTaskRunHistoryStore } from './lib/scheduled-tasks/run-history-store.js';
 import { createServerStartupRuntime } from './lib/opencode/server-startup-runtime.js';
 import { createTunnelWiringRuntime } from './lib/opencode/tunnel-wiring-runtime.js';
@@ -119,6 +120,7 @@ import { createRemoteClientAuthRuntime } from './lib/client-auth/remote-clients.
 import { createHostUpdateRuntime } from './lib/host-update/runtime.js';
 import { createCliUpdateAdapter } from './lib/host-update/cli.js';
 import { attachRemoteDesktop } from './lib/remote-desktop/runtime.js';
+import { attachGuiNetwork } from './lib/gui-network/runtime.js';
 import { getOrCreateInstallId } from './lib/package-manager.js';
 import { applyRuntimeCorsHeaders } from './lib/request-cors.js';
 import { createClientPairingRuntime } from './lib/client-auth/pairing.js';
@@ -126,6 +128,10 @@ import { createPreviewProxyRuntime } from './lib/preview/proxy-runtime.js';
 import { attachRealtimeProxy } from './lib/realtime-proxy.js';
 import { createRelayService, isRelayHostRuntime, resolveEffectiveRelayUrl } from './lib/relay/service.js';
 import { createRelayHostLock } from './lib/relay/host-lock.js';
+import { createRemoteHostStore } from './lib/remote-hosts/store.js';
+import { createRemoteHostGateway } from './lib/remote-hosts/gateway.js';
+import { registerRemoteHostRoutes } from './lib/remote-hosts/routes.js';
+import { classifyRuntimeVersionBand, RUNTIME_CONTRACT_MIN_VERIFIED } from './lib/opencode/runtime-contract.js';
 import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import webPush from 'web-push';
 
@@ -137,6 +143,7 @@ const DESKTOP_NOTIFY_PREFIX = '[YuriDesktopNotify] ';
 const uiNotificationClients = new Set();
 const uiNotificationWsClients = new Set();
 const uiYuriEventClients = new Set();
+let remoteHostInstanceId = null;
 const HEALTH_CHECK_INTERVAL = 15000;
 const SHUTDOWN_TIMEOUT = 10000;
 const CLIENT_RELOAD_DELAY_MS = 800;
@@ -344,10 +351,11 @@ const settingsRuntime = createSettingsRuntime({
   normalizeStringArray,
   formatSettingsResponse,
   resolveDirectoryCandidate,
-  onProjectOrderChanged: () => createYuriEventBroadcaster({
-    getYuriEventClients: () => uiYuriEventClients,
-    writeSseEvent,
-  })({ type: 'yuri:project-order-changed', properties: { occurredAt: Date.now() } }),
+  onProjectOrderChanged: () => {
+    const event = { type: 'yuri:project-order-changed', properties: { occurredAt: Date.now() } };
+    createYuriEventBroadcaster({ getYuriEventClients: () => uiYuriEventClients, writeSseEvent })(event);
+    broadcastGlobalUiEvent(event);
+  },
 });
 
 const readSettingsFromDiskMigrated = (...args) => settingsRuntime.readSettingsFromDiskMigrated(...args);
@@ -424,7 +432,7 @@ const notificationEmitterRuntime = createNotificationEmitterRuntime({
   desktopNotifyPrefix: DESKTOP_NOTIFY_PREFIX,
   getUiNotificationClients: () => uiNotificationClients,
   getBroadcastGlobalUiEvent: () => broadcastGlobalUiEvent,
-  getYuriEventClients: () => uiYuriEventClients,
+  getInstanceId: () => remoteHostInstanceId,
 });
 
 const writeSseEvent = (...args) => notificationEmitterRuntime.writeSseEvent(...args);
@@ -724,7 +732,6 @@ const notificationTriggerRuntime = createNotificationTriggerRuntime({
   sendPushToAllUiSessions,
   sendApnsToAllUiSessions,
   sendNativeNotification: notificationEmitterRuntime.publishNativeNotification,
-  publishNotificationAdmission: notificationEmitterRuntime.publishNotificationAdmission,
   sendLiveActivityEnd,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
@@ -1010,6 +1017,7 @@ const serverUtilsRuntime = createServerUtilsRuntime({
     openCodeServeVersion,
   }),
   getOpenCodeAuthHeaders,
+  isRequestOriginAllowed,
   buildOpenCodeUrl,
   ensureOpenCodeApiPrefix,
   getUiNotificationClients: () => uiNotificationClients,
@@ -1186,9 +1194,9 @@ const waitForAgentPresence = (...args) => openCodeLifecycleRuntime.waitForAgentP
 const refreshOpenCodeAfterConfigChange = (...args) => openCodeLifecycleRuntime.refreshOpenCodeAfterConfigChange(...args);
 const startHealthMonitoring = () => openCodeLifecycleRuntime.startHealthMonitoring(HEALTH_CHECK_INTERVAL);
 const triggerHealthCheck = () => openCodeLifecycleRuntime.triggerHealthCheck();
-const scheduledTaskRunHistoryStore = createScheduledTaskRunHistoryStore({
+const scheduledTaskRunHistoryStore = isScheduledTasksRuntimeEnabled() ? createScheduledTaskRunHistoryStore({
   dbPath: path.join(YURI_DATA_DIR, 'scheduled-task-runs.sqlite'),
-});
+}) : null;
 const scheduledTasksRuntime = createScheduledTasksRuntime({
   projectConfigRuntime,
   listProjects: async () => {
@@ -1506,6 +1514,7 @@ async function main(options = {}) {
     getOpenCodeAuthHeaders,
     waitForOpenCodeReady,
     fetchFn: indexSessionDirectories.fetchSessionList,
+    createFetchBatch: indexSessionDirectories.createFetchBatch,
     isDirectoryMissing: indexSessionDirectories.isDirectoryMissing,
     resolveDirectory: indexSessionDirectories.resolveDirectory,
     projectSessions: (sessions) => {
@@ -1608,7 +1617,7 @@ async function main(options = {}) {
       });
       if (req.method === 'OPTIONS') {
         if (YURI_VERBOSE_REQUEST_LOGS) {
-          console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+          console.log(`${new Date().toISOString()} - ${req.method} ${redactRequestPathForLog(req.path)}`);
         }
         res.status(204).end();
         return;
@@ -1792,6 +1801,34 @@ async function main(options = {}) {
     }, 0);
   }
   uiAuthController = bootstrapResult.uiAuthController;
+  const remoteHostStore = createRemoteHostStore(path.join(YURI_DATA_DIR, 'remote-hosts.sqlite'));
+  remoteHostInstanceId = remoteHostStore.hubId;
+  let remoteHostRuntime;
+  const remoteHostGateway = createRemoteHostGateway({
+    store: remoteHostStore,
+    indexDbPath: resolveSessionIndexDbPath({ sessionIndexDbPath: options.sessionIndexDbPath }, YURI_DATA_DIR),
+    adapter: options.remoteHostsAdapter || null,
+    broadcast: (payload, eventOptions) => broadcastGlobalUiEvent(payload, { ...eventOptions,
+      targetFilter: (resource) => remoteHostRuntime?.canReceiveHostEvents(resource) === true }),
+    onNotification: typeof options.onDesktopNotification === 'function' ? options.onDesktopNotification : null,
+  });
+  remoteHostRuntime = registerRemoteHostRoutes(app, {
+    gateway: remoteHostGateway, getAuth: () => uiAuthController, server, isRequestOriginAllowed,
+    remoteClientAuthRuntime, readSettings: readSettingsFromDiskMigrated,
+    persistSettings, validateDirectoryPath, globalEventHub: globalMessageStreamHub,
+    broadcaster: broadcastGlobalUiEvent, supportedRemote: isRelayHostRuntime(), version: YURI_VERSION,
+    getOpenCodeCompatibility: () => ({ version: openCodeServeVersion, ready: isOpenCodeReady,
+      minimumVersion: RUNTIME_CONTRACT_MIN_VERIFIED,
+      compatible: openCodeServeVersion ? classifyRuntimeVersionBand(openCodeServeVersion) === 'verified' : null }),
+  });
+  const guiNetworkRuntime = attachGuiNetwork({
+    server, uiAuthController, isRequestOriginAllowed,
+    isClientActive: async (id) => {
+      const clients = await remoteClientAuthRuntime.listClients();
+      return clients.some((client) => client.id === id && !client.revokedAt
+        && (!client.expiresAt || Date.parse(client.expiresAt) > Date.now()));
+    },
+  });
   const remoteDesktopRuntime = attachRemoteDesktop({
     app, server, adapter: options.remoteDesktopAdapter, uiAuthController, isRequestOriginAllowed,
     isClientActive: async (id) => {
@@ -1863,6 +1900,9 @@ async function main(options = {}) {
   relayService.registerRoutes(app);
 
   await featureRoutesRuntime.registerRoutes(app, {
+    remoteHostGateway,
+    getRemoteProjectState: () => ({ hubId: remoteHostStore.hubId, hasRemoteProjects: remoteHostStore.hasProjects() }),
+    remoteConnectionsAdapter: options.remoteConnectionsAdapter,
     express,
     uiAuthController,
     crypto,
@@ -2050,6 +2090,7 @@ async function main(options = {}) {
     httpServer: server,
     getPort: () => tunnelRuntimeContext.getActivePort(),
     getOpenCodePort: () => openCodePort,
+    ensureDesktopLocalClientToken: remoteClientAuthRuntime.ensureDesktopLocalClientToken,
     // In-process desktop only: never serialize this authenticated client to a renderer.
     getGuiPluginClient: () => trustedGuiPluginClient({
       managed: Boolean(openCodeProcess && !isExternalOpenCode),
@@ -2073,6 +2114,7 @@ async function main(options = {}) {
       };
     },
     stop: async (shutdownOptions = {}) => {
+      remoteHostRuntime.stop();
       sessionTitleRuntime.stop();
       try {
         unsubscribeSessionIndexEvents();
@@ -2099,6 +2141,7 @@ async function main(options = {}) {
       }
       realtimeProxyRuntime.stop();
       remoteDesktopRuntime.stop();
+      guiNetworkRuntime.stop();
       liveActivityRefreshRuntime.dispose();
       notificationTriggerRuntime.dispose();
       if (relayReconcileTimer) clearInterval(relayReconcileTimer);

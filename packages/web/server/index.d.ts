@@ -20,6 +20,12 @@ export interface WebUiServerController {
 }
 
 export interface StartWebUiServerOptions {
+  /** Host-owned credentials stay process-local. Never forward this adapter through IPC. */
+  remoteHostsAdapter?: {
+    listHosts: () => Promise<RemoteHostDescriptor[]> | RemoteHostDescriptor[];
+    prepareHost?: (hostId: string) => Promise<RemoteHostDescriptor>;
+    subscribe?: (listener: () => void) => () => void;
+  };
   port?: number;
   host?: string;
   attachSignals?: boolean;
@@ -30,6 +36,12 @@ export interface StartWebUiServerOptions {
   messageQueueDbPath?: string | null;
   messageQueueAttachmentRoot?: string | null;
   hostUpdateStateFile?: string;
+  /** Local desktop session bridge only; not exposed as renderer/native IPC. */
+  remoteConnectionsAdapter?: {
+    list: () => Promise<unknown>;
+    setup: (input: { id?: string; sshCommand?: string; nickname?: string }) => Promise<unknown>;
+    pair: (input: { id?: string; relayUrl?: string; label?: string }) => Promise<unknown>;
+  };
   getHostUpdateVersion?: () => string;
   remoteDesktopAdapter?: {
     supported: boolean;
@@ -55,6 +67,19 @@ export interface StartWebUiServerOptions {
    * concurrent desktop writers cannot clobber sibling fields in settings.json.
    */
   settingsPersistLock?: <T>(work: () => Promise<T> | T) => Promise<T>;
+}
+
+export interface RemoteHostDescriptor {
+  id: string;
+  name?: string;
+  label?: string;
+  source: 'ssh' | 'relay' | 'direct';
+  apiUrl?: string;
+  url?: string;
+  clientToken?: string;
+  requestHeaders?: Record<string, string>;
+  pairingSource?: string;
+  relay?: { relayUrl: string; serverId: string; hostEncPubJwk: JsonWebKey };
 }
 
 export declare function startWebUiServer(

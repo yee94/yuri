@@ -86,6 +86,7 @@ function goalAdmissionScope(text: string, options: { armed?: boolean; running?: 
     const snapshot = { message: text, document: { text, references: [] }, hasContent: true };
     return {
         surface: { active: true, kind: 'primary', deliveryTarget: { kind: 'primary' } },
+        hostRuntime: null,
         submissionBlocked: false, inputMode: 'normal', currentSessionId: 'session', currentDirectory: '/repo',
         getCurrentInputSnapshot: () => snapshot, submitBtwCommand: () => false, composerMentions: [],
         useSessionBtwStore: { getState: () => ({ ask: vi.fn() }) },
@@ -105,6 +106,81 @@ function goalAdmissionScope(text: string, options: { armed?: boolean; running?: 
         toast: { error: vi.fn() }, t: (key: string) => key,
     };
 }
+
+it.each([
+    { hasNewDraft: false, fails: false }, { hasNewDraft: true, fails: false },
+    { hasNewDraft: false, fails: true }, { hasNewDraft: true, fails: true },
+])('remote production submit owns new-session identity and resource consumption: %j', async ({ hasNewDraft, fails }) => {
+    const send = vi.fn(async () => { if (fails) throw new Error('Remote offline'); });
+    const flush = vi.fn(async () => undefined);
+    const end = vi.fn();
+    const clear = vi.fn();
+    const consumeSynthetic = vi.fn();
+    const removeInline = vi.fn();
+    const synthetic = { partID: 'part-1', text: 'Synthetic context', synthetic: true, attachments: [] };
+    let releaseCatalog!: () => void;
+    const catalogWait = new Promise<void>((resolve) => { releaseCatalog = resolve; });
+    const scope = {
+        ...goalAdmissionScope('remote text'),
+        hostRuntime: { entry: { sdk: vi.fn(), location: { hubId: 'hub', hostId: 'remote', directory: 'C:\\repo' } } },
+        remoteQueryClient: { ensureQueryData: async () => { await catalogWait; return []; } }, installedSkillsQueryOptions: () => ({}),
+        rawAgentsQueryOptions: () => ({}), ensureRemoteComposerSessions: async () => [],
+        surface: { active: true, kind: 'secondary', surfaceID: 'remote-surface', sessionID: 'remote-session',
+            transportIdentity: 'transport', runtimeGeneration: 1, deliveryTarget: { kind: 'primary' },
+            commands: { hasNewDraft }, selection: { value: { providerID: 'remote-provider', modelID: 'model' }, flush }, backend: { send } },
+        draftKey: { transportIdentity: 'transport', owner: { kind: 'session', ownerID: 'remote-owner' } },
+        availableSkills: [], agents: [], confirmedFileMentions: [], composerQuoteScope: null,
+        compileChatComposerDelivery: ({ plan }: { plan: { chunks: Array<{ text: string }> } }) => ({ text: plan.chunks.map((chunk) => chunk.text).join(''), attachments: [], semantics: [] }),
+        dedupeDeliveryAttachments: (files: unknown[]) => files, sanitizeAttachmentsForSend: (files: unknown[]) => files,
+        messageWithComposerQuotes: (_quotes: unknown, text: string) => text,
+        appendInlineComments: (text: string) => `${text}\nInline comment`,
+        buildSyntheticDeliveryParts: (parts: unknown[]) => parts,
+        useInputStore: { getState: () => ({ getDraftAttachmentViews: () => [], consumeDraftSyntheticParts: consumeSynthetic }) },
+        surfaceResources: { inlineDrafts: [{ id: 'comment-1', createdAt: 1 }], removeInlineDraft: removeInline, getDraft: () => ({ syntheticParts: [synthetic] }) },
+        endSubmissionFlight: end, replacePlainDocument: clear,
+        scrollToBottom: vi.fn(),
+    };
+    const submit = admissionHandler('handleSubmit', 'const quotesAtSubmit', scope);
+    const pending = submit();
+    scope.surface.selection.value = { providerID: 'changed-during-wait', modelID: 'new-model' };
+    releaseCatalog();
+    await pending;
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ providerID: 'remote-provider', modelID: 'model', sessionID: hasNewDraft ? null : 'remote-session', directory: 'C:\\repo', text: 'remote text\nInline comment', parts: [synthetic], options: { delivery: 'queue', messageID: 'pending-message' } }));
+    expect(scope.queueMessageFromEvent).not.toHaveBeenCalled();
+    expect(end).toHaveBeenCalledOnce();
+    if (fails) {
+        expect(clear).not.toHaveBeenCalled();
+        expect(removeInline).not.toHaveBeenCalled();
+        expect(consumeSynthetic).not.toHaveBeenCalled();
+        expect(scope.toast.error).toHaveBeenCalled();
+        return;
+    }
+    expect(clear).toHaveBeenCalledWith('');
+    expect(removeInline).toHaveBeenCalledWith('comment-1');
+    expect(consumeSynthetic).toHaveBeenCalledOnce();
+    const retain = consumeSynthetic.mock.calls[0][1];
+    expect(retain(synthetic)).toBe(false);
+    expect(retain({ partID: 'concurrently-added' })).toBe(true);
+});
+
+it('remote production /timeline opens the local dialog before admission or resource consumption', async () => {
+    const open = vi.fn();
+    const send = vi.fn();
+    const clear = vi.fn();
+    const scope = {
+        ...goalAdmissionScope('/timeline'),
+        hostRuntime: { entry: { location: { hubId: 'hub', hostId: 'host', directory: '/repo' } } },
+        useUIStore: { getState: () => ({ setTimelineDialogOpen: open }) },
+        surface: { active: true, kind: 'secondary', deliveryTarget: { kind: 'primary' }, backend: { send } },
+        replacePlainDocument: clear,
+    };
+    const submit = admissionHandler('handleSubmit', 'const quotesAtSubmit', scope);
+    await submit();
+    expect(open).toHaveBeenCalledWith(true);
+    expect(send).not.toHaveBeenCalled();
+    expect(scope.beginSubmissionFlight).not.toHaveBeenCalled();
+    expect(clear).toHaveBeenCalledWith('');
+});
 
 it.each(['/goal ship the fix', '/goal pause', '/GOAL resume', '/\u2003goal clear', 'Implement plan'])('Goal submit bypasses ordinary queue admission: %s', async (text) => {
     for (const queued of [false, true]) {
@@ -166,13 +242,66 @@ const host = document.createElement('div');
 const root = createRoot(host);
 afterEach(async () => { await act(async () => root.render(null)); vi.restoreAllMocks(); });
 
+it('reserves desktop composer space once per conversation, not on accessory or draft growth', async () => {
+    let reservationEffect = '';
+    let formClass = '';
+    const findReservation = (node: ts.Node) => {
+        if (ts.isCallExpression(node) && node.expression.getText(ast) === 'React.useLayoutEffect'
+            && node.getText(ast).includes('form.style.height')) reservationEffect = `${node.getText(ast)};`;
+        if (ts.isJsxOpeningElement(node) && node.tagName.getText(ast) === 'form') {
+            const attribute = node.attributes.properties.find(prop => ts.isJsxAttribute(prop) && prop.name.getText(ast) === 'className') as ts.JsxAttribute;
+            formClass = (attribute.initializer as ts.JsxExpression).expression!.getText(ast);
+        }
+        ts.forEachChild(node, findReservation);
+    };
+    findReservation(ast);
+    expect(reservationEffect).not.toBe('');
+    const Surface = surface<{ sessionID: string | null; height: number; mobile?: boolean; expanded?: boolean; kind?: string }>(`
+        const { sessionID: currentSessionId, height, mobile: isMobile = false, expanded: isComposerExpanded = false, kind = 'primary' } = props;
+        const surface = { kind };
+        const isDesktopExpanded = !isMobile && isComposerExpanded;
+        const isMobileExpanded = isMobile && isComposerExpanded;
+        const composerFormRef = React.useRef(null);
+        ${declarations.get('reservesDesktopComposerSpace')}
+        ${reservationEffect}
+        return <form ref={composerFormRef} className={${formClass}} data-height={height}>
+            <div className="chat-input-column"><textarea defaultValue="draft" /></div>
+        </form>;
+    `, { cn });
+    const measure = vi.fn(function (this: HTMLElement) { return Number(this.dataset.height); });
+    vi.spyOn(HTMLFormElement.prototype, 'offsetHeight', 'get').mockImplementation(measure);
+    await act(async () => root.render(<Surface sessionID="first" height={160} />));
+    const form = host.querySelector('form')!;
+    const textarea = form.querySelector('textarea');
+    expect(form.style.height).toBe('160px');
+    expect(form.className).toContain('flex flex-col justify-end');
+    expect(form.className).toContain('[&>.chat-input-column]:shrink-0');
+    for (let index = 0; index < 50; index++) {
+        await act(async () => root.render(<Surface sessionID="first" height={200 + index * 10} />));
+    }
+    expect(form.style.height).toBe('160px');
+    expect(form.querySelector('textarea')).toBe(textarea);
+    expect(measure).toHaveBeenCalledTimes(1);
+    await act(async () => root.render(<Surface sessionID="second" height={220} />));
+    expect(form.style.height).toBe('220px');
+    expect(measure).toHaveBeenCalledTimes(2);
+    await act(async () => root.render(<Surface sessionID="second" height={500} expanded />));
+    expect(form.style.height).toBe('');
+    await act(async () => root.render(<Surface sessionID="second" height={180} />));
+    expect(form.style.height).toBe('180px');
+    for (const props of [{ mobile: true }, { sessionID: null }, { kind: 'secondary' }]) {
+        await act(async () => root.render(<Surface sessionID="second" height={500} {...props} />));
+        expect(form.style.height).toBe('');
+    }
+    expect(measure).toHaveBeenCalledTimes(3);
+});
+
 const actionButtonDefaults = {
     isMobile: true,
     compact: false,
     footerIconButtonClass: 'footer-action',
     stopFooterIconButtonClass: 'trailing-circle',
     compactCircleButtonClass: 'compact-circle',
-    sendIconSizeClass: 'send-icon',
     stopIconSizeClass: 'circle-icon',
     canSend: true,
     canAbort: true,
@@ -217,7 +346,7 @@ it.each([false, true])('mobile actions switch Send and Stop in one trailing slot
         expect(host.querySelectorAll('[data-composer-send]')).toHaveLength(1);
     }
     const send = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
-    expect(send.className).toBe(slotClass);
+    expect(send.className).toBe(`${slotClass} disabled:opacity-50`);
     expect(send.dataset.composerCircle).toBe('true');
     expect(send.className).not.toContain('absolute');
     await act(async () => send.click());
@@ -254,6 +383,39 @@ it('desktop keeps its floating follow-up Send and Stop controls', async () => {
     await act(async () => root.render(<ActionButtons {...actionButtonDefaults} isMobile={false} />));
     expect(host.querySelector('[data-composer-stop]')).not.toBeNull();
     expect(host.querySelector('[data-composer-send]')?.className).toContain('absolute');
+});
+
+it.each([
+    { isMobile: false, compact: false },
+    { isMobile: true, compact: false },
+    { isMobile: true, compact: true },
+])('idle Send keeps its filled circle when disabled (%o)', async ({ isMobile, compact }) => {
+    const onPrimaryAction = vi.fn();
+    const props = { ...actionButtonDefaults, isMobile, compact, canAbort: false, onPrimaryAction };
+    await act(async () => root.render(<ActionButtons {...props} canSend={false} hasContent={false} />));
+    const send = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
+    expect(send.disabled).toBe(true);
+    expect(send.dataset.composerCircle).toBe('true');
+    expect(send.className).toContain('disabled:opacity-50');
+    expect(send.querySelector('[data-send-glyph]')).not.toBeNull();
+    await act(async () => send.click());
+    expect(onPrimaryAction).not.toHaveBeenCalled();
+
+    await act(async () => root.render(<ActionButtons {...props} />));
+    expect(host.querySelector('[data-composer-send]')).toBe(send);
+    expect(send.disabled).toBe(false);
+    expect(send.dataset.composerCircle).toBe('true');
+    expect(send.querySelector('[data-send-glyph]')).not.toBeNull();
+});
+
+it('blocked desktop follow-up Send keeps its filled circle and disabled opacity', async () => {
+    await act(async () => root.render(<ActionButtons {...actionButtonDefaults} isMobile={false} submissionBlocked />));
+    const send = host.querySelector<HTMLButtonElement>('[data-composer-send]')!;
+    expect(send.disabled).toBe(true);
+    expect(send.dataset.composerCircle).toBe('true');
+    expect(send.className).toContain('disabled:opacity-50');
+    expect(send.querySelector('[data-send-glyph]')).not.toBeNull();
+    expect(host.querySelector('[data-composer-stop]')).not.toBeNull();
 });
 
 it.each([true, false])('/new opens the visible draft through the production primary backend (phone shell: %s)', async (phone) => {
@@ -327,14 +489,14 @@ it.each([
 ])('native input takes precedence over hold-to-talk (%s/%s/%s)', (enabled, supported, kind, native, holdToTalk) => {
     const dictation = [...declarations].find(([name]) => name.includes('globallyEnabled: dictationEnabled'))?.[1];
     expect(dictation).toBeDefined();
-    const evaluate = new Function('iosNativeUiEnabled', 'canUseNativeIosComposer', 'surface', 'isMobile', 'useHoldToTalkInput', `
+    const evaluate = new Function('iosNativeUiEnabled', 'canUseNativeIosComposer', 'surface', 'isMobile', 'useHoldToTalkInput', 'foregroundActive', `
         ${declarations.get('nativeComposerOwnedInput')}
         ${dictation}
         return { native: nativeComposerOwnedInput, holdToTalk: holdToTalkEnabled };
     `);
-    expect(evaluate(enabled, () => supported, { kind }, true, ({ available }: { available: boolean }) => ({
+    expect(evaluate(enabled, () => supported, { kind, active: true }, true, ({ available }: { available: boolean }) => ({
         globallyEnabled: true, enabled: available, hint: null, onHintChange: () => undefined,
-    }))).toEqual({ native, holdToTalk });
+    }), true)).toEqual({ native, holdToTalk });
 });
 
 it.each([
@@ -354,6 +516,7 @@ it.each([
     `, {
         isMobile: mobile, isCapacitorApp: () => capacitor, isMobileSurfaceRuntime: () => hosted,
         pendingSessionReferenceRef: { current: false },
+        hostRuntime: null, draftKey: null, isCurrentMentionOwner: () => true,
         useSessionUIStore: { getState: () => ({ getAuthoritativeDirectoryForSession: () => '/repo' }) },
         ensureSessionRenderable: ensure, resolveMaterializedSessionDirectory: () => '/repo',
         ensureSessionMentionTranscripts: prefetch, getDocument: () => ({ text: '@' }),
@@ -544,6 +707,7 @@ it('measures once per browser edit through the production commit callback and au
     Object.defineProperty(textarea, 'scrollHeight', { get: () => { heights.push(textarea.style.height); return 48; } });
     const textareaRef = { current: textarea };
     const frames: FrameRequestCallback[] = [];
+    const supersedeSelectionRestore = vi.fn();
     let commit!: (text: string, start: number, end: number) => void;
     const Surface = surface(`
         const [message, setMessage] = React.useState('');
@@ -559,7 +723,7 @@ it('measures once per browser edit through the production commit callback and au
         capture(commitBrowserTextChange);
         return null;
     `, {
-        textareaRef, useComposerTextareaAutosize, inputMode: 'normal', knownSlashNames: new Set(),
+        textareaRef, useComposerTextareaAutosize, supersedeSelectionRestore, inputMode: 'normal', knownSlashNames: new Set(),
         nativeCompositionActiveRef: { current: false }, updateAutocompleteState: vi.fn(),
         requestAnimationFrame: (callback: FrameRequestCallback) => frames.push(callback),
         shouldApplyComposerDomCorrection: (correct: boolean) => correct,
@@ -576,6 +740,7 @@ it('measures once per browser edit through the production commit callback and au
     heights.length = 0;
     await act(async () => commit('x', 1, 1));
     expect(heights).toEqual(['auto']);
+    expect(supersedeSelectionRestore).toHaveBeenCalledTimes(51);
 });
 
 it('does not flash an inbox chip for a direct send already painted in the transcript', async () => {

@@ -15,6 +15,10 @@ import { getTranscriptRepository, unbindTranscriptRepository } from '@/sync/tran
 import { normalizeSessionProjectionMessage, reconcileFetched } from '@/sync/session-projection-api';
 import { mergeSessionTranscript, shareSessionTranscriptData } from '@/sync/transcript-merge';
 
+vi.mock('motion/mini', () => ({
+    animate: () => ({ stop() {}, then() {} }),
+}));
+
 vi.hoisted(() => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input instanceof Request ? input.url : input);
@@ -225,6 +229,54 @@ test('tool arrival, step completion and failure preserve an already displayed pa
     expect(container.textContent).toContain('PARTIAL_ANSWER');
     await render([user, { ...withTool, info: { ...first.info, error: { name: 'UnknownError', data: { message: 'Interrupted test' } } } as Message }], null);
     expect(container.textContent).toContain('PARTIAL_ANSWER');
+});
+
+test.each([false, true])('a live continuation keeps reasoning presentation across step-status gaps until final completion (mobile=%s)', async (isMobile) => {
+    useUIStore.setState({ isMobile, showAssistantTps: true });
+    const step = assistant('continuation-step', 'Still investigating.', 'tool-calls');
+    step.info = { ...step.info, time: { created: 1000, streamed: 2000, completed: 4000 }, tokens: {
+        input: 100, output: 100, reasoning: 0, cache: { read: 0, write: 0 },
+    } } as Message;
+    step.parts.push({ id: 'completed-read', messageID: step.info.id, sessionID, type: 'tool', tool: 'read', callID: 'completed-read',
+        state: { status: 'completed', input: { filePath: '/workspace/example.ts' }, output: 'done', time: { start: 2500, end: 3500 } },
+    } as Part);
+    await render([user, assistant(step.info.id, 'Still investigating.')], step.info.id);
+    for (const activeID of [null, 'next-step', null, 'next-step']) {
+        await render([user, step], activeID);
+        expect(container.querySelector('[data-turn-id="user-1"]')?.getAttribute('data-turn-activity-expanded')).toBe('true');
+        expect(container.textContent).toContain('Still investigating.');
+        expect.soft(container.querySelector('[data-message-footer]')).toBeNull();
+        expect.soft(container.querySelector('.relative.ml-2.pl-3')).toBeNull();
+    }
+    const final = assistant('final-step', 'Final answer.', 'stop');
+    final.info = { ...final.info, time: { created: 5000, streamed: 6000, completed: 7000 }, tokens: step.info.tokens } as Message;
+    await render([user, step, final], null);
+    expect(container.textContent).toContain('Final answer.');
+    expect(container.textContent).not.toContain('Still investigating.');
+    expect(container.querySelector('[data-message-footer]')).not.toBeNull();
+    expect(container.textContent).toContain('tok/s');
+    expect(container.querySelector('[data-turn-id="user-1"]')?.getAttribute('data-turn-activity-expanded')).toBe('false');
+});
+
+test('a cold idle continuation retains settled presentation instead of inventing live reasoning', async () => {
+    const step = assistant('cold-continuation', 'Interrupted investigation.', 'tool-calls');
+    step.parts.push({ id: 'cold-read', messageID: step.info.id, sessionID, type: 'tool', tool: 'read', callID: 'cold-read',
+        state: { status: 'completed', input: { filePath: '/workspace/example.ts' }, output: 'done', time: { start: 2, end: 3 } },
+    } as Part);
+    await render([user, step], null);
+    expect(container.querySelector('.relative.ml-2.pl-3')).not.toBeNull();
+});
+
+test('an interrupted live turn releases reasoning presentation', async () => {
+    const step = assistant('interrupted-step', 'Partial investigation.');
+    step.parts.push({ id: 'interrupted-read', messageID: step.info.id, sessionID, type: 'tool', tool: 'read', callID: 'interrupted-read',
+        state: { status: 'completed', input: { filePath: '/workspace/example.ts' }, output: 'done', time: { start: 2, end: 3 } },
+    } as Part);
+    await render([user, step], step.info.id);
+    await render([user, { ...step, info: { ...step.info, time: { created: 2, completed: 3 },
+        error: { name: 'AbortError', data: { message: 'Interrupted test' } },
+    } as Message }], null);
+    expect(container.querySelector('.relative.ml-2.pl-3')).not.toBeNull();
 });
 
 test('an explicit process expansion survives completion', async () => {

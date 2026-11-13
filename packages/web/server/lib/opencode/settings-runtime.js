@@ -833,10 +833,11 @@ export const createSettingsRuntime = (deps) => {
 
   const persistSettings = async (changes) => runPersistedWrite(async () => {
     const updateCurrent = typeof changes === 'function';
-    const stored = updateCurrent
+    const strictRead = updateCurrent || Object.hasOwn(changes || {}, 'hubProjectLayout');
+    const stored = strictRead
       ? await readSettingsFromDiskStrict()
       : await readSettingsFromDisk();
-    if (updateCurrent && Array.isArray(stored)) throw new Error('Settings file is malformed (array payload)');
+    if (strictRead && Array.isArray(stored)) throw new Error('Settings file is malformed (array payload)');
     const { settings: current } = await migrateSettingsFromLegacyLastDirectory(stored);
     if (typeof changes === 'function') changes = await changes(current);
     // Log field names only — changes can carry credentials (UI password,
@@ -888,7 +889,8 @@ export const createSettingsRuntime = (deps) => {
 
     await writeSettingsToDiskUnlocked(next);
     if (JSON.stringify(stored.projects) !== JSON.stringify(next.projects)
-      || stored.projectSortOrder !== next.projectSortOrder) {
+      || stored.projectSortOrder !== next.projectSortOrder
+      || JSON.stringify(stored.hubProjectLayout) !== JSON.stringify(next.hubProjectLayout)) {
       onProjectOrderChanged?.();
     }
     return formatSettingsResponse(next);

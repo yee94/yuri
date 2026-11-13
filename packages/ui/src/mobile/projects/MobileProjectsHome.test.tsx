@@ -2,10 +2,13 @@ import { describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import React from 'react';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
 
 import { I18nProvider } from '@/lib/i18n';
+import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useMobileProjectsHomeModel } from './useMobileProjectsHomeModel';
 
 import {
   MobileProjectsHome,
@@ -13,7 +16,28 @@ import {
   type MobileProjectsHomeProps,
 } from './MobileProjectsHome';
 
+const fixtures = vi.hoisted(() => ({
+  sessions: [],
+  pinned: new Set<string>(),
+  running: new Set<string>(),
+  iconFetch: vi.fn(async (_path: string) => new Response(new Blob(['logo'], { type: 'image/png' }))),
+}));
+vi.mock('@/lib/runtime-fetch', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/runtime-fetch')>(),
+  runtimeFetch: fixtures.iconFetch,
+}));
+vi.mock('@/hooks/useSessionOrderSync', () => ({ useSessionOrderSync: () => {} }));
+vi.mock('@/stores/useDirectoryStore', async () => {
+  const { create } = await import('zustand');
+  return { useDirectoryStore: create(() => ({ currentDirectory: '' })) };
+});
+vi.mock('@/queries/sessionIndexPinQueries', () => ({ usePinnedSessionIds: () => fixtures.pinned }));
+vi.mock('@/components/session/sidebar/hooks/useAlwaysVisibleSessionIds', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/components/session/sidebar/hooks/useAlwaysVisibleSessionIds')>(),
+  useRunningSessionIds: () => fixtures.running,
+}));
 vi.mock('@/sync/sync-context', () => ({
+  useAllLiveSessions: () => fixtures.sessions,
   useSessionActivity: () => false,
   useSessionPermissions: () => [],
   useSessionQuestions: () => [],
@@ -25,6 +49,8 @@ const homeSource = readFileSync(
 );
 
 const noop = () => undefined;
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const projects: MobileProjectHomeItem[] = [{
   id: 'project-1',
@@ -73,6 +99,47 @@ const props: MobileProjectsHomeProps = {
   onOpenSessionActions: noop,
 };
 
+test.each(['custom', 'auto'] as const)('mobile home project circle uses the configured %s logo from the project store', async (source) => {
+  const previousProjects = useProjectsStore.getState().projects;
+  const project = { id: `home-${source}`, path: '/project', label: 'Logo project', icon: 'rocket', iconImage: { mime: 'image/png', updatedAt: 1, source } };
+  useProjectsStore.setState({ projects: [project] });
+  const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue(`blob:home-${source}`);
+  fixtures.iconFetch.mockClear();
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  function Home() {
+    const model = useMobileProjectsHomeModel();
+    return <MobileProjectsHome {...props} projects={model.projects} pinnedSessions={[]} />;
+  }
+  const circle = () => host.querySelector('.yuri-mobile-project-icon')!;
+  try {
+    await act(async () => root.render(<I18nProvider><Home /></I18nProvider>));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(circle().querySelector('img')?.getAttribute('src')).toBe(`blob:home-${source}`);
+    expect(circle().querySelector('use')).toBeNull();
+    expect(fixtures.iconFetch.mock.calls.map(([path]) => path)).toEqual([`/api/projects/${project.id}/icon`]);
+    for (let i = 0; i < 50; i++) {
+      await act(async () => root.render(<I18nProvider><Home /></I18nProvider>));
+    }
+    expect(fixtures.iconFetch).toHaveBeenCalledTimes(1);
+    await act(async () => circle().querySelector('img')!.dispatchEvent(new Event('error')));
+    expect(circle().querySelector('img')).toBeNull();
+    expect(circle().querySelector('use')?.getAttribute('href')).toBe('#yuri-rocket');
+    await act(async () => useProjectsStore.setState({ projects: [{ ...project, iconImage: { ...project.iconImage, updatedAt: 2 } }] }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(fixtures.iconFetch).toHaveBeenCalledTimes(2);
+    expect(circle().querySelector('img')).not.toBeNull();
+    await act(async () => useProjectsStore.setState({ projects: [{ ...project, iconImage: undefined }] }));
+    expect(circle().querySelector('img')).toBeNull();
+    expect(circle().querySelector('use')?.getAttribute('href')).toBe('#yuri-rocket');
+  } finally {
+    await act(async () => root.unmount());
+    useProjectsStore.setState({ projects: previousProjects });
+    createUrl.mockRestore(); host.remove();
+  }
+});
+
 describe('MobileProjectsHome session row isolation', () => {
   test('live rows and session lists use default React.memo against parent identity churn', () => {
     expect(homeSource).toContain('const MobileLiveSessionRow = React.memo(MobileLiveSessionRowImpl)');
@@ -82,15 +149,63 @@ describe('MobileProjectsHome session row isolation', () => {
 });
 
 describe('MobileProjectsHome workspace groups', () => {
-  test('marks a partial project count and shows the same localized catalog notice with a disabled pending retry', () => {
-    const html = renderToString(<I18nProvider><MobileProjectsHome {...props} projects={[{ ...projects[0], sessionCountPartial: true }]} catalogIncomplete catalogRetrying onRetryCatalog={noop} /></I18nProvider>);
-    expect(html.replace(/<[^>]*>/g, '')).toContain('2 sessions+');
-    expect(html).toContain('Some directories have not refreshed.');
-    expect(html).toMatch(/data-testid="projects-catalog-retry"[^>]*disabled/);
-    const complete = renderToString(<I18nProvider><MobileProjectsHome {...props} /></I18nProvider>);
-    expect(complete).not.toContain('projects-catalog-partial');
-    expect(complete.replace(/<[^>]*>/g, '')).not.toContain('2 sessions+');
+  test.each([
+    { name: 'no workspaces', worktrees: [] },
+    { name: 'empty main workspace', worktrees: [{
+      id: 'main',
+      name: 'Main workspace',
+      path: '/code/empty',
+      kind: 'main' as const,
+      sessionCount: 0,
+      sessions: [],
+    }] },
+  ])('expanded empty projects show an empty-state message instead of a blank padded group ($name)', ({ worktrees }) => {
+    const html = renderToString(
+      <I18nProvider>
+        <MobileProjectsHome
+          {...props}
+          pinnedSessions={[]}
+          projects={[{ ...projects[0], name: 'Empty project', sessionCount: 0, worktrees }]}
+        />
+      </I18nProvider>,
+    );
+    const host = document.createElement('div');
+    host.innerHTML = html;
+
+    expect(host.querySelector('.yuri-mobile-project-groups')?.textContent).toBe('No sessions yet');
   });
+
+  test('collapsed empty projects do not reserve a content area or show an empty-state message', () => {
+    const html = renderToString(
+      <I18nProvider>
+        <MobileProjectsHome
+          {...props}
+          pinnedSessions={[]}
+          projects={[{ ...projects[0], expanded: false, sessionCount: 0, worktrees: [] }]}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).not.toContain('yuri-mobile-project-groups');
+    expect(html).not.toContain('No sessions yet');
+  });
+
+  test('projects with linked worktrees keep their groups without a project empty-state message', () => {
+    const html = renderToString(
+      <I18nProvider>
+        <MobileProjectsHome
+          {...props}
+          pinnedSessions={[]}
+          projects={[{ ...projects[0], worktrees: [projects[0].worktrees[1]] }]}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain('Feature branch');
+    expect(html).toContain('Feature session');
+    expect(html).not.toContain('No sessions yet');
+  });
+
   test('renders one global pinned project card before projects', () => {
     const html = renderToString(
       <I18nProvider>

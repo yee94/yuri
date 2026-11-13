@@ -25,6 +25,8 @@
  */
 
 import { runtimeFetch } from "../lib/runtime-fetch"
+import type { HostRuntimeEntry } from "@/lib/remote-projects/registry"
+import { locationSessionKey, type HostLocation } from "@/lib/remote-projects/location"
 import { getRuntimeGeneration, getRuntimeKey } from "../lib/runtime-switch"
 import {
   captureInboxAuthorityMark,
@@ -51,6 +53,7 @@ import { fetchSessionProjectionPage } from "./session-projection-api"
 export type SessionInboxDelivery = "steer" | "queue"
 
 export type SessionInboxUser = {
+  location?: HostLocation
   id: string
   sessionID: string
   timeCreated: number
@@ -66,6 +69,7 @@ export type SessionInboxUser = {
 }
 
 export type PostIdleSessionPromptInput = {
+  scope?: HostRuntimeEntry
   sessionID: string
   directory: string
   messageID: string
@@ -82,6 +86,7 @@ export type PostSessionPromptInput = PostIdleSessionPromptInput & {
 }
 
 export type PostSessionInterruptInput = {
+  scope?: HostRuntimeEntry
   sessionID: string
   directory?: string | null
   resume?: boolean
@@ -89,6 +94,7 @@ export type PostSessionInterruptInput = {
 }
 
 export type SessionInboxMutationInput = {
+  scope?: HostRuntimeEntry
   sessionID: string
   inboxID: string
   directory?: string | null
@@ -96,6 +102,7 @@ export type SessionInboxMutationInput = {
 }
 
 export type FetchSessionInboxInput = {
+  scope?: HostRuntimeEntry
   sessionID: string
   directory?: string | null
   signal?: AbortSignal
@@ -169,6 +176,10 @@ function inboxPath(sessionID: string, inboxID?: string): string {
   const session = `/api/session/${encodeURIComponent(sessionID)}/inbox`
   if (!inboxID) return session
   return `${session}/${encodeURIComponent(inboxID)}`
+}
+
+function scopedInboxSessionID(sessionID: string, scope?: HostRuntimeEntry): string {
+  return scope ? locationSessionKey(scope.location, sessionID) : sessionID
 }
 
 async function parseJsonBody(response: Response, label: string): Promise<unknown> {
@@ -250,6 +261,7 @@ export function transcriptRowsFromIdlePromptResponse(_payload: unknown): [] {
 }
 
 export type PromptCommitScope = {
+  hostScope?: HostRuntimeEntry
   /** Prefer runtime key (client) or transport identity — compared with capture. */
   runtimeKey: string
   generation: number
@@ -257,16 +269,22 @@ export type PromptCommitScope = {
   overlay: InboxRuntimeScope
 }
 
-export function capturePromptCommitScope(directory: string): PromptCommitScope {
+export function capturePromptCommitScope(directory: string, hostScope?: HostRuntimeEntry): PromptCommitScope {
   return {
     runtimeKey: getRuntimeKey(),
     generation: getRuntimeGeneration(),
-    directory,
+    directory: hostScope?.location.directory ?? directory,
+    hostScope,
     overlay: captureInboxRuntimeScope(),
   }
 }
 
 export function isCurrentPromptCommitScope(scope: PromptCommitScope): boolean {
+  try {
+    scope.hostScope?.sdk()
+  } catch {
+    return false
+  }
   return (
     getRuntimeKey() === scope.runtimeKey
     && getRuntimeGeneration() === scope.generation
@@ -284,7 +302,8 @@ export async function postSessionPrompt(
   input: PostSessionPromptInput & { commit?: PromptCommitScope },
 ): Promise<SessionInboxUser> {
   // Earliest entry: pin commit boundary before any network side effect.
-  const commit = input.commit ?? capturePromptCommitScope(input.directory)
+  const commit = input.commit ?? capturePromptCommitScope(input.directory, input.scope)
+  if (input.scope && commit.hostScope !== input.scope) throw new Error("Prompt scope mismatch")
   if (!isCurrentPromptCommitScope(commit)) {
     throwRuntimeSwitched("session prompt")
   }
@@ -298,9 +317,15 @@ export async function postSessionPrompt(
   if (input.files?.length) body.files = input.files
   if (input.agents?.length) body.agents = input.agents
   if (input.skills?.length) body.skills = input.skills
-  if (input.metadata) body.metadata = input.metadata
+  body.metadata = {
+    ...input.metadata,
+    client: {
+      ...(record(input.metadata?.client) ? input.metadata.client : {}),
+      id: "yuri",
+    },
+  }
 
-  const response = await runtimeFetch(path, {
+  const response = await (commit.hostScope ? commit.hostScope.fetch : runtimeFetch)(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     query: { directory: commit.directory },
@@ -318,6 +343,8 @@ export async function postSessionPrompt(
   }
 
   const admitted = parseSessionInboxUser(await parseJsonBody(response, "session prompt"))
+  if (commit.hostScope && admitted.sessionID !== input.sessionID) throw new Error("Session prompt response scope mismatch")
+  if (commit.hostScope) admitted.location = commit.hostScope.location
   // Commit overlay only on the captured boundary. Terminal cancelled/consumed
   // receipts make remember a no-op so late HTTP cannot resurrect ghosts.
   if (!isCurrentPromptCommitScope(commit)) {
@@ -350,6 +377,7 @@ export type PromptAdmissionReconcileResult =
  * a new logical submission.
  */
 export async function reconcilePromptAdmission(input: {
+  scope?: HostRuntimeEntry
   sessionID: string
   directory?: string | null
   inputID: string
@@ -359,11 +387,12 @@ export async function reconcilePromptAdmission(input: {
   const inputID = input.inputID.trim()
   if (!inputID) return { status: "unknown" }
 
-  const commit = input.commit ?? capturePromptCommitScope(input.directory ?? "")
+  const commit = input.commit ?? capturePromptCommitScope(input.directory ?? "", input.scope)
   if (!isCurrentPromptCommitScope(commit)) return { status: "unknown" }
 
   try {
     const snap = await fetchSessionInboxAuthority({
+      scope: commit.hostScope,
       sessionID: input.sessionID,
       directory: commit.directory || input.directory,
       signal: input.signal,
@@ -386,6 +415,7 @@ export async function reconcilePromptAdmission(input: {
 
   try {
     const page = await fetchSessionProjectionPage({
+      scope: commit.hostScope,
       sessionID: input.sessionID,
       directory: commit.directory || input.directory || "",
       limit: 40,
@@ -394,7 +424,7 @@ export async function reconcilePromptAdmission(input: {
     if (!isCurrentPromptCommitScope(commit)) return { status: "unknown" }
     const promoted = page.records.some((record) => record?.info?.id === inputID)
     if (promoted) {
-      forgetUnpromotedInbox(input.sessionID, inputID, "consumed")
+      forgetUnpromotedInbox(scopedInboxSessionID(input.sessionID, commit.hostScope), inputID, "consumed")
       return { status: "promoted", id: inputID }
     }
   } catch {
@@ -414,7 +444,7 @@ export async function reconcilePromptAdmission(input: {
 export function applySessionInboxEvent(event: {
   type?: string
   properties?: Record<string, unknown> | null
-}): boolean {
+}, scope?: HostRuntimeEntry): boolean {
   const type = typeof event.type === "string" ? event.type : ""
   const props = event.properties && typeof event.properties === "object"
     ? event.properties
@@ -423,6 +453,7 @@ export function applySessionInboxEvent(event: {
   const sessionID = asString(props.sessionID)
   const inboxID = asString(props.inboxID) ?? asString(props.id)
   if (!sessionID || !inboxID) return false
+  const key = scopedInboxSessionID(sessionID, scope)
 
   if (type === "session.inbox.enqueued") {
     const itemPayload = props.item
@@ -437,6 +468,7 @@ export function applySessionInboxEvent(event: {
           ? { ...itemPayload, id: inboxID, sessionID, type: itemType ?? "user" }
           : { id: inboxID, sessionID, type: "user", delivery: "steer", payload: { text: "" } },
       )
+      if (scope) admitted.location = scope.location
       // Live SSE authority — no startedMark (may clear prior terminal).
       rememberUnpromotedInboxFromAuthority(admitted)
       return true
@@ -447,19 +479,19 @@ export function applySessionInboxEvent(event: {
   }
 
   if (type === "session.inbox.cancelled") {
-    forgetUnpromotedInbox(sessionID, inboxID, "cancelled")
+    forgetUnpromotedInbox(key, inboxID, "cancelled")
     return true
   }
 
   if (type === "session.inbox.delivered") {
-    forgetUnpromotedInbox(sessionID, inboxID, "consumed")
+    forgetUnpromotedInbox(key, inboxID, "consumed")
     return true
   }
 
   if (type === "session.inbox.delivery.changed") {
     const delivery = props.delivery === "queue" ? "queue" : props.delivery === "steer" ? "steer" : null
     if (!delivery) return false
-    updateInboxOverlayDelivery(sessionID, inboxID, delivery)
+    updateInboxOverlayDelivery(key, inboxID, delivery)
     return true
   }
 
@@ -480,29 +512,34 @@ export async function fetchSessionInboxAuthority(
   input: FetchSessionInboxInput,
 ): Promise<SessionInboxAuthoritySnapshot> {
   const scope = captureInboxRuntimeScope()
+  const commit = capturePromptCommitScope(input.directory ?? "", input.scope)
   const startedMark = captureInboxAuthorityMark()
-  const compactionRevision = captureCompactionBarrierRevision(input.sessionID)
+  const key = scopedInboxSessionID(input.sessionID, input.scope)
+  const compactionRevision = captureCompactionBarrierRevision(key)
   const options = {
     method: "GET",
-    query: directoryQuery(input.directory),
+    query: directoryQuery(input.scope?.location.directory ?? input.directory),
     signal: input.signal,
   }
-  let response = await runtimeFetch(`/api/sessions/${encodeURIComponent(input.sessionID)}/delivery`, options)
+  const request = input.scope ? input.scope.fetch : runtimeFetch
+  let response = await request(`/api/sessions/${encodeURIComponent(input.sessionID)}/delivery`, options)
   // Standalone VS Code and older Hosts do not own this projection route.
   if (response.status === 404 || response.status === 501 || isHtmlContentType(response.headers.get("content-type"))) {
-    response = await runtimeFetch(inboxPath(input.sessionID), options)
+    response = await request(inboxPath(input.sessionID), options)
   }
   if (!response.ok) {
     throwHttp("session inbox", response.status, await readFailedDetail(response))
   }
   const payload = await parseJsonBody(response, "session inbox")
   const items = parseSessionInboxList(payload)
-  const current = isCurrentInboxRuntimeScope(scope)
-  if (current && captureCompactionBarrierRevision(input.sessionID) === compactionRevision) {
+  if (input.scope && items.some((item) => item.sessionID !== input.sessionID)) throw new Error("Session inbox response scope mismatch")
+  if (input.scope) for (const item of items) item.location = input.scope.location
+  const current = isCurrentInboxRuntimeScope(scope) && isCurrentPromptCommitScope(commit)
+  if (current && captureCompactionBarrierRevision(key) === compactionRevision) {
     if (record(payload) && typeof payload.compactionRunning === "boolean") {
-      setSessionCompactionBarrier(input.sessionID, payload.compactionRunning)
+      setSessionCompactionBarrier(key, payload.compactionRunning)
     } else {
-      syncCompactionBarrierFromInbox(input.sessionID, parseSessionInboxCompactionList(payload))
+      syncCompactionBarrierFromInbox(key, parseSessionInboxCompactionList(payload))
     }
   }
   return { items, startedMark, scope, current }
@@ -522,10 +559,11 @@ async function patchSessionInboxDelivery(
   input: SessionInboxMutationInput & { delivery: SessionInboxDelivery },
 ): Promise<void> {
   const scope = captureInboxRuntimeScope()
-  const response = await runtimeFetch(inboxPath(input.sessionID, input.inboxID), {
+  const commit = capturePromptCommitScope(input.directory ?? "", input.scope)
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(inboxPath(input.sessionID, input.inboxID), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    query: directoryQuery(input.directory),
+    query: directoryQuery(input.scope?.location.directory ?? input.directory),
     body: JSON.stringify({ delivery: input.delivery }),
     signal: input.signal,
   })
@@ -537,13 +575,14 @@ async function patchSessionInboxDelivery(
     )
   }
   // 204 No Content — do not parse a body.
-  if (!isCurrentInboxRuntimeScope(scope)) {
+  if (!isCurrentInboxRuntimeScope(scope) || !isCurrentPromptCommitScope(commit)) {
     return
   }
-  if (getInboxTerminal(input.sessionID, input.inboxID)) {
+  const key = scopedInboxSessionID(input.sessionID, input.scope)
+  if (getInboxTerminal(key, input.inboxID)) {
     return
   }
-  updateInboxOverlayDelivery(input.sessionID, input.inboxID, input.delivery)
+  updateInboxOverlayDelivery(key, input.inboxID, input.delivery)
 }
 
 export async function steerSessionInbox(input: SessionInboxMutationInput): Promise<void> {
@@ -555,9 +594,9 @@ export async function queueSessionInbox(input: SessionInboxMutationInput): Promi
 }
 
 export async function cancelSessionInbox(input: SessionInboxMutationInput): Promise<void> {
-  const response = await runtimeFetch(inboxPath(input.sessionID, input.inboxID), {
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(inboxPath(input.sessionID, input.inboxID), {
     method: "DELETE",
-    query: directoryQuery(input.directory),
+    query: directoryQuery(input.scope?.location.directory ?? input.directory),
     signal: input.signal,
   })
   if (!response.ok) {
@@ -578,36 +617,39 @@ export async function cancelUnpromotedInboxItem(input: SessionInboxMutationInput
   transcriptRows: []
 }> {
   const overlayScope = captureInboxRuntimeScope()
+  const commit = capturePromptCommitScope(input.directory ?? "", input.scope)
+  const key = scopedInboxSessionID(input.sessionID, input.scope)
   await cancelSessionInbox(input)
   // Do not record terminal or mutate overlay after a runtime switch mid-flight.
-  if (!isCurrentInboxRuntimeScope(overlayScope)) {
+  if (!isCurrentInboxRuntimeScope(overlayScope) || !isCurrentPromptCommitScope(commit)) {
     return {
-      overlay: useSessionInboxOverlayStore.getState().list(input.sessionID),
+      overlay: useSessionInboxOverlayStore.getState().list(key),
       transcriptRows: [],
     }
   }
   // Terminal cancelled first so a concurrent late POST cannot re-admit the chip.
-  forgetUnpromotedInbox(input.sessionID, input.inboxID, "cancelled")
+  forgetUnpromotedInbox(key, input.inboxID, "cancelled")
   try {
     const snap = await fetchSessionInboxAuthority({
+      scope: input.scope,
       sessionID: input.sessionID,
       directory: input.directory,
       signal: input.signal,
     })
-    if (!isCurrentInboxRuntimeScope(overlayScope) || !snap.current) {
+    if (!isCurrentInboxRuntimeScope(overlayScope) || !isCurrentPromptCommitScope(commit) || !snap.current) {
       return {
-        overlay: useSessionInboxOverlayStore.getState().list(input.sessionID),
+        overlay: useSessionInboxOverlayStore.getState().list(key),
         transcriptRows: [],
       }
     }
-    replaceInboxOverlayFromAuthority(input.sessionID, snap.items, {
+    replaceInboxOverlayFromAuthority(key, snap.items, {
       startedMark: snap.startedMark,
     })
   } catch {
     // DELETE already won; a refresh miss must not resurrect the cancelled item.
   }
   return {
-    overlay: useSessionInboxOverlayStore.getState().list(input.sessionID),
+    overlay: useSessionInboxOverlayStore.getState().list(key),
     transcriptRows: [],
   }
 }
@@ -615,10 +657,11 @@ export async function cancelUnpromotedInboxItem(input: SessionInboxMutationInput
 export async function postSessionInterrupt(input: PostSessionInterruptInput): Promise<void> {
   const path = `/api/session/${encodeURIComponent(input.sessionID)}/interrupt`
   const query: Record<string, string> = {}
-  if (input.directory) query.directory = input.directory
+  const directory = input.scope?.location.directory ?? input.directory
+  if (directory) query.directory = directory
   if (input.resume !== undefined) query.resume = String(input.resume)
 
-  const response = await runtimeFetch(path, {
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(path, {
     method: "POST",
     query,
     signal: input.signal,

@@ -4,10 +4,13 @@ import { useEvent } from '@reactuses/core';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useCurrentSessionEntity } from '@/sync/sync-context';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import type { HostRuntimeContextValue } from '@/contexts/hostRuntimeContext';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 
 import { MobileChatHeader } from './MobileChatHeader';
 import { MobileContextProgressButton } from './MobileContextProgressButton';
-import { useMobileTranscriptSyncHint } from './useMobileTranscriptSyncHint';
+import { useMobileTranscriptSyncHint, useRemoteMobileTranscriptSyncHint } from './useMobileTranscriptSyncHint';
 
 export type MobileChatScreenProps = {
   /** Empty string = new-session draft mode (no entity/status lookups). */
@@ -29,9 +32,32 @@ export type MobileChatScreenProps = {
  * owns floating navigation and atmospheric edge chrome while ChatView keeps
  * message, composer, draft, and send behavior.
  */
-export function MobileChatScreen({
+export function MobileChatScreen(props: MobileChatScreenProps) {
+  const host = useHostRuntime();
+  return host?.entry.location.hostId ? <RemoteMobileChatScreen {...props} host={host} /> : <LocalMobileChatScreen {...props} />;
+}
+
+function LocalMobileChatScreen({ sessionId, directory, title, ...props }: MobileChatScreenProps) {
+  const { t } = useI18n();
+  const isDraft = sessionId.length === 0;
+  const session = useCurrentSessionEntity(isDraft ? null : sessionId);
+  const resolvedTitle = isDraft ? title?.trim() || t('mobile.menu.newSession') : title?.trim() || session?.title?.trim() || t('mobile.sessions.untitled');
+  const syncHint = useMobileTranscriptSyncHint(isDraft ? '' : sessionId, directory || undefined);
+  return <MobileChatScreenContent {...props} sessionId={sessionId} title={resolvedTitle} syncHint={syncHint} />;
+}
+
+function RemoteMobileChatScreen({ host, sessionId, title, ...props }: MobileChatScreenProps & { host: HostRuntimeContextValue }) {
+  const selectedId = useSessionNavigationStore((state) => {
+    const selected = state.remoteSession;
+    return selected?.location.hubId === host.entry.location.hubId && selected.location.hostId === host.entry.location.hostId && selected.location.directory === host.entry.location.directory ? selected.sessionId : null;
+  });
+  const effectiveSessionId = sessionId || selectedId || '';
+  const syncHint = useRemoteMobileTranscriptSyncHint(host, effectiveSessionId);
+  return <MobileChatScreenContent {...props} sessionId={effectiveSessionId} title={title} syncHint={syncHint} />;
+}
+
+function MobileChatScreenContent({
   sessionId,
-  directory,
   title,
   onBack,
   onOpenMenu,
@@ -39,17 +65,9 @@ export function MobileChatScreen({
   menuOpen = false,
   children,
   className,
-}: MobileChatScreenProps) {
+  syncHint,
+}: MobileChatScreenProps & { syncHint: string | null }) {
   const { t } = useI18n();
-  const isDraft = sessionId.length === 0;
-  const session = useCurrentSessionEntity(isDraft ? null : sessionId);
-  const resolvedTitle = isDraft
-    ? (title?.trim() || t('mobile.menu.newSession'))
-    : (title?.trim() || session?.title?.trim() || t('mobile.sessions.untitled'));
-  const syncHint = useMobileTranscriptSyncHint(
-    isDraft ? '' : sessionId,
-    directory || undefined,
-  );
   const [contextOpen, setContextOpen] = React.useState(false);
 
   // Overflow menu and context panel are mutually exclusive. Switching from one
@@ -76,7 +94,7 @@ export function MobileChatScreen({
       )}
     >
       <MobileChatHeader
-        title={resolvedTitle}
+        title={title || t(sessionId ? 'mobile.sessions.untitled' : 'mobile.menu.newSession')}
         subtitle={syncHint}
         onBack={onBack}
         onOpenMenu={handleOpenMenu}

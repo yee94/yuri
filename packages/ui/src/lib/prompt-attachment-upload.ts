@@ -1,6 +1,8 @@
 import { normalize } from 'pathe';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { captureFileResourceWriter } from '@/lib/runtime-file-resource';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
 
 export class PromptAttachmentUploadError extends Error {
   readonly status: number;
@@ -126,19 +128,21 @@ export const needsPromptAttachmentUpload = (url: string): boolean =>
  * URL in the prompt JSON — that blocks the shared relay tunnel.
  */
 export const uploadPromptAttachmentBytes = async (
-  input: { body: Blob; mime: string; filename?: string; signal?: AbortSignal },
+  input: { body: Blob; mime: string; filename?: string; signal?: AbortSignal; scope?: HostRuntimeEntry },
 ): Promise<PromptAttachmentUploadResult> => {
-  const remember = captureFileResourceWriter();
+  const scope = captureProjectScope(input.scope);
+  const remember = input.scope?.location.hostId ? undefined : captureFileResourceWriter();
   const mime = input.mime || input.body.type || 'application/octet-stream';
   const body = input.body.type === mime ? input.body : new Blob([input.body], { type: mime });
   if (!Number.isSafeInteger(body.size) || body.size < 0) {
     throw new PromptAttachmentUploadError(413, 'too-large');
   }
   const sha256 = await digestHex(body);
+  scope.assertCurrent(input.signal);
   const attachmentID = attachmentIDFor(input.filename);
   let response: Response;
   try {
-    response = await runtimeFetch(`/api/fs/prompt-attachments/${encodeURIComponent(attachmentID)}?storage=temporary`, {
+    response = await (input.scope ? scope.fetch : runtimeFetch)(`/api/fs/prompt-attachments/${encodeURIComponent(attachmentID)}?storage=temporary`, {
       method: 'PUT',
       headers: {
         'Content-Type': mime,
@@ -146,6 +150,7 @@ export const uploadPromptAttachmentBytes = async (
         'X-Yuri-Content-Length': String(body.size),
         'X-Yuri-Sha256': sha256,
         'X-Yuri-Mime': mime,
+        ...(input.scope ? { 'x-opencode-directory': input.scope.location.directory } : {}),
         ...(input.filename ? { 'X-Yuri-Filename': encodeURIComponent(input.filename) } : {}),
       },
       body,
@@ -157,9 +162,12 @@ export const uploadPromptAttachmentBytes = async (
   if (response.status === 413) throw new PromptAttachmentUploadError(413, 'too-large');
   if (!response.ok) throw new PromptAttachmentUploadError(response.status, response.status >= 500 || response.status === 0 ? 'unavailable' : 'rejected');
   const result = await parseUploadResult(response);
+  scope.assertCurrent(input.signal);
   if (result.size !== body.size) {
     throw new PromptAttachmentUploadError(response.status, 'unavailable');
   }
-  await remember(body, result.sha256);
+  if (input.scope && result.sha256 !== sha256) throw new PromptAttachmentUploadError(response.status, 'unavailable');
+  await remember?.(body, result.sha256);
+  scope.assertCurrent(input.signal);
   return { ...result, mime };
 };

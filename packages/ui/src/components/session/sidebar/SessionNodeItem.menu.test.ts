@@ -35,6 +35,12 @@ describe('SessionNodeItem session menu', () => {
     expect(source).toContain('disabled={!sessionDirectory || isTranscriptRefreshing}')
   })
 
+  test('right-click menu exposes the shared unread action for root conversations', () => {
+    expect(source).toContain("t('sessions.sidebar.session.menu.markUnread')")
+    expect(source).toContain('markSessionUnread(session.id, sessionDirectory || undefined)')
+    expect(source).toContain("t('sessions.sidebar.session.menu.markUnreadFailed')")
+  })
+
   test('shows session change counts next to the title when summary has them', () => {
     expect(source).toContain('formatSessionChangeCounts(readSessionChangeSummary(resolvedSession))')
     expect(source).toContain('sessionChangeCounts')

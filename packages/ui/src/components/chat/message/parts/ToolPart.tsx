@@ -70,6 +70,7 @@ import {
 } from './sessionBackgroundModel';
 import { shouldSuppressTaskLoading } from './shouldSuppressTaskLoading';
 import { opencodeClient } from '@/lib/opencode/client';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { areRenderRelevantPartsEqual } from '../renderCompare';
 import { useI18n } from '@/lib/i18n';
 import { findMetadataPatchFile, getDiffPatchEntries, getPatchText, getToolNavigationDiffEntries, getToolPartLineDiffTotals, patchFilePath } from './toolDiffUtils';
@@ -2060,6 +2061,8 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     );
     const isBlockingForeground = isBlockingForegroundToolPart(part);
     const [backgroundMovePending, setBackgroundMovePending] = React.useState(false);
+    const hostRuntime = useHostRuntime();
+    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const handleMoveToBackground = useEvent(async () => {
         if (!isBlockingForeground || backgroundMovePending) return;
         const sessionID = typeof part.sessionID === 'string' ? part.sessionID.trim() : '';
@@ -2071,7 +2074,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
         try {
             const result = await moveSessionBlockingWorkToBackground(
                 sessionID,
-                opencodeClient.getSdkClient() as { session: { background: (input: { sessionID: string }) => Promise<unknown> } },
+                (hostRuntime?.entry.location.hostId ? hostRuntime.entry.sdk() : opencodeClient.getSdkClient()) as { session: { background: (input: { sessionID: string }) => Promise<unknown> } },
             );
             if (!result.ok) {
                 toast.error(t('chat.sessionBackground.moveFailed'), {
@@ -2383,7 +2386,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                     ? [{ path: navigationPath, patch: selectedToolDiffs[0].patch }]
                     : selectedToolDiffs.map((entry) => ({ path: entry.title, patch: entry.patch }));
 
-                if (runtime?.runtime.isVSCode && runtime.editor && toolDiff) {
+                if (!hostScope && runtime?.runtime.isVSCode && runtime.editor && toolDiff) {
                     const label = `${navigationPath} (changes)`;
                     void runtime.editor.openDiff('', absolutePath, label, { line: targetLine, patch: toolDiff });
                     return;
@@ -2408,7 +2411,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                         navigateToDiff(relativePath, false, isWriteLikeNavTool(normalizedPartTool) ? 'working' : 'turn', targetLine);
                     } else if (toolPatches.length > 0) {
                         openContextToolDiff(
-                            currentDirectory,
+                            hostScope?.key ?? currentDirectory,
                             navigationPath,
                             toolPatches,
                             targetLine,
@@ -2416,19 +2419,19 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                             sessionSurface.sessionId,
                         );
                     } else {
-                        openContextDiff(currentDirectory, relativePath, false, isWriteLikeNavTool(normalizedPartTool) ? 'working' : 'turn', targetLine, messageId, sessionSurface.sessionId);
+                        openContextDiff(hostScope?.key ?? currentDirectory, relativePath, false, isWriteLikeNavTool(normalizedPartTool) ? 'working' : 'turn', targetLine, messageId, sessionSurface.sessionId);
                     }
                     return;
                 }
 
-                if (runtime?.editor) {
+                if (!hostScope && runtime?.editor) {
                     void runtime.editor.openFile(absolutePath, targetLine);
                     return;
                 }
 
                 const openInContext = () => {
                     const uiStore = useUIStore.getState();
-                    const contextDirectory = getDirectoryForFilePath(currentDirectory, absolutePath);
+                    const contextDirectory = hostScope?.key ?? getDirectoryForFilePath(currentDirectory, absolutePath);
                     if (typeof targetLine === 'number' && Number.isFinite(targetLine)) {
                         uiStore.openContextFileAtLine(contextDirectory, absolutePath, Math.max(1, Math.trunc(targetLine)), 1);
                         return;
@@ -2436,19 +2439,20 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                     uiStore.openContextFile(contextDirectory, absolutePath);
                 };
 
-                void ensureOutsideFileGrantForDesktop(absolutePath, currentDirectory).then(openInContext);
+                if (hostScope) openInContext();
+                else void ensureOutsideFileGrantForDesktop(absolutePath, currentDirectory).then(openInContext);
                 return;
             }
 
             if (normalizedPartTool === 'lsp') {
-                if (runtime?.editor) {
+                if (!hostScope && runtime?.editor) {
                     void runtime.editor.openFile(absolutePath, targetLine);
                     return;
                 }
 
                 const openInContext = () => {
                     const uiStore = useUIStore.getState();
-                    const contextDirectory = getDirectoryForFilePath(currentDirectory, absolutePath);
+                    const contextDirectory = hostScope?.key ?? getDirectoryForFilePath(currentDirectory, absolutePath);
                     if (typeof targetLine === 'number' && Number.isFinite(targetLine)) {
                         uiStore.openContextFileAtLine(contextDirectory, absolutePath, Math.max(1, Math.trunc(targetLine)), 1);
                         return;
@@ -2456,7 +2460,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                     uiStore.openContextFile(contextDirectory, absolutePath);
                 };
 
-                if (!isFilePathWithinDirectory(absolutePath, currentDirectory)) {
+                if (!hostScope && !isFilePathWithinDirectory(absolutePath, currentDirectory)) {
                     void ensureOutsideFileGrantForDesktop(absolutePath, currentDirectory).then(openInContext);
                     return;
                 }
@@ -2464,7 +2468,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                 return;
             }
 
-            if (runtime?.editor) {
+            if (!hostScope && runtime?.editor) {
                 if (runtime.runtime.isVSCode && toolDiff && (part.tool === 'edit' || part.tool === 'multiedit' || part.tool === 'apply_patch')) {
                     const label = `${getRelativePath(absolutePath, currentDirectory)} (changes)`;
                     void runtime.editor.openDiff('', absolutePath, label, { line: targetLine, patch: toolDiff });
@@ -2483,7 +2487,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
 
         if (normalizedPartTool === 'apply_patch' && currentDirectory && !mobileActions && !isMobile && !runtime?.runtime.isVSCode) {
             e.stopPropagation();
-            openContextPanelTab(currentDirectory, {
+            openContextPanelTab(hostScope?.key ?? currentDirectory, {
                 mode: 'diff',
                 diffScope: 'turn',
                 diffTurnMessageId: messageId,

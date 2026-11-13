@@ -14,6 +14,7 @@ import { FadeInOnReveal } from './message/FadeInOnReveal';
 import { useUIStore } from '@/stores/useUIStore';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import type { EditorAPI } from '@/lib/api/types';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { getClientPlatform } from '@/lib/platform';
@@ -89,7 +90,7 @@ const useExternalLinkInteractions = ({
       return;
     }
 
-    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+    if (event.defaultPrevented || event.button !== 0 || event.altKey || event.shiftKey) {
       return;
     }
 
@@ -123,6 +124,8 @@ const useExternalLinkInteractions = ({
     if (!isExternalHttpUrl(href)) {
       return;
     }
+
+    if (event.metaKey || event.ctrlKey) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -162,6 +165,8 @@ const useMarkdownImageInteractions = ({
   onShowPopup?: (content: ToolPopupContent) => void;
 }) => {
   const transportIdentityRef = React.useRef<string | null>(null);
+  const hostRuntime = useHostRuntime();
+  const scope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
   transportIdentityRef.current ??= getRuntimeTransportIdentity();
   const transportIdentity = transportIdentityRef.current;
   const imagePreviewEnabled = Boolean(onShowPopup);
@@ -271,7 +276,7 @@ const useMarkdownImageInteractions = ({
       state.controller = controller;
       image.setAttribute('data-md-image-state', 'loading');
       image.setAttribute('aria-busy', 'true');
-      void acquireMarkdownImage(resolved.path, controller.signal)
+      void acquireMarkdownImage(resolved.path, controller.signal, scope)
         .then((lease) => {
           const latest = images.get(image);
           if (
@@ -392,7 +397,7 @@ const useMarkdownImageInteractions = ({
       }, 0);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- lifecycle inputs are explicit; useEvent supplies the latest popup callback.
-  }, [containerRef, effectiveDirectory, imagePreviewEnabled, transportIdentity]);
+  }, [containerRef, effectiveDirectory, imagePreviewEnabled, transportIdentity, scope]);
 
   return { reconcileMarkdownImageResources, transportIdentity };
 };
@@ -427,6 +432,7 @@ interface MarkdownRendererProps {
   className?: string;
   isStreaming?: boolean;
   disableStreamAnimation?: boolean;
+  sourceIsPaced?: boolean;
   variant?: MarkdownVariant;
   onShowPopup?: (content: ToolPopupContent) => void;
   enableFileReferences?: boolean;
@@ -449,6 +455,8 @@ const useFileReferenceInteractions = ({
   onShowPopup?: (content: ToolPopupContent) => void;
   enabled: boolean;
 }) => {
+  const hostRuntime = useHostRuntime();
+  const scope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
   const annotationDebounceRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
@@ -538,7 +546,7 @@ const useFileReferenceInteractions = ({
           continue;
         }
 
-        void probeFileReference(resolved.resolvedPath, effectiveDirectory).then((info) => {
+        void probeFileReference(resolved.resolvedPath, effectiveDirectory, scope).then((info) => {
           if (cancelled || !container.contains(candidate)) {
             return;
           }
@@ -569,6 +577,7 @@ const useFileReferenceInteractions = ({
     };
 
     const openFileReference = (sourceElement: HTMLElement) => openFileReferenceFromElement(sourceElement, {
+      scope,
       effectiveDirectory,
       editor,
       preferRuntimeEditor,
@@ -635,7 +644,7 @@ const useFileReferenceInteractions = ({
       container.removeEventListener('click', handleClick);
       container.removeEventListener('keydown', handleKeyDown);
     };
-  }, [containerRef, editor, effectiveDirectory, onShowPopup, preferRuntimeEditor, enabled]);
+  }, [containerRef, editor, effectiveDirectory, onShowPopup, preferRuntimeEditor, enabled, scope]);
 };
 
 const useMermaidInlineInteractions = ({
@@ -1230,12 +1239,14 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   className,
   isStreaming = false,
   disableStreamAnimation = false,
+  sourceIsPaced = false,
   variant = 'assistant',
   onShowPopup,
   enableFileReferences = true,
 }) => {
   const currentTheme = useCurrentMermaidTheme();
   const { editor, runtime } = useRuntimeAPIs();
+  const hostRuntime = useHostRuntime();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const effectiveDirectory = useEffectiveDirectory() ?? '';
 
@@ -1252,7 +1263,8 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
 
   const live = isStreaming && !disableStreamAnimation;
   const streamingRenderCadence = resolveStreamingRenderCadence(getClientPlatform());
-  const pacedText = usePacedText(content, live, streamingRenderCadence.markdownPaceMs);
+  const pacedText = usePacedText(sourceIsPaced ? '' : content, live && !sourceIsPaced, streamingRenderCadence.markdownPaceMs);
+  const displayText = sourceIsPaced ? content : pacedText;
   const [richReady, revealRichContent] = useRichMarkdownReveal(live);
 
   useMermaidInlineInteractions({
@@ -1273,7 +1285,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
     containerRef,
     effectiveDirectory,
     openInAppBrowser,
-    fileReference: enableFileReferences && !isStreaming ? { effectiveDirectory, editor, preferRuntimeEditor: runtime.isVSCode, onShowPopup } : undefined,
+    fileReference: enableFileReferences && !isStreaming ? { effectiveDirectory, scope: hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined, editor, preferRuntimeEditor: runtime.isVSCode, onShowPopup } : undefined,
   });
   const {
     reconcileMarkdownImageResources,
@@ -1294,7 +1306,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
 
   useMorphdomMarkdown({
     containerRef,
-    text: pacedText,
+    text: displayText,
     streaming: live,
     cacheKey,
     syntaxVars,
@@ -1307,8 +1319,8 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   // showing the placeholder — neither height describes the settled render.
   useMarkdownHeightMemo(
     containerRef,
-    markdownHeightCacheKey(content, variant),
-    richReady && !live,
+    richReady && !isStreaming ? markdownHeightCacheKey(content, variant) : '',
+    richReady && !isStreaming,
   );
 
   const markdownContent = (
@@ -1327,7 +1339,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
             'pointer-events-none absolute inset-0 overflow-clip',
           )}
         >
-          <MarkdownLoadingPlaceholder content={pacedText} />
+          <MarkdownLoadingPlaceholder content={displayText} />
         </div>
       )}
       <div
@@ -1353,6 +1365,7 @@ export const MarkdownRenderer = React.memo(MarkdownRendererImpl, (prev, next) =>
   return prev.content === next.content
     && prev.isStreaming === next.isStreaming
     && prev.disableStreamAnimation === next.disableStreamAnimation
+    && prev.sourceIsPaced === next.sourceIsPaced
     && prev.variant === next.variant
     && prev.isAnimated === next.isAnimated
     && prev.skipFadeIn === next.skipFadeIn
@@ -1387,6 +1400,7 @@ const SimpleMarkdownRendererImpl: React.FC<{
   enableFileReferences = true,
 }) => {
   const { editor, runtime } = useRuntimeAPIs();
+  const hostRuntime = useHostRuntime();
   const currentTheme = useCurrentMermaidTheme();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [richReady, revealRichContent] = useRichMarkdownReveal(false);
@@ -1421,7 +1435,7 @@ const SimpleMarkdownRendererImpl: React.FC<{
     enabled: !disableLinkSafety,
     effectiveDirectory,
     openInAppBrowser,
-    fileReference: enableFileReferences ? { effectiveDirectory, editor, preferRuntimeEditor: runtime.isVSCode, onShowPopup } : undefined,
+    fileReference: enableFileReferences ? { effectiveDirectory, scope: hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined, editor, preferRuntimeEditor: runtime.isVSCode, onShowPopup } : undefined,
   });
   const {
     reconcileMarkdownImageResources,

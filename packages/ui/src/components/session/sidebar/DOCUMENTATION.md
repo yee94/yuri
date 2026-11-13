@@ -1,11 +1,217 @@
 # Session Sidebar Documentation
 
-`createSessionOwnershipIndex` accepts the minimal directory identity of a session
-and preserves the caller's record type in its project buckets. Web retains the
-default SDK `Session` contract; NSH passes its native root-session projection
-without manufacturing SDK fields. Both consumers share deepest-project,
-registered-worktree, path-normalization and collision precedence. This index
-does not infer pagination completeness or filter visible roots for its callers.
+## Error presentation
+
+Remote project mutation failures use the shared toast once and retain confirmed
+rows/selection for retry through the original action. Summary/search/pagination
+load failures use a project-keyed toast and retain cached rows. Errors never
+insert banners, text or Retry rows between project headers and sessions on either
+desktop or mobile. Project Sync remains the explicit data-refresh action; it
+must not be presented as a retry for a failed archive or other mutation.
+`RemoteChildSessions` and `SessionSwitcherDropdown` follow the same no-error-row
+rule. Child/summary read failures retain cached rows and expose retry on the toast;
+navigation failures notify without inserting content. The unavailable switcher
+keeps its existing refresh action rather than adding error text to the menu.
+
+## Remote session deletion
+
+Desktop row menus and mobile action sheets expose Delete; the shared selection
+toolbar also exposes bulk Delete. Both use the section model's confirmation,
+capturing immutable Host entries and raw directories before confirmation. Unlike
+the local delayed-undo flow, remote deletion is confirmed before dispatch and
+does not optimistically remove rows. The target Host owns cascading subsession
+deletion; the warning says so without inventing a count from a partial index.
+Submissions share the per-Host serializer and same-tick pending gate. Failed
+targets remain in the dialog and selection; successful targets are removed from
+selection and never retried as part of a partial failure. An authoritative
+`SessionNotFoundError` for that exact ID counts as already deleted, while generic
+HTTP/transport failures do not. Summary and child Queries refresh after writes.
+Only an unchanged navigation reference for the deleted session on that same
+Hub/Host/project is replaced with a remote draft; later selections and local
+state remain untouched. Authorization changes invalidate the captured entry;
+confirmation never re-resolves a replacement Host behind the user's back.
+
+## Fixed desktop navigation
+
+`SessionSidebar` keeps the configured Electron brand/search row and desktop
+navigation actions outside `SidebarProjectsList`'s scroll region in both windowed
+and native fullscreen modes. Fullscreen does not move these actions into the
+scroll body or move the brand/search into `TitlebarLeftControls`. Electron's
+titlebar retains the search fallback when the sidebar is collapsed or no brand
+is configured. Web retains its titlebar brand/search placement; mobile retains
+its scroll-body navigation, and session search retains its existing filtering.
+
+## Explicit Remote Project presentation
+
+`SidebarProjectsList` accepts an optional `hostRegistry`; project sections retain
+`hostId` and `remoteState`. `SortableProjectItem` mounts `RemoteHostIndicator` only
+for remote rows with that registry. The indicator subscribes to its own host,
+exposes machine/status/last-sync/error details through hover and accessibility,
+with a vertically centered computer icon and machine name that uses
+remaining header space (up to 12rem) with ellipsis. Compact SSH labels omit the login
+prefix from user@host names; hover/accessibility retain the original full name.
+Project names take width priority over machine labels. Remote project labels keep
+the same width and position on hover, focus and menu-open: the absolute action
+buttons share a transparent overlay with 12px left padding. The title button is
+clipped and faded before that overlay, so its text and hit area cannot enter the
+actions; the sidebar's original glass/background stays continuous. The clip is
+derived from the rendered action count (24px buttons, 4px gaps and overlay insets).
+Invisible actions do not reserve their full width or shrink labels. Host tooltips show the
+full name above separate bulleted status, last-sync and optional error rows.
+Remote identity tooltips use a local 600ms hover delay instead of the sidebar's
+instant tooltip group, so briefly crossing a machine label does not open details.
+Mobile project cards and recent-session project chips/root headers reuse this
+compact identity. Touch long-press on the identity opens only its tooltip, not
+the enclosing project's action menu; project labels have priority within the row.
+The indicator does not discover hosts or enumerate project/session catalogs. The mobile
+and desktop project bodies never add a connection/status/last-sync text row;
+those details live in the machine icon tooltip and accessible label. The mobile
+`MobileProjectsHome` / `MobileProjectCard` boundary accepts the same registry and
+identity fields. `SessionSidebar` and `MobileProjectsHomeContainer` now consume
+the Hub catalog and preserve the Hub reference ID, host and raw path. Their
+local ownership/worktree projections exclude remote projects; `RemoteProjectSection`
+consumes the shared per-Host summaries Query instead of a Hub local child store.
+Desktop and mobile sections mix both kinds through `sortProjectEntries`, including
+manual, alphabetical, added-date and recent modes. Remote host status stays on that
+host's leaf subscription, and token events do not invalidate structural lists.
+
+### Remote section module ownership
+
+- `RemoteProjectSection` composes the Host adapters and editors. It does not
+  fetch summaries or implement remote writes in JSX callbacks.
+  Its leading pinned/attention rows pass `secondaryMeta` into the remote row
+  adapters as well as the list item. Mobile renders it through the shared
+  `MobileSessionRow` subtitle; desktop retains project/branch secondary text.
+  A custom `content` row must not discard the owning project's label.
+  The subtitle ends with the existing compact `RemoteHostIndicator` (computer
+  icon and Host name), preserving SSH-name shortening, ellipsis, full-name
+  tooltip and isolated touch long-press. Project text keeps priority up to 60%
+  of the subtitle row, matching remote project/session identity presentation.
+- `hooks/useRemoteProjectSectionData` owns summary/search/page Queries, ownership
+  projection, pin/manual ordering and refresh. It does not render either platform.
+- `hooks/useRemoteProjectSectionModel` owns selection/editor state and commands:
+  captured Host writes, per-Host serialization, confirmation, compensation and
+  navigation targets. Both presentations invoke these same commands.
+- `remoteProjectPresentation` defines the data/intent contract. Mobile does not
+  inherit `SortableProjectItem` props; desktop-only menu state stays in its adapter.
+- `RemoteSessionGroups` binds remote snapshots and commands to the existing
+  `useSessionGrouping` and `SessionGroupSection`, including folder layout,
+   worktree headers, default row limits and More/Fewer controls. Its source
+  input prevents reads of same-path Hub folders/pagination and local destructive
+   commands. Visible keyboard targets come from that renderer's actual projection.
+   Archived sessions and the archive header are omitted on both platforms. Active
+   sessions placed in the grouping fallback bucket flow into the main group;
+   their original Host directories remain intact for navigation and commands.
+   The section publishes its busy/retry and unread roots through the shared
+   `listInProgressHomeSessions` projection. Desktop and mobile merge these with
+   local attention rows by activity time in the existing leading list. Host row
+   actions remain bound to the section model; clearing unread removes settled
+   rows from the leading list. Accepted remote sends and real busy/idle
+   transitions also call the shared `moveProjectToTop`, promoting the entire
+   owning Host project in the persisted Hub order. Duplicate status events do
+   not undo a later manual drag. Same-path local/other-Host projects are excluded.
+- `SessionRowLayout`, `SessionRowContent`, `SessionRowTitle` and `SessionRowActions`
+  own the desktop row geometry shared by local `SessionNodeItem` and the remote
+  command adapter. Remote data never mounts the local session subscriptions.
+- `RemoteMobileSessionGroups` adapts Host summaries to `MobileProjectGroups`;
+  both kinds use `MobileProjectSurface`, `MobileProjectCard`, `MobileSessionRow`,
+  the same workspace labels, row drag scope, root-session filter and pagination
+  limits. Mobile expansion uses the existing project/worktree expansion store.
+  There is no remote-only directory/folder list, checkbox, drag handle or inline
+  create-folder row. Action sheets retain captured Host commands.
+- `RemoteProjectResources` keeps optional icon and expanded-child Query lifetimes
+  on their existing leaf observers, separate from summary/model lifetimes.
+
+Mobile project/session/folder menus provide action descriptors to the shared
+`MobileActionSheet` in `mobile/projects/MobileRowActionsSheet.tsx`. That renderer
+owns icons, haptics, grouping, dividers, disabled rows and the resizable sheet;
+local `MobileRowActionsSheet` is its existing local-menu adapter. Remote commands
+never use local session callbacks. Action sheets mount on demand, not per idle row.
+
+The model opens raw session IDs through `useSessionNavigationStore`.
+Title, archive, unread, folder and directory-order writes use the captured registry
+entry; failed writes leave the confirmed snapshot intact and display the error.
+Remote pin/unpin requests use the same scoped registry path but terminate in the
+Hub's DB, not the Remote Host. Pins remain editable while the Host is offline.
+`pinnedSessionIds` is authoritative for row actions and leading-list membership;
+an old `session.time.pinned` must not restore a cleared pin. The mixed leading
+list's `__pinned__` order is also Hub-owned.
+Folder writes serialize per Host and read the full remote folder snapshot before
+changing a scope. Desktop sections reuse `SessionFolderItem` and its `parentId`
+tree; mobile follows its existing flat root-session/worktree presentation.
+The same projection owns visible keyboard targets and drag order. All sessions
+use `createSessionNodeComparator`: saved manual order and its activity baseline
+share the original rule, promoting newly active sessions without reshuffling
+unchanged peers; pin/time ordering is the shared fallback. Expanded children join
+the same keyboard target tree and use the same pin/time comparator.
+
+`SessionFolderDndScope` owns session dragging on both sources. Folder drops change
+membership; row drops reorder within the same folder. Modifier-click selection
+keeps multi-session folder moves without permanent checkboxes. Remote-only folder
+drag handles and nesting drop zones are removed. Nested-folder creation and deletion
+use the existing folder controls; deleting a folder releases its descendants'
+sessions. Failed writes preserve the confirmed tree and selection. Host metadata
+keys and raw filesystem paths are retained, including Windows separators; normalized
+paths are used only for grouping/ownership comparison.
+
+Host summaries' authoritative worktree topology supplies outside-root directory
+ownership. Explicit/most-specific project references still win; raw cwd stays
+unchanged when opening that worktree. User-driven older pages and child expansion use the Host SDK
+with bounded cursor pages and cancellation; title search also uses that SDK.
+Neither path writes remote messages or session IDs into Hub local stores.
+Project metadata waits for the remote confirmation, while close removes only the
+Hub reference. Only local projects enter `settings.projects`; remote ordering and
+collapse currently remain in the instance-scoped client cache, pending a Hub layout
+API (cross-client Hub layout persistence is not implemented). They never mutate
+remote metadata. Missing Hosts and removed projects retain their rows; Sync can recreate
+the registration for an explicitly retained `remote-removed` reference.
+
+`DirectoryExplorerDialog` discovers the Hub catalog only while open. Remote
+machine selection supports Up/Down (skipping disabled hosts) and Enter to
+continue; repeated/composing Enter never submits. The selected machine receives
+initial focus, and connection readiness still owns admission to directory browsing.
+Directory input underlines remain visible without focus. Remote
+selection mounts `RemoteDirectoryExplorerDialog` instead of the local browser,
+using registry HTTP for raw filesystem paths and the Hub's dual-write project
+registration endpoint. A successful registration upserts the confirmed reference
+into the project store and opens its scoped draft before the optional caller
+callback. Remote registration refreshes the catalog; it must not
+be inserted through the local-only `addProject` fallback. Browser/VS Code clients
+show an explicit unsupported explanation and retain local project selection.
+
+The remote navigation bridge can carry draft title, parent, folder, permission,
+pending-worktree/bootstrap and worktree metadata separately from the Hub draft.
+`updateRemoteDraft` uses the captured navigation object as a CAS token, rejects
+Host changes, and cannot overwrite a later selection or an existing session.
+Worktree and chat owners consume that metadata at their production boundaries;
+ordinary session navigation without draft options clears it.
+
+Remote headers expose the shared worktree dialog without enumerating Git on every
+project row. Worktree action availability is independent from verified checkout
+topology: a nested source-directory project may legitimately have no checkout
+alias. Git repository eligibility is checked by the captured Host creator, not
+guessed from topology. `NewWorktreeDialog` and its linked `GitHubIntegrationDialog`
+bind the explicitly requested project (not a retained background workspace), and
+local dialogs clear inherited Host context. Both preserve their mature forms.
+Remote branches, worktree conflicts, validation, GitHub auth/list/context and
+prompt templates use Host scope; no remote path reaches local worktree/session
+actions. The dialog-owned GitHub adapter intentionally exposes only six read
+capabilities, with no machine-auth mutation surface. Remote GitHub configuration
+stays read-only and explains the instance-switch requirement.
+
+Creation delegates to `createRemoteWorktreeDraft`, retaining Host setup/bootstrap,
+relative source cwd and draft CAS ownership. Completion callbacks receive
+`remote: true`: the helper already owns navigation and callers must not reopen
+the bridge (which would erase worktree draft metadata), nor select a local raw
+session ID. A superseded selection does not invoke UI-navigation completion.
+Linked issue/PR context sends through the captured worktree Host prompt endpoint;
+context failure reports separately from successful worktree creation. Failed
+creation leaves form values available for retry.
+
+Project dropdown and right-click menus have one shared popup hairline immediately
+before destructive Close; ordinary actions have no separators. Action icons inherit
+their label color, including Close. Mobile project action sheets use the same
+single destructive-action divider and color mapping while retaining touch targets.
 
 `SidebarBackgroundTasks` is the shared inline progress area to the right of the
 footer settings/device/help buttons. It consumes existing runtime-scoped import,
@@ -56,14 +262,20 @@ instead of fabricating a new selection; they follow the same Continue→Remove f
 Index recovery reuses durable checkpoints. Host update recovery fetches a fresh
 plan for the failed operation's exact version/channel/kind; an unavailable or
 changed plan is a visible failure, never an implicit update to a newer release.
+An already-active matching operation resumes observation; a matching succeeded
+operation with the target running version removes only that Host's stale task.
+Neither path calls the local client updater, even when both target the same version.
 Client downloads reuse their owning updater with `resume: true`, without applying
 or restarting the client. Check-only failures do not invent download tasks.
-The old update footer button hides its duplicate download indicator while this
-area is mounted. After the client reports `downloaded`, the footer shows a compact
-shared neutral solid Button with the restart icon and visible “Restart to update”
-label (“重启更新” in Simplified Chinese), rather than an icon-only download button.
+The update footer button hides its duplicate download indicator while this
+area is mounted. A downloaded client update also suppresses an active stale local
+Host mirror for the same version, while unrelated and failed Host tasks remain visible.
+The restart action is icon-only with a tooltip. When it shares the footer with
+background tasks, those tasks are also icon-only with a hover label; the two
+controls share one right-aligned group with a fixed gap. A single task uses the
+same 28px button as the left footer controls; multiple rings retain their required width.
 Clicking delegates directly to the existing restart mutation, never the details
-dialog; pending restart disables repeat clicks and shows the updating label.
+dialog; pending restart disables repeat clicks and exposes the updating label as its accessible name.
 Runtime generation changes remount the observers and clear completion tracking.
 Import/index/update polling uses 1s/3s/2s while active and 15s while idle; unsupported
 capabilities stop polling. The memoized leaf isolates this work from session-tree
@@ -82,15 +294,41 @@ Session menus no longer offer opening a conversation in the side panel. The
 Electron Mini Chat Window action remains available; subtask and review panels
 retain their existing behavior independently of the sidebar menu.
 
+Inline renaming belongs to the row instance that started it. When a session is
+visible in both Pinned/In Progress and its project, only the originating row
+renders the editor, focuses it and selects its title; the duplicate stays a normal
+row. Both context-menu Rename and mouse-focused Enter preserve this ownership.
+
+Root session context menus offer **Mark as unread** for read sessions (including
+an already selected session), and **Mark as read** for unread sessions. This
+action sits immediately below Pin/Unpin and does not open the conversation.
+Rename follows the read/unread action on desktop and mobile; child sessions that
+omit read/unread place Rename after Pin/Unpin.
+The action shares the notification store's server-backed
+attention projection and reports failed writes without changing the existing
+badge. Manual reminders remain unread through remote snapshot refreshes until
+the conversation is subsequently opened/refocused. Child sessions omit the action.
+
 Session right-click menus and their portaled submenus use
-`yuri-session-context-menu`. With Electron window vibrancy active, this raises the
-shared popup fill to 92% of the theme elevated surface so underlying session titles
-cannot compete with menu labels. Other menus and non-vibrant runtimes retain the
-shared 50% fill; reduced-transparency mode remains opaque.
+`yuri-session-context-menu`. With Electron window vibrancy active, every shared
+popup surface uses the solid theme elevated fill so underlying session titles
+cannot compete with menu labels. The native `data-yuri-vibrancy` marker is the
+only material gate, independent of device-class initialization. Session menus inherit that rule
+through `yuri-popup-surface`; non-vibrant runtimes retain the shared 50% fill, and
+reduced-transparency mode remains opaque.
 
 Sidebar numeric shortcuts and global-search hints share `Kbd variant="hint"`.
 The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neutral
 6% foreground fill; consumers do not maintain their own shortcut color/size recipe.
+The row render callback invalidates memoized groups when the numbered focus-key
+assignments change, including changes caused by earlier projects or the top section.
+Equivalent assignments retain its identity even when the session model refreshes;
+hints and keyboard activation must always use the same current numbered snapshot.
+Collapsing the whole sidebar retains its last committed navigation snapshot for
+both numbered and adjacent-session shortcuts, including pinned/in-progress rows.
+Hidden activity subscriptions remain disabled; focus reconciliation waits until
+the sidebar is visible rather than treating gated activity as an empty group.
+Reopening refreshes the snapshot, and switching instances clears retained targets.
 
 ## Refactor result
 
@@ -107,11 +345,19 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
   The private `SidebarUpdateButton` owns update subscriptions and ring rendering;
   progress does not rerender the footer or device shortcut. Hidden update buttons
   are unmounted. Ring animation uses CSS without Effects or timers.
+  The downloaded/restarting action uses a compact icon-only layout and
+  uses the same transparent resting `Button variant="ghost"` as other footer
+  controls; hover/press feedback and the single-restart guard remain intact.
 
 - Leading New / Schedule / Assistant navigation rows use explicit `px-2` so
   `Button`'s direct-SVG padding rule cannot shift the Assistant row when its icon
   becomes an image. Avatar artwork scales to 125% inside the unchanged 16px slot;
   all three labels retain the same left edge in both avatar and fallback states.
+  On desktop layout (Electron and web, not fullscreen) those rows, plus GUI
+  titlebar items, sit in a `shrink-0` block under the brand header and outside
+  `SidebarProjectsList`, so they stay fixed with the logo. The brand row itself
+  stays Electron-only. Mobile, fullscreen, search, and VS Code keep the rows in
+  the scroll body (VS Code still omits them).
 - Official GUI `TitlebarItem` contributions appear immediately below Bots and
   before pinned/in-progress sessions as icon-and-label rows. Their leaf component
   owns the GUI subscription; SessionSidebar does not subscribe to plugin state.
@@ -355,14 +601,19 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
 - Session rows are single-line (no inline timestamp); details (title, relative time, folder/project,
   branch) open in an immediate floating hover card. Top-section (pinned / in-progress) rows
   always populate that project and branch from ownership, not from the omitted project-tree index.
+  Project-tree rows, including sessions inside folders, use the owning project's
+  display name for the folder-icon line, never a worktree/group or folder name;
+  the branch remains separate. Project-name changes invalidate the group memo.
   A shared `TooltipProvider`
   (`delay=0`, `closeDelay=150`, `timeout=600`) groups row tips so adjacent handoff
   is instant; per-row tooltips do not nest their own Provider. Pointer click keeps
-  focus for Enter-to-rename, but row `mouseleave` blurs so `:focus-within` does not
-  stick hover chrome after the card dismisses.
+  focus for Enter-to-rename until focus moves elsewhere.
 - A session title button focused by an explicit mouse click enters inline rename
   on Enter. Keyboard or programmatic focus does not arm this shortcut, and blur
   clears the mouse-focus authorization.
+- Inline rename cancels on blur outside its controls; Enter or the check button saves.
+  Double-click reuses the context-menu Mini Chat action for that session on Electron;
+  other runtimes do not act on the double-click.
 - Compact relative times use `common.relative.*Compact` i18n keys.
 - Row action icons (pin, archive/delete) use title-matched `h-3.5` glyphs with `gap-1` spacing; the title
   reserves right padding on hover so icons own their space — no fade veil behind them.
@@ -380,6 +631,17 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
 - Archived groups are collapsed by default and support bulk deletion at group/folder level.
 - Session rows support compact inline dates in minimal mode and simplified metadata in default mode.
 - Session-row visual selection is published through a narrow row-only Focus store before authoritative navigation. Focus includes the render scope (`pinned` or `project`) plus session/project identity, so duplicate representations never both receive the Active background or satisfy the wrong paint barrier. On desktop, focusing a fully visible session preserves the sidebar scroll position; a partially or fully out-of-view row smooth-scrolls to about one-third down the sidebar viewport (`scrollFocusedSessionRow.ts`). Mobile keeps `block: 'nearest'`. Reduced-motion users get an instant jump.
+- Project navigation follows the router's `/session/new` draft target, not a
+  search-owned DOM command. `SessionSidebar` projects the draft's selected project
+  ID and existing navigation-intent revision into `SidebarProjectsList`; only the
+  desktop Chat primary requests a reveal. The list locates that project's header
+  inside its own scroll viewport and reuses `scrollFocusedSessionRowIntoView`.
+  Already-visible headers do not scroll. Each request is consumed once after its
+  header mounts, including delayed project hydration and reopening the sidebar;
+  later catalog/status/collapse updates never re-scroll. A new intent can reveal
+  the same project again. No project reordering, expansion, session loading or
+  independent selection state is added. Search-filtered trees wait until their
+  filter clears; mobile and VS Code's headerless main-workspace view are unchanged.
 - Previous/next-session navigation consumes ordered snapshots published from the rendered sidebar model and cycles one combined ring: visible pinned rows first, then the logically visible project rows in sidebar order, wrapping across both sections. Rows hidden by pinned/project/group/folder collapse or the group's Show more boundary are excluded, while always-visible (busy/retry + current viewing) rows retained beyond that boundary remain keyboard targets.
 - Global Mod+1…9 navigation numbers the first nine logically visible session rows from top to bottom across Pinned and the expanded project tree. Container headers never consume a number; duplicate Pinned/Project representations remain distinct Focus rows. Holding the platform primary modifier for 500ms reveals compact shortcut chips only on those rows; each chip occupies only its intrinsic width and replaces row quick actions until release. Releasing the modifier, window blur, or page hide clears the hints immediately.
 - Every session navigation announces a monotonic intent revision. A later sidebar, keyboard, deep-link, or switcher intent invalidates an older pending sidebar commit, including ABA sequences such as A -> B -> A.
@@ -404,7 +666,7 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
 - `SidebarHeader.tsx`: Optional session-search field only (action toolbar removed).
 - `GlobalSearchButton.tsx`: Shared command-palette trigger. Electron with a configured logo renders it in the fixed (non-scrolling) sidebar brand row while open; otherwise it sits next to the titlebar collapse control (web parity, including logo-less Electron).
 - `TitlebarLeftControls.tsx`: Persistent Web brand and sidebar-toggle controls, plus Electron global search when the sidebar is collapsed or no logo is configured. Fullscreen Electron uses the Web single-row brand/search/toggle layout and hides the separate sidebar brand row. `useDesktopWindowFullscreen` shares the authoritative native fullscreen state with the header inset and sidebar through one resize subscription.
-- `SessionSidebar.tsx` desktop brand header: When a logo/wordmark is configured, Electron renders brand + search above `SidebarProjectsList` (`shrink-0`, outside the scroll region). Empty brand config reserves no row and leaves search in the titlebar. Sidebar brand text is transport-scoped in localStorage (`useSidebarBrandStore` via `createRuntimeScopedJSONStorage`) so packaged multi-window local and remote hosts do not share a wordmark.
+- `SessionSidebar.tsx` desktop brand header: When a logo/wordmark is configured, Electron renders brand + search above `SidebarProjectsList` (`shrink-0`, outside the scroll region). Empty brand config reserves no row and leaves search in the titlebar. The same non-scrolling block holds New / Schedule / Assistant (and GUI titlebar items) on any desktop layout, including web, even when the brand row is absent. Mobile, fullscreen, and an open session search keep those rows inside the scroll body. Sidebar brand text is transport-scoped in localStorage (`useSidebarBrandStore` via `createRuntimeScopedJSONStorage`) so packaged multi-window local and remote hosts do not share a wordmark.
 - `SidebarTopBar.tsx`: Desktop titlebar strip with preserved window-drag regions beneath the persistent titlebar controls.
 - `SidebarDisplayModeMenu.tsx`: Project collapse/expand overflow menu; rendered in the Projects section title row beside the add-project action.
 - `SidebarPinnedSessions.tsx`: Global top-section renderer for pinned sessions plus the unlabeled in-progress/unread rows below them.
@@ -419,6 +681,31 @@ The variant owns the sidebar's compact 14px pill, 10px sans-serif label and neut
 - `hooks/useAlwaysVisibleSessionIds.ts`: Shared running (busy/retry + uncovered fallback) and always-visible (running ∪ current viewing) session-id sets for PC sidebar and mobile session lists.
 - `sidebar-numbered-navigation.ts` (sync): Publishes the global first-nine visible session target order consumed by Mod+1…9, with revision-safe responsive remount cleanup.
 - `sessionOwnership.ts`: Resolves session directories once into shared project/worktree ownership and folder-scope indexes.
+- Yuri projects are working-directory scopes, not OpenCode repository identities.
+  Creation, selection and sidebar ownership use the deepest registered directory;
+  explicit project roots beat worktree mappings at the same directory. A nested
+  project such as `repo/src` maps only confirmed Git checkout roots to
+  `checkout/src`, never to the checkout root. `WorktreeMetadata.path` is that
+  scoped working directory; `worktreeRoot` remains the Git resource used for
+  bootstrap and deletion. Main-checkout entries are excluded from each project's
+  worktree list. Persisted repository-wide nested catalogs are projected before
+  first paint; existing sessions are not moved or rewritten. A historical session
+  already inside `checkout/src` belongs to the nested project, while sessions at
+  `checkout` remain with the repository project. Directory mapping performs no
+  filesystem/network reads and is refreshed by the existing bounded topology
+  coordinator. Successful refreshes retain primary-repository identity separately
+  from catalog entries, including empty catalogs. Events from either a parent or
+  nested scope refresh every scope of that repository; unresolved event origins
+  use authoritative primary-root discovery, never directory-prefix inference.
+  One coordinator refresh batch shares one raw listing per runtime/repository,
+  then projects each scope independently. New batches bypass the HTTP TTL; local
+  mutations invalidate sibling caches and stale in-flight results. Runtime changes
+  clear discovery identity and reject stale refresh commits. Enumeration failure
+  retains existing catalogs and attachments. Creating a session in a mapped subdirectory checks its
+  existence through the runtime file-stat Query when available; failure keeps the
+  draft and never retries at the checkout root. Deleting a checkout invalidates all
+  referencing project catalogs and attachments. Standalone VS Code retains exact
+  open-workspace matching and no worktree subgroups.
 - `manualProjectSessionSync.ts`: Builds deduplicated manual session-index sync directories from the project root, current selection, and freshly refreshed worktree catalog.
 
 ### Hooks

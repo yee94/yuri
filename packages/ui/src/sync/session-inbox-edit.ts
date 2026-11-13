@@ -3,9 +3,14 @@ import { isValidDraftComposerSkillName, type DraftKey } from './input-draft-type
 import { buildSentMessageComposerRestoration, commitComposerRestoration, rollbackComposerRestoration } from './message-composer-restoration'
 import { captureInboxRuntimeScope, isCurrentInboxRuntimeScope, forgetUnpromotedInbox } from './session-inbox-overlay'
 import { cancelSessionInbox, fetchSessionInboxAuthority } from './session-prompt-api'
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry'
+import { locationSessionKey } from '@/lib/remote-projects/location'
+import { useInputStore } from './input-store'
 
 /** Restore durably before cancelling; an ambiguous cancellation must retain the recovered draft. */
 export async function editSessionInboxIntoDraft(input: {
+  scope?: HostRuntimeEntry
+  inputStore?: typeof useInputStore
   sessionID: string
   inboxID: string
   directory: string
@@ -15,8 +20,13 @@ export async function editSessionInboxIntoDraft(input: {
   isCurrent: () => boolean
 }): Promise<boolean> {
   const runtime = captureInboxRuntimeScope()
-  const current = () => isCurrentInboxRuntimeScope(runtime) && input.isCurrent()
-  if (!current() || input.targetKey.transportIdentity !== runtime.transportIdentity || input.runtimeGeneration !== runtime.generation) return false
+  const draftStore = input.inputStore?.getState() ?? useInputStore.getState()
+  const draftRuntime = draftStore.captureDraftRuntime()
+  const current = () => {
+    if (!isCurrentInboxRuntimeScope(runtime) || !input.isCurrent()) return false
+    try { input.scope?.sdk(); return true } catch { return false }
+  }
+  if (!current() || input.targetKey.transportIdentity !== draftRuntime.transportIdentity || input.runtimeGeneration !== runtime.generation) return false
   const authority = await fetchSessionInboxAuthority(input)
   if (!current() || !authority.current) return false
   const item = authority.items.find((entry) => entry.id === input.inboxID)
@@ -50,11 +60,11 @@ export async function editSessionInboxIntoDraft(input: {
   }
   const payload = await buildSentMessageComposerRestoration(parts, { directory: input.directory })
   if (!current()) return false
-  const restored = await commitComposerRestoration({ key: input.targetKey, expectedRevision: input.expectedRevision, payload, runtime })
+  const restored = await commitComposerRestoration({ key: input.targetKey, expectedRevision: input.expectedRevision, payload, runtime: draftRuntime, input: draftStore })
   if (restored.status !== 'committed' || !restored.current || !restored.durable) throw new Error('inbox-edit-draft-not-committed')
   const rollback = async () => {
     if (restored.previous && restored.result?.record) {
-      await rollbackComposerRestoration({ key: input.targetKey, restoredRevision: restored.result.record.revision, previous: restored.previous, runtime })
+      await rollbackComposerRestoration({ key: input.targetKey, restoredRevision: restored.result.record.revision, previous: restored.previous, runtime: draftRuntime, input: draftStore })
     }
   }
   if (!current()) {
@@ -70,6 +80,6 @@ export async function editSessionInboxIntoDraft(input: {
     throw error
   }
   if (!isCurrentInboxRuntimeScope(runtime)) return false
-  forgetUnpromotedInbox(input.sessionID, input.inboxID, 'cancelled')
+  forgetUnpromotedInbox(input.scope ? locationSessionKey(input.scope.location, input.sessionID) : input.sessionID, input.inboxID, 'cancelled')
   return current()
 }

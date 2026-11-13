@@ -1,4 +1,15 @@
 import React from 'react';
+import { useRemoteOperationError } from '@/lib/remote-projects/operation-errors';
+import { useQuery } from '@tanstack/react-query';
+import { useEvent } from '@reactuses/core';
+import { useHostRuntime, useRemoteSessionDemand } from '@/contexts/HostRuntimeProvider';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { locationKey } from '@/lib/remote-projects/location';
+import { useRemoteHostSummaries } from '@/queries/remoteProjectQueries';
+import { providerCatalogQueryOptions } from '@/queries/configCatalogQueries';
+import { queryClient } from '@/lib/queryRuntime';
+import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { getTranscriptRepository, transcriptScope, refreshTranscriptFromAuthority, subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision } from '@/sync/transcript-repository-runtime';
 import type { Message, Part } from '@/lib/opencode/v2-types';
 import { WorkerHighlightedCode } from '@/components/code/WorkerHighlightedCode';
 
@@ -275,17 +286,74 @@ const resolveProviderAndModel = (
   };
 };
 
-export const ContextPanelContent: React.FC = () => {
+export const ContextPanelContent: React.FC<{ active?: boolean }> = ({ active = true }) => {
+  const host = useHostRuntime();
+  return host?.entry.location.hostId ? <RemoteContextPanelContent key={host.entry.key} active={active} /> : <LocalContextPanelContent />;
+};
+
+const LocalContextPanelContent: React.FC = () => {
+  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const sessions = useSessions();
+  const sessionMessages = useSessionMessageRecords(currentSessionId ?? '');
+  const providers = useConfigStore((state) => state.providers);
+  return <ContextPanelContentView currentSessionId={currentSessionId} sessions={sessions} sessionMessages={sessionMessages} providers={providers} />;
+};
+
+const RemoteContextPanelContent: React.FC<{ active: boolean }> = ({ active }) => {
+  const host = useHostRuntime()!;
+  const { t } = useI18n();
+  const entry = host.entry;
+  const selected = useSessionNavigationStore((state) => state.remoteSession);
+  const currentSessionId = selected && locationKey(selected.location) === entry.key ? selected.sessionId : null;
+  const revision = React.useSyncExternalStore(subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision, getTranscriptRepositoryBindingRevision);
+  const repository = getTranscriptRepository(entry.location);
+  const binding = React.useMemo(() => ({ revision, scope: repository && currentSessionId ? transcriptScope(entry.location, currentSessionId) : null }), [repository, entry.location, currentSessionId, revision]);
+  const scope = binding.scope;
+  const subscribe = React.useMemo(() => (notify: () => void) => active && repository && scope ? repository.subscribe(scope, notify) : () => {}, [active, repository, scope]);
+  const read = React.useMemo(() => () => active && repository && scope ? repository.getTranscript(scope) : null, [active, repository, scope]);
+  const transcript = React.useSyncExternalStore(subscribe, read, read);
+  const [error, setError] = React.useState<string | null>(null);
+  const report = useEvent((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+  const refresh = useEvent(async () => {
+    if (repository && scope && currentSessionId) {
+      entry.sdk();
+      await refreshTranscriptFromAuthority(entry.location, currentSessionId, { background: true });
+      entry.sdk();
+    }
+    setError(null);
+  });
+  useRemoteSessionDemand(active ? currentSessionId : null, refresh, report);
+  const summaries = useRemoteHostSummaries(host.registry, entry.location.hostId, active && !!currentSessionId);
+  const providerQuery = useQuery({ ...providerCatalogQueryOptions(entry.location.directory, getRuntimeTransportIdentity(), entry), enabled: active && !!currentSessionId }, queryClient);
+  const providers = React.useMemo(() => providerQuery.data?.providers.map((provider) => ({ ...provider, models: Object.values(provider.models) })) ?? [], [providerQuery.data]);
+  const sessions = React.useMemo(() => summaries.data?.directories.find((item) => locationKey({ ...entry.location, directory: item.directory }) === entry.key)?.sessions ?? [], [summaries.data, entry]);
+  const sessionMessages = React.useMemo(() => transcript?.messageOrder.flatMap((id) => transcript.messagesByID[id]
+    ? [{ info: transcript.messagesByID[id], parts: Array.from(transcript.partsByMessageID[id] ?? []) }]
+    : []) ?? [], [transcript]);
+  const failure = error ?? providerQuery.error?.message ?? summaries.error?.message;
+  useRemoteOperationError(host.registry, entry.location.hostId!, active ? failure : null, async () => {
+    await Promise.all([refresh(), providerQuery.refetch(), summaries.refetch()]).catch(report);
+  });
+  return <div className="flex h-full min-h-0 flex-col" data-remote-context-location={entry.key}>
+    {currentSessionId && !transcript && !failure ? <div role="status" className="px-4 py-2 typography-meta text-muted-foreground">{t('common.loading')}</div> : null}
+    <div className="min-h-0 flex-1"><ContextPanelContentView currentSessionId={currentSessionId} sessions={sessions} sessionMessages={sessionMessages} providers={providers} /></div>
+  </div>;
+};
+
+type ContextPanelContentViewProps = {
+  currentSessionId: string | null;
+  sessions: Array<{ id: string; title?: string; time?: { created?: number } }>;
+  sessionMessages: SessionMessage[];
+  providers: ProviderLike[];
+};
+
+const ContextPanelContentView: React.FC<ContextPanelContentViewProps> = ({ currentSessionId, sessions, sessionMessages, providers }) => {
   const { t } = useI18n();
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const showAssistantTps = useUIStore((state) => state.showAssistantTps);
   const [expandedRawMessages, setExpandedRawMessages] = React.useState<Record<string, boolean>>({});
   const [copiedRawMessageId, setCopiedRawMessageId] = React.useState<string | null>(null);
   const copyResetTimeoutRef = React.useRef<number | null>(null);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const sessions = useSessions();
-  const sessionMessages = useSessionMessageRecords(currentSessionId ?? '');
-  const providers = useConfigStore((state) => state.providers);
 
   React.useEffect(() => {
     if (copyResetTimeoutRef.current !== null) {

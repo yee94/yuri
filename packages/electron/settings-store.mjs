@@ -16,6 +16,7 @@ export const createSettingsStore = (options) => {
     : () => String(options?.filePath || '');
 
   let mutationChain = Promise.resolve();
+  const changeListeners = new Set();
 
   const readJsonFile = (filePath) => {
     try {
@@ -54,7 +55,13 @@ export const createSettingsStore = (options) => {
    * @returns {Promise<T>}
    */
   const runExclusive = (work) => {
-    const next = mutationChain.then(async () => work());
+    const next = mutationChain.then(async () => {
+      const result = await work();
+      for (const listener of changeListeners) {
+        try { listener(); } catch { /* A stopped observer must not fail a committed settings write. */ }
+      }
+      return result;
+    });
     // Keep the chain alive even if one mutator throws.
     mutationChain = next.catch(() => {});
     return next;
@@ -73,6 +80,7 @@ export const createSettingsStore = (options) => {
   });
 
   return {
+    subscribe(listener) { changeListeners.add(listener); return () => changeListeners.delete(listener); },
     resolveFilePath,
     readRoot,
     mutate,

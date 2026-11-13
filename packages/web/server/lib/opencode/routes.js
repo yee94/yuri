@@ -38,6 +38,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     readSettingsFromDisk,
     readSettingsFromDiskMigrated,
     persistSettings,
+    getRemoteProjectState = () => null,
     validateDirectoryPath,
     resolveProjectDirectory,
     getProviderSources,
@@ -63,6 +64,13 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
   } = dependencies;
 
   const upgradeOperation = createUpgradeOperationState();
+  const projectSettingsResponse = (response) => {
+    const state = getRemoteProjectState();
+    if (!state) return response;
+    return { ...response, hasRemoteProjects: state.hasRemoteProjects,
+      hubProjectLayout: response.hubProjectLayout?.hubId === state.hubId ? response.hubProjectLayout
+        : { hubId: state.hubId, order: [], collapsed: {} } };
+  };
   const resolveDataDir = () => yuriDataDir || resolveYuriDataDir();
 
   let authLibrary = null;
@@ -296,7 +304,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
   app.get('/api/config/settings', async (req, res) => {
     try {
       const settings = await readSettingsFromDiskMigrated();
-      const response = formatSettingsResponse(settings);
+      const response = projectSettingsResponse(formatSettingsResponse(settings));
       res.json(req.query?.bootstrap === 'true' ? projectBootstrapSettingsResponse(response) : response);
     } catch (error) {
       console.error('Failed to read settings:', error);
@@ -307,7 +315,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
   app.get('/api/config/settings/bootstrap', async (_req, res) => {
     try {
       const settings = await readSettingsFromDiskMigrated();
-      const response = formatSettingsResponse(settings);
+      const response = projectSettingsResponse(formatSettingsResponse(settings));
       res.json(projectBootstrapSettingsResponse(response));
     } catch (error) {
       console.error('Failed to read bootstrap settings:', error);
@@ -610,7 +618,13 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
   app.put('/api/config/settings', async (req, res) => {
     try {
       const changes = req.body ?? {};
-      const updated = await persistSettings(changes);
+      if (Object.hasOwn(changes, 'hubProjectLayout')) {
+        const state = getRemoteProjectState();
+        if (typeof changes.hubProjectLayout?.hubId !== 'string') return res.status(400).json({ error: 'Invalid Hub project layout' });
+        if (!state || changes.hubProjectLayout.hubId !== state.hubId) return res.status(409).json({ error: 'Hub project layout belongs to another Hub' });
+      }
+      const updated = projectSettingsResponse(await persistSettings(changes));
+      if (Object.prototype.hasOwnProperty.call(changes, 'projects')) app.emit('yuri:projects-changed');
       // Only after a successful persist — failed saves must not apply runtime flags.
       if (
         typeof onSettingsPersisted === 'function'
@@ -626,7 +640,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     } catch (error) {
       console.error('[API:PUT /api/config/settings] Failed to save settings:', error);
       console.error('[API:PUT /api/config/settings] Error stack:', error.stack);
-      res.status(500).json({ error: 'Failed to save settings' });
+      res.status(error?.status === 400 ? 400 : 500).json({ error: 'Failed to save settings' });
     }
   });
 

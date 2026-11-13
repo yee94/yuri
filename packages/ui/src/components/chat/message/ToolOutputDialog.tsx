@@ -1,5 +1,6 @@
 import { lockNativeTouchPan } from '@/lib/touch-gestures';
 import React from 'react';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { useEvent } from '@reactuses/core';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -1061,6 +1062,8 @@ const MermaidPreviewDialog: React.FC<{
     onOpenChange: (open: boolean) => void;
     isMobile: boolean;
 }> = ({ popup, onOpenChange, isMobile }) => {
+    const hostRuntime = useHostRuntime();
+    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const { t } = useI18n();
     const themeSystem = useOptionalThemeSystem();
     const previewTheme = React.useMemo(() => {
@@ -1150,7 +1153,7 @@ const MermaidPreviewDialog: React.FC<{
             if (!normalizedPath) {
                 sourcePromise = Promise.reject(mermaidLoadFailure('chat.toolOutputDialog.mermaid.invalidLocalPath'));
             } else {
-                sourcePromise = readRuntimeFile({ path: normalizedPath })
+                sourcePromise = readRuntimeFile({ path: normalizedPath, scope: hostScope })
                     .then((response) => {
                         if (!response.ok) {
                             return Promise.reject(mermaidLoadFailure('chat.toolOutputDialog.mermaid.readFileFailedWithStatus', { status: response.status }));
@@ -1193,7 +1196,7 @@ const MermaidPreviewDialog: React.FC<{
                 setStatus('error');
                 setErrorMessage(isMermaidLoadFailure(error) ? t(error.key, error.params) : t('chat.toolOutputDialog.mermaid.loadFailed'));
             });
-    }, [normalizeFilePath, popup.mermaid, t]);
+    }, [normalizeFilePath, popup.mermaid, t, hostScope]);
 
     React.useEffect(() => {
         if (!popup.open || !popup.mermaid) {

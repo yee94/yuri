@@ -413,6 +413,8 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
     const setShowAssistantTps = useUIStore(state => state.setShowAssistantTps);
     const sidebarBrandName = useSidebarBrandStore(state => state.sidebarBrandName);
     const setSidebarBrandName = useSidebarBrandStore(state => state.setSidebarBrandName);
+    const settingsFocusItemId = useUIStore(state => state.settingsFocusItemId);
+    const sidebarBrandInputRef = React.useRef<HTMLInputElement>(null);
     const allowPromptingSubagentSessions = useUIStore(state => state.allowPromptingSubagentSessions);
     const setAllowPromptingSubagentSessions = useUIStore(state => state.setAllowPromptingSubagentSessions);
     const messageStreamTransport = useConfigStore((state) => state.settingsMessageStreamTransport);
@@ -609,6 +611,21 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
         if (!visibleSettings) return true;
         return visibleSettings.includes(setting);
     };
+
+    const focusSidebarBrand = isSettingsDialogOpen && settingsFocusItemId === 'appearance.sidebar-brand' && shouldShow('sidebarBrand');
+    React.useEffect(() => {
+        if (!focusSidebarBrand) return;
+        const frame = window.requestAnimationFrame(() => {
+            const input = sidebarBrandInputRef.current;
+            const state = useUIStore.getState();
+            if (!input || !state.isSettingsDialogOpen || state.settingsFocusItemId !== 'appearance.sidebar-brand') return;
+            input.focus({ preventScroll: true });
+            input.select();
+            input.scrollIntoView({ block: 'center' });
+            useUIStore.setState({ settingsFocusItemId: null });
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [focusSidebarBrand]);
 
     const handleClearTranscriptCache = async () => {
         if (clearingTranscriptCache) return;
@@ -1017,6 +1034,7 @@ export const YuriVisualSettings: React.FC<YuriVisualSettingsProps> = ({ visibleS
                                 descriptionPlacement="outside"
                             >
                                 <Input
+                                    ref={sidebarBrandInputRef}
                                     value={sidebarBrandName}
                                     onChange={(event) => setSidebarBrandName(event.target.value)}
                                     maxLength={64}

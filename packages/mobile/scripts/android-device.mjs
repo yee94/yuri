@@ -13,7 +13,7 @@ const mobileRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const APK_PATH = join(mobileRoot, 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
 // Matches android/app/build.gradle applicationId + debug.applicationIdSuffix ".debug".
 // Activity class package stays com.yuri.app (namespace); only applicationId changes.
-const APP_ID = 'com.yee94.yuri.debug';
+const APP_ID = `com.yee94.yuri.${process.env.YURI_ANDROID_DEBUG_SUFFIX || 'debug'}`;
 const LAUNCH_ACTIVITY = `${APP_ID}/com.yuri.app.MainActivity`;
 
 const adb = (args, { capture = false, allowFail = false } = {}) => {

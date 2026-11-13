@@ -3,10 +3,21 @@ import { TUNNEL_PARSE_BASE } from './relay/tunnel-payloads';
 import { getIncludeReasoningProjection } from './reasoning-projection-client';
 import { buildRuntimeAuthHeaders, getRuntimeAuthGeneration } from './runtime-auth';
 import { getRuntimeUrlResolver, type RuntimeUrlQuery } from './runtime-url';
+import { getRuntimeKey } from './runtime-switch';
 
 export interface RuntimeFetchOptions extends RequestInit {
   query?: RuntimeUrlQuery;
 }
+
+const notifyAuthRejection = (response: Response, raw: string, runtimeKey: string, generation: number, runtimeRequest: boolean): Response => {
+  const path = runtimeRequestPathname(raw);
+  if (typeof window !== 'undefined' && runtimeRequest && path?.startsWith('/api/')
+    && (response.status === 401 || response.status === 403)
+    && runtimeKey === getRuntimeKey() && generation === getRuntimeAuthGeneration()) {
+    window.dispatchEvent(new Event('yuri:runtime-auth-rejected'));
+  }
+  return response;
+};
 
 const shouldResolveApiPath = (input: string): boolean => {
   return input.startsWith('/api/') || input === '/api' || input.startsWith('/auth/') || input === '/auth' || input === '/health';
@@ -500,6 +511,7 @@ export const runtimeFetch = async (input: string | URL | Request, init: RuntimeF
   const relay = getActiveRelayTunnel();
   const relayPath = relay ? extractRelayPath(input, effectiveQuery) : null;
   const authGeneration = getRuntimeAuthGeneration();
+  const runtimeKey = getRuntimeKey();
 
   let doFetch: () => Promise<Response>;
   let url: string;
@@ -544,6 +556,11 @@ export const runtimeFetch = async (input: string | URL | Request, init: RuntimeF
       ? () => fetch(new Request(resolvedInput, { ...networkRequestInit, headers }))
       : () => fetch(resolvedInput, { ...networkRequestInit, headers });
   }
+
+  const request = doFetch;
+  const rawInput = input instanceof Request ? input.url : input.toString();
+  const runtimeRequest = Boolean(relay && relayPath !== null) || isRuntimeRequestUrl(url) || shouldResolveFetchInput(rawInput);
+  doFetch = async () => notifyAuthRejection(await request(), url, runtimeKey, authGeneration, runtimeRequest);
 
   // A Request always carries a (possibly default) signal; treat any Request, or
   // an explicit init.signal, as "has signal" and skip coalescing for safety.
@@ -645,5 +662,14 @@ export const installRuntimeFetchBridge = (): void => {
     }
 
     return nativeFetch(input, init);
+  };
+  const runtimeBridgeFetch = window.fetch;
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const raw = input instanceof Request ? input.url : input.toString();
+    const runtimeKey = getRuntimeKey();
+    const generation = getRuntimeAuthGeneration();
+    const runtimeRequest = shouldResolveFetchInput(raw) || isRuntimeRequestUrl(raw)
+      || Boolean(getActiveRelayTunnel() && extractRelayPath(input) !== null);
+    return notifyAuthRejection(await runtimeBridgeFetch(input, init), raw, runtimeKey, generation, runtimeRequest);
   };
 };

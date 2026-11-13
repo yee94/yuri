@@ -174,9 +174,14 @@
 
 /* Contact media has no text-bubble backing. Round the actual image bounds,
    not a contain-fit letterbox, while retaining the frame's reserved height. */
+.yuri-contact-conversation :is(.yuri-image-frame[data-image-content], [data-md-image-presentation='true']),
+.yuri-contact-conversation :is(.yuri-image-frame[data-image-content], [data-md-image-presentation='true']) > img {
+  border-radius: var(--contact-bubble-radius, 1.125rem);
+}
+
 [data-assistant-contact-media] :is(.yuri-image-frame[data-image-content], [data-md-image-presentation='true']) {
   margin: 0;
-  border-radius: 1.35rem;
+  border-radius: var(--contact-bubble-radius, 1.125rem);
 }
 
 [data-assistant-contact-media] .yuri-image-frame[data-image-content][data-image-state='loaded'],
@@ -190,5 +195,5 @@
 [data-assistant-contact-media] [data-md-image-presentation='true'] > img[data-md-image-state='loaded'] {
   height: auto;
   max-height: var(--yuri-content-image-height);
-  border-radius: 1.35rem;
+  border-radius: var(--contact-bubble-radius, 1.125rem);
 }

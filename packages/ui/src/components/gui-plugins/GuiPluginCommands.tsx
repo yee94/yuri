@@ -1,25 +1,14 @@
 import React from 'react';
-import { useGuiPlugins } from '@/lib/gui-plugins/react';
 import { useI18n } from '@/lib/i18n';
-import { scoreByFuzzyQuery } from '@/lib/search/fuzzySearch';
 import { CommandGroup, CommandItem } from '@/components/ui/command';
-import { toast } from '@/components/ui';
+import { useGuiPluginCommandEntries } from './useGuiPluginCommandEntries';
 
 export function GuiPluginCommands({ query, onSelect }: { query: string; onSelect: () => void }) {
-  const { host, snapshot } = useGuiPlugins();
+  const { commands, run } = useGuiPluginCommandEntries(query, onSelect);
   const { t } = useI18n();
   const [expandedQuery, setExpandedQuery] = React.useState<string | null>(null);
-  const commands = React.useMemo(() => query.trim()
-    ? scoreByFuzzyQuery([...snapshot.commands], query.trim(), (command) => `${command.title} ${command.description ?? ''}`, { threshold: 0.4 }).map(({ item }) => item)
-    : snapshot.commands, [snapshot.commands, query]);
   if (!commands.length) return null;
   const visible = expandedQuery === query ? commands : commands.slice(0, 5);
-  const run = async (key: string) => {
-    onSelect();
-    try { await host?.runCommand(key); } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : t('guiPlugins.error'));
-    }
-  };
   return (
     <CommandGroup heading={<span className="flex items-baseline gap-2">
       <span>{t('guiPlugins.commands')}</span>

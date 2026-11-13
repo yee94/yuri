@@ -40,6 +40,9 @@ import { waitForPendingDraftWorktreeRequest } from "@/lib/worktrees/pendingDraft
 import { waitForWorktreeBootstrap } from "@/lib/worktrees/worktreeBootstrap"
 import { getWorktreeSetupWaitEnabled } from "@/lib/yuriConfig"
 import { resolveProjectForSessionDirectory } from "@/lib/projectResolution"
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
+import { scopeProjectWorktrees } from "@/lib/worktrees/projectWorktreeScope"
+import { fileStatQueryOptions } from "@/queries/fileQueries"
 import { useWorktreeOrderStore } from "@/stores/useWorktreeOrderStore"
 import { createUuid } from "@/lib/uuid"
 import { ascendingId } from "./message-id"
@@ -745,7 +748,8 @@ const persistDraftTarget = (target: PersistedDraftTarget): void => {
   } catch { /* ignored */ }
 }
 
-const resolveDraftProjectForDirectory = resolveProjectForSessionDirectory
+const resolveDraftProjectForDirectory: typeof resolveProjectForSessionDirectory = (projects, worktrees, directory) =>
+  resolveProjectForSessionDirectory(projects.filter((project) => !project.hostId), worktrees, directory)
 
 const getAttachmentForSession = (sessionId: string | null | undefined): SessionWorktreeAttachment | undefined => {
   if (!sessionId) return undefined
@@ -843,18 +847,31 @@ type DraftSubmissionClaim = {
 const resolveProjectRefForWorktreeDirectory = (directory: string | null, projectId?: string | null): { id: string; path: string } | null => {
   const projectsState = useProjectsStore.getState()
   if (projectId) {
-    const project = projectsState.projects.find((entry) => entry.id === projectId)
+    const project = projectsState.projects.find((entry) => entry.id === projectId && !entry.hostId)
     if (project?.path) return { id: project.id, path: project.path }
   }
-  const resolved = resolveProjectForSessionDirectory(projectsState.projects, useSessionUIStore.getState().availableWorktreesByProject, directory)
+  const resolved = resolveProjectForSessionDirectory(projectsState.projects.filter((project) => !project.hostId), useSessionUIStore.getState().availableWorktreesByProject, directory)
   return resolved?.path ? { id: resolved.id, path: resolved.path } : null
 }
 
 const waitForWorktreeBootstrapIfConfigured = async (directory: string | null, projectId?: string | null): Promise<void> => {
   if (!directory) return
   const project = resolveProjectRefForWorktreeDirectory(directory, projectId)
+  const worktree = project
+    ? useSessionUIStore.getState().availableWorktreesByProject.get(normalizePath(project.path) ?? project.path)
+      ?.find((entry) => normalizePath(entry.path) === normalizePath(directory))
+    : undefined
   if (project && await getWorktreeSetupWaitEnabled(project)) {
-    await waitForWorktreeBootstrap(directory)
+    await waitForWorktreeBootstrap(worktree?.worktreeRoot ?? directory)
+  }
+  if (worktree?.relativePath) {
+    const files = getRegisteredRuntimeAPIs()?.files
+    if (files?.statFile) {
+      await queryClient.fetchQuery({
+        ...fileStatQueryOptions(files, { scopeDirectory: directory, path: directory, options: { directory: worktree.worktreeRoot ?? directory } }),
+        staleTime: 0,
+      })
+    }
   }
 }
 
@@ -866,7 +883,7 @@ export const promoteProjectForConversation = (
   if (!session || !isVisibleGlobalSession(session) || (session.time?.archived ?? 0) > 0) return
   const projectsState = useProjectsStore.getState()
   const project = resolveProjectForSessionDirectory(
-    projectsState.projects,
+    projectsState.projects.filter((project) => !project.hostId),
     availableWorktreesByProject,
     directory,
   )
@@ -1390,7 +1407,8 @@ const loadPersistedWorktreeMap = (): Map<string, WorktreeMetadata[]> => {
     const entries = JSON.parse(raw) as Array<[string, WorktreeMetadata[]]>
     if (!Array.isArray(entries)) return new Map()
     return new Map(
-      entries.filter((entry) => Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1])),
+      entries.filter((entry) => Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1]))
+        .map(([project, worktrees]) => [project, scopeProjectWorktrees(project, worktrees)]),
     )
   } catch {
     return new Map()
@@ -1500,6 +1518,9 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
   // setCurrentSession
   // ---------------------------------------------------------------------------
   setCurrentSession: (id, directoryHint?: string | null, options?: SetCurrentSessionOptions) => {
+    const projectsAtSelection = useProjectsStore.getState()
+    const leavingRemote = Boolean(useSessionNavigationStore.getState().remoteSession || projectsAtSelection.projects.find((project) => project.id === projectsAtSelection.activeProjectId)?.hostId)
+    useSessionNavigationStore.getState().clearRemoteSession()
     announceSessionSwitchIntent(id)
     setRuntimeInteractiveSessionRequestId(id)
     const previousSessionId = get().currentSessionId
@@ -1531,11 +1552,16 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     const projectsState = useProjectsStore.getState()
     const sessionProject = resolvedDir
       ? resolveProjectForSessionDirectory(
-        projectsState.projects,
+        projectsState.projects.filter((project) => !project.hostId),
         get().availableWorktreesByProject,
         resolvedDir,
       )
       : null
+
+    if (leavingRemote) {
+      if (sessionProject) projectsState.setActiveProjectIdOnly(sessionProject.id)
+      else useProjectsStore.setState({ activeProjectId: null })
+    }
 
     // Set the directory together with the session id so chat hooks read the
     // same child store that send/SSE events will update during startup races.
@@ -1625,6 +1651,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     const key = runtimeMemoryKey(apiBaseUrl)
     const memory = runtimeSessionMemory.get(key)
     const restoredSessionId = memory?.sessionId ?? activeSessionByRuntime.get(key) ?? null
+    announceSessionSwitchIntent(restoredSessionId)
     setRuntimeInteractiveSessionRequestId(restoredSessionId)
     const restoredDraft = memory?.draft ? cloneDraft(memory.draft) : { ...DEFAULT_DRAFT }
     const restoredDirectory = memory?.directory ?? null
@@ -1667,6 +1694,25 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
   // openNewSessionDraft
   // ---------------------------------------------------------------------------
   openNewSessionDraft: (options) => {
+    const projectsAtOpen = useProjectsStore.getState()
+    const requestedProject = options?.selectedProjectId ? projectsAtOpen.projects.find((project) => project.id === options.selectedProjectId) : undefined
+    const remoteProject = requestedProject?.hostId ? requestedProject
+      : options?.directoryOverride === undefined && !options?.selectedProjectId ? projectsAtOpen.getActiveProject() : undefined
+    if (remoteProject?.hostId) {
+      const transport = getRuntimeTransportIdentity()
+      const generation = getRuntimeGeneration()
+      const selected = useSessionNavigationStore.getState().remoteSession
+      const directory = options?.directoryOverride ?? (selected?.projectId === remoteProject.id ? selected.location.directory : remoteProject.path)
+      void import('@/queries/remoteProjectQueries').then(async ({ ensureRemoteHostCatalog }) => {
+        const catalog = await ensureRemoteHostCatalog()
+        if (transport !== getRuntimeTransportIdentity() || generation !== getRuntimeGeneration()
+          || useProjectsStore.getState().activeProjectId !== projectsAtOpen.activeProjectId) return
+        if (!catalog.supported || catalog.hubId !== remoteProject.hubId || !catalog.projects.some((project) => project.id === remoteProject.id && project.hostId === remoteProject.hostId)) throw new Error('Remote Project is not referenced by the current Hub')
+        useSessionNavigationStore.getState().openRemoteSession(remoteProject, { hubId: catalog.hubId, hostId: remoteProject.hostId, directory }, null, options)
+      }).catch(() => console.warn('[remote-session] Unable to open remote draft'))
+      return
+    }
+    useSessionNavigationStore.getState().clearRemoteSession()
     // Establishing create+prompt owns the draft identity. Rotating here would
     // clear draftSubmitting/draftEstablishing and allow a second createSession.
     if (useComposerSendStore.getState().shouldBlockNewSessionDraftOpen()) {
@@ -1679,10 +1725,13 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     if (existingDraft.draftSubmitting || existingDraft.draftEstablishing) {
       return
     }
+    // Same boundary as setCurrentSession: announce before dropping the session so
+    // session-scoped popups dismiss while their trigger is still mounted.
+    announceSessionSwitchIntent(null)
     // Same disarm as a session switch — this path does not go through setCurrentSession.
     get().clearStagedMessageEdit()
     let projectsState = useProjectsStore.getState()
-    const projects = projectsState.projects
+    const projects = projectsState.projects.filter((project) => !project.hostId)
     const availableWorktreesByProject = get().availableWorktreesByProject
     // Prefer the active conversation workspace over the directory store / last draft
     // target so Mod+N (and other unscoped "new session" entry points) land on Welcome
@@ -1704,8 +1753,9 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     if (ensuredProject) {
       projectsState = useProjectsStore.getState()
     }
-    const resolvedProjects = projectsState.projects
-    const activeProject = projectsState.getActiveProject()
+    const resolvedProjects = projectsState.projects.filter((project) => !project.hostId)
+    const active = projectsState.getActiveProject()
+    const activeProject = active?.hostId ? null : active
     const explicitProject = options?.selectedProjectId
       ? resolvedProjects.find((p) => p.id === options.selectedProjectId) ?? null
       : null
@@ -1733,6 +1783,11 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       if (currentDirectory) return currentDirProject
       return persistedProjectByDir ?? persistedProjectById ?? fallbackProject
     })()
+
+    if (projectsState.getActiveProject()?.hostId) {
+      if (selectedProject) projectsState.setActiveProjectIdOnly(selectedProject.id)
+      else useProjectsStore.setState({ activeProjectId: null })
+    }
 
     const directory = (() => {
       if (explicitDirectory !== null) return explicitDirectory
@@ -2382,6 +2437,9 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
 
     try {
       const dir = directoryOverride ?? opencodeClient.getDirectory()
+      if (dir && get().availableWorktrees.some((entry) => entry.path === dir && entry.relativePath)) {
+        await waitForWorktreeBootstrapIfConfigured(dir)
+      }
       const session = await createSessionAction(title, dir, parentID ?? null, metadata)
       if (!session) {
         if (draftSnapshot && !get().newSessionDraft.open && !get().currentSessionId) {

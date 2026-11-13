@@ -1,6 +1,5 @@
 import React from 'react';
 import { WorktreeSectionContent } from '@/components/sections/yuri/WorktreeSectionContent';
-import { ProjectActionsSection } from '@/components/sections/projects/ProjectActionsSection';
 import { ProjectIdentityFields } from '@/components/sections/projects/ProjectIdentityFields';
 import {
   useProjectIdentityForm,
@@ -13,11 +12,13 @@ import { useI18n } from '@/lib/i18n';
 type ProjectSettingsPanelProps = {
   project: ProjectEntry | null;
   onIdentitySave: (data: ProjectIdentitySaveData) => void | Promise<void>;
+  compact?: boolean;
 };
 
 export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
   project,
   onIdentitySave,
+  compact = false,
 }) => {
   const { t } = useI18n();
   const form = useProjectIdentityForm(project);
@@ -29,11 +30,7 @@ export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
     return { id: project.id, path: project.path };
   }, [project]);
 
-  const handleIdentitySave = React.useCallback(async (data: ProjectIdentitySaveData) => {
-    await onIdentitySave(data);
-  }, [onIdentitySave]);
-
-  useProjectIdentityAutoSave(form, handleIdentitySave);
+  useProjectIdentityAutoSave(form, onIdentitySave);
 
   if (!project || !projectRef) {
     return null;
@@ -43,7 +40,7 @@ export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
 
   return (
     <div className="yuri-settings-section-stack">
-      <div className="px-1">
+      <div className="min-w-0 pr-6">
         <h2 className="typography-ui-header font-semibold text-foreground truncate">
           {headerLabel}
         </h2>
@@ -53,8 +50,7 @@ export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
       </div>
 
       <ProjectIdentityFields form={form} />
-      <ProjectActionsSection projectRef={projectRef} />
-      <WorktreeSectionContent projectRef={projectRef} />
+      <WorktreeSectionContent projectRef={projectRef} collapsible={compact} />
     </div>
   );
 };

@@ -40,10 +40,13 @@ android {
         // Side-by-side with release: debug keeps its own applicationId so a local
         // assembleDebug install does not replace a store/CI release package.
         debug {
-            applicationIdSuffix ".debug"
-            versionNameSuffix "-debug"
-            resValue "string", "app_name", "Yuri Debug"
-            resValue "string", "title_activity_main", "Yuri Debug"
+            // Experiments may install beside the normal debug package.
+            def debugSuffix = System.getenv('YURI_ANDROID_DEBUG_SUFFIX') ?: 'debug'
+            def debugLabel = System.getenv('YURI_ANDROID_DEBUG_LABEL') ?: 'Yuri Debug'
+            applicationIdSuffix ".${debugSuffix}"
+            versionNameSuffix "-${debugSuffix}"
+            resValue "string", "app_name", debugLabel
+            resValue "string", "title_activity_main", debugLabel
         }
         release {
             if (hasCiSigning) {
@@ -66,6 +69,7 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     implementation project(':capacitor-android')
     implementation project(':capacitor-cordova-android-plugins')
     // Reuse the version already shipped by capacitor-updater for the native notification stream.

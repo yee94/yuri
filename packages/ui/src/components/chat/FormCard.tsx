@@ -16,6 +16,7 @@ import {
 import { useSessionFormStore } from '@/sync/session-form-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { QuestionCardFrame } from './QuestionCardFrame';
+import { useRemoteChat } from '@/sync/remote-chat-context';
 
 interface FormCardProps {
   form: SessionFormInfo;
@@ -32,6 +33,7 @@ function defaultValue(field: SessionFormField): SessionFormValue | undefined {
 
 export const FormCard: React.FC<FormCardProps> = ({ form, directory }) => {
   const { t } = useI18n();
+  const remote = useRemoteChat();
   const isMobile = useUIStore((state) => state.isMobile);
   const [busy, setBusy] = React.useState(false);
   const [failure, setFailure] = React.useState<'reply' | 'cancel' | null>(null);
@@ -53,6 +55,9 @@ export const FormCard: React.FC<FormCardProps> = ({ form, directory }) => {
     setFailure(null);
     setBusy(true);
     try {
+      if (remote) {
+        await remote.respondForm(form.sessionID, form.id, answers);
+      } else {
       await postSessionFormReply({
         sessionID: form.sessionID,
         formID: form.id,
@@ -60,6 +65,7 @@ export const FormCard: React.FC<FormCardProps> = ({ form, directory }) => {
         directory,
       });
       useSessionFormStore.getState().remove(form.sessionID, form.id);
+      }
     } catch {
       setFailure('reply');
     } finally {
@@ -72,12 +78,16 @@ export const FormCard: React.FC<FormCardProps> = ({ form, directory }) => {
     setFailure(null);
     setBusy(true);
     try {
+      if (remote) {
+        await remote.respondForm(form.sessionID, form.id, null);
+      } else {
       await postSessionFormCancel({
         sessionID: form.sessionID,
         formID: form.id,
         directory,
       });
       useSessionFormStore.getState().remove(form.sessionID, form.id);
+      }
     } catch {
       setFailure('cancel');
     } finally {

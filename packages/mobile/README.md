@@ -31,8 +31,8 @@ This native dock addition requires a native rebuild; older shells ignore it.
 ### Yuri native identity migration (shell API 2)
 
 This is a new installation, not an OTA-only rename. `YuriOTA.shellApiVersion`
-and `YURI_SHELL_API_VERSION` are now **3**. The update publisher must use
-`minShellApiVersion: 3` and application identity `com.yee94.yuri` for every new Yuri
+and `YURI_SHELL_API_VERSION` are now **4**. The update publisher must use
+`minShellApiVersion: 4` and application identity `com.yee94.yuri` for every new Yuri
 bundle. Old shells must receive `install_native_required`, never a Yuri UI bundle.
 The UI and Host owners must update all plugin imports, `Yuri*` registration names,
 `yuri://` deep links, `yuri-asset://` resources and `yuri:ime-state` together.
@@ -46,7 +46,52 @@ object does not expose `getConfig()` or `config`. Missing/invalid metadata fails
 the check instead of inventing epoch 1. Installing the new native shell is required;
 the broken 0.1.3 updater cannot fetch this repair itself. Hosted mobile keeps its
 existing public-feed path. Capgo automatic checks remain disabled and their legacy
-identity-only epoch inference stays conservative; interactive checks send epoch 3.
+identity-only epoch inference stays conservative; interactive checks send the installed shell epoch.
+
+### GUI applications (shell API 4)
+
+Projects shows Apps when active GUI plugins register `yuri.page` entries. Icon
+cards open locally rendered Solid/DOM pages in the existing mobile sheet.
+`YuriGuiNetwork` adds a loopback SOCKS5 server and a native socket restricted to
+the saved Relay endpoint. The existing TypeScript tunnel still performs E2EE;
+the connected Host's authenticated `/api/gui-network/ws` owns target DNS/TCP.
+Website URLs, cookies, browser cross-origin checks and end-to-end website TLS
+remain browser-owned. No hostname bypass or direct fallback is configured, but
+the current iOS implementation has a verified platform routing bypass below.
+
+This is an increment: application networking (startup, sync, sending, pairing a new
+device by QR) keeps its original path and never touches the gateway. The WebView proxy
+points at the gateway only while a plugin view (page/panel/settings) or built-in HTML
+preview is mounted; the loopback listener is bound for that lease, and the last release
+restores the previous proxy configuration and closes the listener. Plugin
+loading and setup do not wait for, or use, the gateway. The plugin Relay channel connects
+on the first plugin connection and reconnects with backoff after loss. While a lease is
+held, Yuri's own Relay, runtime and LAN hosts are excluded at the WebView proxy layer.
+iOS defuncts the loopback listener while suspended and Android's accept loop can end;
+both rebind and repoint an active lease, so returning to the app needs no restart.
+Apps appears as soon as an enabled GUI plugin exists; its sheet shows loading/retry.
+Old shells, iOS below 17,
+Android WebViews without `PROXY_OVERRIDE`, and connections without a saved Relay
+candidate cannot activate native GUI plugins. Hosted mobile global pages remain
+unsupported. Native rebuild and updated Host are required.
+
+The proxy currently applies to the main iOS website data store / Android WebView
+process, including other WebView traffic while plugins are active. This is not an
+independent plugin container or OS VPN. WebRTC/UDP, native network APIs, external
+browser handoff and pre-existing connections remain outside the enforced TCP
+path; strict all-network isolation is unfinished. The iOS 26.5 Simulator acceptance
+matrix passes cold and prewarmed `localhost`, including post-release networking.
+Both `127.0.0.1` and `[::1]` bypass the Host, including after disconnect (2 passed,
+4 failed). A new nonpersistent WebView configured before creation also bypasses an
+unreachable proxy for those IPs. Physical iOS behavior is unverified. Complete iOS
+simulator and Android debug builds passed; Android has only build evidence.
+Built-in loopback URL sheets now load the Host preview proxy through the same
+gateway. The three prewarmed localhost/IPv4/IPv6 proxy cases pass the native probe,
+including upload, WS, nested resources, Host socket attribution and disconnect.
+This does not fix arbitrary JS requests to raw loopback IPs. See
+`packages/ui/src/lib/preview/DOCUMENTATION.md` for file HTML and token renewal limits.
+Protocol, reproducible probe and remaining boundaries are in
+`packages/web/server/lib/gui-network/DOCUMENTATION.md`.
 
 Identity inventory (old strings here are migration documentation only):
 
@@ -111,10 +156,11 @@ identity table after retained installations have recovered their data.
 - Connections sort by `lastUsedAt`. Successful connect/unlock/re-pair/auto-connect advances it; edits, renames, and password challenges preserve it (new unconnected saves use zero). Existing timestamps remain compatible; legacy values are retained rather than inventing past successful-connect times. Rename changes only the label, preserving identities, candidates and secure credentials. Metadata writes commit before list replacement; failed writes preserve the list and expose an error. Local deletion uses the existing secure-token/cache cleanup path, and post-commit auxiliary catalog cleanup cannot resurrect deleted rows.
 - The welcome places the sculpted-serif `YuriWordmark` in a safe-area-aware top-left header and the shared Yuri portrait in the hero, which decoratively reuses `yuri-image-loading` dots (without loading/status semantics). `apps/mobile-welcome.css` owns the bounded fade, 4.2s drift, stronger 2.4s breathing cycle, and monochrome action. Animation pauses during native inactivity, scanning, history or any sheet and is disabled by reduced-motion preferences; it adds no JavaScript animation loop or per-dot DOM nodes.
 - Connections are saved locally in the app and can be managed from Settings under `Switch instance`.
+- Settings instance addition initially shows only Scan QR and Add by address actions. Add by address opens the welcome-style `MobileResizableSheet`, with the shared pairing-link form, explicit clipboard/Connect actions and optional manual entry inside it; no link field is embedded in the instance list. Closing/reopening or switching to manual entry preserves the pairing-link draft. Successful connection closes the sheet and clears that draft. Saved-instance editing retains its inline address/name/token editor.
 - About reports the installed native client version separately from the connected instance's Yuri and OpenCode versions. Mobile update checks send the native client version to the instance.
 - Capacitor About export of the prerelease diagnostics log calls `YuriMedia.saveFile`, which presents the system save picker (iOS `UIDocumentPickerViewController`, Android `ACTION_CREATE_DOCUMENT`). It does not copy to the clipboard or rely on `navigator.share`. Android stages the bytes in an app-private cache file and strips `dataBase64` from the Capacitor plugin call before opening the picker, so activity-pause persistence cannot hit Binder's `TransactionTooLargeException`. The picker uses `application/octet-stream` plus `EXTRA_TITLE` because OEM DocumentsUI can crash on confirm when the type is `application/json`.
 - Android update actions pass the APK URL to the configured system default browser, which owns the download and installation handoff.
-- Mobile chat HTTP(S) links open the browser rather than the desktop context panel. Android shares the update-download `YuriExternalBrowser` bridge through `packages/ui/src/lib/native-external-browser.ts`; iOS and hosted H5 use the window browser handoff.
+- Native mobile loopback HTTP(S) links, including bare `localhost:port`, open the local HTML Sheet through the saved Relay and Host preview proxy. Explicit context Preview/Browser actions use that sheet too. Other mobile chat HTTP(S) links retain browser handoff: Android uses `YuriExternalBrowser`, iOS and hosted H5 use the window browser handoff.
 - The connection screen and `Switch instance` Settings page are Capacitor-only. Hosted `mobile.html` in a normal browser keeps the regular web behavior.
 - Password-protected Yuri servers can be unlocked from the mobile app. The app stores the issued client token with the saved connection.
 - Chat `edit` and `multiedit` rows open their exact single-file tool patch in a resizable phone sheet or the iPad Changes panel. An `apply_patch` row opens every renderable file patch from that invocation. The initial target focuses its first changed line, and apply-patch turn-snapshot records open the owning turn diff.
@@ -264,9 +310,75 @@ WebP fixture to a simulator's Photos library. Run it with `YURI_IOS_TEST_DEVICE`
 
 ## Native Android Keyboard
 
-`ImeSyncBridge` emits `yuri:ime-state` visibility and height through the asynchronous Capacitor WebView bridge. Shared UI's `useNativeMobileChrome` in `packages/ui/src/apps/MobileApp.tsx` owns the Android response. On native close, both its open and already-closed paths restrict `blur()` to a focused text field inside `.yuri-mobile-composer`. Settings, model-picker search, and other fields retain DOM focus across late or repeated close events. Keyboard insets, classes, and composer lift still follow the existing close lifecycle. Native Back dismissal continues to blur the focused composer so a subsequent tap can start a fresh keyboard session.
+This branch experiments with **A: native translation + header snapshot**.
+`ImeSyncBridge` translates the WebView from actual system IME insets in
+`onProgress`, without per-frame viewport resize or JavaScript calls. One local
+`ImeMotionOverlay` bitmap captures **only the top header strip**, selected from
+the visible detail-navigation/surface/collapsing header. No full-page bitmap is
+created or painted during handoff. Capture uses synchronous
+`WebView.draw`, not asynchronous window PixelCopy (which could capture an already
+translated frame). Screenshots never leave memory or cross the JS bridge.
 
-The shared UI focus regression tests exercise the production hook and real picker sheet with simulated native events; actual device event ordering and keyboard presentation require Android validation.
+Close expands the viewport once at start; open shrinks once at end. A WebView
+visual-state callback after layout releases the fixed header. Generation checks
+reject stale completions; an 800ms timeout releases the header
+with a warning instead of leaving a frozen screenshot. Snapshot allocation failure
+falls back to settled resize, not native translation without a fixed header.
+The bitmap is released on transition end/interruption/activity teardown. Header
+animation and interaction pause while covered. Header capture resolves alpha
+against the current page backdrop so browser-composited glass is not blended a
+second time. Its blurred backdrop is frozen for the transition, not live native
+glass. Bitmap capture uses the WebView density and explicit pixel destination
+bounds (no second CSS/DPR/density scaling), preserving icon sizes.
+`adjustResize` is retained for
+Android compatibility; only the inset owner changes padding. True system progress
+is Android 11+; older systems use the compatibility callback.
+
+`yuri:ime-state` sends `phase: start | settled`, visibility, informational window-px
+height, system duration and `nativeResize: true` only at bookends or standalone
+inset changes. `useNativeMobileChrome` sets presentation state but never caches
+height for prediction or transforms the composer. Native translation and page
+offset handoff are enabled only while a bottom `.yuri-mobile-composer` input owns
+focus. Search, question cards and other fields leave the full page in place and
+reserve only local overlay/scroll space. Only settled native
+close blurs a focused composer; Settings/picker search retain focus, and cancelled
+Back preserves the composer. `useChatAutoFollow` retains scroll ownership: its
+ordinary resize observer keeps following at the live edge. Before native layout,
+`yuri:keyboard-native-layout` captures the viewport in that same owner; released
+history compensates once for the native translation already shown, without
+acquiring follow. Thus A moves history too (unlike the earlier resize experiment).
+Hosted mobile and desktop retain their existing behavior.
+
+Install this experiment as a debug APK with its matching bundled Web assets;
+do not publish the Web changes alone to older native shells. Native frame sizing
+requires a new APK, not just an OTA. `test/android-native-ime.test.mjs` guards
+native-only frame work, while shared-UI tests cover double-inset avoidance,
+cancelled-close focus, and following versus historical reading ownership.
+
+The shared UI focus regression tests exercise the production hook and real picker sheet with simulated native events; device event ordering, IME/compositor frame pacing, Chinese composition and OEM keyboard-height changes require physical Android validation.
+
+The shared `mobile/nativeImeHeader.ts` mirror bridge keeps headers with input,
+textarea, select or editable content in the main WebView. The pinned mirror can
+replay button/link taps but cannot own editable focus or preserve search-page
+ancestor selectors. Global search therefore retains its live header and styling;
+returning to a conversation restores the ordinary mirror. This is a shared web
+bundle change; physical Android/iOS keyboard validation is still required.
+
+Head stylesheet mutations invalidate the mirror's CSS cache even when stylesheet
+and rule counts are unchanged. Theme replacements must send the new token values
+together with the root classes on both Android and iOS, with or without an engaged
+keyboard; header-only updates continue to omit unchanged CSS.
+
+`YuriNativeHeader.setImeSync` gates the native lift on both platforms. A focus
+transfer to an ordinary input releases the lift immediately, without waiting for
+another keyboard notification. A plain blur retains the owner through native
+keyboard dismissal/cancellation. iOS native liquid-glass input retains its own
+owner; bottom Side Chat uses the web-composer path. iOS records keyboard frames
+while disabled so a search-to-chat transfer can recover an already-open keyboard;
+stale animation completions cannot settle a newer owner. Ownership updates are
+focus/class-driven, not per keystroke. The complete fix requires new iOS/Android
+native builds; older iOS shells can accept the focus gate via the web bundle but
+do not have the already-open-keyboard recovery. Older Android shells lack the gate.
 
 ## Native iOS Composer
 
@@ -278,7 +390,9 @@ The shared UI focus regression tests exercise the production hook and real picke
 - Shared UI (`packages/ui/src/lib/native-ios-composer.ts`, `useNativeIosComposer`) presents the overlay on Capacitor iOS primary chat only. Send, abort, model, and agent stay in `ChatInput`. Native never submits a prompt itself: Return and Send emit `send` and return immediately; Web owns wait / queue / errors on the next macrotask. The send listener must not mark that draft as an echo — after Web clears the document, JS `forceText`s empty so the `UITextView` does not keep the sent text. Echoed typing does not push text, JPEG thumbs, or the model icon back across the bridge. Cancelled interactive back `show()`s the hidden overlay without rewriting the UITextView. The native `UITextView` owns text while it is first responder / composing so Chinese IME marked text is not rewritten; JS only force-writes on external changes (attach, send clear, session, sent-message edit). A leftover keystroke/blur echo must not omit or revert that preset. The keyboard Return key sends (or queues while a turn is running) and does not insert a newline; IME marked text still confirms composition. Local non-empty text enables Send even if the last JS `canSend` is stale after an app resume. While `canAbort` is true, Stop stays on the card; a queue Send control appears above it only while the card is expanded. Collapsed abort shows Stop alone. `+` opens a `UIMenu` above the button (photos first, then files) without resigning first responder. Hiding the keyboard dismisses that menu. Photos open `PHPickerViewController`; files open `UIDocumentPickerViewController`. Those system pickers may hide the keyboard once; the card stays expanded and focus returns when the picker closes. Both emit `filesPicked` so ChatInput can attach `File` objects. The expanded card then shows a 40pt preview strip (image thumbs and file chips) with a remove control per item (`removeAttachment`). JS also publishes citation UTF-16 ranges so deleting inside `[filename]` removes the whole token and the linked attachment. Highlight parts with a trigger-icon visual are published as paint-only `chipRanges` (UTF-16 start/end, trigger well, `--primary`, rasterized sprite PNG): native colors the label, hides the trigger glyphs, overlays the icon, and unions those ranges with citations for whole-token delete. Slim chrome updates omit `chipRanges` and skip chip paint and model-bitmap raster so streaming / scroll ticks do not stall the WebView. Source text stays `/`+em-space+name — never NSTextAttachment — and chip attributes are not applied while IME marked text is active. Model and the agent picker open the existing WebView panels after the overlay suppresses itself so the sheet is tappable. Tapping the Agent identicon or the revealed name cycles the primary agent; a long-press on either opens the agent picker. The model chip is a static icon plus bitmap name and muted thinking suffix (not UILabels, so session switches refresh on the singleton overlay). Expand/collapse does not animate footer chrome (the keyboard-pin animation must not slide those labels); Agent stays in the footer stack instead of being inserted on focus. The Agent identicon matches the 16pt model icon.
 - Typing `/` or `@` opens a liquid-glass autocomplete list above the card (card width, 8pt gap, internal scroll). Height uses the same clamp as the web popup (`computeMobileAutocompleteMaxHeight`): space below the mobile header, and 40% of the keyboard-aware visible column (`card.maxY`), so the first row stays on screen. The table sits above the glass (not in `UIGlassEffect.contentView`) and paints titles as bitmaps like the icons — UILabel inside the glass vibrancy layer was invisible. Glass chrome does not receive taps. Rows accept via table selection so a pan can scroll the clamped list. `overrideUserInterfaceStyle` follows the Web theme. Search, ranking, and accept stay on the JS channel (`packages/ui/src/lib/composer-autocomplete` + ChatInput insert handlers): a tap replaces the open trigger token the same way as web and `forceText`s the native field plus caret. The popup is not part of published occupancy.
 - Overlay height is published as `--yuri-native-composer-height` for the **collapsed** pill occupancy only. Expanding / keyboard open / showing the native scroll button does not change that value, so Changes, TODO, and the queue stay docked above the pill. JS measures those accessory rows into `--yuri-native-composer-accessory` and never writes `--yuri-chat-foot-inset`. `:root.yuri-native-ios-composer` hides the web textarea/pill and web scroll-to-bottom controls. Queue and status rows stay absolutely docked to the overlay (8px settle toward the pill) and fade with `--yuri-native-composer-dock` (visible only after arriving at the true bottom; a short downward approach stays hidden; no background veil). Queue-card rules that hide the composer-overlap tail apply only under that class — Android Capacitor and hosted/web keep the tuck-behind-input spacer. Composer-swap rest can be expanded far from the live edge and is not the fade source. Keyboard hide re-reports that collapsed height so the pill recovers.
-- Capacitor Keyboard choreography skips composer FLIP while that class is set; the native `UITextView` owns IME. Hide still clears leftover `--yuri-kb-layout` / `yuri-keyboard-open`, snaps WKWebView scroll, and calls `YuriComposer.blur()` so the web shell cannot stay raised.
+- Capacitor Keyboard choreography skips composer FLIP while that class is set; the native `UITextView` owns IME. Hide still clears leftover `--yuri-kb-layout` / `yuri-keyboard-open` and snaps WKWebView scroll, but never calls `YuriComposer.blur()`. iOS keyboard notifications describe presentation, not the editing lifetime: `reloadInputViews` during focus and software-to-hardware/minimized transitions can hide the software keyboard while the field remains first responder. `keyboardSessionOpen` gates only the overlay's bottom pin. Hide completion collapses native chrome only after the field is no longer first responder; a late old completion cannot resign or collapse a newly focused editor. Explicit `blurInput`, transcript taps, model/agent picker actions, suppression/navigation dismissal and UIKit `textViewDidEndEditing` retain their existing editing-end behavior. `UIApplication.didEnterBackgroundNotification` explicitly blurs the native editor without clearing its text; foreground does not force focus. This native change requires a rebuilt iOS shell.
+- Native text-notification deduplication includes composition state as well as text and UTF-16 selection. Ending or starting marked text must reach JS even when text and caret are unchanged; repeated identical callbacks and external-text echoes remain suppressed. This requires a rebuilt iOS shell.
+- `test/native-composer-editing.test.mjs` compiles and executes the production Swift hide-completion / view lifecycle and text-notification method bodies against responder/layout doubles on macOS. It covers repeated hide, stale completion, explicit blur, picker retention and same-text composition transitions, not actual UIKit, WebKit, HID delivery or iOS IME. The existing keyboard geometry tests keep hide-to-rest behavior. Rebuilt-app software key/delete, HID mode switch, explicit dismissal, navigation, picker and background checks remain platform acceptance work; these tests alone are not platform approval.
 
 ## Native iOS Homepage Tab Bar
 
@@ -288,6 +402,7 @@ The shared UI focus regression tests exercise the production hook and real picke
 - Shared UI (`packages/ui/src/lib/native-ios-tab-bar.ts`, `useNativeIosTabBar`) presents the overlay from `MobileTabsRoot` on Capacitor iOS when `yuri.iosNativeUi` is on. Labels come from existing `mobile.tabs.*` keys. Each tab may carry an optional `badge` display string (`string | null`); UI owns formatting (including the `99+` cap), and native only maps non-empty strings onto `UITabBarItem.badgeValue` (null/empty clears). A tab may also set `activity` with `activityLabel`. UI sends activity only when that tab's unread count is zero and work is in progress; native paints an 18pt spinner badge in the count-badge corner and does not combine it with `badgeValue`. Badge-only and activity-only updates reuse the installed items instead of rebuilding chrome. The overlay hosts a chrome-only `UITabBarController` (clear placeholder pages, pass-through hit testing) so iOS 26 owns the floating liquid-glass capsule, the selected liquid-lens indicator, and light/dark materials (`overrideUserInterfaceStyle` follows the Web theme). The selected glyph uses the theme `--primary` tint; unselected items use `secondaryLabel`. Custom nested glass pills and hover lift/highlight are not used. `:root.yuri-native-ios-tab-bar` marks adoption; the Web dock unmounts once adopted.
 
 - Native iOS tabs always use their default SF Symbols, including the Assistant tab. Custom assistant avatars are not sent to or rendered by the native tab bar.
+- Unread badges use fixed sRGB `#F95252` and white text in normal/selected states, matching the shared `--assistant-unread-fill` token. Like the recording fill, this targets raw screenshot RGB `#CF6A58` under the Rec2020/sRGB-transfer profile rather than using that profile-specific value directly as CSS/UIColor. The color change requires a native iOS rebuild; Web/Android badges update with the shared UI bundle.
 
 ## Native Photo Picker
 

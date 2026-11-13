@@ -6,6 +6,7 @@ import {
   LEGACY_SCHEDULE_TAB_ID,
   SCHEDULE_TAB_ID,
 } from './primarySurface';
+import type { HostLocation } from '@/lib/remote-projects/location';
 
 /**
  * Session-scoped tools only (under /session/$id/…).
@@ -39,6 +40,8 @@ export const SCHEDULED_VIEWS = SCHEDULE_VIEWS;
 export type DiffScope = 'staged' | 'working' | 'turn';
 
 export type BuildSessionPathInput = {
+  location?: HostLocation;
+  projectId?: string;
   sessionId: string;
   tab?: string | null;
   file?: string | null;
@@ -71,6 +74,8 @@ export type BuildSettingsPathInput = {
  * When tab is schedule|assistant, sessionId is ignored for path construction.
  */
 export type BuildAppLocationInput = {
+  location?: HostLocation;
+  projectId?: string;
   sessionId?: string | null;
   tab?: string | null;
   file?: string | null;
@@ -86,6 +91,8 @@ export type BuildAppLocationInput = {
 };
 
 export type ParsedSessionPath = {
+  location?: HostLocation;
+  projectId?: string;
   kind: 'session';
   sessionId: string;
   tab: WorkspaceTab;
@@ -119,7 +126,7 @@ export type ParsedAppPath =
   | ParsedAssistantPath
   | ParsedSettingsPath
   | { kind: 'plugin'; pluginId: string; pageId: string }
-  | { kind: 'new' }
+  | { kind: 'new'; location?: HostLocation; projectId?: string }
   | { kind: 'connect' }
   | { kind: 'unknown' };
 
@@ -155,8 +162,20 @@ export function normalizeDiffScope(scope: string | null | undefined): DiffScope 
   return DIFF_SCOPE_SET.has(scope) ? (scope as DiffScope) : null;
 }
 
-export function buildNewSessionPath(): string {
-  return NEW_SESSION_PATH;
+export function buildNewSessionPath(input?: { location?: HostLocation; projectId?: string }): string {
+  const params = new URLSearchParams();
+  appendLocation(params, input?.location, input?.projectId);
+  return params.size ? `${NEW_SESSION_PATH}?${params}` : NEW_SESSION_PATH;
+}
+
+function appendLocation(params: URLSearchParams, location?: HostLocation, projectId?: string) {
+  if (!location?.hostId) return;
+  if (!location.hubId || !location.directory) throw new Error('Remote navigation requires a Hub and raw directory');
+  params.set('hubId', location.hubId);
+  params.set('hostId', location.hostId);
+  if (location.instanceId) params.set('instanceId', location.instanceId);
+  params.set('directory', location.directory);
+  if (projectId) params.set('projectId', projectId);
 }
 
 export function buildPluginPagePath(pluginId: string, pageId: string): string {
@@ -241,6 +260,7 @@ export function buildSessionPath(input: BuildSessionPathInput): string {
   }
 
   const params = new URLSearchParams();
+  appendLocation(params, input.location, input.projectId);
   if (input.file) params.set('file', input.file);
   const scope = normalizeDiffScope(input.scope);
   if (scope) params.set('scope', scope);
@@ -277,6 +297,8 @@ export function buildAppLocation(input: BuildAppLocationInput): string {
       tab,
       file: input.file,
       scope: input.scope,
+      location: input.location,
+      projectId: input.projectId,
     });
   }
 
@@ -286,10 +308,24 @@ export function buildAppLocation(input: BuildAppLocationInput): string {
 function parseSearch(search: string): {
   file: string | null;
   scope: DiffScope | null;
+  location?: HostLocation;
+  projectId?: string;
+  invalidRemote?: boolean;
 } {
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
   const file = params.get('file');
   const scope = normalizeDiffScope(params.get('scope'));
+  const hostId = params.get('hostId');
+  if (hostId === null && (params.has('hubId') || params.has('instanceId'))) return { file, scope, invalidRemote: true };
+  if (hostId !== null) {
+    const hubId = params.get('hubId');
+    const directory = params.get('directory');
+    if (!hostId || !hubId || !directory) return { file, scope, invalidRemote: true };
+    const projectId = params.get('projectId');
+    const instanceId = params.get('instanceId');
+    if (instanceId !== null && !instanceId.trim()) return { file, scope, invalidRemote: true };
+    return { file, scope, location: { hubId, hostId, directory, ...(instanceId ? { instanceId } : {}) }, ...(projectId ? { projectId } : {}) };
+  }
   return { file, scope };
 }
 
@@ -368,7 +404,8 @@ export function parseAppPath(pathWithSearch: string): ParsedAppPath {
 
   // Canonical + short aliases for the new-session draft surface
   if (pathname === NEW_SESSION_PATH || pathname === '/new' || pathname === '/session/new/') {
-    return { kind: 'new' };
+    const { location, projectId, invalidRemote } = parseSearch(search);
+    return invalidRemote ? { kind: 'unknown' } : { kind: 'new', ...(location ? { location, ...(projectId ? { projectId } : {}) } : {}) };
   }
   if (pathname === '/connect') return { kind: 'connect' };
 
@@ -417,7 +454,9 @@ export function parseAppPath(pathWithSearch: string): ParsedAppPath {
       return { kind: 'new' };
     }
 
-    const { file, scope } = parseSearch(search);
+    const { file, scope, location, projectId, invalidRemote } = parseSearch(search);
+    if (invalidRemote) return { kind: 'unknown' };
+    const remote = location ? { location, ...(projectId ? { projectId } : {}) } : {};
     const segment = parts[2];
 
     // Legacy nested schedule/assistant under session → promote to top-level kinds
@@ -439,6 +478,7 @@ export function parseAppPath(pathWithSearch: string): ParsedAppPath {
         tab: 'chat',
         file,
         scope,
+        ...remote,
       };
     }
 
@@ -450,6 +490,7 @@ export function parseAppPath(pathWithSearch: string): ParsedAppPath {
         tab: 'chat',
         file,
         scope,
+        ...remote,
       };
     }
 
@@ -459,6 +500,7 @@ export function parseAppPath(pathWithSearch: string): ParsedAppPath {
       tab,
       file,
       scope,
+      ...remote,
     };
   }
 

@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { createUiPasskeys } from './ui-passkeys.js';
+import { parseFilePreviewPath, readFilePreviewUrlAuthToken } from '../preview/file-preview-path.js';
 
 const SESSION_COOKIE_NAME = 'yuri_ui_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -266,7 +267,8 @@ const getUrlAuthTokenFromRequest = (req) => {
       token = undefined;
     }
   }
-  return typeof token === 'string' && token.trim() ? token.trim() : null;
+  if (typeof token === 'string' && token.trim()) return token.trim();
+  return readFilePreviewUrlAuthToken(getRequestPathname(req)) || null;
 };
 
 const getRequestPathname = (req) => {
@@ -292,6 +294,8 @@ const isWebSocketUpgrade = (req) => {
 };
 
 const isUrlAuthReadableHttpPath = (pathname) => {
+  const remote = /^\/api\/hosts\/[^/]+(\/api\/(?:fs\/(?:raw|serve)(?:\/.*)?|preview\/proxy\/.*|terminal\/[^/]+\/stream|projects\/[^/]+\/icon))$/.exec(pathname);
+  if (remote) return isUrlAuthReadableHttpPath(remote[1]);
   return pathname === '/api/event'
     || pathname === '/api/global/event'
     || pathname === '/api/yuri/events'
@@ -315,11 +319,15 @@ const isUrlAuthReadableHttpPath = (pathname) => {
  */
 export const isUrlAuthWebSocketPath = (pathname) => {
   if (typeof pathname !== 'string' || !pathname) return false;
+  if (parseFilePreviewPath(pathname)) return false;
+  const remote = /^\/api\/hosts\/[^/]+(\/api\/(?:terminal\/ws|gui-network\/ws|preview\/proxy\/.*))$/.exec(pathname);
+  if (remote) return isUrlAuthWebSocketPath(remote[1]);
   return pathname === '/api/event/ws'
     || pathname === '/api/global/event/ws'
     || pathname === '/api/yuri/realtime-proxy/ws'
      || pathname === '/api/terminal/ws'
      || pathname === '/api/remote-desktop/ws'
+     || pathname === '/api/gui-network/ws'
     || pathname === '/api/dictation/ws'
     || pathname.startsWith('/api/preview/proxy/');
 };
@@ -327,8 +335,17 @@ export const isUrlAuthWebSocketPath = (pathname) => {
 const canUseUrlAuthTokenForRequest = (req) => {
   const method = typeof req?.method === 'string' ? req.method.toUpperCase() : 'GET';
   const pathname = getRequestPathname(req);
+  if (parseFilePreviewPath(pathname)) return !isWebSocketUpgrade(req) && ['GET', 'HEAD'].includes(method);
   if (isWebSocketUpgrade(req)) {
     return isUrlAuthWebSocketPath(pathname);
+  }
+  if (/^\/api\/hosts\/[^/]+\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/|$)/i.test(pathname)) {
+    return ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].includes(method);
+  }
+  // Browser-owned preview forms/fetch cannot attach Yuri headers. The proxy also
+  // requires its separate target token and strips both tokens before forwarding.
+  if (/^\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/|$)/i.test(pathname)) {
+    return ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].includes(method);
   }
   return method === 'GET' && isUrlAuthReadableHttpPath(pathname);
 };
@@ -457,9 +474,19 @@ export const createUiAuth = ({
 
   const clientPresence = createClientPresence();
   const authenticateClientRequest = async (req, { allowUrlToken = true } = {}) => {
-    if (allowUrlToken) {
+    const filePreview = parseFilePreviewPath(getRequestPathname(req));
+    if (allowUrlToken && !(filePreview && getBearerTokenFromRequest(req))) {
       const urlAuth = authenticateUrlAuthToken(req);
       if (urlAuth) {
+        if (filePreview && urlAuth.sessionToken?.startsWith('client:')) {
+          try {
+            const clientId = urlAuth.sessionToken.slice('client:'.length);
+            const client = (await clientAuthController?.listClients?.())?.find((entry) => entry.id === clientId);
+            if (!client || client.revokedAt || (client.expiresAt && Date.parse(client.expiresAt) <= Date.now())) return null;
+            urlAuth.client = client;
+            urlAuth.clientId = clientId;
+          } catch { return null; }
+        }
         clientPresence.track(req, urlAuth);
         return urlAuth;
       }
@@ -498,6 +525,11 @@ export const createUiAuth = ({
     clientId: clientAuthClientId(clientAuth),
     client: clientAuth?.client || null,
   });
+
+  const issueClientUrlToken = async (req) => {
+    const authenticated = await authenticateClientRequest(req);
+    return authenticated ? issueUrlAuthTokenForSession(clientSessionToken(authenticated)) : null;
+  };
 
   const authorizeRelayRequest = async (req) => {
     const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
@@ -590,6 +622,7 @@ export const createUiAuth = ({
 
     return {
       enabled: false,
+      issueClientUrlToken,
       authorizeRelayRequest,
       requireAuth,
       requireSessionAuth,
@@ -1001,6 +1034,7 @@ export const createUiAuth = ({
 
   return {
     enabled: true,
+    issueClientUrlToken,
     authorizeRelayRequest,
     requireAuth,
     requireSessionAuth,

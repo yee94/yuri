@@ -17,7 +17,7 @@ test('phone chat title can show a live transcript sync whisper', async () => {
   expect(screen).toContain('directory || undefined');
   expect(screen).toContain('subtitle={syncHint}');
   expect(header).toContain('subtitle?: string | null');
-  expect(header).toContain('subtitle={subtitle}');
+  expect(header).toContain('subtitle={subtitle || (host?.entry.location.hostId ? <RemoteHostIndicator');
   expect(navigation).toContain('subtitle?: ReactNode');
   expect(navigation).toContain('yuri-mobile-detail-subtitle');
   expect(navigation).toContain('aria-live="polite"');

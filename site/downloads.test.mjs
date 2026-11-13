@@ -15,7 +15,7 @@ const page = () => {
   doc.body.innerHTML = `
     <a data-download-primary href="#downloads"><svg><use data-download-icon href="#icon-download"></use></svg><span data-download-label>Choose installer</span></a>
     <section id="downloads" data-download-label="Download" data-choose-label="Choose installer">
-      <span data-release-version>0.1.1-beta.1 Beta</span>
+      <span data-release-version>0.1.1</span>
       ${Object.entries(snapshot.targets).map(([key, href]) => `<a data-platform="${key}" href="${href}">${key}</a>`).join('')}
       <p data-no-downloads hidden>No installers</p>
     </section>`;
@@ -24,33 +24,33 @@ const page = () => {
 const windows = { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', platform: 'Win32' };
 
 describe('release selection', () => {
-  it('selects the newest publication including beta, without mixing assets', () => {
+  it('selects the newest stable publication and never a beta, without mixing assets', () => {
     const result = resolveRelease([
       release('2.0.0-beta.1', true, [asset('2.0.0-beta.1', 'win-x64.exe')], '2026-10-25'),
       release('1.0.0', false, [asset('1.0.0', 'win-x64.exe')]),
       release('1.1.0', false, [asset('1.1.0', 'linux-arm64.AppImage')], '2026-10-20'),
     ]);
-    expect(result.version).toBe('2.0.0-beta.1');
-    expect(result.prerelease).toBe(true);
-    expect(result.targets.windows).toBe(asset('2.0.0-beta.1', 'win-x64.exe').browser_download_url);
-    expect(result.targets.linuxArm).toBeNull();
+    expect(result.version).toBe('1.1.0');
+    expect(result.prerelease).toBe(false);
+    expect(result.targets.linuxArm).toBe(asset('1.1.0', 'linux-arm64.AppImage').browser_download_url);
+    expect(result.targets.windows).toBeNull();
     expect(result.targets.ios).toBe(snapshot.targets.ios);
   });
 
-  it('switches back to stable when it is published after beta', () => {
+  it('keeps the stable release when a newer beta is published', () => {
     expect(resolveRelease([
       release('2.0.0-beta.2', true, [], '2026-10-25'),
       release('2.0.0', false, [], '2026-10-26'),
+      release('2.0.1-beta.1', true, [], '2026-10-28'),
     ])).toMatchObject({ version: '2.0.0', prerelease: false });
   });
 
-  it('selects the newest beta when no stable release exists and ignores drafts', () => {
-    const result = resolveRelease([
+  it('returns nothing when only betas or drafts exist', () => {
+    expect(resolveRelease([
       { ...release('3.0.0', false), draft: true },
       release('2.0.0-beta.1', true),
       release('2.0.0-beta.2', true, [], '2026-10-20'),
-    ]);
-    expect(result).toMatchObject({ version: '2.0.0-beta.2', prerelease: true });
+    ])).toBeNull();
     expect(resolveRelease([])).toBeNull();
     expect(() => resolveRelease({ message: 'rate limited' })).toThrow();
   });
@@ -120,13 +120,11 @@ describe('download page enhancement', () => {
     expect(doc.querySelector('[data-release-version]').textContent).toBe('1.0.0');
     expect(doc.querySelector('[data-no-downloads]').hidden).toBe(true);
 
-    const empty = page();
-    await initializeDownloads(empty, windows, async () => ({ ok: true, json: async () => [release('1.1.0-beta.1', true)] }));
-    expect(empty.querySelector('[data-download-primary]').getAttribute('href')).toBe('#downloads');
-    expect(empty.querySelector('[data-download-label]').textContent).toBe('Choose installer');
-    expect(empty.querySelector('[data-no-downloads]').hidden).toBe(false);
-    expect(empty.querySelector('[data-platform="ios"]').hidden).toBe(false);
-    expect(empty.querySelector('[data-release-version]').textContent).toBe('1.1.0-beta.1 Beta');
+    const betaOnly = page();
+    const before = betaOnly.querySelector('#downloads').innerHTML;
+    await initializeDownloads(betaOnly, windows, async () => ({ ok: true, json: async () => [release('1.1.0-beta.1', true)] }));
+    expect(betaOnly.querySelector('#downloads').innerHTML).toBe(before);
+    expect(betaOnly.querySelector('[data-download-primary]').href).toBe(snapshot.targets.windows);
   });
 
   it('coordinates delayed CPU hints with the currently selected release', async () => {

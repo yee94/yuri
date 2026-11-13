@@ -1,3 +1,5 @@
+import { parseExecutionTarget, executionTargetKey } from './execution-target.js';
+
 export const CONTACT_CARD_TYPES = Object.freeze(['session', 'assistant', 'schedule']);
 const CARD_TYPES = new Set(CONTACT_CARD_TYPES);
 // Assistant tools explicitly publish these cards through reference_resource.
@@ -10,10 +12,13 @@ const parseSessionCard = (value) => {
   const sessionID = string(value.sessionID);
   const directory = string(value.directory);
   if (!sessionID || !directory) return null;
+  let target;
+  try { target = parseExecutionTarget(value.target); } catch { return null; }
   return {
     type: 'card',
     cardType: 'session',
     sessionID,
+    ...(target ? { target } : {}),
     directory,
     title: string(value.title) || null,
     status: string(value.status) || null,
@@ -121,7 +126,7 @@ export function serializeContactPart(part, index) {
 
 export function contactCardIdentity(card) {
   if (!card || card.type !== 'card') return '';
-  if (card.cardType === 'session') return `session:${card.sessionID}:${card.directory}`;
+  if (card.cardType === 'session') return `${card.target ? `${executionTargetKey(card.target)}:` : ''}session:${card.sessionID}:${card.directory}`;
   if (card.cardType === 'assistant') return `assistant:${card.assistantID}`;
   if (card.cardType === 'schedule') return `schedule:${card.projectID}:${card.taskID}`;
   return card.cardType;

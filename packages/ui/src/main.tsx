@@ -20,6 +20,7 @@ import type { RuntimeAPIs } from './lib/api/types'
 import { isDesktopShell } from './lib/desktop'
 import { beginSessionStartupBarrier } from './lib/session-startup-barrier'
 import { QueryRuntimeProvider } from './lib/QueryRuntimeProvider'
+import { preloadMarkdownRenderer } from './components/chat/markdownRendererLoader'
 
 declare global {
   interface Window {
@@ -47,6 +48,9 @@ const runtimeAPIs = (typeof window !== 'undefined' && window.__YURI_RUNTIME_APIS
   throw new Error('Runtime APIs not provided for legacy UI entrypoint.');
 })();
 
+// Load the renderer (and its stylesheet) before the transcript paints; a late
+// stylesheet would restyle an already rendered conversation.
+preloadMarkdownRenderer();
 initializeLocale();
 
 // Start before React effects so the session pass owns cold-start bandwidth.

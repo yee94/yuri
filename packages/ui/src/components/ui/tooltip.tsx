@@ -256,16 +256,20 @@ function TooltipTrigger({
 }
 
 type ContentProps = React.ComponentProps<typeof BaseTooltip.Popup> & {
+  positionerClassName?: string;
   sideOffset?: number;
   side?: "top" | "right" | "bottom" | "left";
   align?: "start" | "center" | "end";
+  anchor?: React.ComponentProps<typeof BaseTooltip.Positioner>["anchor"];
 };
 
 function TooltipContent({
   className,
+  positionerClassName,
   sideOffset = 0,
   side,
   align,
+  anchor,
   children,
   style,
   ...props
@@ -273,7 +277,7 @@ function TooltipContent({
   return (
     <TooltipPartBoundary>
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner sideOffset={sideOffset} side={side} align={align} className="z-50">
+        <BaseTooltip.Positioner sideOffset={sideOffset} side={side} align={align} anchor={anchor} className={cn("z-50", positionerClassName)}>
           <BaseTooltip.Popup
             data-slot="tooltip-content"
             className={cn(

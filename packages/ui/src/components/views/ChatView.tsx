@@ -8,6 +8,10 @@ import { cn } from '@/lib/utils';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import type { HostLocation } from '@/lib/remote-projects/location';
+import { locationKey } from '@/lib/remote-projects/location';
 
 const WorkStatusHost: React.FC<{
     sessionId: string | null;
@@ -39,10 +43,22 @@ type ChatViewProps = {
         sessionId: string | null;
         directory: string | null;
         viewKey: string;
+        location?: HostLocation;
     };
 };
 
 export const ChatView: React.FC<ChatViewProps> = ({ readOnly = false, active = true, selectionOverride }) => {
+    const host = useHostRuntime();
+    const remoteSelection = useSessionNavigationStore((state) => state.remoteSession);
+    const remoteLocation = selectionOverride?.location ?? (host?.entry.location.hostId ? host.entry.location : undefined);
+    const explicitSession = selectionOverride ? {
+        ...selectionOverride, active,
+        ...(remoteLocation ? { location: remoteLocation,
+            directory: selectionOverride.directory ?? remoteLocation.directory,
+            sessionId: selectionOverride.sessionId || (remoteSelection && locationKey(remoteSelection.location) === locationKey(remoteLocation)
+                ? remoteSelection.sessionId : null),
+        } : {}),
+    } : undefined;
     const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
     const currentSessionDirectory = useSessionUIStore((state) => state.currentSessionDirectory);
     const isDraftOpen = useSessionUIStore((state) => Boolean(state.newSessionDraft?.open));
@@ -57,11 +73,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ readOnly = false, active = t
     const workStatusEnabled = useUIStore((state) => state.workStatusPanelEnabled);
     const workStatusOverlayOpen = useUIStore((state) => state.workStatusOverlayOpen);
     const setWorkStatusPanelFits = useUIStore((state) => state.setWorkStatusPanelFits);
-    const errorSessionId = selectionOverride?.sessionId ?? currentSessionId;
-    const sessionId = selectionOverride?.sessionId ?? currentSessionId;
-    const directory = selectionOverride?.directory ?? currentSessionDirectory ?? effectiveDirectory ?? null;
-    const { visible, fits, layoutAllows } = useWorkStatusVisibility({ isMobile, isVSCode, directory });
-    const hasConversation = selectionOverride ? Boolean(selectionOverride.sessionId)
+    const matchingRemote = remoteLocation && remoteSelection
+        && locationKey(remoteSelection.location) === locationKey(remoteLocation) ? remoteSelection : null;
+    const sessionId = remoteLocation ? (explicitSession?.sessionId ?? matchingRemote?.sessionId ?? null)
+        : selectionOverride?.sessionId ?? currentSessionId;
+    const errorSessionId = sessionId;
+    const directory = remoteLocation ? remoteLocation.directory
+        : selectionOverride?.directory ?? currentSessionDirectory ?? effectiveDirectory ?? null;
+    const stateKey = remoteLocation ? locationKey(remoteLocation) : directory;
+    const { visible, fits, layoutAllows } = useWorkStatusVisibility({ isMobile, isVSCode, directory: stateKey });
+    const hasConversation = remoteLocation ? Boolean(sessionId) : selectionOverride ? Boolean(selectionOverride.sessionId)
         : isDraftOpen ? isDraftConversation : Boolean(sessionId);
     const mountable = active && !isMobile && !isVSCode && !isExpandedInput && hasConversation;
     const showInline = mountable && visible;
@@ -79,7 +100,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ readOnly = false, active = t
         >
             <div className="absolute inset-0 min-h-0 min-w-0">
                 <ChatErrorBoundary sessionId={errorSessionId || undefined}>
-                    <ChatContainer readOnly={readOnly} active={active} explicitSession={selectionOverride ? { ...selectionOverride, active } : undefined} />
+                    <ChatContainer readOnly={readOnly} active={active} explicitSession={explicitSession} />
                 </ChatErrorBoundary>
             </div>
             {mountable && layoutAllows ? (

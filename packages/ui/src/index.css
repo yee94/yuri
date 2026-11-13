@@ -4,16 +4,73 @@
 @import "./styles/typography.css";
 @import "./styles/settings.css";
 @import "./styles/mobile.css";
+@import "./components/assistants/assistant-workspace.css";
 /* Load KaTeX styles eagerly with the main bundle. Importing them inside the
    lazy MarkdownRendererImpl chunk meant a stylesheet was injected late on the
    first markdown render of a session; that late injection triggered a style
    recalc during which the layered `.chat-message-column` width clamp briefly
    lost, flashing message text to full width before it snapped back. */
 @import "katex/dist/katex.min.css";
+/* The media preview lives in a lazy chunk; injecting its stylesheet on the first
+   open forced a whole-document style recalc (~90ms with a long transcript). */
+@import "./components/chat/message/mediaPreviewTransition.css";
 @source "./**/*.{ts,tsx,css}";
+
+.yuri-assistant-wallpaper {
+  --assistant-wallpaper-pattern: url("./assets/assistant-wallpaper/telegram-pattern.svg");
+}
 
 ::highlight(yuri-speech) {
   color: var(--foreground);
+}
+
+::highlight(yuri-transcript-find) {
+  background-color: var(--chat-findMatch, Mark);
+  color: var(--chat-findMatchForeground, MarkText);
+}
+
+::highlight(yuri-transcript-find-active) {
+  background-color: var(--chat-findActiveMatch, var(--primary-base));
+  color: var(--chat-findActiveMatchForeground, var(--primary-foreground));
+  text-decoration: underline;
+  text-decoration-thickness: 0.12em;
+}
+
+.yuri-transcript-find [data-slot="input"],
+.yuri-transcript-find [data-slot="input"]:hover,
+.yuri-transcript-find [data-slot="input"]:focus {
+  height: 2.5rem;
+  padding: 0 0.25rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  font-size: var(--font-size-ui, 0.875rem);
+}
+
+.yuri-transcript-find:focus-within {
+  border-color: var(--interactive-border-hover);
+}
+
+.yuri-transcript-find-close {
+  border-left: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-transcript-find-navigation {
+  border-top: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-transcript-find [data-slot="button"] {
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-transcript-find [data-slot="button"]:hover {
+  color: var(--surface-foreground);
+}
+
+.yuri-transcript-find [data-slot="button"]:disabled {
+  opacity: 0.3;
 }
 
 [data-speech-active="true"] {
@@ -681,6 +738,10 @@ button svg.yuri-icon circle[fill],
   will-change: transform !important;
   background: transparent !important;
   background-color: transparent !important;
+}
+
+.chat-scroll [role="status"][aria-busy="false"] > .animate-spin {
+  animation-play-state: paused !important;
 }
 
 /* Specific SVG spinner fixes for WebKit */

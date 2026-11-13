@@ -23,6 +23,7 @@ import { type RelayTunnelWebSocket } from "@/lib/relay/tunnel-client"
 import { openRuntimeWebSocket } from "@/lib/relay/runtime-socket"
 import { isRelayModeActive } from "@/lib/relay/runtime-tunnel"
 import { getRuntimeGeneration } from "@/lib/runtime-switch"
+import { dispatchYuriEventEnvelope } from '@/lib/yuriEvents'
 import {
   normalizeOpenCodeEvent,
   toLegacyEventShape,
@@ -264,6 +265,13 @@ type IngressResult =
 
 const normalizeIngressEvent = (payload: unknown): IngressResult => {
   if (!payload || typeof payload !== "object") return { status: "unusable" }
+
+  const envelope = payload as { type?: unknown; properties?: unknown }
+  if (envelope.type === 'yuri:host-event' || envelope.type === 'yuri:host-status' || envelope.type === 'yuri:project-order-changed') {
+    // Aggregate frames belong to the existing Hub event bus, never local reducers.
+    dispatchYuriEventEnvelope({ type: envelope.type, properties: envelope.properties })
+    return { status: 'declined' }
+  }
 
   // yuri:session-status → canonical session.status before general path
   const yuri = normalizeYuriSessionStatus(payload as Event)
@@ -738,6 +746,7 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
     // edges that keep the browser WS open). Upper layers use this for
     // transcript HTTP reconcile after replay events have been flushed.
     publishCompensationTrigger()
+    dispatchYuriEventEnvelope({ type: 'yuri:global-event-stream-ready', properties: {} })
   }
 
   const enqueueEvent = (

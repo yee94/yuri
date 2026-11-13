@@ -2,8 +2,8 @@
 
 `registry.js` owns registering existing directories. It reuses `validateDirectoryPath`, deterministic
 path-derived IDs and the settings runtime's serialized persistence. The existing
-`POST /api/opencode/directory` API and assistant business tools share this owner.
-The HTTP API still selects the active directory; assistant registration does not
+`POST /api/opencode/directory` API, the session-bound project API bridge and assistant business tools share this owner.
+The UI directory API still selects the active directory; session/assistant registration does not
 change an existing active selection. The first registered project becomes active
 through the existing settings invariant.
 
@@ -21,9 +21,18 @@ normalization, migration, atomic write and project-order SSE notification paths.
 Unlike full-list UI replacement, this form does not sweep other projects for
 missing directories: callers validate the affected resource. Corrupt reads and
 failed writes are errors, not empty state or successful registration. No new
-database, settings file, HTTP mutation surface or client sync protocol is added.
+database, settings file or client sync protocol is added. The session skill's
+`POST /api/yuri/session-skills/projects` bridge adds authenticated `describe`,
+`list` and `add` operations without exposing the full settings API; its admission
+and result contract live in `../gui-customization/DOCUMENTATION.md`.
 
 `registry.test.js` covers canonical alias deduplication, concurrent append/settings
 writes, persistence, offline-project retention, corrupt
 reads and failed-write preservation. Assistant HTTP integration is covered in
 `../assistants/yuri-project.http.test.js`.
+
+The Remote Host Gateway mounts authenticated `POST /api/projects` and `PATCH
+/api/projects/:id` local-authority operations using the same registry/settings
+lock. `GET /api/projects` excludes remote references. Remote-first registration,
+metadata write-through and Hub-only reference removal belong to
+`../remote-hosts/`, not this local filesystem registry.

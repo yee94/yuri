@@ -9,6 +9,7 @@
 
 import { isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime } from "@/lib/desktop"
 import { isCapacitorApp } from "@/lib/platform"
+import type { HostLocation } from "@/lib/remote-projects/location"
 
 import { createHttpTranscriptDurableStore } from "./transcript-durable-store-http"
 import { createIndexedDBTranscriptDurableStore } from "./transcript-durable-store-indexeddb"
@@ -23,6 +24,7 @@ import type {
 export type TranscriptDurableRuntimeKind = "http" | "indexeddb"
 
 export type TranscriptDurableRuntimeDeps = {
+  location?: HostLocation
   isDesktopShell?: () => boolean
   isDesktopLocalOriginActive?: () => boolean
   isVSCodeRuntime?: () => boolean
@@ -40,6 +42,7 @@ export type TranscriptDurableRuntimeDeps = {
 export function resolveTranscriptDurableRuntimeKind(
   deps: TranscriptDurableRuntimeDeps = {},
 ): TranscriptDurableRuntimeKind {
+  if (deps.location?.hostId) return "indexeddb"
   const desktopShell = deps.isDesktopShell ?? isDesktopShell
   const localOrigin = deps.isDesktopLocalOriginActive ?? isDesktopLocalOriginActive
   const vscode = deps.isVSCodeRuntime ?? isVSCodeRuntime
@@ -88,7 +91,9 @@ export function createRuntimeTranscriptDurableStore(
     removeMessage: (scope, messageID) => active().removeMessage(scope, messageID),
     clearSession: (scope) => active().clearSession(scope),
     clearGeneration: (generation: TranscriptDurableGeneration) =>
-      settleAll([http().clearGeneration(generation), indexedDB().clearGeneration(generation)]),
+      deps.location?.hostId
+        ? indexedDB().clearGeneration(generation)
+        : settleAll([http().clearGeneration(generation), indexedDB().clearGeneration(generation)]),
     evictToBytes: (maxBytes, options?: TranscriptEvictToBytesOptions) =>
       active().evictToBytes(maxBytes, options),
     clearAll: () => active().clearAll(),

@@ -1,5 +1,138 @@
 # Sync architecture, event handling & store update rules
 
+## Explicit Remote Project state
+
+`createRemoteSessionState(registry, location)` owns a remote Location's Query
+transcript, native prompt/inbox and visible content demand. It never switches the
+global runtime or replaces the local SyncProvider binding. Create it once per
+registry/Location/logical scope revision and dispose it when that owner changes;
+the Host's `scopeGeneration` authorization/descriptor identity fences old HTTP, SDK
+and durable commits. Physical wire `generation`, connection state and
+`lastConnectedAt` are live transport metadata, not the logical request scope:
+opening/closing a zero-reference short HTTP connection must not cancel its own
+bootstrap or rebuild Model/files/git consumers. Actual scope revocation still
+replaces their captured entry; wire generations independently reject stale events.
+First admission of an authenticated instance identity also replaces the unpinned
+entry and advances its Query scope. A replacement remote repository cannot reuse
+the disposed predecessor's pending transcript/metadata Query functions; stable
+durable keys still retain the same Host/Location drafts and cached content.
+Creating state performs no network/subscription/timer work. `observe(sessionID,
+onError)` seeds the transcript and retains the shared content lease; multiple
+views of the same session share one listener and lease until the last leaves.
+It consumes events from the existing Hub channel, not another socket.
+Global transport ingress bridges Host aggregate envelopes into the existing Yuri
+event bus before local normalization; they never enter local transcript reducers.
+Global stream ready/reconnect uses the remote runtime's distinct
+`global-event-stream-ready` notification to recover leases without refetching local
+product state. The native-capture regression exercises this production ingress,
+not a mocked event-bus emit, and preserves logical scope revocation and physical
+wire event fences independently. Hosts missing the new field conservatively retain
+legacy fencing; missing-token unavailable rows revoke an already-known scope, and
+late snapshots cannot resurrect a retired authorization token.
+The optional third `onRecovered` observer callback runs only after the full
+content/inbox/metadata refresh succeeds. Views clear observation errors there,
+not unrelated failed-mutation errors.
+
+Remote repositories register under the full `locationKey` separately from the
+local binding. `getTranscriptRepository(location)` and `transcriptScope(location,
+sessionID)` resolve them explicitly. Initial/older/refresh/retry/materialization
+and purge runtime entrypoints accept `string | HostLocation`; strings retain
+their existing local meaning. Unbound remote Locations never fall back to the
+local repository. Imperative `getSyncMessages` and materialization readers accept
+the Location; remote `getSyncParts` additionally requires the owning session ID.
+Remote rendering must pass the repository and its scope explicitly rather than
+call an old local-only observer with just the physical directory.
+
+The repository Query transport includes Hub/Host/Location/logical scope revision;
+durable partition uses stable Hub+Host identity. Physical directory remains raw
+at every HTTP/SDK boundary. The runtime durable selector accepts `location` and
+always chooses client IndexedDB for a Remote Host, even in local Electron; remote
+generation cleanup also skips HTTP/SQLite. Authority inbox retirement uses the
+same remote session key, so it cannot clear a local session's queue chips.
+
+`session-prompt-api` and `session-inbox-query` accept an optional resolved
+`HostRuntimeEntry` as `scope`. Prompt, reconcile, interrupt, inbox GET/PATCH/DELETE
+use its fenced transport and raw directory. Overlay, terminal receipts and
+compaction barriers use `locationSessionKey`; received inbox items retain their
+Location while wire session IDs stay raw. `applySessionInboxEvent(event, scope)`
+is the remote event seam. Native queued inputs do not change the session's
+model/agent on enqueue; direct sends use the captured selection and authoritative
+remote session record. `createRemoteSessionState.send` rejects disconnected
+Hosts. Remote bodies never enter Yuri's Hub-owned queue: that queue's admission
+boundary rejects explicit remote `scope.location` or `scope.hostId` before staging,
+upload or POST. Do not erase that identity and then invoke a local queue fallback.
+
+Draft key factories accept an optional `location` alongside transport identity.
+Their existing owner field carries the remote session key through metadata and
+IndexedDB blob references, with no schema migration and identical local keys.
+Selection-store model/agent/variant reads and writes accept an optional final
+Location argument; remote choices never fall back to a bare session ID or update
+the local `lastUsedProvider` preference.
+Remote draft selections use `REMOTE_NEW_SESSION_DRAFT_ID` under that same Location
+key. The remote composer subscribes to its own saved model/agent/variant, so an
+unmount while switching projects does not reset the draft's selection or borrow
+the local default. Directory and Host changes resolve separate saved selections.
+
+`remote-input-store.getRemoteInputStore(location)` owns the production remote
+composer's separate, per-Hub draft store. Its namespaced metadata sink and default
+IndexedDB attachment driver use a stable Hub durable transport; Host/directory
+and raw session remain in the draft owner. LAN/Relay endpoint identity still
+fences HTTP/SDK work but does not move or delete these client draft partitions.
+Native/menu/worktree initial text uses `seedRemoteDraft`; programmatic input and
+preset submission use the explicit Location pending-composer bridge, never the
+retained Hub's singleton draft or pending fields. Real Chromium document reload
+evidence covers the current factory and attachment bytes, not packaged mobile
+or network lifecycle acceptance.
+
+`remote-input-store` partitions durable metadata and blob databases per Hub,
+with stable `remote-hub:` transport keys independent of LAN/Relay fingerprints.
+Location and draft/session identities remain part of every draft key. Its
+explicit store is injected into the real composer and inbox edit CAS; native
+seed/pending-input/preset entrypoints must use this owner, never the Hub singleton.
+Each blob coordinator reconciles only its Hub database, not local or other-Hub
+references. Network operations retain the current logical authorization scope fence.
+
+Production primary chat now mounts this entry through `RemoteChatContainer` and
+`RemoteChatContext`; concurrent primary/context-panel views share one state per
+registry entry. Its metadata Query reads session identity, live status, permissions
+and forms separately, preserving each successful snapshot through unrelated read
+failures. Native execution and status events update live activity; terminal events
+and content-demand reconnect refresh authority. Permission/question/form responses
+use the same captured Host. Recovery reads native `/session/active` through
+`getSessionActive` and the per-Host connection-scoped active Query; a validated
+empty membership is inactive, while unknown/unsupported/failed reads preserve the
+previous snapshot. Never call the disabled legacy directory-status wrapper here:
+current OpenCode treats `/session/status` as an invalid session ID. Cached
+SessionInfo metadata also supplies remote Header titles independently of whether
+the Hub's summary index has caught up, without another content lease.
+Permission/question/form responses
+never call the local session-actions or local form store. `session-inbox-edit`
+accepts an explicit entry and retires only that Location's inbox identity.
+`useRemoteSessionViewed` owns visible remote read acknowledgement through scoped
+unread Query/API calls. Reads capture the observed row revision and fence late
+focus completions by entry/session; later manual reminders stay unread until
+refocus. The local viewed predicate ignores the retained primary session while
+remote navigation is active. Native notification details carrying Hub/Host
+identity resolve the catalog-backed remote route rather than the local store.
+
+This remains an explicit scoped integration seam, not a migration of all old global
+session APIs. `session-ui-store`, local child-store status and global catalog
+ownership still require dedicated remote-aware callers; passing remote rows to
+their bare-ID/local-only APIs is unsupported. Regression coverage is in
+`remote-session-state.test.ts` and `RemoteChatContainer.test.tsx`; no Electron/iOS timing or live Relay acceptance
+is established by these tests.
+
+## Prompt client provenance
+
+`postSessionPrompt` declares `metadata.client.id: "yuri"` on each actual user
+prompt, for both steer and queue delivery. Existing diagnostic metadata is
+preserved without mutating the caller's object; retries retain the same input
+id and declaration. This shared boundary covers web, desktop, VS Code and mobile
+transports. Merely opening a session does not relabel it. OpenCode persists this
+application-defined metadata in its native inbox events, where telemetry can
+read it without changing HTTP User-Agent, execution Agent or model selection.
+The declaration is for observability, not authentication or proof of identity.
+
 `vcs.branch.updated` invalidates the exact runtime/directory Git branch Query
 before child-store lookup. Mounted branch selectors and Assistant Session cards
 therefore share a fresh directory snapshot even when no Location child exists.
@@ -152,6 +285,29 @@ One weakly keyed reader per runtime child-store manager shares the projection ac
 
 ## Viewed-session terminal reconciliation
 
+`session-unread-sync.ts` mounts with the SyncProvider. A runtime-scoped TanStack
+Query observer owns the Host unread snapshot and projects it into the existing
+notification store's narrow session/project badge indexes (sidebar, switcher,
+tray/dock and widget share the same projection). Local live notifications retain
+their error details but never double-count Host attention. Initial GET, revision
+tips and stream-ready recovery converge without per-session polling or transcript
+reads; tips received during a GET force a trailing read. Failed refreshes keep the
+last authoritative snapshot. Transport/generation fences reject stale responses,
+and runtime switches clear the old projection.
+
+Opening/refocusing a session acknowledges its observed row revision. A completion
+received while a session is visibly focused is acknowledged by the same path.
+Explicit manual unread markers are not auto-acknowledged by background snapshots;
+they remain until a subsequent open/refocus action. Read and manual-unread changes
+apply only after confirmed server success, so failed mutations leave attention
+intact. Standalone VS Code retains local-only state without issuing Host routes.
+
+Local completion badges use `isVisibleGlobalSession`, matching catalog exclusions
+for native children and explicitly linked CLI workers. A worker marker is
+`metadata.yuri.worker.parentSessionID`; an ordinary CLI root without explicit
+ownership stays visible. Host startup and metadata-event reconciliation remove
+persisted hidden attention before a successful unread snapshot is returned.
+
 Successful top-level turn completion also emits the existing directory-scoped `sessionEvents.requestGitRefresh` hint, refreshing mounted Changes/Diff consumers through their runtime Git API. This is independent of window focus and targets the completed session's directory. The native succeeded event and its trailing legacy idle share the completion deduplication gate; streaming events do not trigger extra Git reads.
 
 Turn-complete and error notifications use the same viewed-session gate: the matching active directory/session in a focused window, or an externally registered viewed session, is already read on receipt. Background or other-session completions remain unread. `session.execution.succeeded` and its legacy `session.idle` fallback share this rule and retain completion deduplication. Regression coverage: `session-execution-failed.test.ts`.
@@ -173,12 +329,23 @@ manual drags. Settings sync adopts the Host registry order on every client.
 
 `project-order-sync.ts` owns project ordering catch-up for shared Host clients.
 It subscribes before the initial GET, coalesces `project-order-changed` tips and
-stream-ready reconnects, and waits for pending local settings writes before
+stream-ready reconnects, and waits for pending local settings and Hub layout writes before
 reading. Queries use current runtime transport identity; generation checks
 reject late results after switching away and back. A local edit during a read
 forces another read after the write settles. Failures preserve cached ordering;
 successful empty lists clear it. Remote order changes do not change the selected
 project. VS Code keeps its workspace registry.
+
+The same GET consumes the read-only SQLite-backed `hasRemoteProjects` hint into
+the existing bootstrap Query. Thus a safe project-order tip can discover another
+client's first reference without unconditional Host discovery, a second event
+subscription or polling. A last-reference removal refreshes the already-observed
+catalog and clears its projections. `hubProjectLayout` is a separate Hub-owned
+ID-only layout, not remote `settings.projects`; its order and explicit collapse
+booleans apply even when the Host catalog arrives after settings. Layout writes
+serialize with runtime/generation fences, wait for existing local settings writes,
+and expose failed saves while restoring the last confirmed layout. A stale Hub
+completion cannot alter another Hub's selection or layout.
 
 Live session list equality includes the title-refresh presentation fields
 `isGenerating`, `generationExpiresAt`, `lastError`, and `failedAt`. Metadata-only completion must release
@@ -523,7 +690,7 @@ VS Code webview tip delivery may directly call the exported `refreshQuestionAuto
 | Layer / Store | Owns | Scope |
 |---|---|---|
 | child directory stores in `sync-context.tsx` | `session`, `permission`, `question`, `session_status`, `session_error_at`, etc. — non-transcript domains only | One directory |
-| `scoped-blocking-requests.ts` | Blocking-request scope (`useScopedBlockingQuestions` / `useScopedBlockingPermissions`): catalog `parentID` subtree plus live task dispatch edges read from running `task` tool parts (`state.metadata.parentSessionId`/`sessionId`). Fork + task_id reuse can leave a reused subagent session's catalog `parentID` on the pre-fork lineage, so the dispatch edge is what keeps a running subagent's pending question reachable from the dispatching session; terminal tasks contribute no edge | One directory |
+| `scoped-blocking-requests.ts` | Blocking-request scope (`useScopedBlockingQuestions` / `useScopedBlockingPermissions`): catalog `parentID` subtree plus structured `task`/native `subagent` dispatch ownership. Foreground calls and completed tools with `metadata.status=running` contribute; child identity accepts `sessionId`/`sessionID`, parent identity uses explicit dispatch metadata or the owning part's `sessionID`. This keeps pending questions/permissions reachable before child catalog hydration and for fork + task reuse. The transcript reader applies synthetic reports in source order: `running` retains/restores ownership, final reports retire it, and redispatch reopens it. Ordinary user text cannot retire an edge. Edges provide ownership only, never live activity; child identities deduplicate and semantically equal snapshots retain stable references | One directory |
 | QueryCache / TranscriptRepository | Production sole authority for transcript message/part/pagination boundary, request lifecycle, optimistic rows, SSE transcript merge, reconnect compensation | Transport + generation + directory + session |
 | `session-ui-store.ts` | Session selection, draft lifecycle, abort prompts, worktree metadata, SDK-facing action entrypoints | App UI state |
 | `useGlobalSessionsStore.ts` | Global active sessions, global archived sessions, `sessionsByDirectory` | All opened project/worktree session lists |
@@ -2033,7 +2200,7 @@ Rules:
 2. If an action targets a session by ID, resolve the **session's own directory**. Do not assume the current directory is correct.
 3. Scope-sensitive session actions use `getAuthoritativeDirectoryForSession()`, which resolves worktree metadata, session attachments, sync metadata, and global session metadata.
 4. `session-ui-store.ts` should delegate to `session-actions.ts` for these mutations instead of duplicating SDK calls.
-5. `setCurrentSession()` announces a monotonic session-switch intent before directory resolution or store publication. Delayed visual/transition callbacks must validate that intent and silently discard stale work. Optional `skipMessageFetch` skips the same-tick transcript fetch for callers that own the subsequent load (fork).
+5. `setCurrentSession()` announces a monotonic session-switch intent before directory resolution or store publication; `openNewSessionDraft()` announces a null intent when clearing the session, and `restoreForRuntimeSwitch()` always announces, including equal ids or two Welcome views with null ids across runtimes. Delayed visual/transition callbacks must validate that intent and silently discard stale work. Session-scoped transient popups (text selection, model/agent pickers) dismiss on this intent while their trigger view is still mounted. Optional `skipMessageFetch` skips the same-tick transcript fetch for callers that own the subsequent load (fork).
 6. On a real session id change, `setCurrentSession()` also calls `useUIStore.syncWorkspacePanelsForSessionSwitch()` so right-side workspace panels (context/subagent chat, file preview, git changes sidebar) follow the session. Complete tab lists, order, active selection, preview geometry and exact tool diffs restore from bounded runtime/session snapshots; the directory map is only the live projection. Unknown sessions start empty and closed rather than inheriting another session's tabs. The initial selection before any session snapshot exists preserves the persisted startup layout, including the zero-settings Git Changes rail. `openNewSessionDraft()` must call the same helper when clearing a real session for Welcome/draft, because it does not go through `setCurrentSession()`.
 7. Edit staging restores the composer from the visible user-message snapshot captured at click time. Primary send interrupts a busy turn, waits for idle, and commits the native V2 history boundary with `files:false` before admitting the optimistic replacement. Pre-commit failures retain the draft; confirmed commit removes the old tail in conversation order. A replacement-send failure keeps the draft for ordinary retry. Leaving the session disarms `stagedMessageEdit`.
 8. Sidebar previous/next navigation follows the rendered sidebar order. `SessionSidebar` publishes pinned rows plus logically visible project rows to `session-navigation.ts`; keyboard and native-menu actions share that registry and update the explicit session Focus before committing current-session authority. Adjacent navigation concatenates those rings (pinned first) and wraps across both sections, never falling through to hidden project rows.
@@ -2050,7 +2217,7 @@ Examples of global-store updates performed in `session-actions.ts`:
 - `archiveSession()` -> optimistic `archiveSessions([id], archivedAt)` then Host `updateSession({ time: { archived } })` (`PUT /api/yuri/sessions/:id/archive`); same-runtime Host failure restores snapshots; runtime generation/identity change abandons without rolling A snapshots into B
 - `unarchiveSession()` -> Host `updateSession({ time: { archived: 0 } })` then `upsertSession` into the active list (strip any residual `0` stamp); same-runtime failure restores prior archived snapshot; runtime switch abandons without B pollution
 - `deleteSession()` -> optimistic `removeSessions([id])` then immediate server delete
-- UI hard-deletes use `scheduleSessionDeletes()` so the server delete waits for a 10s undo window; `cancelScheduledSessionDeletes()` restores local state without calling the server. Pending deletion IDs keep global refreshes and aggregated live child-store sessions hidden until cancellation restores the snapshot or delete settlement clears the pending state.
+- UI hard-deletes use `scheduleSessionDeletes()` so the server delete waits for a 5s undo window; `cancelScheduledSessionDeletes()` restores local state without calling the server. Pending deletion IDs keep global refreshes and aggregated live child-store sessions hidden until cancellation restores the snapshot or delete settlement clears the pending state.
 - Archive success toasts use `showArchivedSessionsUndoToast()` (undo + open `ArchivedSessionsDialog` via `setArchivedSessionsDialogOpen`); delete success toasts use `deleteSessionsWithUndo()`. Neither expands the sidebar archived bucket by default.
 
 ### Fork transition and event isolation

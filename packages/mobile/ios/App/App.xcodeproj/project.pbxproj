@@ -7,12 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        AAF400000000000000000001 /* YuriGuiNetworkPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF400000000000000000002 /* YuriGuiNetworkPlugin.swift */; };
         AAF300000000000000000001 /* YuriViewExportRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF300000000000000000002 /* YuriViewExportRenderer.swift */; };
         AAF300000000000000000003 /* YuriViewExportPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF300000000000000000004 /* YuriViewExportPlugin.swift */; };
         AAF200000000000000000001 /* YuriVideoServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF200000000000000000002 /* YuriVideoServer.swift */; };
         AAF200000000000000000003 /* YuriVideoPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF200000000000000000004 /* YuriVideoPlugin.swift */; };
         C39E9CA8E0DD4B2797F2B601 /* YuriUpdateConfigPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39E9CA8E0DD4B2797F2B602 /* YuriUpdateConfigPlugin.swift */; };
         AAF100000000000000000001 /* YuriScreenAwakePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF100000000000000000002 /* YuriScreenAwakePlugin.swift */; };
+        AAF100000000000000000901 /* YuriNativeHeaderPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF100000000000000000902 /* YuriNativeHeaderPlugin.swift */; };
         AAF1000000000000000000F1 /* YuriOrientationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF1000000000000000000F2 /* YuriOrientationPlugin.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
@@ -59,12 +61,14 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        AAF400000000000000000002 /* YuriGuiNetworkPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriGuiNetworkPlugin.swift; sourceTree = "<group>"; };
         AAF300000000000000000002 /* YuriViewExportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriViewExportRenderer.swift; sourceTree = "<group>"; };
         AAF300000000000000000004 /* YuriViewExportPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriViewExportPlugin.swift; sourceTree = "<group>"; };
         AAF200000000000000000002 /* YuriVideoServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriVideoServer.swift; sourceTree = "<group>"; };
         AAF200000000000000000004 /* YuriVideoPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriVideoPlugin.swift; sourceTree = "<group>"; };
         C39E9CA8E0DD4B2797F2B602 /* YuriUpdateConfigPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriUpdateConfigPlugin.swift; sourceTree = "<group>"; };
         AAF100000000000000000002 /* YuriScreenAwakePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriScreenAwakePlugin.swift; sourceTree = "<group>"; };
+        AAF100000000000000000902 /* YuriNativeHeaderPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriNativeHeaderPlugin.swift; sourceTree = "<group>"; };
         AAF1000000000000000000F2 /* YuriOrientationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YuriOrientationPlugin.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -255,8 +259,10 @@
                 AAF300000000000000000004 /* YuriViewExportPlugin.swift */,
                 AAF200000000000000000002 /* YuriVideoServer.swift */,
                 AAF200000000000000000004 /* YuriVideoPlugin.swift */,
+                AAF400000000000000000002 /* YuriGuiNetworkPlugin.swift */,
 				D0H1000000000000000000A1 /* YuriPhysicalScalePlugin.swift */,
                 AAF100000000000000000002 /* YuriScreenAwakePlugin.swift */,
+                AAF100000000000000000902 /* YuriNativeHeaderPlugin.swift */,
                 AAF1000000000000000000F2 /* YuriOrientationPlugin.swift */,
                 C39E9CA8E0DD4B2797F2B602 /* YuriUpdateConfigPlugin.swift */,
 				D0J1000000000000000000A1 /* YuriComposerView.swift */,
@@ -486,8 +492,10 @@
                 AAF300000000000000000003 /* YuriViewExportPlugin.swift in Sources */,
                 AAF200000000000000000001 /* YuriVideoServer.swift in Sources */,
                 AAF200000000000000000003 /* YuriVideoPlugin.swift in Sources */,
+                AAF400000000000000000001 /* YuriGuiNetworkPlugin.swift in Sources */,
 				D0H2000000000000000000B1 /* YuriPhysicalScalePlugin.swift in Sources */,
                 AAF100000000000000000001 /* YuriScreenAwakePlugin.swift in Sources */,
+                AAF100000000000000000901 /* YuriNativeHeaderPlugin.swift in Sources */,
                 AAF1000000000000000000F1 /* YuriOrientationPlugin.swift in Sources */,
                 C39E9CA8E0DD4B2797F2B601 /* YuriUpdateConfigPlugin.swift in Sources */,
 				D0J2000000000000000000B1 /* YuriComposerView.swift in Sources */,

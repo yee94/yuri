@@ -1,5 +1,105 @@
 # Assistants Module
 
+## Hub-owned remote project execution
+
+The contact and its inference stay on the Hub. `feature-routes-runtime.js` injects
+the existing `remoteHostGateway` through `routes.js`; `execution-target.js` is a
+focused accessor, not another Assistant runtime. Project/session tools, model and
+OpenCode capability/skill readers accept optional
+`target: { hubId, hostId, instanceId }`. Omission retains the legacy local meaning.
+Present null, partial, extra-field or malformed identities reject; foreign Hubs,
+unavailable connections and changed instances never fall back to local execution.
+Every remote result, reference, session card and watch carries the complete target.
+
+Composer references use `@session:{"sessionID":"id","directory":"raw path","target":{"hubId":"hub","hostId":"host","instanceId":"instance"}}`.
+The contact reads these coordinates as data and passes them intact to its session
+tools. Local directory-only references omit `target`; legacy `@session:id` remains
+local. A reference alone is not authorization to watch or mutate the session.
+
+Ordinary prompt construction reads only saved remote project metadata. Explicit
+`list_projects` discovers local project registries on the already authorized saved
+Hosts, returns machine names/targets and reports per-Host discovery failures as
+partial results. It cannot configure SSH, change credentials or create pairings.
+Remote `list_sessions` uses official, bounded `session.list` calls against remote
+registered roots and verified worktrees, not the Hub's session index. `nextPages`
+contains exact target/projectPath/before continuation references. Failed reads are
+unknown, never an authoritative empty catalog. Remote paths remain raw wire paths;
+scope checks are lexical and remote-authoritative, without Hub stat/realpath.
+Nested project worktrees retain the source checkout's relative project suffix.
+
+`remote-hosts/task-client.js` creates the official `makeOpenCodeV2Client` over a
+captured Gateway task lease. SDK method/body/query/headers/abort signals pass through
+unchanged. Its explicit `executionAdmission: 'target-yuri-proxy'` delegates live
+OpenCode admission to the actual target Yuri proxy rather than this Hub's unrelated
+local runtime contract. Target-side execution rejection still propagates; no direct
+OpenCode endpoint, credential fallback or second protocol implementation exists.
+Short reads and mutations release their lease in `finally`. Service shutdown aborts
+all accessor leases, including in-flight reconciliation and discovery.
+
+Remote assignment without model arguments leaves both new-session defaults and
+continued-session model/Agent selection to that machine; it never copies the Hub
+contact's provider/model/Agent/variant or model preferences. Explicit model choices
+are checked against the remote connected catalog. With remote default selection,
+the target owns attachment/model admission; definitive prompt rejection retains
+the existing created-session cleanup and ambiguous-admission recovery semantics.
+Read, new/continue, watch, stop, steer, archive and delete consume this same accessor.
+Archive goes to the target's existing Host archive route; remote delete never invokes
+Hub metadata cleanup. Mutations are not automatically replayed after uncertainty.
+
+`list_models` accepts an optional registered `directory` alongside `target` and
+returns both coordinates with its catalog. Omitted target explicitly means the
+local Hub; omitted directory means instance-default discovery, not the selected
+project. For project workers, query their exact target/directory. Remote queries
+never incorporate Hub favorites or the contact's own model.
+Assignment resolves the final project/worktree (or authoritative reused-session
+directory) before `assignSession` invokes its optional `resolveModel(directory)`
+callback. The service loads provider/model catalogs with that SDK Location, rather
+than the remote service's working directory. Explicit models are validated before
+session creation. Default remote assignment skips catalog and model-history reads;
+the target keeps ownership of model selection. Catalog reads remain on demand,
+with one provider/model pair per explicit validation and no cross-target cache.
+
+Remote watches retain their own Gateway status demand independently of the contact
+turn or any UI client. The persisted watch key incorporates all three target IDs
+and the raw session ID; existing local keys are unchanged. Only target/directory,
+delivery watermark and watch/settlement metadata persist, not remote messages or
+tool results. Existing one-shot semantics and new-user-turn notification
+supersession remain unchanged. Native events and bounded authority reconciliation
+settle the existing watch/card/contact-lane path, including descendant activity;
+same-worker events received during a read request a trailing reconciliation.
+Unrelated session events do not read messages. Offline/failed reads retain the
+watch and retry on the existing timer/reconnect. Completion/cancel, wipe, deletion
+and shutdown release only the appropriate task demand.
+
+`remote-watch-reconciler.js` batches watch reconciliation by complete target and
+deduplicates session IDs across contacts. Each batch reads active membership and
+ancestry once per machine, using the existing family reader's parent lookup sharing;
+only distinct potentially settled workers need message/goal reads. Periodic recovery
+groups leases by target before queuing the batch. Concurrent callers share its
+promise; authority changes received in flight invalidate the affected worker and
+coalesce into a trailing batch, so an older read cannot overwrite a newer running
+event. Different machines have independent flights, and one failed worker does not
+erase siblings. This adds no timer or TTL: results are discarded at batch completion,
+the next reconciliation reads fresh authority, and remote bodies are never cached
+or persisted. Cost is per-machine activity/ancestry plus distinct settled workers,
+not number-of-contacts multiplied by the full active-session graph.
+
+An additive `remote_resume_pending` watch column records a remote terminal review
+until its authored reply, silence or explicit cancellation is acknowledged. Failed
+result reads/model reviews and process restarts retry that review without replaying
+assignment; already-persisted replies reconcile idempotently. Result-phase raw
+worker text and `read_session` tool output remain turn-local memory. Only the
+contact's own public replies/rolling summaries and resource metadata enter Hub
+contact history; no remote transcript or raw tool-result cache is introduced.
+
+`remote-execution.test.js` exercises two synthetic Hosts with identical directory
+and session IDs through the actual SDK fetch boundary, SQLite, the native Agent
+tool loop and the existing service lanes. It covers discovery/read/new/continue,
+cards, controls, no-UI/restart/failure recovery, malformed/retargeted rejection,
+task demand release and raw-result non-persistence. `remote-hosts/task-client.test.js`
+separately verifies Hub-blocked/target-allowed and target-rejected admission. These
+are deterministic backend contracts, not live model, SSH/Relay or device evidence.
+
 ## Contact pins
 
 Schema v15 adds nullable `assistant_v2.pinned_at`; existing contacts start unpinned.
@@ -105,6 +205,21 @@ use this timestamp, never assistant configuration `updatedAt`. Regression fixtur
 return the timestamp actually inserted, and snapshot tests require a finite value.
 
 ## Recoverable contact errors
+
+Every contact tool invocation has a Host-enforced 300-second ceiling, including
+pi file/shell tools, Yuri operations, deferred tools, read-only background tools,
+and result-phase resource references. Existing shorter deadlines remain in force.
+The bash schema and execution arguments also cap/default `timeout` at 300 seconds;
+the pi Node execution environment kills the shell process group on timeout/abort.
+This bounds tool execution, not model inference or an admitted worker's lifetime.
+
+`tool-execution.js` owns the turn-local deadline and cancellation wrapper. A timeout
+aborts its signal, returns an explicit error/unknown outcome, suppresses late
+updates, and disables further operations for that contact turn (including queued
+calls in the same batch). It never retries an ambiguous mutation. Uncooperative
+external operations may still commit after cancellation; read authoritative state
+before a later retry. Completed side effects are not rolled back. User cancellation
+also releases the waiter without waiting for an uncooperative tool to finish.
 
 Contact model requests have no Yuri generation time limit (`timeoutMs: 0`).
 Empty text-only model replies recover in the same generation call with capped
@@ -225,11 +340,23 @@ reasoning display.
 
 ### Scheduled-task result review
 
+Scheduled and assigned-worker result bubbles keep their stable Host `turnID`
+provenance in the LLM-only history projection. They are explicitly marked as
+background notifications, not answers to an adjacent user request or fresh user
+authorization. The same projection feeds rolling summaries, whose instructions
+retain this distinction. SQLite/UI reply text is unchanged; existing transcripts
+need no migration.
+
 - `schedule_task` retains the existing assistant/project/task mapping. The task
   prompt preserves the user's delivery intent. A terminal run is handed from the
   scheduler to `reportScheduledTaskResult`; prompt admission and intermediate
   session events do not wake the contact. Associations created after the run
   started do not receive its historical result.
+- A new task belongs to the calling contact, and its result returns there. The
+  task tool description and pre-load `yuri.tasks` description expose that ownership.
+  For another contact's work, the coordinator creates/resolves that contact and
+  sends the complete scheduling request with `message_assistant`; the recipient
+  creates it with its normal tools. A message admission is not task completion.
 - Each live owner receives a read-only contact-lane turn with the captured
   contact configuration, the run's original task prompt, authoritative outcome,
   error and bounded worker output. `read_session` can fetch the full result.
@@ -442,10 +569,22 @@ also exercised the real provider: the contact selected provider discovery and
 `websearch`, then returned actual source links, without a CLI or worker session.
 
 Interactive turns no longer fetch or inject the OpenCode built-in skill by default.
-The permanent prompt retains only short routing and evidence/authorization rules;
+`builtin-skills.js` adds only two short discovery pointers, gated by the granted
+readers: `opencode` uses `load_tools({ domain: 'opencode.catalog' })` followed by
+`read_opencode_skill({ id: 'opencode' })`; `yuri-customization` uses pi `read` on
+the existing shipped `../gui-customization/skill/SKILL.md`, then matching references
+relative to that file's directory. No body or reference is read during prompt
+construction, no additional skill directories are scanned, and no skill/config
+copy, tool registration or permission is created. Missing/failed OpenCode skill
+reads retain the existing explicit tool errors. These pointers are absent from
+read-only background reviews and do not change ordinary Session instructions.
+The customization pointer explicitly has no bound desktop helper: SSH, config
+sync and Relay pairing remain unavailable in the contact, without a filesystem,
+credential or internal-HTTP fallback. GUI authoring instructions do not authorize
+installation; substantive implementation still belongs in a worker.
 CLI authentication instructions, endpoint URLs and skill bodies are not duplicated
-there. Load `opencode.catalog`, discover the applicable skill ID, and call
-`read_opencode_skill` when instructions are relevant. The virtual
+in the permanent prompt. For other connected skills, load `opencode.catalog`,
+discover the applicable skill ID, and call `read_opencode_skill` on demand. The virtual
 `/builtin/opencode.md` / `<built-in>` markers are not local files. A skill result is
 instruction content, not tool registration or evidence of execution. Local skill
 indexes and `read` retain their existing separate instruction-loading behavior.
@@ -561,7 +700,7 @@ and keep their existing error result handling.
 - **Completion receipt:** consuming a successful notification-enabled watch inserts one additional ordinary session-reference card in the same transaction as the old card update and release. Its stable resume-derived receipt ID is claimed once across Hosts. It does not create/rearm a watch or fabricate a text bubble, and remains available even if the model review is silent or fails. Existing UI session-summary diff presentation is reused (real non-zero changes only); parent idle alone cannot override the server's busy/retry family status. Error/cancel paths do not issue success receipts.
 - **Result context order:** `message.list(order: 'desc')` is normalized through the existing V2 projection adapter and read newest-first for bounded worker text. The callback must not take the oldest assistant progress message from the page or omit native V2 `content` text. Fetch failure remains unavailable context and the review may use `read_session`.
 - **Model watch-state synchronization:** the internal result-review input explicitly carries `watchState: released`, `watchMode: one_shot`, and `rewatchAllowed` (`false` for interruption). It tells the model that the server released the watch before this invocation, no cleanup call is needed, future rounds will not auto-notify, and earlier watching confirmations are historical. The model must not promise continued monitoring without a successful new `watch_session` call; sufficient results leave the watch released. These fields are internal context, not a new transcript bubble or client DTO.
-- **Explicit rewatch:** successful `watch_session` / `assign_session` admission rearms only its `(assistantID, sessionID)` row; `reference_resource` never rearms it. Listen-only watch clears an old assignment delivery watermark. A new terminal-baseline watch stays armed for the next observed running → terminal transition, without replaying the old result. Non-interrupted worker-result reviews expose one narrowly scoped exception to read-only tools: `watch_session` for that exact worker, enforced in the service callback. The contact may explicitly rewatch only when the original user request still needs monitoring; worker output is evidence, never authorization. Cancellation reviews, scheduled-task reviews, and peer-message turns retain lookup-only tools. No background review gains resource publication, assignment, prompting, stop, file, shell, or settings mutation tools.
+- **Explicit rewatch:** successful `watch_session` / `assign_session` admission rearms only its `(assistantID, sessionID)` row; `reference_resource` never rearms it. Listen-only watch clears an old assignment delivery watermark. A new terminal-baseline watch stays armed for the next observed running → terminal transition, without replaying the old result. Non-interrupted worker-result reviews expose one narrowly scoped exception to read-only tools: `watch_session` for that exact worker, enforced in the service callback. The contact may explicitly rewatch only when the original user request still needs monitoring; worker output is evidence, never authorization. Cancellation reviews and scheduled-task reviews retain lookup-only tools. No background review gains resource publication, assignment, prompting, stop, file, shell, or settings mutation tools. Peer-message turns are actionable delegation, not background reviews.
 - `AssistantDTO.assignedSessionIDs` lists in-flight (`busy`/`question`) watches for assigned worker sessions. Session-card busy stays on the card; it does **not** drive the list green dot.
 - **Contact active turn (server authoritative):** process-local metadata tracks admission → `queued` → `running` → settled (removed). `AssistantDTO.working` is true only while that assistant has an unsettled contact turn. `AssistantDTO.activeContactTurn` is `{ turnID, messageID, status: 'queued'|'running', admittedAt }` or `null` so APP restart / reconnect can rehydrate list green dots and the contact 3-dot row from the snapshot HTTP GET. Spoken bubbles and cards persist to SQLite as soon as they publish (`done:true` / `onCard`) so another device or APP restart can GET them while the turn is still running. Token-level SSE deltas remain live paint only. A server process restart clears in-memory activity (no permanent green; tools are not auto-rerun) but already-published bubbles/cards stay in the transcript. Per-assistant lanes isolate turns across assistants/runtimes. Stale `contact-turn-end` for an older `turnID` must not clear a newer active turn.
 - **List latest-message preview (server authoritative):** every `AssistantDTO` path (`snapshot` / `create` / `update` / other `output` rows) carries `latestMessagePreview: { messageID, ordinal, createdAt, role: 'user'|'assistant', text, fallbackKind: 'image'|'file'|'session'|'assistant'|'schedule'|null } | null`. Source is the contact transcript only (not `defaultPrompt` / `updatedAt`). Order is the same keyset as contact pages: newest `(ordinal DESC, message_id DESC)`. Visible roles are `user`, `assistant`, and `peer` (peer maps to `role: 'user'` because inbound DMs are user-visible). Internal assigned-session settle markers (`oc.settle.*`) are excluded in the SQL candidate probe (and again in `buildContactMessagePreview`). Recoverable errors are excluded in SQL and the preview projector and cannot replace the preview. Plain text is sanitized and capped at `CONTACT_PREVIEW_MAX_CHARS` (500) with no data-URL/base64 bodies. File-only rows set `fallbackKind` `image`/`file`; pure cards set `session`/`assistant`/`schedule`. Empty transcript → `null`. **Snapshot cost:** one prepared statement reused per assistant (`assistant_id` + indexed `ORDER BY ordinal DESC, message_id DESC LIMIT candidateLimit`, catalog ≤100) collecting only those bounded candidates, then **one** parts `IN` query — not a window/`ROW_NUMBER` over full multi-assistant history and not HTTP N+1. SQL already drops pure settle tails so they cannot exhaust the LIMIT and hide an older real bubble; remaining non-preview empty rows may still consume a candidate slot within that same LIMIT. Admission, assistant completion, peer DM, card insert, wipe, and clear-memory already bump domain revision / `yuri:assistants-changed`; clients re-GET snapshot for the new preview. Clear-memory keeps transcript rows so the preview still reflects the last bubble; clear-history / reset remove rows so the preview becomes the wipe confirm (or `null` after a full unbounded wipe with no remaining user).
@@ -623,7 +762,7 @@ Reply language follows the user's latest substantive message and conversation co
   `X-Content-SHA256`, `X-Content-Size`, `Content-Type`, optional `X-Attachment-Filename` (encodeURIComponent).
   The shared runtime CORS allowlist includes these upload headers for packaged desktop/mobile and cross-origin development clients; auth and allowed-origin checks remain unchanged.
   Relay uses the same upload through `runtimeFetch`, carrying raw bytes and integrity headers over the encrypted tunnel. The compiled-Relay E2E covers authenticated image/JSON uploads, Unicode filenames, idempotent retry, byte-exact download and descriptor admission; missing/invalid client credentials remain rejected.
-  Returns `{ type:'file', attachmentID, sha256, size, mime, filename?, generation }` — never a filesystem path.
+  Returns `{ type:'file', attachmentID, sha256, size, mime, filename? }` — never a filesystem path.
   Same uploadID + same content is idempotent; different content → `idempotency_conflict` (409).
 - **Download (frozen):** `GET …/contact/attachments/:attachmentID` runtime-auth, opaque ID scoped to
   assistant + live `generation`. Body is raw bytes with `Content-Type`, `Content-Length`, `ETag`,
@@ -637,173 +776,19 @@ Reply language follows the user's latest substantive message and conversation co
   materialize (owned read) may still complete for the running turn.
 - Legacy data-URL migration: batch 20 / 50 MiB, write disk first, CAS-replace `part_json`; failure keeps old JSON.
 
-### Contact upload receipt and retirement HTTP contract
-
-This is a Yuri Host-owned contract, shared by all clients that connect to this Host;
-it does not add an OpenCode endpoint, a client store, a task scheduler or a polling loop.
-Native picker/policy wiring is a separate consumer and is not implemented here.
-
-**Capture authority before presenting a picker.** Reuse
-`GET /api/yuri/assistants/:assistantID/contact/messages?limit=1`, whose existing
-top-level `generation` is the authoritative contact transcript generation, including
-an empty transcript. A failed read is not generation zero. Clients must require a
-nonnegative JSON safe integer (not a string, boolean, array, null or fraction), capture
-it alongside the exact Host/lease, assistant and page operation, and retain that same
-value across selection, upload, receipt reconciliation and retirement. Runtime lease
-and contact generation fence different lifetimes. Do not refresh the generation to
-make an old picker intent pass. A reset after this GET is rejected by PUT CAS.
-
-| Operation | Request | Success |
-| --- | --- | --- |
-| Receipt-aware upload | `PUT …/contact/attachments/:uploadID?generation=G`, raw bytes, `Accept: application/vnd.yuri.contact-upload+json` | **201**, authoritative descriptor with numeric `generation: G` |
-| Exact receipt | `GET …/contact/attachments/uploads/:uploadID?generation=G` | **200** for `inflight`, `committed` or `retired`; **404** with `state: 'not_found'` for no row |
-| Exact retirement | `DELETE …/contact/attachments/uploads/:uploadID`, JSON `{ generation: G, descriptor: D_OR_NULL }` | **200**, durable `state: 'retired'` receipt plus retention fields |
-| Existing content download | `GET …/contact/attachments/:attachmentID` | **200** raw bytes; distinct from receipt JSON |
-
-All routes retain the existing Host authentication/allowed-origin boundary. Upload
-integrity headers remain `Content-Type`, `X-Content-SHA256`, `X-Content-Size` and optional
-`X-Attachment-Filename` (encodeURIComponent). Generation CAS is a **query parameter**
-on PUT/receipt GET and a **JSON number** on DELETE, not a new header or an ETag guess.
-The protocol marker uses the already allowed `Accept` header; no new CORS header is
-needed. The marker is recognized within comma-separated Accept values and parameters.
-Receipt-aware PUT without a generation is **400**, never a legacy fallback.
-Receipt-aware integrity headers must be single strings; size must be a positive canonical
-decimal within the byte cap, and any supplied encoded filename must decode to a valid name.
-Arrays/booleans, empty/noncanonical/unsafe sizes and invalid filenames fail validation
-before reserving an upload or consuming its body. Legacy header normalization is retained.
-
-Generation query values must be a single canonical decimal nonnegative safe integer
-(`0` or a nonzero digit followed by digits). Empty, duplicate/array/object, boolean,
-negative, fractional and unsafe values fail **400 `validation_error`**. DELETE requires
-a nonnegative safe integer JSON number and an explicit `descriptor` property; missing,
-string/boolean/array/null generations and unknown body fields are invalid. `descriptor`
-is either the complete authoritative descriptor (including generation and optional
-filename exactly as returned) or explicit null when the upload outcome is unknown.
-A provided descriptor must match **all** canonical fields; extra fields are rejected.
-It is a compare-and-swap assertion, never a hash-based selector. Clients must validate
-the descriptor's type/opaque ID/hash/MIME/filename/size and numeric generation; the
-server rebuilds descriptors only from committed ownership rows. Send accepts the
-new generation metadata after safe-integer validation, checks it against the row,
-and continues to accept old descriptors without that field.
-
-Receipt bodies have this shape (JSON numbers, descriptor null before commit):
-
-```json
-{
-  "assistantID": "assistant_a",
-  "uploadID": "upload_a",
-  "generation": 3,
-  "currentGeneration": 3,
-  "state": "committed",
-  "descriptor": {
-    "type": "file",
-    "attachmentID": "att_opaque",
-    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "size": 42,
-    "mime": "text/plain",
-    "filename": "note.txt",
-    "generation": 3
-  }
-}
-```
-
-- `generation` is the exact captured/requested generation of this upload;
-  `currentGeneration` is the current Host contact generation at read time. An old
-  generation's receipt remains readable for cleanup; it does **not** authorize a
-  new send. Receipt query for an existing upload of another generation is
-  **409 `contact_generation_conflict`**, not a different upload lookup.
-- `not_found` (**404**) returns the same envelope with null descriptor. It means no
-  ownership/reservation is currently visible; a delayed request can still arrive.
-  It is **not** a cancellation ACK. Failed reads remain errors, not `not_found`.
-- `inflight` (**200**) means a durable reservation exists without committed object
-  metadata. It may be executing, or may have survived a Host interruption; no timeout
-  or lease heuristic changes it to failure. The only follow-ups are GET reconciliation
-  or exact retirement, never automatic upload replay or descriptor construction.
-- `committed` (**200**) is an authoritative descriptor; a lost PUT ACK can be resolved
-  with GET alone. Adoption additionally requires the consumer's original Host, lease,
-  page operation and current contact generation. A late ACK cannot undo retirement.
-- `retired` (**200**) is a durable prohibition on committing this upload or using it
-  for a **new** admission. Descriptor is null if no object was committed, otherwise
-  it retains the committed descriptor for exact identity checks.
-
-Retirement additionally returns `newAdmissionAllowed: false`,
-`ownershipRetained: boolean` and `bytesDeleted: false`. `ownershipRetained` means an
-existing committed ownership row/object reference is retained; it is not a claim that
-a turn references it. Retirement does not physically delete the row or any bytes and
-does not claim disk cleanup. Original picker/provider files, session temporary files
-and shared content-addressed objects are never removed. Two uploadIDs with the same
-hash have independent ownership/retirement and can safely share the same object.
-
-DELETE is idempotent for the exact assistant/uploadID/generation and matching optional
-descriptor assertion. Explicit null can retire an unknown or already committed upload
-using the exact uploadID/generation; a supplied descriptor must match that upload.
-DELETE may retire a captured old generation after reset but rejects future generations.
-A retirement on a missing upload creates a tombstone **in the existing ownership table**;
-PUT can never overwrite it, even if DELETE won before PUT admission or during body/store.
-UploadIDs are unique per assistant for their entire retained lifetime, across generations;
-clients must not reuse a retired ID in another generation. Tombstones are not expired.
-
-Persistence uses the existing `(assistant_id, upload_id)` unique index and an additive,
-idempotent `retired_at INTEGER` migration in `ensureContactAttachmentSchema`; old rows
-remain committed with null retirement time. An empty `relative_path` is a reservation
-(retired_at null) or a pre-commit retirement fence (retired_at set), never an attachment
-descriptor. New reservations record expected integrity metadata before consuming bytes.
-Reservation, retirement and final publication each use `BEGIN IMMEDIATE`; final publication
-rechecks exact generation, row identity, MIME/hash/size and retirement. A definite failed
-handler removes only its own uncommitted, unretired reservation; object bytes are retained.
-A process interruption may leave inflight, which requires GET/retirement as above.
-No async/network/disk operation runs inside these SQLite transactions. Reads and writes
-use indexed exact lookups; there are no catalog scans or background cleanup jobs.
-
-New send admission rechecks ownership inside its existing transaction after all awaited
-preparation, so retirement cannot race between preparation and admission. Already-admitted
-turns keep owned reads/materialization (including after reset); same-messageID replay
-of an existing reference remains a receipt replay, not a second turn. Content download
-for retained objects remains available in the live generation, including retired uploads;
-reset still makes external old-generation content GET return 404. This preserves existing
-reference reads without granting retired descriptors to a new intent.
-
-Compatibility is explicit: old PUTs without the receipt-aware Accept marker may omit
-generation; they bind the current generation **at handler entry**, preserving existing
-Web/channel/Native clients. If any client supplies generation it is always checked,
-never ignored or coerced. This legacy form cannot fence a reset before request arrival;
-new clients **must** send both the receipt-aware marker and their captured generation.
-Clients must first require this exact receipt protocol on the selected Host: a receipt
-probe for their unique uploadID must return a validated envelope (including the explicit
-404 `not_found` envelope). An older Host's generic 404 or unsupported route is not this
-contract and must not trigger a fallback to legacy PUT. Native consumption of this probe
-and the picker-before-authority ordering remain separate integration work.
-Same committed uploadID + hash/size/MIME still returns the same descriptor; a duplicate
-while reserved returns **409 `attachment_upload_inflight`**, without another write.
-Existing body rejection still permits a later explicit legacy retry after its own failed
-reservation was removed. Older server binaries that ignore retirement must not share/open
-the migrated database; server downgrade is not a supported retirement-preserving path.
-
-Other errors use the existing `{ ok:false, error, message }` envelope:
-**400 `validation_error`** for malformed authority/CAS; **409 `contact_generation_conflict`**
-for stale/future or foreign-generation ownership; **409 `idempotency_conflict`** for content,
-MIME or descriptor identity mismatch; **409 `attachment_retired`** for PUT of a retired ID;
-**409 `attachment_upload_inflight`** for duplicate pending PUT. Existing authentication,
-assistant availability, byte-budget, integrity and storage errors retain their error codes.
-Receipt and retirement responses are `Cache-Control: private, no-store`.
-
-Focused evidence: `contact-attachments.receipt.test.js` uses temporary SQLite/files and
-real stream/storeBytes seams for reset-before/during, reservation/reopen, lost ACK,
-pre-commit DELETE, same-hash isolation, INSERT collision and failed-write rollback.
-`contact-attachments.routes.test.js` runs production Express routes/body middleware with
-in-memory IncomingMessage/ServerResponse (no listener, socket connection, Host or engine)
-and covers separate receipt/content routes, raw JSON upload, malformed authority/CAS,
-legacy compatibility, admitted-reference retention and retirement during admission await.
-These are not Native lifecycle, real transport/auth/CORS/Relay, device or load-test evidence.
-
-**Inter-assistant DM (read-only recipient reply)**
+**Inter-assistant DM (actionable delegation)**
 
 - `message_assistant` is the contact tool for natural language (给 PeerQA 说一声 / tell PeerQA). It calls in-process `deliverPeerMessage` and confirms delivery, not completion of the recipient reply. No card required. The user never types `/dm`.
 - `POST /:fromAssistantID/contact/dm` `{ toAssistantID, text, parts?, messageID? }` delivers into B’s contact transcript as `role: 'peer'` with `fromAssistantID` / `fromAssistantName`. Admission remains synchronous (HTTP 201) and queues exactly one asynchronous recipient turn using that message ID. Same ID + sender + recipient + canonical parts replays admission without another turn; conflicting reuse returns `idempotency_conflict`. No duplicate `user` row or second inbox is created.
-- Recipient replies reuse the composer contact-turn queue, captured assistant configuration, streaming bubbles, working status, cancellation, errors and completion notifications. The incoming text identifies the sender and is not direct user authorization. It does not cancel existing worker watches or background results. Replies appear in the recipient contact, not automatically back in the sender contact.
-- The recipient harness runs with `readOnly: true`: only the existing read-only lookup allowlist is exposed, with no coding runtime, progressive tool loader, mutations or `message_assistant`. The service delivery callback also rejects outgoing peer messages during this turn. No `session.prompt`, session/file/worktree mutation or automatic bot-to-bot reply chain is allowed.
+- Recipient replies reuse the composer contact-turn queue, captured assistant configuration, streaming bubbles, working status, cancellation, errors and completion notifications. Incoming text identifies the sender as current delegated work within existing user constraints, not a background result or a new platform authorization. Admission does not cancel existing worker watches or background results. Replies appear in the recipient contact, not automatically back in the sender contact.
+- The recipient harness runs with normal tools (`readOnly: false`), including the coding runtime, progressive loader, task/settings mutations, worker assignment and explicit peer messaging. The message source does not downgrade permissions; ordinary operation validations still apply. No worker prompt or return DM is sent automatically: the recipient Agent selects operations for the delegated goal. Read-only worker/scheduled-result reviews retain their separate lookup-only policy.
+- Every model request receives server-owned current-contact ID, name and actionable/review mode in turn context. Main prompt policy resolves the intended owner before choosing operations; tool schemas own invocation, ownership and admission/completion details. Tool descriptions state that recipients act without a second user trigger and that their tasks/results belong to their own contact. Historical peer text remains quoted evidence rather than fresh instructions.
 - Peer history is retained as attributed quoted context so a later user turn can understand the reply. Current peer input is excluded from history and supplied once as this turn's prompt; later-admitted peers respect the same ordinal ceiling as user rows.
 - Removed/disabled recipients and wiped inbox rows cancel queued peer turns; a reply arriving after its inbox row was wiped is discarded. Model failures preserve the delivered peer row and use normal live turn-error feedback, without claiming the recipient replied. Old persisted inbox rows are not automatically replayed on process restart; duplicate admission still does not schedule them again. No schema migration or historical-message backfill is required.
+- Service tests run the real Agent and SQLite for create-contact → message → recipient
+  load-tools → schedule → reference, asserting recipient-only ownership and card
+  publication without a user row/second trigger. External model replies and task
+  storage are fixtures; this is contract coverage, not live-model first-path accuracy.
 
 `GET /api/yuri/assistants/capability` remains the navigation gate.
 
@@ -869,7 +854,7 @@ Snapshots expose the latest 50 `historySessionIDs` in chronological order and `h
 
 `assistants` owns Assistant configuration, session bindings, and contact/share metadata in `assistants.sqlite`. OpenCode message bodies are read from upstream projections, not mirrored. Routes register before the generic OpenCode proxy.
 
-`GET /api/yuri/assistants/capability` returns `supported`, `enabled: true`, domain revision, relay-derived stable `serverInstanceID`, and explicit v2 gaps `sharingAvailable` (always `false`), `archiveMetadataAvailable` (true only when Host archive is injected), and `sessionMetadataAvailable` (always `false`). Assistants are always enabled. Startup atomically upgrades an old disabled instance flag. After schema migration, a separate atomic normalization restores disabled live contacts, incrementing their individual revisions and one domain revision while retaining settings, bindings and transcripts. Reopening is idempotent; failed normalization rolls back. The legacy `PUT /api/yuri/assistants/settings` validates `expectedRevision` but returns `enabled: true` without a mutation. Legacy create/PATCH `enabled` inputs are accepted but ignored, and DTOs retain `enabled:true` for installed clients. No individual disable setting or runtime admission/background-review gate remains. CRUD and snapshots live under `/api/yuri/assistants`. Session routes are `POST /:id/session/ensure`, `/:id/session/new`, and `/:id/session/compact`; composer sends use `POST /:id/messages` (contact harness, not `session.prompt`); contact history is `GET /:id/contact/messages` (full transcript, including rows before a clear-memory boundary); contact reset wipe is `POST /:id/contact/reset`; shared contact read watermark is `POST /:id/contact/read`; session cards are `POST /:id/contact/cards`; read-only inter-assistant DMs are `POST /:fromID/contact/dm`; assistant-owned scheduled tasks are `GET /:id/scheduled-tasks`. Shares still use `POST /:id/share` and `GET /share-operations/:operationID`.
+`GET /api/yuri/assistants/capability` returns `supported`, `enabled: true`, domain revision, relay-derived stable `serverInstanceID`, and explicit v2 gaps `sharingAvailable` (always `false`), `archiveMetadataAvailable` (true only when Host archive is injected), and `sessionMetadataAvailable` (always `false`). Assistants are always enabled. Startup atomically upgrades an old disabled instance flag. After schema migration, a separate atomic normalization restores disabled live contacts, incrementing their individual revisions and one domain revision while retaining settings, bindings and transcripts. Reopening is idempotent; failed normalization rolls back. The legacy `PUT /api/yuri/assistants/settings` validates `expectedRevision` but returns `enabled: true` without a mutation. Legacy create/PATCH `enabled` inputs are accepted but ignored, and DTOs retain `enabled:true` for installed clients. No individual disable setting or runtime admission/background-review gate remains. CRUD and snapshots live under `/api/yuri/assistants`. Session routes are `POST /:id/session/ensure`, `/:id/session/new`, and `/:id/session/compact`; composer sends use `POST /:id/messages` (contact harness, not `session.prompt`); contact history is `GET /:id/contact/messages` (full transcript, including rows before a clear-memory boundary); contact reset wipe is `POST /:id/contact/reset`; shared contact read watermark is `POST /:id/contact/read`; session cards are `POST /:id/contact/cards`; actionable inter-assistant DMs are `POST /:fromID/contact/dm`; assistant-owned scheduled tasks are `GET /:id/scheduled-tasks`. Shares still use `POST /:id/share` and `GET /share-operations/:operationID`.
 
 Both HTTP snapshot aliases call `ensureDefaultAssistant` before reading. A never-used catalog automatically gets one enabled `Yuri` contact in its managed workspace, with no OpenCode session or model call. It uses the configured default model/variant if connected, otherwise the first connected catalog model. No configured models leaves the catalog empty until a later read after provider setup; catalog/preferences failures reject the read and remain retryable. Same-process initialization is single-flight, and the SQLite write transaction rechecks all rows (including tombstones) so multiple clients/processes cannot seed duplicates or resurrect an explicitly deleted last contact. Existing catalogs bypass model reads entirely. The preference dependency also supplies `defaultModel`/`defaultVariant` for seeding; only favorites/recents enter contact prompts.
 
@@ -884,7 +869,6 @@ Both HTTP snapshot aliases call `ensureDefaultAssistant` before reading. A never
 - **Successful `new_conversation` / `clear_chat_history`:** mid-turn spoken/card publishes for that turn are discarded. `persistContactAssistantReply({ reset:true })` deletes this turn's `role=assistant` rows by `assistantID+turnID` (parts first; same delete pattern as contact-store, **not** `deleteContactMessages`) inside the existing write transaction, then inserts the single confirm bubble and bumps revision. Clearing user, queued users, peers, older turns, watches, generation, context boundary, and read watermark stay. Late bubble/card publish after reset success is ignored; `spokenByIndex` and `assignedCards` clear. Failure keeps prior error semantics.
 - **`stop_session` abort race:** before `session.interrupt`, the service registers a private per-`sessionID` inflight map (shared promise + observed terminal). Concurrent stop calls on the same worker share that promise. While inflight, `reportAssignedSession` only stashes terminals (`cancelled` > `error` > `complete`) and delays watch writes / continuations. Abort success (including silent no-SSE): release map, `cancelAssignedResumes({ sessionID })`, then `reportAssignedSession(cancelled, resume=false)`. Abort throw / 404 / error / `data:false` / signal failure: release map, replay one observed terminal through the normal reporter when present (else watch unchanged), return the real tool failure. `close()` clears the map; late events stay cancelled-idempotent.
 - In-process tests use `whenContactTurnSettled(messageID)` (not part of the HTTP JSON body).
-- The notification callback preserves the real `turnID`. The owning notification runtime now emits a separate content-free `yuri:notification-admitted` Assistant proof (`assistantID`, `turnID`, terminal `status`, `publication:'published'`) at `sendContactTurnNotification`, gated by `notifyOnAssistants`. Silent review still returns before `notifyContactTurn`; it may emit the same raw complete end but never this proof. Published card-only replies/errors do not require the client to have seen a text bubble. Existing contact SSE, notification bodies and channel policies are unchanged; proof carries no body/name/error text or credentials. See `notifications/DOCUMENTATION.md` and the NSH integration document for consumers and pending root/native wiring.
 - Completions: public `POST /llm/chat/completions` still rejects `stream:true`. In-process contact harness passes `onTextDelta` + `globalEventHub` through `boundCompletion` → `createChatCompletion` → throwaway generate for real tokens only.
 
 Composer messages carry a client message ID. The service accepts the existing OpenCode delivery parts (`{ type: 'text' }` and `{ type: 'file', mime, url, filename? }` data URLs — not a second attachment store), extracts text (`[attachment]` when the send is file-only), admits the user at 202, then runs the contact harness asynchronously (`runContactTurn` / pi-agent-core, thinking off, pi `read` / `write` / `edit` / `bash` in the assistant workspace, Yuri tools `new_conversation` / `clear_chat_history` / `list_projects` / `list_sessions` / `get_assistant_settings` / `update_assistant_settings` / `create_assistant` / `schedule_task` / `message_assistant` / `assign_session`, merged `.agents`/`.claude` skills, plus the registered-projects catalog each turn) through the Yuri completions gateway (public HTTP non-streaming; in-process `onTextDelta` for contact SSE). Assistant bubbles and tool cards persist when they publish (bubble `done:true` / card insert) and turn end upserts any remainder. File parts survive `GET /:id/contact/messages`. The harness forwards those file parts to the completions gateway. Image data URLs reach `session.prompt` only when the connected catalog marks the model as vision-capable; otherwise generate keeps the `[image: …]` description and text-file bytes so a non-vision model cannot stall the contact turn. Gateway 502 responses include `{ error, message }` so the composer can show the OpenCode error string. OpenCode `session.prompt` is not the contact conversation engine; assign uses it only on the **worker** session. Share and queued delivery still use it on Assistant bindings. OpenCode `204` is an admitted empty response. A 404 restores one generation-scoped binding before retrying. Ambiguous network errors preserve the client message ID without another send. Every committed Assistant revision publishes `yuri:assistants-changed` only after its SQLite transaction completes; clients use the tip to reload the authoritative snapshot after worker-driven stateless binding changes. `POST /:id/session/abort` requires the same `{ sessionID, sessionGeneration }`, returns the binding and `aborted: true`, reports a changed binding as `revision_conflict`, and preserves upstream missing-session `not_found` semantics.

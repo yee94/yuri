@@ -2,7 +2,11 @@ import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { subscribeYuriEvents } from '@/lib/yuriEvents';
 import { invalidateSettingsCache, waitForPendingSettingsUpdates } from '@/lib/persistence';
 import { getRuntimeGeneration, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
-import { refreshProjectOrderSnapshot } from '@/queries/projectOrderQueries';
+import { refreshProjectOrderSnapshot, waitForPendingHubProjectLayoutUpdates } from '@/queries/projectOrderQueries';
+import { settingsBootstrapQueryOptions } from '@/queries/settingsBootstrapQueries';
+import type { SettingsBootstrap } from '@/queries/settingsBootstrapDto';
+import { queryClient } from '@/lib/queryRuntime';
+import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 
@@ -28,6 +32,7 @@ export function mountProjectOrderSync(): () => void {
         const current = () => !disposed && run === runId && generation === getRuntimeGeneration()
           && transport === getRuntimeTransportIdentity();
         await waitForPendingSettingsUpdates(transport);
+        await waitForPendingHubProjectLayoutUpdates(transport);
         if (!current()) continue;
         const projects = useProjectsStore.getState().projects;
         const sortOrder = useSessionDisplayStore.getState().projectSortOrder;
@@ -40,6 +45,14 @@ export function mountProjectOrderSync(): () => void {
             continue;
           }
           const activeProjectId = useProjectsStore.getState().activeProjectId;
+          if (typeof snapshot.hasRemoteProjects === 'boolean') {
+            queryClient.setQueryData<SettingsBootstrap>(settingsBootstrapQueryOptions(transport).queryKey, (previous) => ({
+              schemaVersion: 1, ...previous, hasRemoteProjects: snapshot.hasRemoteProjects,
+            }));
+            if (supportsRemoteProjects() && (snapshot.hasRemoteProjects || projects.some((project) => project.hostId))) {
+              void queryClient.invalidateQueries({ queryKey: [transport, 'remote-projects', 'catalog'], exact: true });
+            }
+          }
           // A remote edit invalidates the save deduplicator's old baseline too.
           invalidateSettingsCache(transport);
           useProjectsStore.getState().synchronizeFromSettings({

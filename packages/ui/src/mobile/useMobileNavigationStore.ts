@@ -4,6 +4,7 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { getSelectedAssistantID, useAssistantUIStore } from '@/stores/useAssistantUIStore';
 import { isCapacitorApp, isIPadApp } from '@/lib/platform';
 import { normalizePath } from '@/lib/pathNormalization';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 
 import {
   INITIAL_MOBILE_NAVIGATION_STATE,
@@ -48,6 +49,7 @@ type MobileNavigationStore = MobileNavigationState & {
    * Opens a root session route and synchronizes the primary session selection.
    */
   openSession: (target: OpenSessionTarget) => void;
+  openRemoteProject: () => void;
   /** Push a nested session while preserving only lightweight route metadata. */
   pushSession: (target: OpenSessionTarget) => void;
   /** Pop one chat route and synchronize the primary session selection. */
@@ -165,6 +167,7 @@ export const useMobileNavigationStore = create<MobileNavigationStore>((set, get)
     return returnTo;
   },
   openSession: (target) => {
+    useSessionNavigationStore.getState().clearRemoteSession();
     const state = get();
     const assistantID = state.secondary?.kind === 'assistant' ? getSelectedAssistantID() : null;
     const returnTo = assistantID ? { tab: state.activeTab, assistantID }
@@ -177,6 +180,10 @@ export const useMobileNavigationStore = create<MobileNavigationStore>((set, get)
       },
     });
     mirrorCurrentSession(target);
+  },
+  openRemoteProject: () => {
+    resetMobileSessionMirror();
+    set({ secondary: { kind: 'draft' }, settingsReturnTo: null });
   },
   pushSession: (target) => {
     set((state) => {
@@ -243,6 +250,7 @@ export const useMobileNavigationStore = create<MobileNavigationStore>((set, get)
       : state
   )),
   openDraft: (options) => {
+    useSessionNavigationStore.getState().clearRemoteSession();
     resetMobileSessionMirror();
     useSessionUIStore.getState().openNewSessionDraft(options);
     set({ secondary: { kind: 'draft' } });
@@ -276,6 +284,7 @@ export const useMobileNavigationStore = create<MobileNavigationStore>((set, get)
     return { secondary: { kind: 'assistant' } };
   }),
   closeSecondary: () => {
+    useSessionNavigationStore.getState().clearRemoteSession();
     resetMobileSessionMirror();
     const secondary = get().secondary;
     if (secondary?.kind === 'chat' && secondary.returnTo) {
@@ -286,6 +295,7 @@ export const useMobileNavigationStore = create<MobileNavigationStore>((set, get)
     set((state) => (state.secondary ? { ...state, secondary: null } : state));
   },
   reset: () => {
+    useSessionNavigationStore.getState().clearRemoteSession();
     resetMobileSessionMirror();
     set({ ...INITIAL_MOBILE_NAVIGATION_STATE });
   },

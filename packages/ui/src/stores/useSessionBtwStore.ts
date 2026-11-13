@@ -3,6 +3,8 @@ import { opencodeClient } from '@/lib/opencode/client';
 import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useSelectionStore } from '@/sync/selection-store';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { locationSessionKey } from '@/lib/remote-projects/location';
 import {
   getRuntimeGeneration,
   getRuntimeTransportIdentity,
@@ -28,6 +30,7 @@ const MAX_SESSION_BTW_PROMPT_TURNS = 12;
 const MAX_SESSION_BTW_QUOTES = 10;
 
 export type SessionBtwScope = {
+  host?: HostRuntimeEntry;
   sessionId: string;
   directory?: string | null;
 };
@@ -66,6 +69,7 @@ export const EMPTY_SESSION_BTW_ENTRY: SessionBtwEntry = Object.freeze({
 
 export const getSessionBtwKey = (scope: SessionBtwScope): string => {
   const sessionId = typeof scope.sessionId === 'string' ? scope.sessionId.trim() : '';
+  if (scope.host) return `${getRuntimeTransportIdentity()}\u0000${locationSessionKey(scope.host.location, sessionId)}`;
   const directory = normalizeDirectoryKey(scope.directory);
   return `${getRuntimeTransportIdentity()}\u0000${directory}\u0000${sessionId}`;
 };
@@ -193,7 +197,7 @@ const patchTurn = (key: string, turnId: string, patch: Partial<SessionBtwTurn>):
 const quoteBlock = (quote: string): string =>
   quote.split('\n').map((line) => `> ${line}`).join('\n');
 
-const formatUserTurn = (turn: Pick<SessionBtwTurn, 'question' | 'quotes'>): string =>
+export const formatSessionBtwUserTurn = (turn: Pick<SessionBtwTurn, 'question' | 'quotes'>): string =>
   turn.quotes.length === 0
     ? turn.question
     : ['Quoted from the conversation:', ...turn.quotes.map(quoteBlock), turn.question].join('\n\n');
@@ -202,16 +206,16 @@ const buildBtwPrompt = (history: readonly SessionBtwTurn[], current: Pick<Sessio
   const earlier = history
     .filter((turn) => turn.answer)
     .slice(-MAX_SESSION_BTW_PROMPT_TURNS);
-  if (earlier.length === 0) return [SESSION_BTW_INSTRUCTIONS, formatUserTurn(current)].join('\n\n');
+  if (earlier.length === 0) return [SESSION_BTW_INSTRUCTIONS, formatSessionBtwUserTurn(current)].join('\n\n');
   const transcript = earlier
-    .map((turn) => `User: ${formatUserTurn(turn)}\n\nAssistant: ${turn.answer}`)
+    .map((turn) => `User: ${formatSessionBtwUserTurn(turn)}\n\nAssistant: ${turn.answer}`)
     .join('\n\n');
   return [
     SESSION_BTW_INSTRUCTIONS,
     'Earlier in this side conversation:',
     transcript,
     'Follow-up question:',
-    formatUserTurn(current),
+    formatSessionBtwUserTurn(current),
   ].join('\n\n');
 };
 
@@ -223,11 +227,12 @@ const commitOwned = (
   key: string,
   turnId: string,
   controller: AbortController,
-  runtime: { epoch: number; transport: string; generation: number },
+  runtime: { epoch: number; transport: string; generation: number; host?: HostRuntimeEntry },
   patch: Partial<SessionBtwTurn>,
 ): void => {
   if (!ownsRequest(key, controller)) return;
   if (btwRuntimeGeneration !== runtime.epoch) return;
+  try { runtime.host?.sdk(); } catch { patchTurn(key, turnId, { pending: false }); return; }
   if (getRuntimeTransportIdentity() !== runtime.transport || getRuntimeGeneration() !== runtime.generation) {
     // Still own the slot on a stale transport: clear stuck pending, drop payload.
     patchTurn(key, turnId, { pending: false });
@@ -236,13 +241,13 @@ const commitOwned = (
   patchTurn(key, turnId, patch);
 };
 
-const normalizeScope = (scope: SessionBtwScope): { sessionId: string; directory: string | null } | null => {
+const normalizeScope = (scope: SessionBtwScope): (SessionBtwScope & { directory: string | null }) | null => {
   const sessionId = typeof scope.sessionId === 'string' ? scope.sessionId.trim() : '';
   if (!sessionId) return null;
   const directory = typeof scope.directory === 'string' && scope.directory.trim()
     ? scope.directory
     : scope.directory ?? null;
-  return { sessionId, directory };
+  return { sessionId, directory: scope.host?.location.directory ?? directory, ...(scope.host ? { host: scope.host } : {}) };
 };
 
 /** Settle a superseded pending turn so it shows as cancelled, not stuck. */
@@ -259,14 +264,15 @@ export const resolveSessionBtwSendSelection = (scope: SessionBtwScope): SessionB
   const key = getSessionBtwKey(target);
   const stored = useSessionBtwStore.getState().sendSelection[key];
   if (stored?.providerID && stored?.modelID) return stored;
-  const remembered = useSelectionStore.getState().getSessionModelSelection(target.sessionId);
+  const remembered = useSelectionStore.getState().getSessionModelSelection(target.sessionId, target.host?.location);
   if (remembered) {
     return {
       providerID: remembered.providerId,
       modelID: remembered.modelId,
-      agent: useSelectionStore.getState().getSessionAgentSelection(target.sessionId) ?? undefined,
+      agent: useSelectionStore.getState().getSessionAgentSelection(target.sessionId, target.host?.location) ?? undefined,
     };
   }
+  if (target.host) return null;
   const config = useConfigStore.getState();
   if (config.currentProviderId && config.currentModelId) {
     return {
@@ -279,13 +285,13 @@ export const resolveSessionBtwSendSelection = (scope: SessionBtwScope): SessionB
   return null;
 };
 
-const applyBtwSendSelection = async (scope: { sessionId: string; directory: string | null }): Promise<void> => {
-  const selection = resolveSessionBtwSendSelection({ sessionId: scope.sessionId, directory: scope.directory });
+const applyBtwSendSelection = async (scope: SessionBtwScope & { directory: string | null }): Promise<void> => {
+  const selection = resolveSessionBtwSendSelection(scope);
   if (!selection) return;
   const variant = typeof selection.variant === 'string' && selection.variant.trim()
     ? selection.variant.trim()
     : undefined;
-  await opencodeClient.applySendSelection(scope.sessionId, {
+  await (scope.host ? scope.host.service() : opencodeClient).applySendSelection(scope.sessionId, {
     model: {
       providerID: selection.providerID,
       id: selection.modelID,
@@ -302,20 +308,21 @@ const setSendSelection = (scope: SessionBtwScope, selection: SessionBtwSendSelec
   useSessionBtwStore.setState((state) => ({
     sendSelection: { ...state.sendSelection, [key]: selection },
   }));
-  useSelectionStore.getState().saveSessionModelSelection(target.sessionId, selection.providerID, selection.modelID);
+  useSelectionStore.getState().saveSessionModelSelection(target.sessionId, selection.providerID, selection.modelID, target.host?.location);
   if (selection.agent) {
-    useSelectionStore.getState().saveSessionAgentSelection(target.sessionId, selection.agent);
+    useSelectionStore.getState().saveSessionAgentSelection(target.sessionId, selection.agent, target.host?.location);
   }
 };
 
 const runTurn = async (
-  scope: { sessionId: string; directory: string | null },
+  scope: SessionBtwScope & { directory: string | null },
   key: string,
   current: Pick<SessionBtwTurn, 'id' | 'question' | 'quotes'>,
   history: readonly SessionBtwTurn[],
 ): Promise<void> => {
   const turnId = current.id;
   const runtime = {
+    host: scope.host,
     epoch: btwRuntimeGeneration,
     transport: getRuntimeTransportIdentity(),
     generation: getRuntimeGeneration(),
@@ -328,7 +335,7 @@ const runTurn = async (
     await applyBtwSendSelection(scope);
     if (!ownsRequest(key, controller)) return;
 
-    const result = await opencodeClient.generateSessionAside({
+    const result = await (scope.host ? scope.host.service() : opencodeClient).generateSessionAside({
       sessionId: scope.sessionId,
       directory: scope.directory,
       prompt: buildBtwPrompt(history, current),

@@ -119,9 +119,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
           title: "typography-ui-label !font-medium !text-foreground",
           description: "typography-meta !text-muted-foreground !mt-0",
           actionButton:
-            "!ms-0 !me-0 !shrink-0 !rounded-[var(--radius-md)] !bg-[var(--yuri-toast-action-background,var(--surface-muted))] !text-[var(--yuri-toast-action-foreground,var(--foreground))] hover:!opacity-85 !px-2 !py-1 typography-meta !font-medium transition-opacity",
+            "!ms-0 !me-0 !shrink-0 !rounded-[var(--radius-md)] !text-[var(--yuri-toast-action-foreground,var(--foreground))] !px-2 !py-1 typography-meta !font-medium transition-colors",
           cancelButton:
-            "!ms-0 !me-0 !shrink-0 !rounded-[var(--radius-md)] !bg-[var(--yuri-toast-cancel-background,var(--interactive-hover))] !text-[var(--yuri-toast-cancel-foreground,var(--foreground))] hover:!bg-[var(--interactive-active)] !px-2 !py-1 typography-meta !font-medium transition-colors",
+            "!ms-0 !me-0 !shrink-0 !rounded-[var(--radius-md)] !text-[var(--yuri-toast-cancel-foreground,var(--foreground))] !px-2 !py-1 typography-meta !font-medium transition-colors",
           closeButton:
             "!rounded-[var(--radius-md)] !bg-[var(--interactive-hover)] !text-foreground hover:!bg-[var(--interactive-active)]",
           icon: "!shrink-0 !text-[var(--yuri-toast-status-color,var(--muted-foreground))]",

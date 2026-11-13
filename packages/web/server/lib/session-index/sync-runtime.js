@@ -81,6 +81,7 @@ export const createSessionIndexSyncRuntime = ({
    */
   projectSessions = null,
   fetchFn = globalThis.fetch,
+  createFetchBatch = null,
   resolveDirectory = (value) => value,
   isDirectoryMissing = null,
   now = Date.now,
@@ -95,6 +96,7 @@ export const createSessionIndexSyncRuntime = ({
   let enrichingChildFlags = false;
   let currentController = null;
   let currentWasPreempted = false;
+  let batchFetch = null;
   let interactiveUntil = 0;
   let runtimeKey = sessionIndexService.getRuntimeKey();
   const queue = [];
@@ -207,6 +209,7 @@ export const createSessionIndexSyncRuntime = ({
       let hitPageBudget = false;
       let lastCursorToken = null;
       let seenCursor = new Set();
+      batchFetch ??= createFetchBatch?.() ?? fetchFn;
 
       while (collected.length < SESSION_LIMIT * 3 && pages < ARCHIVE_SKIP_PAGE_BUDGET) {
         const url = new URL(buildOpenCodeUrl('/session'));
@@ -216,7 +219,7 @@ export const createSessionIndexSyncRuntime = ({
           url.searchParams.set('cursor', cursorToken);
         }
 
-        const response = await fetchFn(url, {
+        const response = await (batchFetch ?? fetchFn)(url, {
           method: 'GET',
           headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
           signal: controller.signal,
@@ -458,6 +461,7 @@ export const createSessionIndexSyncRuntime = ({
   const run = async () => {
     if (running || enrichingChildFlags || stopped) return;
     running = true;
+    batchFetch ??= createFetchBatch?.() ?? fetchFn;
     notify();
     try {
       const ready = await waitForOpenCodeReady?.(15_000);
@@ -510,6 +514,7 @@ export const createSessionIndexSyncRuntime = ({
       console.warn('[SessionIndex] Background sync could not reach OpenCode:', error);
     } finally {
       running = false;
+      batchFetch = null;
       if (!stopped) {
         notify();
         void runChildFlagEnrichment();
@@ -521,6 +526,7 @@ export const createSessionIndexSyncRuntime = ({
     if (stopped) return snapshot();
     const nextRuntimeKey = sessionIndexService.getRuntimeKey();
     if (nextRuntimeKey !== runtimeKey) {
+      batchFetch = null;
       runtimeKey = nextRuntimeKey;
       currentWasPreempted = true;
       currentController?.abort();
@@ -564,6 +570,7 @@ export const createSessionIndexSyncRuntime = ({
   };
 
   const noteInteractiveRequest = () => {
+    batchFetch = null;
     interactiveUntil = Math.max(interactiveUntil, now() + INTERACTIVE_YIELD_MS);
     if (currentController) {
       currentWasPreempted = true;
@@ -573,6 +580,7 @@ export const createSessionIndexSyncRuntime = ({
 
   const publishChange = () => {
     if (stopped) return;
+    batchFetch = null;
     notify(true, 'change');
   };
 
@@ -598,6 +606,7 @@ export const createSessionIndexSyncRuntime = ({
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    batchFetch = null;
     currentController?.abort();
     const interruptedDirectories = [...queuedDirectories];
     queue.length = 0;

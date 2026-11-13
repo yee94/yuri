@@ -21,7 +21,7 @@ describe('Assistant UI product contract', () => {
       read('../session/SessionSidebar.tsx'),
       read('../../apps/MobileApp.tsx'),
     ]);
-    const sidebarMenu = sidebar.slice(sidebar.indexOf('const topContent ='), sidebar.indexOf('const isInlineEditing'));
+    const sidebarMenu = sidebar.slice(sidebar.indexOf('const sidebarActionButtons ='), sidebar.indexOf('const topContent ='));
     expect(sidebarMenu.indexOf('sessions.sidebar.header.actions.newSession')).toBeLessThan(sidebarMenu.indexOf('sessions.sidebar.header.actions.scheduledTasks'));
     expect(sidebarMenu.indexOf('sessions.sidebar.header.actions.scheduledTasks')).toBeLessThan(sidebarMenu.indexOf('t("assistants.title")'));
     // Product entry only appears when the host supports Assistants and the global switch is on.
@@ -149,11 +149,11 @@ describe('Assistant UI product contract', () => {
     expect(navigation.indexOf('selectAssistant(assistantID)')).toBeLessThan(navigation.indexOf("set({ secondary: { kind: 'assistant' } })"));
     expect(view).toContain('onMobileBack?: () => void');
     expect(view).toContain('<MobileDetailNavigation');
-    expect(view).toContain("actions={assistant ? [{ icon: 'settings-3'");
+    expect(view).toContain('<AssistantHeaderIdentity assistant={assistant} onClick={openSettings}');
     expect(view).toContain("t('assistants.conversation.openSettings')");
     expect(view).toContain('variant="ghost"');
-    expect(view).toContain('size="icon"');
-    expect(view).toContain('<Icon name="settings-3"');
+    expect(view).toContain('yuri-assistant-header-identity');
+    expect(view).not.toContain('<Icon name="settings-3"');
     expect(view).toContain('overlay');
     expect(view).not.toContain('<MobileOverlayPanel');
     expect(view).not.toContain('mobileSelectorOpen');
@@ -379,7 +379,8 @@ describe('Assistant UI product contract', () => {
     expect(conversation).toContain("t('assistants.contact.processing')");
     expect(conversation).toContain('data-assistant-contact-run-start');
     expect(conversation).toContain('sameAssistantRun');
-    expect(conversation).toContain('showAvatar');
+    expect(conversation).toContain('data-assistant-contact-group');
+    expect(conversation).toContain('data-assistant-contact-avatar-rail');
     expect(conversation).not.toContain('data-assistant-contact-streaming-caret');
     expect(conversation).toContain('data-assistant-contact-status-slot');
     expect(conversation).toContain('animate-pulse');
@@ -445,7 +446,7 @@ describe('Assistant UI product contract', () => {
     expect(card).toContain('CONTACT_SESSION_CARD_COVER_CLASS');
     expect(await read('contactCardChrome.ts')).toContain('h-[calc(148px*var(--padding-scale,1))] w-[19rem] min-w-0 max-w-full');
     expect(await read('contactCardChrome.ts')).toContain('grid-rows-[calc(40px*var(--padding-scale,1))_calc(20px*var(--padding-scale,1))_calc(20px*var(--padding-scale,1))_calc(48px*var(--padding-scale,1))]');
-    expect(await read('contactCardChrome.ts')).toContain('rounded-[1.35rem]');
+    expect(await read('contactCardChrome.ts')).toContain('rounded-[var(--contact-bubble-radius,1.125rem)]');
     expect(await read('contactCardChrome.ts')).not.toContain('ring-[var(--surface-subtle)]');
     expect(card).toContain('readSessionChangeSummary');
     expect(card).toContain('directoryName(directory)');
@@ -570,8 +571,9 @@ describe('Assistant UI product contract', () => {
     expect(promptComposer.indexOf('data-composer-input-shell="true"')).toBeLessThan(
       promptComposer.indexOf('data-composer-inline-send="true"'),
     );
-    expect(promptComposer).toContain('const contentHeight = inline ? Math.max(textarea.scrollHeight, 48) : textarea.scrollHeight;');
-    expect(promptComposer).toContain('const nextInlineGrown = nextHeight > 48;');
+    expect(promptComposer).toContain('Number.parseFloat(textareaStyle.lineHeight)');
+    expect(promptComposer).not.toContain('Math.max(textarea.scrollHeight, 48)');
+    expect(promptComposer).not.toContain('const nextInlineGrown = nextHeight > 48;');
     expect(promptComposer).toContain("'field-sizing-fixed min-h-12 max-h-32 px-3 py-3 leading-6'");
     expect(promptComposer).toContain("textarea.style.height = inline ? '0px' : 'auto'");
     expect(promptComposer).toContain("fillContainer={inline ? false : textareaProps?.fillContainer}");
@@ -634,7 +636,7 @@ describe('Assistant UI product contract', () => {
     expect(queries).toContain('/contact/cards');
     expect(queries).toContain('/contact/dm');
     expect(queries).toContain('CONTACT_SEND_TIMEOUT_MS = 15_000');
-    expect(documentation).toContain('Contact turn SSE streams real bubble deltas');
+    expect(documentation).toContain('Real contact SSE deltas populate per-Assistant previews');
     expect(documentation).not.toContain('The LLM gateway is still non-streaming.');
   });
 
@@ -745,7 +747,9 @@ describe('Assistant UI product contract', () => {
     expect(chatMessage).toContain('sessionSurface.onRevertMessage');
     expect(chatMessage).toContain('directory: sessionSurface.directory ?? undefined');
     expect(timeline).toContain('sessionID?: string;');
-    expect(timeline).toContain('useSessionMessageRecords(currentSessionId ?? \'\', directory)');
+    expect(timeline).toContain("useSessionMessageRecords(remote ? '' : currentSessionId ?? '', remote ? localDirectory : directory)");
+    expect(timeline).toContain('const currentSessionId = sessionID;');
+    expect(timeline).toContain('const messages = remoteMessages ?? localMessages;');
     expect(timeline).toContain('if (onRevertMessage) await onRevertMessage(messageId)');
     expect(timeline).toContain('revertToMessage(currentSessionId, messageId, { directory })');
     expect(timeline).toContain('getTimelineActionAvailability(sessionSurface.capabilities)');
@@ -759,23 +763,26 @@ describe('Assistant UI product contract', () => {
     expect(conversation).not.toContain('<ChatContainer');
     expect(conversation).not.toContain('chat-content-max-width');
     expect(conversation).not.toContain('inputClassName=');
-    expect(conversation).toContain("bg-[var(--primary-base)]/90 text-[var(--primary-foreground)]");
-    expect(conversation).toContain('typography-markdown leading-6');
-    expect(conversation).toContain("imageOnly ? 'p-0' : 'px-4 py-2.5'");
+    expect(conversation).not.toContain("bg-[var(--primary-base)]/90 text-[var(--primary-foreground)]");
+    const bubbleStyle = await read('contact-message-bubble.css');
+    expect(conversation).toContain('<ContactMessageBubble');
+    expect(bubbleStyle).toContain('--contact-column-width: 45.5rem');
+    expect(bubbleStyle).toContain('max-width: var(--contact-column-width)');
+    expect(bubbleStyle).toContain('--contact-bubble-fill: var(--surface-muted)');
     expect(conversation).toContain('const imageOnly = useMarkdown &&');
     expect(conversation).not.toContain('px-4 py-2.5 typography-ui leading-6');
-    expect(conversation).toContain('border border-dashed border-border/50 bg-[var(--surface-muted)]/70');
     expect(conversation).not.toContain('rounded-tl-lg');
-    expect(conversation).toContain("startsTurn ? 'mt-6 first:mt-0' : sameAssistantRun ? 'mt-1.5' : 'mt-3'");
+    expect(conversation).toContain("joinedBefore ? 'mt-2' : 'mt-4 first:mt-0'");
     expect(conversation).toContain("max-w-[min(82%,30rem)] items-end");
     expect(conversation).toContain('data-assistant-contact-empty');
     expect(conversation).not.toContain("'bg-[var(--surface-elevated)] text-foreground'");
-    expect(view).toContain('bg-[var(--surface-elevated)]');
-    expect(view).toContain('border-border/50');
-    expect(view).toContain('border-l border-[var(--surface-subtle)]');
-    expect(view).toContain('flex h-16');
+    expect(view).toContain('bg-interactive-selection text-interactive-selection-foreground');
+    expect(view).toContain('yuri-assistant-catalog-panel');
+    expect(view).toContain('yuri-assistant-conversation-header');
+    expect(view).not.toContain('border-l border-[var(--surface-subtle)]');
+    expect(view).toContain('yuri-assistant-header-identity');
     expect(view).toContain('focus-visible:ring-[var(--interactive-focus-ring)]');
-    expect(view).toContain('border-border');
+    expect(view).toContain('border-transparent');
     expect(view).not.toContain('bg-sidebar');
     expect(view).not.toContain('w-56');
     expect(/\b(?:bg|text|border)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}\b/.test(`${view}\n${conversation}`)).toBe(false);
@@ -864,10 +871,9 @@ describe('Assistant UI product contract', () => {
   test('shows retry for an empty stale snapshot and truncates long assistant names in conversation chrome', async () => {
     const view = await read('AssistantView.tsx');
     expect(view).toContain("snapshotQuery.isError ? t('assistants.state.staleSnapshot')");
-    expect(view).toContain('truncate typography-ui-label font-semibold leading-5 tracking-[-0.01em]');
-    expect(view).toContain('<AssistantContactStatus');
-    expect(view).toContain('lastContactAt={assistant.latestMessagePreview?.createdAt}');
-    expect(view).toContain('presentation.displayName || assistant.name');
+    expect(view).toContain('yuri-assistant-header-name truncate typography-ui-label font-medium');
+    expect(view).not.toContain('<AssistantContactStatus');
+    expect(view).toContain('getAssistantPresentation(assistant.name).displayName || assistant.name');
   });
 
   test('persists contact history, session cards, and peer DMs outside ChatContainer', async () => {

@@ -187,10 +187,12 @@ class YuriBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(YuriMediaPlugin())
         bridge?.registerPluginInstance(YuriViewExportPlugin())
         bridge?.registerPluginInstance(YuriVideoPlugin())
+        bridge?.registerPluginInstance(YuriGuiNetworkPlugin())
         bridge?.registerPluginInstance(YuriPhysicalScalePlugin())
         bridge?.registerPluginInstance(YuriComposerPlugin())
         bridge?.registerPluginInstance(YuriTabBarPlugin())
         bridge?.registerPluginInstance(YuriLiveActivityPlugin())
+        bridge?.registerPluginInstance(YuriNativeHeaderPlugin())
         let sharePlugin = YuriSharePlugin()
         self.sharePlugin = sharePlugin
         bridge?.registerPluginInstance(sharePlugin)

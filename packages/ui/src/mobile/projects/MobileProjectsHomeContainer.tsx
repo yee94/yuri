@@ -3,7 +3,7 @@ import type { Session } from '@/lib/opencode/v2-types';
 import { useEvent } from '@reactuses/core';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { buildSessionActivitySnapshot } from '@/components/session/sidebar/sessionSortableOrder';
-import { PINNED_SESSION_ORDER_SCOPE } from '@/components/session/sidebar/pinnedSessions';
+import { PINNED_SESSION_ORDER_SCOPE, rankByManualOrder } from '@/components/session/sidebar/pinnedSessions';
 
 import { Icon } from '@/components/icon/Icon';
 import { NewWorktreeDialog } from '@/components/session/NewWorktreeDialog';
@@ -19,9 +19,16 @@ import { useI18n } from '@/lib/i18n';
 import { deleteSessionsWithUndo, showArchivedSessionsUndoToast } from '@/lib/sessionMutationUndo';
 import { useMobileSessionTreeStore } from '@/stores/useMobileSessionTreeStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useRemoteProjectNavigation } from '@/components/session/sidebar/hooks/useRemoteProjectNavigation';
+import { RemoteProjectSection } from '@/components/session/sidebar/RemoteProjectSection';
+import type { PinnedItem } from '@/components/session/sidebar/SidebarPinnedSessions';
+import { getSessionActivityUpdatedAt } from '@/lib/sessionActivity';
+import { sortProjectEntries } from '@/lib/projectOrder';
+import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
+import { parseRemoteProject } from '@/lib/remote-projects/types';
+import { openRemoteProjectDraft } from '@/router/openRemoteProjectSession';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
-import { syncGlobalSessionsForDirectories, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
-import { getRuntimeGeneration } from '@/lib/runtime-switch';
+import { syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isSessionSharingAvailable } from '@/sync/session-sharing-availability';
 import { useLiveSessionStatus } from '@/sync/sync-context';
@@ -31,6 +38,7 @@ import { normalizePath } from '@/lib/pathNormalization';
 import type { WorktreeMetadata } from '@/types/worktree';
 
 import { useMobileNavigationStore } from '../useMobileNavigationStore';
+import { useSessionReadMenuAction } from '../useSessionReadMenuAction';
 
 import {
   MobileProjectsHome,
@@ -88,6 +96,15 @@ export function MobileProjectsHomeContainer({
   const { git } = useRuntimeAPIs();
   const sharingAvailable = isSessionSharingAvailable();
   const model = useMobileProjectsHomeModel();
+  const [remoteActivityItems, setRemoteActivityItems] = React.useState<Map<string, PinnedItem[]>>(() => new Map());
+  const handleRemoteActivityItems = useEvent((projectId: string, items: PinnedItem[]) => {
+    setRemoteActivityItems((previous) => {
+      if (!items.length && !previous.has(projectId)) return previous;
+      const next = new Map(previous);
+      if (items.length) next.set(projectId, items); else next.delete(projectId);
+      return next;
+    });
+  });
   const handleReorderSessions = useEvent((scope: string, ids: string[], activeId: string, overId: string) => {
     const store = useSessionFoldersStore.getState();
     const scopeKey = scope === PINNED_SESSION_ORDER_SCOPE ? scope : normalizePath(scope);
@@ -114,21 +131,27 @@ export function MobileProjectsHomeContainer({
   const openDraft = useMobileNavigationStore((state) => state.openDraft);
   const openSession = useMobileNavigationStore((state) => state.openSession);
   const projects = useProjectsStore((state) => state.projects);
+  const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
+  const remoteNavigation = useRemoteProjectNavigation();
+  const remoteProjects = React.useMemo(() => projects.filter((project) => project.hostId).map(parseRemoteProject), [projects]);
+  const remoteTopItems = React.useMemo(() => remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []).map((item) => ({
+    pinned: Boolean(item.pinned), time: getSessionActivityUpdatedAt(item.node.session),
+    session: { id: item.identity!, title: item.node.session.title || '', content: item.content },
+  })), [remoteProjects, remoteActivityItems]);
+  const pinnedOrder = useSessionFoldersStore((state) => state.sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]);
+  const pinnedSessions = React.useMemo(() => rankByManualOrder(
+    [...model.pinnedSessions, ...remoteTopItems.filter((entry) => entry.pinned).map((entry) => entry.session)], (session) => session.id, pinnedOrder),
+  [model.pinnedSessions, remoteTopItems, pinnedOrder]);
+  const inProgressSessions = React.useMemo(() => [
+    ...model.inProgressSessions.map((session) => ({ session, time: model.sessionById.get(session.id) ? getSessionActivityUpdatedAt(model.sessionById.get(session.id)!) : 0 })),
+    ...remoteTopItems.filter((entry) => !entry.pinned),
+  ].sort((a, b) => b.time - a.time).map((entry) => entry.session), [model.inProgressSessions, model.sessionById, remoteTopItems]);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
   const removeProject = useProjectsStore((state) => state.removeProject);
   const sync = useSync();
 
   const [actionTarget, setActionTarget] = React.useState<ActionTargetState | null>(null);
   const [actionsOpen, setActionsOpen] = React.useState(false);
-  const [catalogRetrying, setCatalogRetrying] = React.useState(false);
-  const handleRetryCatalog = useEvent(async () => {
-    if (catalogRetrying) return;
-    const generation = getRuntimeGeneration();
-    setCatalogRetrying(true);
-    try { await useGlobalSessionsStore.getState().refreshSessionIndex(); }
-    catch { if (generation === getRuntimeGeneration()) toast.error(t('mobile.sessions.catalogPartial')); }
-    finally { setCatalogRetrying(false); }
-  });
   const [editingProjectId, setEditingProjectId] = React.useState<string | null>(null);
   const [closingProject, setClosingProject] = React.useState<ProjectMeta | null>(null);
   const [renamingSession, setRenamingSession] = React.useState<Session | null>(null);
@@ -147,6 +170,10 @@ export function MobileProjectsHomeContainer({
   const actionSessionDirectory = actionTarget?.kind === 'session'
     ? getSessionDirectory(actionTarget.session)
     : '';
+  const { unread: actionSessionUnread, onToggleRead } = useSessionReadMenuAction(
+    actionTarget?.kind === 'session' ? actionTarget.session : null,
+    actionSessionDirectory,
+  );
   const isActionTranscriptRefreshing = Boolean(actionSessionId) && refreshingSessionId === actionSessionId;
   const refreshTranscriptDisabled = !actionSessionDirectory || isActionTranscriptRefreshing || isActionSessionBusy;
 
@@ -271,6 +298,11 @@ export function MobileProjectsHomeContainer({
   });
 
   const handleNewSession = useEvent(() => {
+    const project = useProjectsStore.getState().getActiveProject();
+    if (project?.hostId) {
+      void openRemoteProjectDraft(parseRemoteProject(project), true).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+      return;
+    }
     if (onNewSession) {
       onNewSession();
       return;
@@ -478,6 +510,7 @@ export function MobileProjectsHomeContainer({
         title: actionTarget.session.title?.trim() || t('mobile.sessions.untitled'),
         pinned: pinnedSessionIds.has(actionTarget.session.id),
         shared: Boolean(actionTarget.session.share?.url),
+        unread: actionSessionUnread,
       };
     }
     if (actionTarget.kind === 'project') {
@@ -491,7 +524,7 @@ export function MobileProjectsHomeContainer({
       kind: 'worktree',
       title: actionTarget.worktreeName,
     };
-  }, [actionTarget, pinnedSessionIds, t]);
+  }, [actionTarget, actionSessionUnread, pinnedSessionIds, t]);
 
   const sheetActions: MobileRowActionCallbacks = React.useMemo(() => {
     if (!actionTarget) return {};
@@ -503,6 +536,7 @@ export function MobileProjectsHomeContainer({
           setRenamingSession(session);
         },
         onTogglePin: () => togglePinnedSession(session.id),
+        onToggleRead,
         onShare: sharingAvailable && !session.share?.url
           ? () => {
               void handleShareFromMenu(session);
@@ -562,6 +596,7 @@ export function MobileProjectsHomeContainer({
     handleSyncProjectSessions,
     handleShareFromMenu,
     handleUnshareFromMenu,
+    onToggleRead,
     resolveWorktreeMetadata,
     sharingAvailable,
     startSessionDraftForDirectory,
@@ -593,13 +628,15 @@ export function MobileProjectsHomeContainer({
   return (
     <>
       <MobileProjectsHome
+        remoteProjects={remoteProjects}
+        hostRegistry={remoteNavigation.registry}
+        projectOrderIds={sortProjectEntries(projects, projectSortOrder).map((project) => project.id)}
+        renderRemoteProject={remoteNavigation.registry ? (project) => <RemoteProjectSection project={project} registry={remoteNavigation.registry!} mobile reorderEnabled={false} onActivityItems={handleRemoteActivityItems} /> : undefined}
+        remoteError={remoteNavigation.catalog.error?.message}
         className={className}
         projects={model.projects}
-        pinnedSessions={model.pinnedSessions}
-        inProgressSessions={model.inProgressSessions}
-        catalogIncomplete={model.catalogIncomplete}
-        catalogRetrying={catalogRetrying}
-        onRetryCatalog={handleRetryCatalog}
+        pinnedSessions={pinnedSessions}
+        inProgressSessions={inProgressSessions}
         onAddProject={onAddProject}
         onNewSession={handleNewSession}
         onScanQr={onScanQr}

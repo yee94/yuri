@@ -12,7 +12,7 @@ import type { AssistantAttachmentDescriptor } from '@/lib/assistant-attachment-u
 import type { AssistantContactFilePart } from '@/queries/assistantDTO'
 import { useI18n } from '@/lib/i18n'
 
-const imageClass = 'rounded-[1.35rem] border border-border/40 cursor-zoom-in'
+const imageClass = 'rounded-[var(--contact-bubble-radius,1.125rem)] border border-border/40 cursor-zoom-in'
 
 function CachedAttachment({ assistantID, descriptor, onShowPopup }: {
   assistantID: string
@@ -111,7 +111,7 @@ function CachedAttachment({ assistantID, descriptor, onShowPopup }: {
       data-assistant-contact-image=""
     />
   )
-  if (image && !failed) return <ImageLoadingPlaceholder className="h-[var(--yuri-content-image-height)] w-[min(20rem,100%)] rounded-[1.35rem]" />
+  if (image && !failed) return <ImageLoadingPlaceholder className="h-[var(--yuri-content-image-height)] w-[min(20rem,100%)] rounded-[var(--contact-bubble-radius,1.125rem)]" />
   return <div className="flex max-w-full flex-col gap-1 rounded-[1.25rem] bg-[var(--surface-muted)] px-3.5 py-2.5 ring-1 ring-inset ring-[var(--surface-subtle)]" data-assistant-contact-file="">
     <span className="flex min-w-0 items-center gap-2.5"><Icon name="file-text" className="size-4 shrink-0 text-muted-foreground" /><span className="truncate typography-ui">{name}</span></span>
     {failed ? <p role="alert" className="typography-micro text-[var(--status-error)]">{t('assistants.contact.attachment.loadFailed')}</p> : null}

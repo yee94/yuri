@@ -11,7 +11,7 @@ These are **siblings**, not children of a session:
 | **schedule** | `/schedule` · `/schedule/history` · `/schedule/tasks/$p/$t` · `…/agent/$focus` | Schedule workspace only |
 | **assistant** | `/assistant` · `/assistant/$id` · `…/agent/$focus` | Assistant workspace only |
 | **settings** | `/settings/$slug[/$entity]` | Settings overlay only |
-| **plugin** | `/plugins/$pluginId/$pageId` | Desktop global Solid plugin placement only |
+| **plugin** | `/plugins/$pluginId/$pageId` | Global Solid placement; Capacitor uses a mobile Sheet |
 
 **Invalid product URLs (must not be written):**
 
@@ -32,6 +32,12 @@ no header/back/loading/retry chrome; rendering failures use the shared centered
 preview-error SVG and text, while detailed diagnostics stay in plugin settings. It never
 opens an external browser. Runtime switching clears the selection.
 
+On Capacitor, Projects' Apps cards select the same plugin/page identity and the
+shared window stack owns the sheet/back action. The prior main tab is retained.
+Only registered pages create cards; unrelated plugin failures do not keep removed
+pages open. The GUI Provider must establish the native Relay proxy before setup
+or mounting; hosted mobile cannot mount global pages.
+
 ## Session tools only under session
 
 `git | diff | terminal | files | diagram | plan` live under `/session/$id/…`.
@@ -46,6 +52,23 @@ buildSessionPath({ sessionId, tab: 'git' })  // → /session/$id/git
 ```
 
 `createAppNavigation`: `goSchedule()` / `goAssistant()` / `goSession()`.
+
+Remote project/session selection uses `stores/useSessionNavigationStore`, not the
+Hub's local `setCurrentSession`. Its `remoteSession` contains `projectId`, explicit
+`location: {hubId, hostId, directory}` and a raw `sessionId` (`null` for a draft).
+`openRemoteProjectSession` is the synchronous registry-fenced selection action;
+`openRemoteProjectDraft` validates a header/global New target against the current
+Hub catalog first. Neither changes the singleton endpoint or directory. Local
+selection clears the remote bridge. The phone opens a stable draft secondary
+container without invoking the local draft/session mirror; the chat entrypoint
+consumes the remote bridge even when that container supplies an empty explicit
+session ID. Closing the secondary page clears it. Hub switches also clear the
+transient selection. URL and notification adapters must retain this full location
+and must never resolve a remote raw ID through local session lookup.
+Remote routes also retain `instanceId` when supplied by an authenticated resource
+reference. URL parsing, native notification/Mini Chat handoff and route restoration
+preserve it, and registry admission checks it before changing selection. Legacy
+Host-only routes remain compatible with the Hub's persisted connection-authority pin.
 
 Individual tasks use `/schedule/tasks/$projectId/$taskId`. The scheduled workspace
 restores the composite identity on initial load and browser Back/Forward; list
@@ -64,6 +87,11 @@ precedence over a retained new-session draft. Selecting an Assistant writes
 without selecting an OpenCode session. Changing or clearing the Assistant drops
 the previous Assistant's focused child-session suffix. Returning to Chat restores
 `/session/new` when its draft is still open and no session is selected.
+Desktop sidebar project reveals consume that same draft's selected project ID
+and the existing session-switch intent revision. Global-search project selection
+continues through `openNewSessionDraft`; it does not introduce another project
+route, publish a separate selection, or reach into sidebar DOM. The sidebar owns
+one-shot, viewport-aware scrolling after the target header is mounted.
 
 The phone navigation store separately captures an Assistant-origin chat return
 target (contact ID and root tab). Popping the worker restores the contact page,

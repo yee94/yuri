@@ -29,6 +29,7 @@ export interface SessionSurfaceContextValue {
     navigateSession?: (sessionId: string, directory: string) => void;
     /** Hosted surfaces (Assistant) restore into their own draft partition. */
     onRevertMessage?: (messageId: string) => Promise<void>;
+    onForkMessage?: (messageId: string) => Promise<void>;
     /**
      * Hosted surfaces (Assistant continuous) stage a sent-message edit into the
      * surface draft partition and keep primary stagedMessageEdit untouched.

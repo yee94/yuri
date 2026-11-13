@@ -18,7 +18,7 @@ const WorkStatusMount = React.memo(function WorkStatusMount({ host, entry, input
     const handle = mount(container.current);
     mounted.current = handle;
     return () => { mounted.current = null; handle.dispose(); };
-  }, [host, entry.key, entry.generation, input.sessionId, input.directory, mount]);
+  }, [host, entry.key, entry.generation, input.sessionId, input.directory, input.scope, mount]);
 
   React.useLayoutEffect(() => { mounted.current?.update(input); }, [input]);
 

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { messageHoverHandlers } from '../lib/messageHover';
 import { useEvent } from '@reactuses/core';
 import type { Part } from '@/lib/opencode/v2-types';
@@ -177,6 +178,8 @@ const TurnChangesPreview = React.memo(({
 }) => {
     const { t } = useI18n();
     const effectiveDirectory = useEffectiveDirectory();
+    const hostRuntime = useHostRuntime();
+    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const sessionSurface = useSessionSurface();
     // Nested/subagent surfaces own their directory + session; primary falls back to global.
     const diffDirectory = sessionSurface.directory || effectiveDirectory;
@@ -220,6 +223,7 @@ const TurnChangesPreview = React.memo(({
 
         if (!isMobile && diffDirectory) {
             openTurnChangedFilePreview({
+                scope: hostScope,
                 directory: diffDirectory,
                 filePath: file,
                 turnMessageId: turnId,
@@ -230,6 +234,7 @@ const TurnChangesPreview = React.memo(({
 
         if (isMobile && isLatestTurn && diffDirectory) {
             openTurnChangedFilePreview({
+                scope: hostScope,
                 directory: diffDirectory,
                 filePath: file,
                 turnMessageId: turnId,
@@ -246,7 +251,7 @@ const TurnChangesPreview = React.memo(({
         }
 
         if (!isMobile && diffDirectory) {
-            openContextPanelTab(diffDirectory, {
+            openContextPanelTab(hostScope?.key ?? diffDirectory, {
                 mode: 'diff',
                 dedupeKey: `turn-diff:${diffSessionId || 'session'}:${turnId}`,
                 targetPath: null,
@@ -260,6 +265,7 @@ const TurnChangesPreview = React.memo(({
         const firstFile = visibleFiles[0]?.file;
         if (firstFile && isMobile && isLatestTurn && diffDirectory) {
             openTurnChangedFilePreview({
+                scope: hostScope,
                 directory: diffDirectory,
                 filePath: firstFile,
                 turnMessageId: turnId,
@@ -477,12 +483,16 @@ const SubagentNotificationCard: React.FC<{ notification: SubagentNotification }>
     const { isMobile } = useDeviceInfo();
     const { t } = useI18n();
     const canOpen = Boolean(effectiveDirectory && !isMobile && !isVSCodeRuntime());
-    const stateLabel = notification.state === 'completed'
+    const stateLabel = notification.state === 'running'
+        ? t('chat.usedGroup.running')
+        : notification.state === 'completed'
         ? t('chat.messageBody.subagent.completed')
         : notification.state === 'error'
             ? t('chat.messageBody.subagent.error')
             : t('chat.messageBody.subagent.cancelled');
-    const fallbackDescription = notification.state === 'completed'
+    const fallbackDescription = notification.state === 'running'
+        ? t('chat.messageBody.subtask.title')
+        : notification.state === 'completed'
         ? t('chat.messageBody.subagent.completedDescription')
         : notification.state === 'error'
             ? t('chat.messageBody.subagent.errorDescription')
@@ -1164,6 +1174,7 @@ const AssistantMessageBody = React.memo(({
     const assistantPlanText = React.useMemo(() => flattenAssistantTextParts(assistantTextParts), [assistantTextParts]);
 
     const openContextPreview = useUIStore((state) => state.openContextPreview);
+    const hostRuntime = useHostRuntime();
     const isVSCode = isVSCodeRuntime();
     const isMiniChatSurface = chatSurfaceMode === 'mini-chat';
 
@@ -1356,8 +1367,6 @@ const AssistantMessageBody = React.memo(({
         onContentChange?.('structural');
     }, [awaitingMessageCompletion, hasTools, onContentChange, reasoningComplete, reasoningParts.length, shouldHoldReasoning]);
 
-    const hasCopyableText = Boolean(hasTextContent) && !awaitingMessageCompletion;
-
     const handleForkClick = useEvent(
         async (event: React.MouseEvent<HTMLButtonElement>) => {
             event.stopPropagation();
@@ -1367,7 +1376,8 @@ const AssistantMessageBody = React.memo(({
             }
             setIsForkPending(true);
             try {
-                await forkFromMessage(sessionId, messageId);
+                if (sessionSurface.onForkMessage) await sessionSurface.onForkMessage(messageId);
+                else await forkFromMessage(sessionId, messageId);
             } finally {
                 setIsForkPending(false);
             }
@@ -1476,14 +1486,37 @@ const AssistantMessageBody = React.memo(({
     const shouldDeferSortedInlineText = isSortedRenderMode
         && !canRevealSortedBody
         && !(isCompactionTurn && isActivityExpanded);
-    const shouldShowMessageActions = hasCopyableText;
+    const assistantTpsText = React.useMemo(() => {
+        if (!showAssistantTps || !isLastAssistantInTurn || errorPresentation?.variant === 'error') return null;
+        const tps = turnGroupingContext?.assistantTps;
+        // Interrupted and aborted turns stay visible once the streamed clocks
+        // can produce a rate. An active continuation must not flash one.
+        if (!canPresentAssistantTps({
+            completionDisposition: turnGroupingContext?.completionDisposition,
+            tps,
+        })) return null;
+        const label = formatAssistantTps(tps ?? 0);
+        return label.length > 0 ? label : null;
+    }, [
+        showAssistantTps,
+        errorPresentation?.variant,
+        isLastAssistantInTurn,
+        turnGroupingContext?.assistantTps,
+        turnGroupingContext?.completionDisposition,
+    ]);
     // Settled turns keep duration + TPS after user abort, even without text.
     // Failures own the feedback instead of also publishing completion chrome.
+    // A publishable rate uses this same footer even before time.completed arrives;
+    // disabled copy keeps the initial footprint identical to the completed row.
     const shouldShowTurnFooter = isLastAssistantInTurn
-        && isTurnSettled
         && errorPresentation?.variant !== 'error'
         && !hideCompactionBody
-        && (hasTextContent || Boolean(errorMessage) || isMessageCompleted);
+        && ((isTurnSettled && (hasTextContent || Boolean(errorMessage) || isMessageCompleted))
+            || Boolean(assistantTpsText));
+    const hasCopyableText = shouldShowTurnFooter
+        ? getSortedBodyPartIndex(sourceParts ?? parts) >= 0
+        : Boolean(hasTextContent) && !awaitingMessageCompletion;
+    const shouldShowMessageActions = hasCopyableText;
     const hasAuthoritativeChangesMarker = turnGroupingContext?.diffStats?.hasDiffs === true;
     const showBackgroundActivity = Boolean(turnGroupingContext?.activityParts?.length) && sessionId && sessionSurface.active && !isMiniChatSurface;
     const shouldShowChangesPreview = !isMiniChatSurface
@@ -1948,25 +1981,6 @@ const AssistantMessageBody = React.memo(({
         return formatted.length > 0 ? formatted : null;
     }, [messageCompletedAt, messageCreatedAt]);
 
-    const assistantTpsText = React.useMemo(() => {
-        if (!showAssistantTps || !isLastAssistantInTurn || errorPresentation?.variant === 'error') return null;
-        const tps = turnGroupingContext?.assistantTps;
-        // Interrupted and aborted turns stay visible once the streamed clocks
-        // can produce a rate. An active continuation must not flash one.
-        if (!canPresentAssistantTps({
-            completionDisposition: turnGroupingContext?.completionDisposition,
-            tps,
-        })) return null;
-        const label = formatAssistantTps(tps ?? 0);
-        return label.length > 0 ? label : null;
-    }, [
-        showAssistantTps,
-        errorPresentation?.variant,
-        isLastAssistantInTurn,
-        turnGroupingContext?.assistantTps,
-        turnGroupingContext?.completionDisposition,
-    ]);
-
     const canOpenMessagePreview = !isMiniChatSurface && !isMobile && !isVSCode;
 
     const finalTurnActionButtons = (
@@ -1987,7 +2001,7 @@ const AssistantMessageBody = React.memo(({
                                 if (!directory) {
                                     return;
                                 }
-                                openContextPreview(directory, messagePreviewUrl);
+                                openContextPreview(hostRuntime?.entry.location.hostId ? hostRuntime.entry.key : directory, messagePreviewUrl);
                             }}
                         >
                             <Icon weight={MESSAGE_ACTION_ICON_WEIGHT} name="global" className={MESSAGE_ACTION_ICON_CLASS} />
@@ -2075,6 +2089,7 @@ const AssistantMessageBody = React.memo(({
                 )}
                 {shouldShowTurnFooter && (
                     <AssistantMessageFooter messageId={messageId} isMobile={isMobile}
+                        animateReveal={hasStreamingHapticLifecycle}
                         actions={<>{messageActionButtons}{finalTurnActionButtons}</>}
                         tps={assistantTpsText} duration={turnDurationText} timestamp={footerTimestamp}
                         activity={showBackgroundActivity && sessionId ? <BackgroundActivityHint sessionId={sessionId} activityParts={turnGroupingContext?.activityParts} /> : null}
@@ -2082,10 +2097,6 @@ const AssistantMessageBody = React.memo(({
                             ? <TurnChangedFilesDropdown activityParts={turnGroupingContext?.activityParts} /> : null}
                     />
                 )}
-                {!shouldShowTurnFooter && !hideCompactionBody && assistantTpsText ? (
-                    <AssistantMessageFooter messageId={messageId} isMobile={isMobile} tps={assistantTpsText} interrupted />
-                ) : null}
-
             </div>
         </div>
     );

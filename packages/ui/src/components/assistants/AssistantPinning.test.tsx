@@ -109,3 +109,25 @@ test('failed Mini Chat opening reports an error and retains the contact', async 
   expect(calls.error).toHaveBeenCalledWith('miniChat.actions.failed');
   expect(host.querySelector('button')?.textContent).toBe('A');
 });
+
+test('double-click opens the selected contact only when Mini Chat is available', async () => {
+  const select = vi.fn();
+  await render(<AssistantPinnedContacts contacts={[assistant]} onSelect={select} onEdit={vi.fn()} onDelete={vi.fn()} />);
+  const button = host.querySelector('button')!;
+  await act(async () => button.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  expect(calls.miniChat).not.toHaveBeenCalled();
+  calls.miniChatAvailable = true;
+  await act(async () => button.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  expect(calls.miniChat).toHaveBeenCalledExactlyOnceWith(assistant.id);
+});
+
+test('ordinary contact double-click uses the same error handling and delete icon inherits its label color', async () => {
+  calls.miniChatAvailable = true;
+  calls.miniChat.mockRejectedValueOnce(new Error('failed'));
+  await render(<AssistantContactMenu assistant={assistant} doubleClickMiniChat trigger={<button>A</button>} onEdit={vi.fn()} onDelete={vi.fn()} />);
+  await act(async () => host.querySelector('button')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  expect(calls.error).toHaveBeenCalledWith('miniChat.actions.failed');
+  await openMenu();
+  const deletion = menuItems().find(item => item.textContent === 'assistants.settings.delete')!;
+  expect(deletion.querySelector('svg')?.classList.contains('text-inherit')).toBe(true);
+});

@@ -15,7 +15,11 @@ import type { DraftStarterRef } from '@/lib/draftStarters';
 import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
 import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 import { getRuntimeKey } from '@/lib/runtime-switch';
+import { subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { setIncludeReasoningProjection } from '@/lib/reasoning-projection-client';
+import { isCapacitorApp } from '@/lib/platform';
+import { useMobileHtmlPreviewStore } from '@/mobile/useMobileHtmlPreviewStore';
+import { normalizeLocationStateKey, parseLocationKey } from '@/lib/remote-projects/location';
 
 /** Main column tab. Product exclusive primaries: chat(session) | schedule | assistant. */
 export type MainTab = 'chat' | 'git' | 'diff' | 'terminal' | 'files' | 'diagram' | 'schedule' | 'assistant' | 'plugin';
@@ -205,6 +209,7 @@ const runtimeMemoryKey = (value?: string | null): string => {
 };
 
 export const normalizeContextPanelDirectoryKey = (value: string): string => {
+  if (value.startsWith('yuri-remote-location:')) return normalizeLocationStateKey(value);
   if (!value) return '';
 
   const raw = value.replace(/\\/g, '/');
@@ -602,7 +607,8 @@ const sanitizeContextPanelByDirectory = (
   const next: Record<string, ContextPanelDirectoryState> = {};
 
   for (const [rawDirectory, rawState] of Object.entries(source)) {
-    const directory = normalizeContextPanelDirectoryKey(rawDirectory);
+    let directory: string;
+    try { directory = normalizeContextPanelDirectoryKey(rawDirectory); } catch { continue; }
     if (!directory || !rawState || typeof rawState !== 'object') {
       continue;
     }
@@ -781,6 +787,7 @@ interface UIStore {
 
   // Settings IA (new shell)
   settingsPage: string;
+  settingsFocusItemId: string | null;
   devicePairingRequested: boolean;
   settingsHasOpenedOnce: boolean;
   settingsProjectsSelectedId: string | null;
@@ -972,6 +979,7 @@ interface UIStore {
   applyTheme: () => void;
   setSidebarSection: (section: SidebarSection) => void;
   setSettingsPage: (slug: string) => void;
+  openSettingsAtItem: (slug: string, itemId: string) => void;
   setSettingsProjectsSelectedId: (projectId: string | null) => void;
   setSettingsRemoteInstancesSelectedId: (instanceId: string | null) => void;
   setEventStreamStatus: (status: EventStreamStatus, hint?: string | null) => void;
@@ -1152,6 +1160,7 @@ export const useUIStore = create<UIStore>()(
         isAgentSelectorInstant: false,
         sidebarSection: 'sessions',
         settingsPage: 'home',
+        settingsFocusItemId: null,
         devicePairingRequested: false,
         settingsHasOpenedOnce: false,
         settingsProjectsSelectedId: null,
@@ -1238,7 +1247,7 @@ export const useUIStore = create<UIStore>()(
         userMessageRenderingMode: 'markdown',
         collapsibleUserMessages: true,
         stickyUserHeader: false,
-        promptNavigatorEnabled: false,
+        promptNavigatorEnabled: true,
         showSplitAssistantMessageActions: false,
         showAssistantTps: true,
         allowPromptingSubagentSessions: false,
@@ -1610,6 +1619,10 @@ export const useUIStore = create<UIStore>()(
         },
 
         openContextPreview: (directory, url) => {
+          if (isCapacitorApp()) {
+            useMobileHtmlPreviewStore.getState().open(url, directory.startsWith('yuri-remote-location:') ? parseLocationKey(directory, 'local') : undefined);
+            return;
+          }
           const normalizedDirectory = normalizeContextPanelDirectoryKey((directory || '').trim());
           const normalizedUrl = (url || '').trim();
           if (!normalizedDirectory || !normalizedUrl) {
@@ -1634,6 +1647,10 @@ export const useUIStore = create<UIStore>()(
           });
         },
         openContextBrowser: (directory, url = '') => {
+          if (isCapacitorApp()) {
+            useMobileHtmlPreviewStore.getState().open(url, directory.startsWith('yuri-remote-location:') ? parseLocationKey(directory, 'local') : undefined);
+            return;
+          }
           const normalizedDirectory = normalizeContextPanelDirectoryKey((directory || '').trim());
           if (!normalizedDirectory) return;
           const targetUrl = typeof url === 'string' && url.trim().length > 0 ? url.trim() : '';
@@ -2086,7 +2103,7 @@ export const useUIStore = create<UIStore>()(
         setSettingsDialogOpen: (open) => {
           set((state) => {
             if (!open) {
-              return { isSettingsDialogOpen: false };
+              return { isSettingsDialogOpen: false, settingsFocusItemId: null };
             }
             if (state.settingsHasOpenedOnce) {
               return { isSettingsDialogOpen: true };
@@ -2140,7 +2157,11 @@ export const useUIStore = create<UIStore>()(
         },
 
         setSettingsPage: (slug) => {
-          set({ settingsPage: slug });
+          set((state) => state.settingsPage === slug ? state : { settingsPage: slug, settingsFocusItemId: null });
+        },
+
+        openSettingsAtItem: (slug, itemId) => {
+          set({ settingsPage: slug, settingsFocusItemId: itemId, isSettingsDialogOpen: true, settingsHasOpenedOnce: true });
         },
 
         setSettingsProjectsSelectedId: (projectId) => {
@@ -3070,6 +3091,18 @@ export const useUIStore = create<UIStore>()(
     }
   )
 );
+
+subscribeSessionSwitchIntent(() => {
+  const state = useUIStore.getState();
+  // Guard before setState: persist still projects state for no-op writes.
+  if (!state.isModelSelectorOpen && !state.isAgentSelectorOpen) return;
+  useUIStore.setState({
+    isModelSelectorOpen: false,
+    isAgentSelectorOpen: false,
+    isModelSelectorInstant: state.isModelSelectorOpen || state.isModelSelectorInstant,
+    isAgentSelectorInstant: state.isAgentSelectorOpen || state.isAgentSelectorInstant,
+  });
+});
 
 // Keep the leaf reasoning-projection flag aligned with the store for the
 // entire app lifetime (module init + persist hydrate + setter). runtime-fetch

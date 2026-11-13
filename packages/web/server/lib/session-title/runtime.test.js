@@ -226,6 +226,8 @@ describe('session-title helpers', () => {
   });
 
   it('detects system-owned sessions from metadata only', () => {
+    expect(isSystemOwnedSession({ metadata: { yuri: { worker: { parentSessionID: 'root' } } } })).toBe(true);
+    expect(isSystemOwnedSession({ metadata: { yuri: { worker: { parentSessionID: '' } } } })).toBe(false);
     expect(isSystemOwnedSession({
       metadata: { yuri: { assistant: { assistantID: 'assistant_1', name: 'A' } } },
     })).toBe(true);

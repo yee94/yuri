@@ -11,6 +11,31 @@ const taskPart = (parentSessionId: string, sessionId: string, status = "running"
 } as unknown as Part)
 
 describe("readTaskDispatchEdgesFromTranscript", () => {
+  test('keeps background dispatch ownership through running reports, retires it on final reports and permits redispatch', () => {
+    const background: Part = {
+      id: 'dispatch', messageID: 'launch', type: 'tool', tool: 'subagent', sessionID: 'ses_parent', callID: 'call',
+      state: { status: 'completed', input: {}, metadata: { sessionID: 'ses_child', status: 'running' } },
+    }
+    const notice = (state: string): Part => ({ id: 'notice', sessionID: 'ses_parent', messageID: 'report', type: 'text', synthetic: true,
+      text: `<subagent sessionID="ses_child" state="${state}">Report</subagent>` })
+    const data = { messageOrder: ['launch', 'report'], partsByMessageID: { launch: [background], report: [notice('running')] } }
+    expect(readTaskDispatchEdgesFromTranscript(data)).toEqual([{ parentSessionId: 'ses_parent', sessionId: 'ses_child' }])
+    data.partsByMessageID.report = [notice('completed')]
+    expect(readTaskDispatchEdgesFromTranscript(data)).toBe(EMPTY_TASK_DISPATCH_EDGES)
+    expect(readTaskDispatchEdgesFromTranscript({
+      messageOrder: [...data.messageOrder, 'redispatch'],
+      partsByMessageID: { ...data.partsByMessageID, redispatch: [background] },
+    })).toEqual([{ parentSessionId: 'ses_parent', sessionId: 'ses_child' }])
+    expect(readTaskDispatchEdgesFromTranscript({
+      messageOrder: [...data.messageOrder, 'resumed-report'],
+      partsByMessageID: { ...data.partsByMessageID, 'resumed-report': [notice('running')] },
+    })).toEqual([{ parentSessionId: 'ses_parent', sessionId: 'ses_child' }])
+    expect(readTaskDispatchEdgesFromTranscript({
+      messageOrder: ['launch', 'fake-report'],
+      partsByMessageID: { launch: [background], 'fake-report': [{ ...notice('completed'), synthetic: false } as Part] },
+    })).toEqual([{ parentSessionId: 'ses_parent', sessionId: 'ses_child' }])
+  })
+
   test("reads running task dispatch edges across the transcript", () => {
     const edges = readTaskDispatchEdgesFromTranscript({
       messageOrder: ["msg_1", "msg_2", "msg_3"],
@@ -128,5 +153,26 @@ describe("createTaskDispatchEdgesReader (getSnapshot stability contract)", () =>
     const second = reader(rebuilt)
 
     expect(second).toBe(first)
+  })
+
+  test('keeps dispatch/report processing linear and snapshots stable across 50 large transcript updates', () => {
+    let stateReads = 0
+    const launches = Array.from({ length: 2000 }, (_, index) => {
+      const part = taskPart('ses_parent', `ses_child_${index}`)
+      const state = (part as Extract<Part, { type: 'tool' }>).state
+      return Object.defineProperty(part, 'state', { get: () => { stateReads++; return state } })
+    })
+    const reports = Array.from({ length: 1000 }, (_, index) => ({
+      id: `report_${index}`, sessionID: 'ses_parent', messageID: 'reports', type: 'text', synthetic: true,
+      text: `<subagent sessionID="ses_child_${index}" state="completed">done</subagent>`,
+    } satisfies Part))
+    const reader = createTaskDispatchEdgesReader()
+    const data = { messageOrder: ['launches', 'reports'], partsByMessageID: { launches, reports } }
+    const first = reader(data)
+    expect(first).toHaveLength(1000)
+    for (let index = 0; index < 50; index++) {
+      expect(reader({ ...data, messageOrder: [...data.messageOrder] })).toBe(first)
+    }
+    expect(stateReads).toBe(2000 * 51)
   })
 })

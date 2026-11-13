@@ -95,8 +95,25 @@ The Host has no goal routes, objective-file API, progress auditor or continuatio
 System ownership for sidebar / session-index / notifications is established when Host metadata
 carries a non-empty `yuri.assistant.assistantID` (unless
 `assigned.from === 'contact'`), `yuri.scheduledTask.taskID`,
-`yuri.smallModel.purpose`, or `yuri.llm.purpose`. Every system
+   `yuri.smallModel.purpose`, or `yuri.llm.purpose`. Every system
 session creator must persist the matching patch through this store. Separately,
 ordinary sidebar/session-index lists also exclude reserved leading title tags
 `[Scheduled]`, `[Assistant]`, and `[yuri-llm]`, including legacy sessions
 without metadata; these tags do not establish metadata ownership.
+
+## Delegated CLI workers
+
+Use the native subagent tool, or create the session with OpenCode's `parentID`
+before passing its ID to `opencode run --session`. Bare `opencode run` creates
+an ordinary root conversation; agent names, titles and prompt text do not prove
+delegation and must not be used to hide it.
+
+For an existing CLI worker whose delegating session is explicitly known, merge
+`{ yuri: { worker: { parentSessionID: "<delegating-session-id>" } } }` through
+`PUT /api/yuri/sessions/:sessionId/metadata`. Preserve the real native `parentID`;
+this marker does not manufacture an upstream ancestry edge. It excludes the
+worker from ordinary session catalogs, unread badges, title refresh and ordinary
+notifications, including standalone VS Code. Transcript content is unchanged.
+Only mark verified delegated workers, never every root session using a secondary
+agent. Remove this marker with `{ yuri: { worker: null } }` to restore ordinary
+visibility on the next catalog refresh; old hidden unread is not resurrected.

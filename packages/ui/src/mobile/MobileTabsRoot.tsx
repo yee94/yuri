@@ -191,6 +191,7 @@ export function MobileTabsRoot({
       className={cn(
         'yuri-mobile-floating-shell relative isolate flex h-full min-h-0 flex-col overflow-hidden text-foreground',
         'bg-[var(--yuri-mobile-page-background)]',
+        selectedTab === 'assistant' && 'yuri-assistant-wallpaper',
         className,
       )}
     >

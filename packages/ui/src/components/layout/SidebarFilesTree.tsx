@@ -28,12 +28,13 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useFileSearchStore } from '@/stores/useFileSearchStore';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useGitStatus } from '@/stores/useGitStore';
+import { useGitStatus } from '@/lib/api/useProjectGitStore';
 import { useDirectoryShowHidden } from '@/lib/directoryShowHidden';
 import { useFilesViewShowGitignored } from '@/lib/filesViewShowGitignored';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -308,7 +309,7 @@ const FileRow: React.FC<FileRowProps> = ({
             onClick={(e: React.MouseEvent) => { e.stopPropagation(); onOpenDialog('delete', node); }}
             className="text-destructive focus:text-destructive"
           >
-            <Icon name="delete-bin" className="mr-2 h-4 w-4" /> {t('sidebarFilesTree.menu.delete')}
+            <Icon name="delete-bin" className="mr-2 h-4 w-4 text-inherit" /> {t('sidebarFilesTree.menu.delete')}
           </Item>
         </>
       )}
@@ -417,9 +418,13 @@ const MemoizedFileRow = React.memo(FileRow, areFileRowPropsEqual);
 
 export const SidebarFilesTree: React.FC = () => {
   const { t } = useI18n();
-  const { files } = useRuntimeAPIs();
+  const { files } = useProjectRuntimeAPIs();
+  const host = useHostRuntime();
+  const hostEntry = host?.entry;
   const currentDirectory = useEffectiveDirectory() ?? '';
   const root = normalizePath(currentDirectory.trim());
+  const stateKey = hostEntry?.key ?? root;
+  const cacheKey = host?.entry.location.hostId ? JSON.stringify([host.entry.queryScope, root]) : root;
   const showHidden = useDirectoryShowHidden();
   const showGitignored = useFilesViewShowGitignored();
   const searchFiles = useFileSearchStore((state) => state.searchFiles);
@@ -451,7 +456,7 @@ export const SidebarFilesTree: React.FC = () => {
       loadedDirsRef.current = new Set();
       return;
     }
-    const cached = touchCache(root);
+    const cached = touchCache(cacheKey);
     if (cached) {
       // Shallow-clone so the state and cache hold independent references.
       // This protects the cache from accidental in-place mutation of state
@@ -464,22 +469,22 @@ export const SidebarFilesTree: React.FC = () => {
       setLoadErrorsByDir({});
       loadedDirsRef.current = new Set();
     }
-  }, [root]);
+  }, [root, cacheKey]);
 
   // Mirror local state into the per-root cache. Don't bump touchedAt here:
   // writes are frequent and the LRU should reflect user attention, not
   // background re-renders.
   React.useEffect(() => {
     if (!root) return;
-    const cache = getOrCreateCache(root);
+    const cache = getOrCreateCache(cacheKey);
     cache.childrenByDir = childrenByDir;
-  }, [root, childrenByDir]);
+  }, [root, cacheKey, childrenByDir]);
 
   React.useEffect(() => {
     if (!root) return;
-    const cache = getOrCreateCache(root);
+    const cache = getOrCreateCache(cacheKey);
     cache.loadErrorsByDir = loadErrorsByDir;
-  }, [root, loadErrorsByDir]);
+  }, [root, cacheKey, loadErrorsByDir]);
 
   // The ref's contents must be persisted to the cache so a remount (e.g.
   // close-and-reopen of the right sidebar) skips re-listing already-known
@@ -488,9 +493,9 @@ export const SidebarFilesTree: React.FC = () => {
   // `loadDirectory` and isn't tracked by React otherwise.
   React.useEffect(() => {
     if (!root) return;
-    const cache = getOrCreateCache(root);
+    const cache = getOrCreateCache(cacheKey);
     cache.loadedDirs = new Set(loadedDirsRef.current);
-  }, [root, childrenByDir, loadErrorsByDir]);
+  }, [root, cacheKey, childrenByDir, loadErrorsByDir]);
 
   // Drop the cache entry for this root on unmount when no data was loaded
   // (e.g. user opened the tab and immediately switched projects before any
@@ -498,23 +503,23 @@ export const SidebarFilesTree: React.FC = () => {
   // rehydrates instantly.
   React.useEffect(() => () => {
     if (!root) return;
-    const cache = fileTreeCacheByRoot.get(root);
+    const cache = fileTreeCacheByRoot.get(cacheKey);
     if (cache && cache.loadedDirs.size === 0 && Object.keys(cache.childrenByDir).length === 0) {
-      dropCacheForRoot(root);
+      dropCacheForRoot(cacheKey);
     }
-  }, [root]);
+  }, [root, cacheKey]);
 
   const EMPTY_PATHS: string[] = React.useMemo(() => [], []);
   const EMPTY_CONTEXT_TABS: Array<{ mode: string; targetPath: string | null }> = React.useMemo(() => [], []);
-  const expandedPaths = useFilesViewTabsStore((state) => (root ? (state.byRoot[root]?.expandedPaths ?? EMPTY_PATHS) : EMPTY_PATHS));
-  const selectedPath = useFilesViewTabsStore((state) => (root ? (state.byRoot[root]?.selectedPath ?? null) : null));
+  const expandedPaths = useFilesViewTabsStore((state) => (root ? (state.byRoot[stateKey]?.expandedPaths ?? EMPTY_PATHS) : EMPTY_PATHS));
+  const selectedPath = useFilesViewTabsStore((state) => (root ? (state.byRoot[stateKey]?.selectedPath ?? null) : null));
   const setSelectedPath = useFilesViewTabsStore((state) => state.setSelectedPath);
   const addOpenPath = useFilesViewTabsStore((state) => state.addOpenPath);
   const removeOpenPathsByPrefix = useFilesViewTabsStore((state) => state.removeOpenPathsByPrefix);
   const removeExpandedPathsByPrefix = useFilesViewTabsStore((state) => state.removeExpandedPathsByPrefix);
   const toggleExpandedPath = useFilesViewTabsStore((state) => state.toggleExpandedPath);
   const expandPaths = useFilesViewTabsStore((state) => state.expandPaths);
-  const contextTabs = useUIStore((state) => (root ? (state.contextPanelByDirectory[root]?.tabs ?? EMPTY_CONTEXT_TABS) : EMPTY_CONTEXT_TABS));
+  const contextTabs = useUIStore((state) => (root ? (state.contextPanelByDirectory[stateKey]?.tabs ?? EMPTY_CONTEXT_TABS) : EMPTY_CONTEXT_TABS));
   const openContextFilePaths = React.useMemo(() => new Set(
     contextTabs
       .map((tab) => (tab.mode === 'file' ? tab.targetPath : null))
@@ -589,7 +594,7 @@ export const SidebarFilesTree: React.FC = () => {
         path: entry.path,
         isDirectory: entry.isDirectory,
       })))
-      : opencodeClient.listLocalDirectory(normalizedDir).then((result) => result.map((entry) => ({
+      : (hostEntry?.service() ?? opencodeClient).listLocalDirectory(normalizedDir).then((result) => result.map((entry) => ({
         name: entry.name,
         path: entry.path,
         isDirectory: entry.isDirectory,
@@ -621,7 +626,7 @@ export const SidebarFilesTree: React.FC = () => {
       inFlightDirsRef.current = new Set(inFlightDirsRef.current);
       inFlightDirsRef.current.delete(normalizedDir);
     }
-  }, [files, mapDirectoryEntries]);
+  }, [files, mapDirectoryEntries, hostEntry]);
 
   const refreshRoot = React.useCallback(async () => {
     if (!root) return;
@@ -637,7 +642,7 @@ export const SidebarFilesTree: React.FC = () => {
       // cached children visible while re-fetching so the tree stays expanded
       // and does not flash/collapse. Read expanded paths from the store at
       // call time so this callback stays stable when directories are toggled.
-      const currentExpanded = useFilesViewTabsStore.getState().byRoot[root]?.expandedPaths ?? [];
+      const currentExpanded = useFilesViewTabsStore.getState().byRoot[stateKey]?.expandedPaths ?? [];
       const normalizedExpanded = currentExpanded
         .map((p) => normalizePath(p))
         .filter((normalized): normalized is string =>
@@ -680,7 +685,7 @@ export const SidebarFilesTree: React.FC = () => {
         refreshAbortRef.current = null;
       }
     }
-  }, [loadDirectory, root]);
+  }, [loadDirectory, root, stateKey]);
 
   /**
    * Incrementally refresh a single directory without nuking the rest of the
@@ -765,11 +770,15 @@ export const SidebarFilesTree: React.FC = () => {
     let cancelled = false;
     setSearching(true);
 
-    searchFiles(currentDirectory, trimmedQuery, 150, {
+    const options = {
       includeHidden: showHidden,
       respectGitignore: !showGitignored,
-      type: 'file',
-    })
+      type: 'file' as const,
+    };
+    const search = hostEntry?.location.hostId
+      ? hostEntry.service().searchFiles(trimmedQuery, { ...options, directory: currentDirectory, limit: 150 })
+      : searchFiles(currentDirectory, trimmedQuery, 150, options);
+    search
       .then((hits) => {
         if (cancelled) return;
 
@@ -799,7 +808,7 @@ export const SidebarFilesTree: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [currentDirectory, debouncedSearchQuery, searchFiles, showHidden, showGitignored]);
+  }, [currentDirectory, debouncedSearchQuery, searchFiles, showHidden, showGitignored, hostEntry]);
 
   // --- Git status helpers (matching FilesView) ---
   //
@@ -872,20 +881,20 @@ export const SidebarFilesTree: React.FC = () => {
       return;
     }
 
-    setSelectedPath(root, node.path);
-    addOpenPath(root, node.path);
-    openContextFile(root, node.path);
-  }, [addOpenPath, files, openContextFile, root, setSelectedPath]);
+    setSelectedPath(stateKey, node.path);
+    addOpenPath(stateKey, node.path);
+    openContextFile(stateKey, node.path);
+  }, [addOpenPath, files, openContextFile, root, stateKey, setSelectedPath]);
 
   const toggleDirectory = React.useCallback(async (dirPath: string) => {
     const normalized = normalizePath(dirPath);
     if (!root) return;
 
-    toggleExpandedPath(root, normalized);
+    toggleExpandedPath(stateKey, normalized);
     if (!loadedDirsRef.current.has(normalized)) {
       await loadDirectory(normalized);
     }
-  }, [loadDirectory, root, toggleExpandedPath]);
+  }, [loadDirectory, root, stateKey, toggleExpandedPath]);
 
   const directoryPaths = React.useMemo(
     () => (root ? collectExpandableDirectoryPaths(root, childrenByDir) : []),
@@ -901,18 +910,18 @@ export const SidebarFilesTree: React.FC = () => {
     if (!root) return;
     if (allDirectoriesExpanded) {
       expandAllInProgressRef.current = false;
-      removeExpandedPathsByPrefix(root, root);
+      removeExpandedPathsByPrefix(stateKey, root);
       return;
     }
     expandAllInProgressRef.current = true;
-    expandPaths(root, directoryPaths);
-  }, [allDirectoriesExpanded, directoryPaths, expandPaths, removeExpandedPathsByPrefix, root]);
+    expandPaths(stateKey, directoryPaths);
+  }, [allDirectoriesExpanded, directoryPaths, expandPaths, removeExpandedPathsByPrefix, root, stateKey]);
 
   React.useEffect(() => {
     if (!root || !expandAllInProgressRef.current) return;
     const pending = collectUnexpandedDirectoryPaths(directoryPaths, expandedPaths);
     if (pending.length > 0) {
-      expandPaths(root, pending);
+      expandPaths(stateKey, pending);
       return;
     }
     const loadedOrFailed = new Set([
@@ -922,7 +931,7 @@ export const SidebarFilesTree: React.FC = () => {
     if (isFileTreeExpandAllSettled(directoryPaths, expandedPaths, loadedOrFailed)) {
       expandAllInProgressRef.current = false;
     }
-  }, [directoryPaths, expandPaths, expandedPaths, loadErrorsByDir, root]);
+  }, [directoryPaths, expandPaths, expandedPaths, loadErrorsByDir, root, stateKey]);
 
   // --- Dialog submit (matching FilesView) ---
 
@@ -1010,10 +1019,10 @@ export const SidebarFilesTree: React.FC = () => {
             toast.success(t('sidebarFilesTree.toast.renamedSuccessfully'));
             await refreshDirectory(parentDir);
             if (root) {
-              removeOpenPathsByPrefix(root, oldPath);
+              removeOpenPathsByPrefix(stateKey, oldPath);
             }
             if (selectedPath === oldPath || (selectedPath && selectedPath.startsWith(`${oldPath}/`))) {
-              setSelectedPath(root, null);
+              setSelectedPath(stateKey, null);
             }
           }
           closeDialog();
@@ -1038,10 +1047,10 @@ export const SidebarFilesTree: React.FC = () => {
             toast.success(t('sidebarFilesTree.toast.deletedSuccessfully'));
             await refreshDirectory(parentDir);
             if (root) {
-              removeOpenPathsByPrefix(root, deletedPath);
+              removeOpenPathsByPrefix(stateKey, deletedPath);
             }
             if (selectedPath === deletedPath || (selectedPath && selectedPath.startsWith(deletedPath + '/'))) {
-              setSelectedPath(root, null);
+              setSelectedPath(stateKey, null);
             }
           }
           closeDialog();
@@ -1052,7 +1061,7 @@ export const SidebarFilesTree: React.FC = () => {
     }
 
     done();
-  }, [activeDialog, dialogData, dialogInputValue, files, refreshDirectory, removeOpenPathsByPrefix, root, selectedPath, setSelectedPath, t]);
+  }, [activeDialog, dialogData, dialogInputValue, files, refreshDirectory, removeOpenPathsByPrefix, root, stateKey, selectedPath, setSelectedPath, t]);
 
   // --- Tree rendering (matching FilesView with indent guides) ---
 

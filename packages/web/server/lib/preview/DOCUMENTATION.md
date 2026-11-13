@@ -1,20 +1,73 @@
-# Preview proxy
+# Preview targets and resource graphs
 
-`proxy-runtime.js` owns target creation, loopback/external SSRF admission, scoped preview tokens, HTML/CSS/JS and redirect rewriting, and preview WebSocket upgrades. Normal Web creation remains on `POST /api/preview/targets`, with the existing UI authentication and `isRequestOriginAllowed` gate; no packaged Origin is added by the native extension.
+`proxy-runtime.js` owns the existing `/api/preview/targets` registry and
+`/api/preview/proxy/:id` HTTP/WS transport. Network targets retain the existing
+loopback-origin normalization, resource rewrite, CSP/bridge and redirect behavior.
 
-## Native resource protocol v1
+## Project file target
 
-The native resource WKWebView has no browser UI origin or application credential. Its trusted RuntimeBridge captures the selected authenticated Host and generation, then uses the same direct transport or authorized E2EE Relay as other resources. It never fetches the user's localhost URL on the phone.
+`POST /api/preview/targets` accepts `{ kind: 'file', directory, path, ttlMs? }`.
+`directory` and `path` are absolute physical paths, not serialized Location keys.
+Both are canonicalized; the HTML entry must be inside the directory. A Remote
+Project's Hub gateway first obtains its registered project/worktree authority and
+replaces the submitted root with that authority. A caller cannot grant itself an
+arbitrary remote directory. The response is `{ id, kind: 'file', proxyBasePath,
+entryPath, previewToken, expiresAt }`; `entryPath` is encoded project-relative path.
 
-- **Create**: `POST /api/preview/targets`, `X-Yuri-Native-Preview: 1`, existing device `Authorization: Bearer …`, JSON `{url, ttlMs:300000, allowExternal:false}`. The URL must have an exact HTTP(S) loopback authority (`localhost`, `127.0.0.1`, `[::1]`, `0.0.0.0`), no userinfo/control characters/client or preview credential query. Normalization still uses the existing loopback SSRF policy. No external-target opt-in is available on this protocol.
-- **Source/auth boundary**: native-marked requests reject any Origin (including packaged origins), Cookie, Referer and browser `Sec-Fetch-*`; this is not an Origin allowlist exception. The one transport exception is exactly `Sec-Fetch-Mode:cors` automatically added by Node fetch in the existing Host HTTP dispatcher: it requires a nonempty Relay connection marker **and** successful existing `authorizeRelayRequest` pairing authorization. All Relay-marked native requests recheck that gate; spoofing a Relay marker with a direct-only/password/expired/revoked credential fails. An active remote-client bearer must resolve via the existing `resolveAuthContext(..., {allowUrlToken:false})` to a real client record, even when UI password protection is disabled. Header presence or a password-less owner session is not authentication. Direct password/passkey-issued device bearers retain their existing direct permissions; the unchanged dispatcher independently enforces Relay pairing before forwarding.
-- **Result**: existing `{id,proxyBasePath,previewToken,expiresAt}`, `Cache-Control:no-store`, no native Set-Cookie. Native validates the exact target path/id, token format and at-most-five-minute expiry. Preview tokens stay in captured Swift closures, not app state, storage or logs.
-- **Read**: only GET under that single target prefix, both native marker and bearer, plus private `X-Yuri-Preview-Token`. The native target never accepts token cookies or query-only preview authentication. It reauthenticates and requires the creating client ID for every GET; revoked/expired client credentials fail. A different otherwise-authorized client cannot use a copied scoped token. The original Web target/token behavior is unchanged.
-- **Upstream isolation**: authorization, cookies, UI-session and both native preview headers are removed before forwarding to the dev server. Existing rewriting may put a short-lived scoped `yuri_preview_token` into response-body resource URLs; native strips old query values and supplies its captured private header. Client bearer/URL-auth credentials never enter native resource URLs. The WKWebView receives only status/MIME/bytes/CSP, not Set-Cookie/Location/auth headers.
-- **Limits/lifecycle**: native bounds streamed receipt, rejects redirects/non-2xx, preserves response CSP, checks generation before/after reads and rejects expired targets. The existing Host map is TTL-collected; no new DELETE endpoint or token renewal is invented. Native targets reject all WebSocket upgrades, including the proxy middleware's automatic upgrade path. POST/form/API/WS/HMR parity is not implied.
+File browser URLs use:
 
-The native protocol must be deployed on the actual paired Host. An old Host rejecting a native marker or private preview token is a visible failure, never a reason to forge an Origin, retry as Web/Capacitor, weaken SSRF or create an alternate Relay owner. In-flight revocation/real-network and WebKit behavior still require platform verification; per-request auth tests are not proof of cancelling an already-proxied response.
+```
+[Host prefix]/api/preview/proxy/:id/_file/:previewToken/:shortUrlAuthToken/:relativePath
+```
 
-## Focused evidence
+All ordinary relative references resolve in the browser: HTML attributes, CSS
+`@import`/`url()`, JS static/dynamic imports and fetch, and nested documents retain
+the entire target/auth/Host prefix. There is no second static server, global
+runtime switch, server-side HTML parser, resource crawler or Relay `srcDoc`
+fallback. Existing preview rewriting handles root-relative references; the
+existing request bridge recognizes the file envelope for root fetch/Request/URL
+inputs. Arbitrary external origins are not rewritten or given Yuri tokens.
 
-`proxy-runtime.test.js` invokes actual registered handlers, request-security, UI auth and the remote-client store against ephemeral synthetic records; it does not bind sockets or contact a Host/upstream. Tests cover native admission, wrong/missing/header-only/cookie/URL-token authorization, client ownership and revocation, expiry, malformed/native SSRF scope, unchanged Web Origin checks, unchanged Relay pairing authorization, credential stripping and native upgrade rejection. Run `bunx vitest run --project @yuriai/web packages/web/server/lib/preview/proxy-runtime.test.js`.
+`file-preview-path.js` is the shared strict envelope parser. It rejects dot
+segments, encoded slash/backslash/control and malformed URI escapes. The only
+credential format is the existing short URL token (`yuri_url_` plus 32 base64url
+characters). GET/HEAD authentication reads that segment through the normal
+ui-auth authorization/revocation gates; the preview token alone is not ordinary
+UI authentication. Explicit bearer auth takes precedence. A `-` segment carries
+no credential and never bypasses normal authentication.
+
+After Hub authorization, the Remote Host gateway replaces the Hub URL token with
+`-` before forwarding over the existing authenticated direct/Relay Host transport.
+The Remote's root-resource rewrite emits `REMOTE_PREVIEW_TOKEN_MARKER`, never the
+Hub credential; the existing Hub streaming substitution restores a short Hub-side
+token. Plain relative URLs need no token serialization in response bodies.
+Responses are `no-store`, `no-referrer`, and `nosniff`; the Hub preserves these
+policies. Tokens must never enter logs or external-site URLs/referrers.
+
+Every descendant canonicalizes its path again and rejects symlinks outside the
+target root. Files are bounded to 100 MiB. Binary assets stream through Express;
+text HTML/CSS/JS uses the existing preview rewrite/bridge. Directory resources
+resolve `index.html`. Files permit GET/HEAD only; file WebSockets are explicitly
+rejected, including when the normal HTTP preview proxy has attached its automatic
+upgrade listener. Normal network-preview WebSockets are unchanged.
+
+`DELETE /api/preview/targets/:id` accepts `{ previewToken }` through normal
+session/client authorization and origin checks. It is idempotent for an already
+missing target. Revocation destroys active responses; expiry checks every request
+and terminates active file responses at the deadline. Client disconnect aborts
+file reads/streams through the existing transport chain. A failed cleanup after
+the captured runtime ends cannot be sent using the next runtime's credentials;
+the old server's grant remains bounded by expiry.
+
+## Verification
+
+`file-target.test.js` exercises real production Hub + two Host listeners, real
+ui-auth/client revocation, registered directory gateway, every resource kind,
+symlink rejection, Host mismatch, target and URL-token expiry, revoke, and 80 MiB
+stream cancellation. A separate case uses the real E2EE Relay transport for Host
+A, while Host B stays direct. `proxy-runtime.test.js` retains network-preview
+regressions. `scripts/remote-project-file-preview-smoke.mjs` exports the same
+isolated fixture for browser/platform checks and records a source manifest.
+
+Browser evidence is not Electron main/preload or Capacitor WKWebView evidence.
+Those platforms require separate application/gateway/native network checks.

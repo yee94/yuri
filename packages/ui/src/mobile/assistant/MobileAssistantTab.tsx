@@ -229,10 +229,11 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
   const pageTitle = t('assistants.title');
   const editLabel = t('assistants.menu.edit');
   const deleteLabel = t('assistants.settings.delete');
+  const pageClassName = cn('yuri-assistant-mobile-catalog-page', className);
 
   if (capability.isPending || (capability.data?.supported && capability.data.enabled && snapshot.isPending)) {
     return (
-      <MobileTabPageScaffold title={pageTitle} className={className} surface={false}>
+      <MobileTabPageScaffold title={pageTitle} className={pageClassName} surface={false}>
         <MobileFloatingSurface className="yuri-mobile-assistant-loading">
           <MobileAssistantSkeleton />
         </MobileFloatingSurface>
@@ -244,7 +245,7 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
     return (
       <MobileTabPageScaffold
         title={pageTitle}
-        className={className}
+        className={pageClassName}
         surface={false}
         scrollsWithPage
         trailing={(
@@ -312,7 +313,7 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
     return (
       <MobileTabPageScaffold
         title={pageTitle}
-        className={className}
+        className={pageClassName}
         surface={false}
         surfaceClassName="yuri-mobile-assistant-state"
       >
@@ -346,7 +347,7 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
     return (
       <MobileTabPageScaffold
         title={pageTitle}
-        className={className}
+        className={pageClassName}
         surface={false}
         surfaceClassName="yuri-mobile-assistant-guide-host"
       >
@@ -358,7 +359,7 @@ export function MobileAssistantTab({ onEnable, onOpenAssistant, className }: Mob
   return (
     <MobileTabPageScaffold
       title={pageTitle}
-      className={className}
+      className={pageClassName}
       surface={false}
       surfaceClassName="yuri-mobile-assistant-state"
     >

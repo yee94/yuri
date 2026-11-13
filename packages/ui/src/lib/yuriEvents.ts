@@ -1,6 +1,5 @@
 import { consumeRuntimeSse } from './runtime-sse';
 import { subscribeRuntimeEndpointChanged } from './runtime-switch';
-import { notificationAdmission, type NotificationAdmission } from '../../../web/server/lib/notifications/admission-event.js';
 
 type ScheduledTaskRanEvent = {
   type: 'scheduled-task-ran';
@@ -71,7 +70,10 @@ export type ContactTurnEndEvent = {
   occurredAt: number;
 };
 export type YuriEvent =
-  | { type: 'notification-admitted'; admission: NotificationAdmission }
+  | { type: 'global-event-stream-ready' }
+  | { type: 'remote-host-status'; envelope: { type: 'yuri:host-status'; properties: unknown } }
+  | { type: 'remote-host-event'; envelope: { type: 'yuri:host-event'; properties: unknown } }
+  | { type: 'session-unread-changed'; revision: number; occurredAt: number }
   | { type: 'session-order-changed'; occurredAt: number }
   | { type: 'project-order-changed'; occurredAt: number }
   | { type: 'speech-settings-changed'; occurredAt: number }
@@ -87,6 +89,7 @@ export type YuriEvent =
   | ContactTurnEndEvent;
 /** Domains that carry a monotonic server revision tip. */
 type YuriRevisionEventType =
+  | 'session-unread-changed'
   | 'session-index-changed'
   | 'message-queue-changed'
   | 'assistants-changed';
@@ -104,7 +107,7 @@ const listeners = new Set<Listener>();
 /** In-memory latest tip per revision domain — closes GET→subscribe gaps. Not persisted. */
 const latestRevisionByDomain = new Map<YuriRevisionEventType, number>();
 const isRevisionEventType = (type: string): type is YuriRevisionEventType =>
-  type === 'session-index-changed' || type === 'message-queue-changed' || type === 'assistants-changed';
+  type === 'session-unread-changed' || type === 'session-index-changed' || type === 'message-queue-changed' || type === 'assistants-changed';
 const clearRevisionWatermarks = () => {
   latestRevisionByDomain.clear();
 };
@@ -186,9 +189,10 @@ const parseEnvelope = (raw: string): { type: string; properties: unknown } | nul
 };
 
 export const parseYuriEventEnvelope = (envelope: { type: string; properties: unknown }): YuriEvent | null => {
-  if (envelope.type === 'yuri:notification-admitted') {
-    const admission = notificationAdmission(envelope.properties);
-    return admission ? { type: 'notification-admitted', admission } : null;
+  if (envelope.type === 'yuri:global-event-stream-ready') {
+    return envelope.properties === undefined || envelope.properties === null || (typeof envelope.properties === 'object' && !Array.isArray(envelope.properties))
+      ? { type: 'global-event-stream-ready' }
+      : null;
   }
   if (envelope.type === 'yuri:event-stream-ready') {
     return envelope.properties === undefined || envelope.properties === null || (typeof envelope.properties === 'object' && !Array.isArray(envelope.properties))
@@ -203,6 +207,13 @@ export const parseYuriEventEnvelope = (envelope: { type: string; properties: unk
   const parsed = envelope.properties && typeof envelope.properties === 'object' && !Array.isArray(envelope.properties)
     ? envelope.properties as Record<string, unknown>
     : null;
+
+  if (envelope.type === 'yuri:host-status' || envelope.type === 'yuri:host-event') {
+    if (typeof parsed?.hubId !== 'string' || !parsed.hubId || typeof parsed.hostId !== 'string' || !parsed.hostId) return null;
+    return envelope.type === 'yuri:host-status'
+      ? { type: 'remote-host-status', envelope: { type: envelope.type, properties: parsed } }
+      : { type: 'remote-host-event', envelope: { type: envelope.type, properties: parsed } };
+  }
 
   if (envelope.type === 'yuri:worktree-topology-changed') {
     const projectDirectory = typeof parsed?.projectDirectory === 'string' ? parsed.projectDirectory.trim() : '';
@@ -253,6 +264,14 @@ export const parseYuriEventEnvelope = (envelope: { type: string; properties: unk
     if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) return null;
     if (typeof occurredAt !== 'number' || !Number.isFinite(occurredAt)) return null;
     return { type: 'message-queue-changed', revision, occurredAt };
+  }
+
+  if (envelope.type === 'yuri:session-unread-changed') {
+    const revision = parsed?.revision;
+    const occurredAt = parsed?.occurredAt;
+    if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) return null;
+    if (typeof occurredAt !== 'number' || !Number.isFinite(occurredAt)) return null;
+    return { type: 'session-unread-changed', revision, occurredAt };
   }
 
   if (envelope.type === 'yuri:speech-settings-changed') {
@@ -340,7 +359,7 @@ export const parseYuriEventEnvelope = (envelope: { type: string; properties: unk
   return nextEvent;
 };
 
-const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) => {
+export const dispatchYuriEventEnvelope = (envelope: { type: string; properties: unknown }) => {
   const nextEvent = parseYuriEventEnvelope(envelope);
   if (!nextEvent) return;
   if (nextEvent.type === 'event-stream-ready') reconnectAttempt = 0;
@@ -379,7 +398,7 @@ const connect = () => {
     onMessage: (data) => {
       if (attempt !== nextAttempt) return;
       const envelope = parseEnvelope(data);
-      if (envelope) dispatchFromEnvelope(envelope);
+      if (envelope) dispatchYuriEventEnvelope(envelope);
     },
   }).then(
     () => {

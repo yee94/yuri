@@ -9,9 +9,14 @@ import { execFileSync } from 'node:child_process';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const output = path.join(root, 'dist');
-const assets = new Set(['assets/vendor/LICENSE-devices.txt']);
+const assets = new Set([
+  'assets/wallpaper/telegram-pattern.svg',
+  'assets/wallpaper/LICENSE-telegram-pattern.txt',
+]);
 rmSync(output, { recursive: true, force: true });
 const template = readFileSync(path.join(root, 'src/index.template.html'), 'utf8');
+
+const statusIcons = '<span class="ti-signals"><svg viewBox="0 0 18 12" aria-hidden="true"><rect x="1" y="8" width="2.5" height="3.5" rx=".8"/><rect x="5" y="5.8" width="2.5" height="5.7" rx=".8"/><rect x="9" y="3.4" width="2.5" height="8.1" rx=".8"/><rect x="13" y="1" width="2.5" height="10.5" rx=".8"/></svg><svg viewBox="0 0 25 12" aria-hidden="true"><rect x=".75" y="1.25" width="20.5" height="9.5" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55"/><rect x="2.4" y="2.9" width="15.8" height="6.2" rx="1.3"/><path d="M22.6 4.2v3.6a1.6 1.6 0 0 0 0-3.6Z" opacity=".5"/></svg></span>';
 
 const pages = [
   { lang: 'zh', htmlLang: 'zh-CN', out: 'index.html', base: '', switchHref: 'en/' },
@@ -43,8 +48,8 @@ for (const page of pages) {
       return escapeHtml(snapshot.targets[name]);
     })
     .replaceAll('{{release}}', escapeHtml(snapshot.version + (snapshot.prerelease ? ' Beta' : '')))
-    .replaceAll('{{device:start}}', '<div class="device device-iphone-14-pro device-black"><div class="device-frame"><div class="device-screen"><div class="device-status" aria-hidden="true"><span>9:41</span><span>▮▮▮ ▰</span></div><div class="screen">')
-    .replaceAll('{{device:end}}', '</div><div class="device-indicator" aria-hidden="true"></div></div></div><div class="device-stripe"></div><div class="device-header"></div><div class="device-sensors"></div><div class="device-btns"></div><div class="device-power"></div><div class="device-home"></div></div>')
+    .replaceAll('{{device:start}}', `<div class="ti-phone"><span class="ti-btn ti-btn-action" aria-hidden="true"></span><span class="ti-btn ti-btn-vol-up" aria-hidden="true"></span><span class="ti-btn ti-btn-vol-down" aria-hidden="true"></span><span class="ti-btn ti-btn-power" aria-hidden="true"></span><div class="ti-bezel"><div class="ti-viewport"><div class="ti-statusbar" aria-hidden="true"><span class="ti-time">9:41</span><span class="ti-island"></span>${statusIcons}</div><div class="ti-screen">`)
+    .replaceAll('{{device:end}}', '</div><span class="ti-home" aria-hidden="true"></span></div></div></div>')
     .replace(/\{\{words:([\w.-]+)\}\}/g, (_, key) => text(key).split('|')
       .map((word) => `<span class="word">${escapeHtml(word)}</span>`).join(''))
     .replace(/\{\{tags:([\w.-]+)\}\}/g, (_, key) => text(key).split('|')

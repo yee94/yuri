@@ -6,29 +6,37 @@ import android.os.Build;
 import android.view.View;
 import android.view.Window;
 import android.webkit.WebView;
+import androidx.annotation.NonNull;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsAnimationCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
- * Android IME companion for Capacitor WebView — no whole-page lift.
+ * Android IME owner for Capacitor WebView — two-WebView experiment.
  *
  * Geometry:
- *   WebView parent padding stays 0 so SystemBars does not pad for IME
- *   (that would layout-shrink the page under the keyboard). The page keeps
- *   full height; JS lifts only the composer (transform FLIP) so the header
- *   stays pinned to the top.
+ *   The main WebView is never resized by the IME. System frames only set its
+ *   native translationY (= -IME inset). At rest the page paints its own
+ *   same-layer header. Only during IME motion a separate pinned WebView
+ *   ({@link NativeHeaderHost}) is engaged, so translation never moves it.
  *
- * Composer timing:
- *   JS starts a short composer-only CSS transform from keyboard intent/focus,
- *   using the previous measured IME height. This bridge emits only visibility
- *   state + settled height from the inset listener so JS can calibrate/cache
- *   the next open. There is no progress bridge or per-frame JS geometry.
+ * Layout handoff:
+ *   At rest the web layout is offset by the IME height inside the page
+ *   (window.__yuriImeOffset) so its body box maps exactly onto the visible area.
+ *   That change is a single web-side frame while native translation stays
+ *   constant: there is no native resize racing an asynchronous web repaint.
+ *   Opening applies the offset after the IME settles. Closing removes it in
+ *   onPrepare, before the first moving frame; translation always follows the
+ *   live IME frame and never waits for the page.
  *
  * Backdrop (gray strip above the keyboard on edge-to-edge):
  *   Paint window / decor / WebView parent / nav bar to match page --background.
@@ -39,6 +47,17 @@ final class ImeSyncBridge {
     private final BridgeActivity activity;
     private Bridge bridge;
     private View webParent;
+    private View rootView;
+    private WebView webView;
+    private int currentInset;
+    private boolean enabled;
+    /** IME px the page layout currently absorbs (acknowledged). */
+    private int webOffset;
+    private int requestedOffset = -1;
+    private long offsetGeneration;
+    private long headerGeneration;
+    private final Set<WindowInsetsAnimationCompat> imeAnimations = new HashSet<>();
+    private int lastImeHeight = -1;
     /** Last painted backdrop (ARGB). Avoid redundant window writes. */
     private int lastBackdropArgb = Color.TRANSPARENT;
     private boolean lastImeVisible = false;
@@ -50,22 +69,20 @@ final class ImeSyncBridge {
     void attach() {
         bridge = activity.getBridge();
         if (bridge == null) return;
-        WebView webView = bridge.getWebView();
+        webView = bridge.getWebView();
         if (webView == null) return;
         View content = activity.getWindow().getDecorView().findViewById(android.R.id.content);
         if (content == null) return;
         webParent = (View) webView.getParent();
-        View rootView = content.getRootView();
+        rootView = content.getRootView();
 
         paintBackdrop(resolveThemeBackdrop());
         hideNavigationBar();
         webView.post(this::syncBackdropFromWeb);
 
         if (webParent != null) {
-            // Own this view's padding so SystemBars cannot IME-pad the WebView.
-            // Do not translationY the WebView — that would drag the header off-screen.
+            // Replace SystemBars' final-frame padding with one native owner.
             ViewCompat.setOnApplyWindowInsetsListener(webParent, (v, insets) -> {
-                v.setPadding(0, 0, 0, 0);
                 Insets systemBars = insets.getInsets(
                     WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
                 );
@@ -73,13 +90,13 @@ final class ImeSyncBridge {
                 if (!imeVisible) {
                     hideNavigationBar();
                 }
-                if (imeVisible != lastImeVisible) {
-                    if (imeVisible) syncBackdropFromWeb();
-                    lastImeVisible = imeVisible;
-                    notifyImeState(
-                        imeVisible,
-                        imeVisible ? insets.getInsets(WindowInsetsCompat.Type.ime()).bottom : 0
-                    );
+                // onPrepare precedes final-inset dispatch. Do not jump to that
+                // final size before onProgress supplies the animated geometry.
+                if (imeAnimations.isEmpty()) {
+                    currentInset = imeInset(insets);
+                    applyTranslation();
+                    requestOffset(enabled ? currentInset : 0);
+                    reportImeState(insets, "settled", 0);
                 }
                 return new WindowInsetsCompat.Builder(insets)
                     .setInsets(
@@ -94,12 +111,183 @@ final class ImeSyncBridge {
                     .build();
             });
             webParent.setPadding(0, 0, 0, 0);
-            webParent.requestApplyInsets();
         }
 
-        // Capacitor Keyboard installs an empty root animation callback. Remove it
-        // so the IME animation can stay off the app's main-thread callback path.
-        ViewCompat.setWindowInsetsAnimationCallback(rootView, null);
+        // Replace Capacitor Keyboard's empty callback; all frame work stays
+        // native. Other inset animations (status/navigation bars) are not IME.
+        ViewCompat.setWindowInsetsAnimationCallback(rootView, new WindowInsetsAnimationCompat.Callback(
+            WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE
+        ) {
+            @Override
+            public void onPrepare(@NonNull WindowInsetsAnimationCompat animation) {
+                if (!isIme(animation)) return;
+                if (imeAnimations.isEmpty()) {
+                    engageHeader();
+                    // A visible IME can only shrink or change height: drop the
+                    // page's top offset before the first moving frame. The
+                    // translation still holds the composer above the IME, the
+                    // shell's top just moves above the screen (no gap).
+                    WindowInsetsCompat now = ViewCompat.getRootWindowInsets(rootView);
+                    if (now != null && now.isVisible(WindowInsetsCompat.Type.ime())) requestOffset(0);
+                }
+                imeAnimations.add(animation);
+            }
+
+            @NonNull
+            @Override
+            public WindowInsetsAnimationCompat.BoundsCompat onStart(
+                @NonNull WindowInsetsAnimationCompat animation,
+                @NonNull WindowInsetsAnimationCompat.BoundsCompat bounds
+            ) {
+                if (isIme(animation)) {
+                    WindowInsetsCompat target = ViewCompat.getRootWindowInsets(rootView);
+                    if (target != null) {
+                        reportImeState(target, "start", animation.getDurationMillis());
+                        // Fallback when onPrepare could not see the IME.
+                        if (imeInset(target) < webOffset) requestOffset(0);
+                    }
+                }
+                return bounds;
+            }
+
+            @NonNull
+            @Override
+            public WindowInsetsCompat onProgress(
+                @NonNull WindowInsetsCompat insets,
+                @NonNull List<WindowInsetsAnimationCompat> runningAnimations
+            ) {
+                for (WindowInsetsAnimationCompat animation : runningAnimations) {
+                    if (isIme(animation)) {
+                        currentInset = imeInset(insets);
+                        applyTranslation();
+                        break;
+                    }
+                }
+                return insets;
+            }
+
+            @Override
+            public void onEnd(@NonNull WindowInsetsAnimationCompat animation) {
+                if (!isIme(animation)) return;
+                imeAnimations.remove(animation);
+                if (!imeAnimations.isEmpty()) return;
+                WindowInsetsCompat settled = ViewCompat.getRootWindowInsets(rootView);
+                if (settled != null) {
+                    currentInset = imeInset(settled);
+                    applyTranslation();
+                    requestOffset(enabled ? currentInset : 0);
+                    if (currentInset == webOffset) releaseHeader();
+                    reportImeState(settled, "settled", 0);
+                }
+            }
+        });
+        if (webParent != null) webParent.requestApplyInsets();
+    }
+
+    private static boolean isIme(WindowInsetsAnimationCompat animation) {
+        return (animation.getTypeMask() & WindowInsetsCompat.Type.ime()) != 0;
+    }
+
+    void setEnabled(boolean next) {
+        if (enabled == next) return;
+        enabled = next;
+        applyTranslation();
+        requestOffset(enabled && imeAnimations.isEmpty() ? currentInset : 0);
+        if (enabled && !imeAnimations.isEmpty()) engageHeader();
+        if (!enabled) releaseHeader();
+        // A focus transfer need not cause another inset dispatch. Refresh the
+        // local field inset / composer state from the current native geometry.
+        lastImeHeight = -1;
+        WindowInsetsCompat now = rootView == null ? null : ViewCompat.getRootWindowInsets(rootView);
+        if (now != null) reportImeState(now, imeAnimations.isEmpty() ? "settled" : "start", 0);
+    }
+
+    private static int imeInset(WindowInsetsCompat insets) {
+        return Math.max(0, insets.getInsets(WindowInsetsCompat.Type.ime()).bottom);
+    }
+
+    private void applyTranslation() {
+        if (webView == null) return;
+        // Always the live IME frame. Until the page drops a stale top offset
+        // the strip under the pinned header shows page background only.
+        float next = enabled ? -currentInset : 0;
+        if (webView.getTranslationY() != next) webView.setTranslationY(next);
+    }
+
+    /** Ask the page to absorb {@code px} IME height in one web frame. */
+    private void requestOffset(int px) {
+        if (webView == null || px == requestedOffset) return;
+        requestedOffset = px;
+        final long token = ++offsetGeneration;
+        float density = webView.getResources().getDisplayMetrics().density;
+        String css = String.format(Locale.US, "%.3f", px / density);
+        webView.evaluateJavascript(
+            "window.__yuriImeOffset?window.__yuriImeOffset(" + css + "):0", value -> {
+                if (token != offsetGeneration || webView == null) return;
+                // A stale bundle without the hook keeps today's translation.
+                webOffset = px;
+                // The callback returns after the script ran; wait for that frame.
+                webView.postVisualStateCallback(token, new WebView.VisualStateCallback() {
+                    @Override public void onComplete(long requestId) {
+                        if (token != offsetGeneration || webView == null) return;
+                        if (imeAnimations.isEmpty() && currentInset == webOffset) releaseHeader();
+                    }
+                });
+            });
+    }
+
+    /**
+     * Pin the mirror synchronously (alpha only) before the first translated
+     * frame, then ask the page to hide its own header. Until that lands both
+     * coincide at the top.
+     */
+    private void engageHeader() {
+        if (!enabled) return;
+        NativeHeaderHost header = NativeHeaderHost.current;
+        headerGeneration++;
+        if (header == null || webView == null || !header.ready()) return;
+        header.setEngaged(true);
+        webView.evaluateJavascript("window.__yuriNativeHeader&&window.__yuriNativeHeader(true)", null);
+    }
+
+    /** Page header first; drop the mirror only after the page painted it. */
+    private void releaseHeader() {
+        NativeHeaderHost header = NativeHeaderHost.current;
+        if (header == null || webView == null || !header.engaged()) return;
+        final long token = ++headerGeneration;
+        webView.evaluateJavascript("window.__yuriNativeHeader&&window.__yuriNativeHeader(false)", ignored -> {
+            if (token != headerGeneration || webView == null) return;
+            webView.postVisualStateCallback(token, new WebView.VisualStateCallback() {
+                @Override public void onComplete(long requestId) {
+                    if (token != headerGeneration || (enabled && !imeAnimations.isEmpty())) return;
+                    header.setEngaged(false);
+                }
+            });
+        });
+    }
+
+    private void reportImeState(WindowInsetsCompat insets, String phase, long durationMs) {
+        boolean open = insets.isVisible(WindowInsetsCompat.Type.ime());
+        int height = open ? insets.getInsets(WindowInsetsCompat.Type.ime()).bottom : 0;
+        if (!"start".equals(phase) && open == lastImeVisible && height == lastImeHeight && imeAnimations.isEmpty()) {
+            return;
+        }
+        if (open && !lastImeVisible) syncBackdropFromWeb();
+        lastImeVisible = open;
+        lastImeHeight = "start".equals(phase) ? -1 : height;
+        notifyImeState(open, height, phase, durationMs);
+    }
+
+    void detach() {
+        offsetGeneration++;
+        if (webView != null) webView.setTranslationY(0);
+        if (rootView != null) ViewCompat.setWindowInsetsAnimationCallback(rootView, null);
+        if (webParent != null) ViewCompat.setOnApplyWindowInsetsListener(webParent, null);
+        imeAnimations.clear();
+        rootView = null;
+        webParent = null;
+        webView = null;
+        bridge = null;
     }
 
     @SuppressWarnings("deprecation")
@@ -243,16 +431,18 @@ final class ImeSyncBridge {
         return lum > 0.5;
     }
 
-    /** State-only notification for classes / auto-follow freeze; geometry stays native. */
-    private void notifyImeState(boolean open, int heightPx) {
+    /** Bookends only: classes and the transcript's existing scroll owner, no JS lift. */
+    private void notifyImeState(boolean open, int heightPx, String phase, long durationMs) {
         if (bridge == null) return;
-        // Send raw window px. JS converts with window.devicePixelRatio so the
-        // lift stays in WebView CSS space even when Activity density is pinned.
+        // Height is informational window px. JS must not subtract it again:
+        // the WebView viewport already excludes this native inset.
         String data = String.format(
             Locale.US,
-            "{\"open\":%s,\"height\":%d}",
+            "{\"open\":%s,\"height\":%d,\"phase\":\"%s\",\"durationMs\":%d,\"nativeResize\":true}",
             open,
-            Math.max(0, heightPx)
+            Math.max(0, heightPx),
+            phase,
+            Math.max(0, durationMs)
         );
         bridge.triggerJSEvent("yuri:ime-state", "window", data);
     }

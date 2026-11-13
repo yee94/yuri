@@ -12,6 +12,9 @@ import type { PermissionRequest } from '@/types/permission';
 import type { QuestionRequest } from '@/types/question';
 
 import { ChatInput } from './ChatInput';
+import { RemoteChatContainer } from './RemoteChatContainer';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import type { HostLocation } from '@/lib/remote-projects/location';
 import type { ChatInputSurface } from './chatInputSurface';
 import {
     resolveChatContainerHostFeatures,
@@ -49,6 +52,7 @@ import { refreshSessionForms, useSessionFormStore } from '@/sync/session-form-st
 import { isQuestionFormMetadata } from '@/sync/v2-runtime';
 import { isSessionRetryAction, resolveRetryActionCopy } from '@/sync/session-retry-action';
 import { StatusRowContainer } from './StatusRowContainer';
+import { ComposerFoot, DesktopComposerEdgeFade, DraftComposerFoot } from './ComposerFoot';
 import { TranscriptScrollControls } from './components/TranscriptScrollControls';
 import { PromptNavigatorRail } from './components/PromptNavigatorRail';
 import { getFullText } from './lib/messagePreview';
@@ -64,6 +68,8 @@ import {
     CHAT_TAIL_SPACER_MOBILE_HEIGHT,
 } from './lib/scroll/chatTailSpacer';
 import { TimelineDialog } from './TimelineDialog';
+import { TranscriptSearch } from './TranscriptSearch';
+import { TranscriptSearchContext } from './TranscriptSearchContext';
 import { useChatTurnNavigation } from './hooks/useChatTurnNavigation';
 import { useChatSurfaceMode } from './useChatSurfaceMode';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
@@ -191,12 +197,6 @@ const CHAT_SCROLL_STYLE = {
     overscrollBehaviorY: 'contain',
 } as const;
 
-const DesktopComposerEdgeFade: React.FC = () => (
-    <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 bottom-full z-0 h-11 bg-gradient-to-t from-[var(--surface-background)] to-transparent"
-    />
-);
 const CHAT_NAVIGATION_IGNORED_TARGET_SELECTOR = [
     'a[href]',
     'button',
@@ -313,7 +313,7 @@ type ChatViewportProps = {
     transcriptStatusRow?: React.ReactNode;
 };
 
-const ChatViewport = React.memo(({
+export const ChatViewport = React.memo(({
     currentSessionId,
     virtualizerKey,
     isDesktopExpandedInput,
@@ -351,6 +351,11 @@ const ChatViewport = React.memo(({
     timelineHistoryAnchorToken,
 }: ChatViewportProps) => {
     const { t } = useI18n();
+    const searchTarget = React.useContext(TranscriptSearchContext);
+    const handleViewportHistoryScroll = useEvent(() => {
+        // Find navigates within the loaded snapshot, never through scroll paging.
+        if (!searchTarget) handleHistoryScroll();
+    });
     // Loading status is mutation-owned only (isLoadingOlder); background
     // prefetch/SWR loading never drives it.
     const loadOlderBusy = resolveMobileLoadOlderBusy({ isLoadingOlder });
@@ -534,7 +539,7 @@ const ChatViewport = React.memo(({
                     hideBottomShadow={isMobile}
                     tabIndex={0}
                     onClick={focusScrollContainer}
-                    onScroll={handleHistoryScroll}
+                    onScroll={handleViewportHistoryScroll}
                     data-scroll-shadow="true"
                     data-scrollbar="chat"
                 >
@@ -709,6 +714,7 @@ type ChatContainerProps = {
     host?: ChatContainerHost;
     /** Binds one phone navigation page to an explicit route and skips the primary retained-view cache. */
     explicitSession?: {
+        location?: HostLocation;
         sessionId: string | null;
         directory: string | null;
         viewKey: string;
@@ -1507,6 +1513,12 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         goToBottom('instant');
         expandMobileComposer();
     });
+    const canOpenTranscriptSearch = useEvent((event: KeyboardEvent) => {
+        if (useUIStore.getState().activeMainTab !== 'chat' || hasBlockingChatOverlay()) return false;
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || composerSwapScopeRef.current?.contains(target)) return true;
+        return !target.closest('input, textarea, [contenteditable="true"], .cm-editor, .monaco-editor, .terminal-viewport-container');
+    });
     const scrollViewportOnSend = useEvent(() => {
         scrollToBottomOnSend();
     });
@@ -1561,6 +1573,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
             : (
                 <ChatInput
                     key="composer-input"
+                    foregroundActive={active}
                     surface={composerSurface}
                     scrollToBottom={scrollViewportOnSend}
                     submissionBlocked={promptAvailability.blockSubmission}
@@ -1997,19 +2010,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						/>
 					</div>
 				) : null}
-				<div
-					className={cn(
-						'relative z-10 flex min-h-0',
-						isMobile && 'yuri-mobile-composer-foot',
-						isDesktopExpandedInput
-							? 'flex-1 bg-background'
-							: useCompactDraftLayout
-								? cn('bg-background', 'px-0')
-								: 'flex-1 items-center justify-center bg-background px-0 pb-[6vh]'
-					)}
-				>
+				<DraftComposerFoot isMobile={isMobile} expanded={isDesktopExpandedInput} compact={useCompactDraftLayout}>
                         {promptSurface}
-				</div>
+				</DraftComposerFoot>
 			</div>
         );
     }
@@ -2059,18 +2062,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						</div>
 					) : null}
 				</div>
-				<div
-					key="composer-foot"
-					className={cn(
-						'relative z-10',
-						isMobile && 'yuri-mobile-composer-foot',
-						isDesktopExpandedInput
-							? 'flex-1 min-h-0 bg-background'
-							: 'bg-background',
-					)}
-				>
+				<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
 					{promptSurface}
-				</div>
+				</ComposerFoot>
 			</div>
 		);
 	}
@@ -2117,19 +2111,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                         </div>
                     </div>
                 </div>
-                <div
-                    key="composer-foot"
-                    className={cn(
-                        'relative z-10',
-                        isMobile && 'yuri-mobile-composer-foot yuri-mobile-composer-foot--overlay',
-						isDesktopExpandedInput
-							? 'flex-1 min-h-0 bg-background'
-							: 'bg-background'
-					)}
-				>
-                    {!isMobile && !isDesktopExpandedInput ? <DesktopComposerEdgeFade /> : null}
+                <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
                     {promptSurface}
-				</div>
+				</ComposerFoot>
             </div>
         );
     }
@@ -2155,18 +2139,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                         </div>
                     ) : null}
                 </div>
-                <div
-                    key="composer-foot"
-                    className={cn(
-                        'relative z-10',
-                        isMobile && 'yuri-mobile-composer-foot',
-					isDesktopExpandedInput
-						? 'flex-1 min-h-0 bg-background'
-						: 'bg-background'
-					)}
-				>
+                <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
                     {promptSurface}
-				</div>
+				</ComposerFoot>
             </div>
         );
     }
@@ -2179,6 +2154,8 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 				</div>
 			) : null}
 			{returnToParentButton}
+            <TranscriptSearch key={`find:${sessionViewKey ?? currentSessionId}`} messages={renderedViewportMessages}
+                enabled={active && !isDesktopExpandedInput} canOpen={canOpenTranscriptSearch} onNavigate={releaseAutoFollow}>
 			<ChatViewport
                 timelineHistoryAnchorToken={timelineHistoryAnchorToken}
 				key={currentSessionId}
@@ -2216,18 +2193,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                 isLoadingOlderPrompts={isLoadOlderBusy}
                 onLoadEarlierPrompts={handleLoadOlderClick}
             />
+            </TranscriptSearch>
 
-            <div
-                key="composer-foot"
-                className={cn(
-                    'relative z-10',
-                    isMobile && 'yuri-mobile-composer-foot yuri-mobile-composer-foot--overlay',
-                    isDesktopExpandedInput
-                        ? 'flex-1 min-h-0 bg-background'
-                        : 'bg-background'
-                )}
-            >
-                {!isMobile && !isDesktopExpandedInput ? <DesktopComposerEdgeFade /> : null}
+            <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
                 <TranscriptScrollControls
                     scrollRef={scrollRef}
                     active={active && !isDesktopExpandedInput}
@@ -2235,7 +2203,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                     onScrollToBottom={navigation.resumeToLatest}
                 />
                 {promptSurface}
-            </div>
+            </ComposerFoot>
 
 
             <TimelineDialog
@@ -2245,8 +2213,6 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                 directory={effectiveSessionDirectory}
                 onRevertMessage={onRevertMessage}
                 onScrollToMessage={timelineController.scrollToMessage}
-                onScrollByTurnOffset={navigation.scrollByTurnOffset}
-                onResumeToLatest={resumeToLatestInstant}
                 canLoadEarlier={timelineController.historySignals.canLoadEarlier}
                 isLoadingEarlier={isLoadOlderBusy}
                 onLoadEarlier={handleLoadOlderClick}
@@ -2575,6 +2541,7 @@ const ExplicitChatContainer: React.FC<Omit<ChatContainerProps, 'host'> & {
 };
 
 export const ChatContainer: React.FC<ChatContainerProps> = (props) => {
+    const remoteSession = useSessionNavigationStore((store) => store.remoteSession);
     const runtimeKey = React.useSyncExternalStore(
         subscribeRuntimeKey,
         getRuntimeKey,
@@ -2583,6 +2550,13 @@ export const ChatContainer: React.FC<ChatContainerProps> = (props) => {
 
     if (props.host) {
         return <HostedChatContainer key={`${runtimeKey}:${props.host.sessionSurface.surfaceId}`} {...props} host={props.host} runtimeKey={runtimeKey} />;
+    }
+
+    const remoteLocation = props.explicitSession?.location ?? (!props.explicitSession?.sessionId ? remoteSession?.location : undefined);
+    if (remoteLocation?.hostId) {
+        const sessionId = props.explicitSession?.location ? props.explicitSession.sessionId : remoteSession?.sessionId ?? null;
+        return <RemoteChatContainer key={`${runtimeKey}:${remoteLocation.hubId}:${remoteLocation.hostId}:${remoteLocation.directory}`}
+            location={remoteLocation} sessionId={sessionId} active={props.explicitSession?.active ?? props.active} readOnly={props.readOnly} composerPresentation="primary" viewport={ChatViewport} />;
     }
 
     if (props.explicitSession) {

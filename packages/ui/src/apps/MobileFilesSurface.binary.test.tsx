@@ -5,13 +5,21 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { queryClient } from '@/lib/queryRuntime';
 import { fileStatQueryOptions } from '@/queries/fileQueries';
 import { MobileFilesSurface } from './MobileFilesSurface';
+import { HostRuntimeContext } from '@/contexts/hostRuntimeContext';
+import { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
+import { HostContentDemand } from '@/lib/remote-projects/content-demand';
+import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { opencodeClient } from '@/lib/opencode/client';
 
 const state = vi.hoisted(() => ({
   files: { readFile: vi.fn(), statFile: vi.fn(), downloadFile: vi.fn(), listDirectory: vi.fn(), search: vi.fn(), createDirectory: vi.fn() },
   runtime: { isDesktop: false },
   plugin: false,
   t: (key: string) => key,
+  preview: vi.fn(),
 }));
+vi.mock('@/lib/preview/project-file-preview', () => ({ resolveProjectFilePreview: (...args: unknown[]) => state.preview(...args) }));
+vi.mock('@/lib/runtime-auth', async (original) => ({ ...await original<object>(), acquireRuntimeUrlAuthToken: () => () => {}, subscribeRuntimeUrlAuthToken: () => () => {} }));
 vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => state }));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/workspace' }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: state.t }) }));
@@ -48,6 +56,7 @@ beforeEach(() => {
   queryClient.clear();
   queryClient.setDefaultOptions({ queries: { retry: false } });
   state.plugin = false;
+  state.preview.mockReset();
   state.files.statFile.mockReset().mockImplementation(async (path: string) => ({ path, isFile: true, size: 500, isBinary: true }));
   state.files.readFile.mockReset().mockResolvedValue({ content: 'plain text' });
   state.files.downloadFile.mockReset().mockResolvedValue(undefined);
@@ -81,6 +90,62 @@ test('binary fallback stays behind plugin preview', async () => {
   expect(host.querySelector('[data-testid="plugin"]')).not.toBeNull();
   expect(host.textContent).not.toContain('filesView.binary.description');
   expect(state.files.readFile).not.toHaveBeenCalled();
+});
+
+test('real mobile file detail reads the selected Host and never the Hub, even for identical paths', async () => {
+  const path = '/workspace/remote.txt';
+  const fetch = vi.fn(async (route: string) => route.endsWith('/api/fs/stat')
+    ? new Response(JSON.stringify({ path, isFile: true, size: 12, mtimeMs: 1, isBinary: false }), { headers: { 'Content-Type': 'application/json' } })
+    : new Response(route.includes('/hosts/a/') ? 'Host A bytes' : 'Host B bytes'));
+  const registry = new HostRuntimeRegistry('hub', {
+    transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
+    sdk: () => opencodeClient.getSdkClient(), service: () => { throw new Error('Unexpected Hub service'); },
+  });
+  for (const hostId of ['a', 'b']) {
+    const entry = registry.resolve({ hubId: 'hub', hostId, directory: '/workspace' });
+    await act(async () => root.render(<QueryClientProvider client={queryClient}>
+      <HostRuntimeContext.Provider value={{ registry, entry, demand: new HostContentDemand(registry) }}>
+        <MobileFilesSurface key={hostId} initialFilePath={path} />
+      </HostRuntimeContext.Provider>
+    </QueryClientProvider>));
+    await settle();
+    await settle();
+    expect(host.querySelector('[data-testid="text"]')?.textContent).toBe(hostId === 'a' ? 'Host A bytes' : 'Host B bytes');
+  }
+  expect(state.files.readFile).not.toHaveBeenCalled();
+  expect(state.files.statFile).not.toHaveBeenCalled();
+  expect(fetch.mock.calls.every(([route]) => route.startsWith('/api/hosts/'))).toBe(true);
+  expect(fetch.mock.calls.some(([route]) => route === '/api/hosts/a/api/fs/stat')).toBe(true);
+  expect(fetch.mock.calls.some(([route]) => route === '/api/hosts/b/api/fs/stat')).toBe(true);
+});
+
+test('real mobile HTML detail consumes scoped graph helper across same-path Hosts and releases it on source toggle', async () => {
+  const path = '/workspace/index.html';
+  const fetch = vi.fn(async (route: string) => route.endsWith('/api/fs/stat')
+    ? Response.json({ path, isFile: true, size: 20, mtimeMs: 1, isBinary: false }) : new Response('<html>Host source</html>'));
+  const registry = new HostRuntimeRegistry('hub', { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
+    sdk: () => opencodeClient.getSdkClient(), service: () => { throw new Error('Unexpected Hub service'); } });
+  const releases = [vi.fn(async () => {}), vi.fn(async () => {})];
+  try {
+    for (const [index, hostId] of ['a', 'b'].entries()) {
+      const entry = registry.resolve({ hubId: 'hub', hostId, directory: '/workspace' });
+      state.preview.mockResolvedValueOnce({ src: `about:blank#${hostId}`, expiresAt: Date.now() + 30 * 60_000, release: releases[index] });
+      await act(async () => root.render(<QueryClientProvider client={queryClient}>
+        <HostRuntimeContext.Provider value={{ registry, entry, demand: new HostContentDemand(registry) }}>
+          <MobileFilesSurface key={hostId} initialFilePath={path} />
+        </HostRuntimeContext.Provider>
+      </QueryClientProvider>));
+      await settle();
+      await vi.waitFor(() => expect(host.querySelector('iframe')?.getAttribute('src')).toBe(`about:blank#${hostId}`));
+      expect(state.preview).toHaveBeenLastCalledWith(entry, path, '/workspace', expect.any(AbortSignal), undefined);
+      expect(host.querySelector('iframe')?.getAttribute('srcdoc')).toBeNull();
+    }
+    expect(releases[0]).toHaveBeenCalled();
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="mobile.files.html.viewSourceAria"]')!.click());
+    expect(host.querySelector('iframe')).toBeNull(); expect(releases[1]).toHaveBeenCalled();
+    expect(state.files.readFile).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.every(([route]) => route.startsWith('/api/hosts/'))).toBe(true);
+  } finally { registry.dispose(); }
 });
 
 test('stat failure blocks content and is visible', async () => {

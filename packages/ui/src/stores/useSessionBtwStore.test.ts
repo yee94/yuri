@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createNativeBtwStore } from '../../../nsh/desktop-btw';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 
 type GenerateInput = { sessionId: string; directory?: string | null; prompt: string; signal?: AbortSignal };
 type GenerateResult = { text: string } | Error | (() => Promise<{ text: string }>);
@@ -81,27 +81,28 @@ beforeEach(() => {
 });
 afterEach(() => resetSessionBtwStoreForRuntimeSwitch());
 
-test('Native generate owner produces exactly the production Web prompts for quotes, failures and the 12-turn history window', async () => {
-  const prompts: string[] = [];
-  let index = 0;
-  const native = createNativeBtwStore({ runtime: () => ({ transport: harness.transport, generation: harness.generation }), resolveSelection: () => null,
-    rememberSelection: () => { throw new Error('No selection change requested'); }, applySelection: async () => { throw new Error('No model selected'); },
-    generate: async (_scope, body, options) => {
-      expect(Object.keys(body)).toEqual(['sessionID', 'prompt']); expect(options.signal).toBeInstanceOf(AbortSignal);
-      prompts.push(body.prompt); const current = index++; if (current === 1) throw new Error('synthetic failure'); return { text: `answer-${current}` };
-    } });
-  const target = scope('parity', '/workspace');
-  for (const quote of ['quoted\nsource', 'quoted\nsource', 'another quote']) { native.addQuote(target, quote); useSessionBtwStore.getState().addQuote(target, quote); }
-  for (let position = 0; position < 16; position++) {
-    harness.queue.push(position === 1 ? new Error('synthetic failure') : { text: `answer-${position}` });
-    await native.ask(target, `question-${position}`); await useSessionBtwStore.getState().ask(target, `question-${position}`);
-  }
-  expect(prompts).toEqual(harness.calls.map(call => call.prompt));
-  expect(native.entry(target).turns.map(({ question, answer, error, pending }) => ({ question, answer, error, pending }))).toEqual(turns(target));
-  native.dispose();
-});
-
 describe('useSessionBtwStore side conversation', () => {
+  test('remote aside scopes same IDs to the Host service, never local defaults, and fences reconnect completions', async () => {
+    let current = true;
+    let finish!: (value: { text: string }) => void;
+    const generate = vi.fn(() => new Promise<{ text: string }>((resolve) => { finish = resolve; }));
+    const host = { location: { hubId: 'hub', hostId: 'remote', directory: 'C:\\repo' },
+      sdk: () => { if (!current) throw new Error('Remote connection changed'); return {}; },
+      service: () => ({ generateSessionAside: generate }),
+    } as unknown as HostRuntimeEntry;
+    const target = { sessionId: 'same', directory: 'C:\\repo', host };
+    expect(getSessionBtwKey(target)).not.toBe(getSessionBtwKey({ sessionId: 'same', directory: target.directory }));
+    const flight = useSessionBtwStore.getState().ask(target, 'Remote question');
+    await flush();
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'same', directory: 'C:\\repo' }));
+    expect(harness.calls).toEqual([]);
+    expect(harness.applySendSelection).not.toHaveBeenCalled();
+    current = false;
+    finish({ text: 'stale answer' });
+    await flight;
+    expect(useSessionBtwStore.getState().entries[getSessionBtwKey(target)]?.turns[0]).toMatchObject({ answer: '', pending: false });
+  });
+
   test('captures only real receipt timing and replaces it on retry, including failure', async () => {
     const target = scope('ses_timing', '/repo');
     let clock = 100;

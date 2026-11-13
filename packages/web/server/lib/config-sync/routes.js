@@ -84,6 +84,11 @@ export const registerConfigSyncRoutes = (app, deps = {}) => {
     catch (error) { sendError(res, error); }
   });
 
+  app.post('/api/yuri/config-sync/magpie/gateway', async (_req, res) => {
+    try { res.json(await receiver.ensureMagpieGateway()); }
+    catch { res.status(503).json({ code: 'magpie_gateway_failed', error: 'Magpie gateway could not be prepared' }); }
+  });
+
   app.get('/api/yuri/config-sync/credentials/inventory', async (_req, res) => {
     try { res.json({ providerCredentials: await receiver.credentialInventory() }); }
     catch (error) { sendError(res, error); }

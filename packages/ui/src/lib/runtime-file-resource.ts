@@ -10,6 +10,9 @@ import { getRuntimeUrlResolver, type RuntimeUrlQuery } from './runtime-url';
 import { normalizeFilePath, toAbsoluteFilePath } from './path-utils';
 import { getNativeImageCacheBridge } from './relay/native-asset-bridge';
 import { releaseRelayImageDisplayUrl, retainRelayImageDisplayUrl, streamRelayImageDisplayUrl, streamRelayImageResponse } from './relay/relay-image-stream';
+import type { HostRuntimeEntry } from './remote-projects/registry';
+import { captureProjectScope } from './api/project-scope';
+import { hostApiPath } from './remote-projects/location';
 
 export type RuntimeImageIntent = 'inline' | 'preview';
 type FileResourceLease = {
@@ -404,8 +407,9 @@ const acquireImageStream = async (path: string, signal: AbortSignal): Promise<Ru
 };
 
 /** Prefer native disk caching; otherwise share bounded, version-validated bytes between display leases. */
-export const acquireRuntimeImage = (path: string, signal: AbortSignal, _intent: RuntimeImageIntent = 'inline'): Promise<RuntimeImageLease> => {
+export const acquireRuntimeImage = (path: string, signal: AbortSignal, _intent: RuntimeImageIntent = 'inline', scope?: HostRuntimeEntry): Promise<RuntimeImageLease> => {
   if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  if (scope) return acquireProjectImage(path, signal, scope);
   subscribeFileResources();
   const bridge = getNativeImageCacheBridge();
   if (!bridge) return cancellableLease(acquireBufferedImage(path, signal), signal);
@@ -426,13 +430,69 @@ const subscribeFileResources = () => {
   }
 };
 
-export type FileResourceRequest = FileReadScope & { path: string; signal?: AbortSignal; range?: string };
+export type FileResourceRequest = FileReadScope & { path: string; signal?: AbortSignal; range?: string; scope?: HostRuntimeEntry };
+
+/** Remote bytes never enter the active-Hub-only native/durable cache. */
+const readProjectFile = async (input: FileResourceRequest & { scope: HostRuntimeEntry }): Promise<Response> => {
+  const scope = captureProjectScope(input.scope);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const stopEndpoint = subscribeRuntimeEndpointChanged(abort);
+  const stopAuth = subscribeRuntimeAuthGeneration(abort);
+  input.signal?.addEventListener('abort', abort, { once: true });
+  const release = () => { abort(); stopEndpoint(); stopAuth(); input.signal?.removeEventListener('abort', abort); };
+  try {
+    input.signal?.throwIfAborted();
+    const response = await scope.fetch('/api/fs/raw', {
+      ...rawOptions(input.path, { ...input, directory: input.directory ?? input.scope.location.directory }),
+      headers: { 'x-opencode-directory': input.directory ?? input.scope.location.directory, ...(input.range ? { Range: input.range } : {}) },
+      signal: controller.signal, cache: 'no-store',
+    });
+    if (!response.ok && response.status !== 416) throw new Error(`File request failed (${response.status})`);
+    const reader = response.body?.getReader();
+    if (!reader) { release(); return response; }
+    return new Response(new ReadableStream({
+      async pull(stream) {
+        try {
+          scope.assertCurrent(controller.signal);
+          const next = await reader.read();
+          scope.assertCurrent(controller.signal);
+          if (next.done) { stream.close(); release(); }
+          else stream.enqueue(next.value);
+        } catch (error) { stream.error(error); release(); void reader.cancel().catch(() => {}); }
+      },
+      cancel() { release(); return reader.cancel(); },
+    }), { status: response.status, statusText: response.statusText, headers: response.headers });
+  } catch (error) { release(); throw error; }
+};
+
+const acquireProjectImage = async (path: string, signal: AbortSignal, entry: HostRuntimeEntry): Promise<RuntimeImageLease> => {
+  const scope = captureProjectScope(entry);
+  const controller = new AbortController();
+  let url = '';
+  const release = () => {
+    controller.abort(); signal.removeEventListener('abort', release);
+    if (url) { releaseRelayImageDisplayUrl(url); url = ''; }
+  };
+  signal.addEventListener('abort', release, { once: true });
+  try {
+    const response = await readProjectFile({ path, signal: controller.signal, scope: entry });
+    // This is a per-reader stream, not a cache lookup. Never register a bare
+    // remote path as sourcePath: the native save helper would reread it on Hub.
+    url = await streamRelayImageResponse(response, controller.signal, getRuntimeTransportIdentity());
+    scope.assertCurrent(signal);
+    controller.signal.throwIfAborted();
+    retainRelayImageDisplayUrl(url);
+    return { url, release };
+  } catch (error) { release(); throw error; }
+};
 
 /** Navigation stays browser/native-owned, including HTML origin and subresources.
  * This handle promises no client persistence; HTTP caching is server/browser policy. */
-export const directFileResource = (route: string, query?: RuntimeUrlQuery): { url: string; cache: 'browser' } => ({
-  url: getRuntimeUrlResolver().authenticatedAsset(route, query), cache: 'browser',
-});
+export const directFileResource = (route: string, query?: RuntimeUrlQuery, scope?: HostRuntimeEntry): { url: string; cache: 'browser' } => {
+  if (scope) captureProjectScope(scope).assertCurrent();
+  return { url: getRuntimeUrlResolver().authenticatedAsset(scope ? hostApiPath(scope.location.hostId, route) : route, query), cache: 'browser' };
+};
 
 /** Import already staged/local bytes once; seeding is optional retention, never
  * a second remote read. Destination upload still executes its real authorization. */
@@ -535,6 +595,7 @@ const rangedBlobResponse = (blob: Blob, range: string): Response => {
 /** Complete bodies only enter persistence. Cold ranges and oversized files stream
  * without a tee or body accumulation. EOF waits for commit; cancel releases the lease. */
 export const readRuntimeFile = async (input: FileResourceRequest): Promise<Response> => {
+  if (input.scope) return readProjectFile({ ...input, scope: input.scope });
   subscribeFileResources();
   const signal = input.signal ?? new AbortController().signal;
   signal.throwIfAborted();

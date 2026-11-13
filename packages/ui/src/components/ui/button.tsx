@@ -44,7 +44,7 @@ const buttonVariants = cva(
         neutral: SOLID_PRIMARY,
         outline: SOLID_PRIMARY,
         mobileGlass:
-          "yuri-mobile-floating-action text-foreground hover:brightness-105 active:bg-interactive-active focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]",
+          "yuri-mobile-floating-action text-foreground active:bg-interactive-active focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]",
         // Borderless neutral toggles distinguish selection through fill strength.
         chip: cn(
           SOLID_PRIMARY,

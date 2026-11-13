@@ -127,7 +127,9 @@ export const partitionComposerSemantics = (semantics: readonly ComposerReference
     const seen = { session: new Set<string>(), skill: new Set<string>(), attachment: new Set<string>() };
     for (const semantic of semantics) {
         switch (semantic.type) {
-            case 'session': if (!seen.session.has(semantic.sessionId)) { seen.session.add(semantic.sessionId); sessionIds.push(semantic.sessionId); } break;
+            case 'session':
+                if (semantic.target) throw new Error('Remote session references require an explicit Host delivery boundary');
+                if (!seen.session.has(semantic.sessionId)) { seen.session.add(semantic.sessionId); sessionIds.push(semantic.sessionId); } break;
             case 'skill': if (!seen.skill.has(semantic.skillName)) { seen.skill.add(semantic.skillName); skillNames.push(semantic.skillName); } break;
             case 'attachment': if (!seen.attachment.has(semantic.attachmentRefID)) { seen.attachment.add(semantic.attachmentRefID); attachmentRefIDs.push(semantic.attachmentRefID); } break;
         }
@@ -138,8 +140,9 @@ export const partitionComposerSemantics = (semantics: readonly ComposerReference
 /** Resolves semantic delivery at the owner boundary from the loaded directory snapshot. */
 export const buildComposerSemanticParts = (semantics: readonly ComposerReferenceSemantic[], directory: string): Array<{ text: string; synthetic: true }> => {
     const { sessionIds, skillNames } = partitionComposerSemantics(semantics);
+    const directories = new Map(semantics.flatMap((reference) => reference.type === 'session' && reference.directory ? [[reference.sessionId, reference.directory] as const] : []));
     const contexts: SessionMentionContext[] = sessionIds.map((sessionId) => {
-        const sessionDirectory = resolveMaterializedSessionDirectory(sessionId, directory);
+        const sessionDirectory = directories.get(sessionId) ?? resolveMaterializedSessionDirectory(sessionId, directory);
         const session = sessionDirectory
             ? getSyncSessions(sessionDirectory).find((candidate) => candidate.id === sessionId)
             : undefined;
@@ -191,13 +194,14 @@ export const ensureSessionMentionTranscripts = async (
     options?: { maxPages?: number; maxChars?: number },
 ): Promise<void> => {
     const { sessionIds } = partitionComposerSemantics(semantics);
+    const directories = new Map(semantics.flatMap((reference) => reference.type === 'session' && reference.directory ? [[reference.sessionId, reference.directory] as const] : []));
     if (sessionIds.length === 0) return;
     const repository = getTranscriptRepository();
     if (!repository) return;
     const maxPages = options?.maxPages ?? SESSION_MENTION_HYDRATION_MAX_PAGES;
     const maxChars = options?.maxChars ?? SESSION_MENTION_HYDRATION_MAX_CHARS;
     await Promise.all(sessionIds.map(async (sessionId) => {
-        const sessionDirectory = resolveMaterializedSessionDirectory(sessionId, directory);
+        const sessionDirectory = directories.get(sessionId) ?? resolveMaterializedSessionDirectory(sessionId, directory);
         if (!sessionDirectory) return;
         const scope = transcriptScope(sessionDirectory, sessionId);
         let data = repository.getTranscript(scope);

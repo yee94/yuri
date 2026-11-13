@@ -5,6 +5,16 @@ import { registerContentSearchRoutes } from './routes.js';
 import { createContentSearchService } from './service.js';
 import { createContentSearchRuntime } from './runtime.js';
 
+test('rejects remote scopes without querying the local content index', async () => {
+  const app = express(); const search = vi.fn();
+  registerContentSearchRoutes(app, { contentSearch: { service: { search }, getRuntimeKey: () => 'local' } });
+  for (const query of [{ hostId: 'remote' }, { directory: 'yuri-remote-location:["hub","host","/repo"]' }]) {
+    expect((await request(app).get('/api/yuri/content-search').query(query)).status).toBe(403);
+  }
+  expect((await request(app).get('/api/yuri/content-search').set('x-yuri-remote-host', 'remote')).status).toBe(403);
+  expect(search).not.toHaveBeenCalled();
+});
+
 test('exposes durable initialization times through the existing status route', async () => {
   const app = express();
   const service = createContentSearchService({ dbPath: ':memory:' });

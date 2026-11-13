@@ -4,13 +4,15 @@ import {
   parseYuriEventEnvelope,
   subscribeYuriEvents,
 } from './yuriEvents';
-import { createNotificationAdmission } from '../../../web/server/lib/notifications/admission-event.js';
 
 describe('parseYuriEventEnvelope', () => {
-  test('accepts content-free admission with exact domain proof without changing legacy events', () => {
-    const admission = createNotificationAdmission('schedule', { kind: 'schedule', id: 'task' }, { type: 'schedule', projectID: 'project', taskID: 'task', runID: 'run', trigger: 'scheduled', resultOwner: 'unowned', status: 'success' });
-    expect(parseYuriEventEnvelope({ type: 'yuri:notification-admitted', properties: admission })).toEqual({ type: 'notification-admitted', admission });
-    for (const invalid of [{ ...admission, text: 'Private' }, { ...admission, eventID: 'invented' }, { ...admission, source: { ...admission!.source, trigger: 'manual' } }]) expect(parseYuriEventEnvelope({ type: 'yuri:notification-admitted', properties: invalid })).toBeNull();
+  test('parses unread revision tips and rejects invalid clocks', () => {
+    expect(parseYuriEventEnvelope({ type: 'yuri:session-unread-changed', properties: { revision: 4, occurredAt: 10 } }))
+      .toEqual({ type: 'session-unread-changed', revision: 4, occurredAt: 10 });
+    for (const revision of [-1, 0.5, '4', NaN]) {
+      expect(parseYuriEventEnvelope({ type: 'yuri:session-unread-changed', properties: { revision, occurredAt: 10 } })).toBeNull();
+    }
+    expect(parseYuriEventEnvelope({ type: 'yuri:session-unread-changed', properties: { revision: 4, occurredAt: Infinity } })).toBeNull();
   });
   test('parses the session-order invalidation tip', () => {
     expect(parseYuriEventEnvelope({ type: 'yuri:session-order-changed', properties: { occurredAt: 2 } }))

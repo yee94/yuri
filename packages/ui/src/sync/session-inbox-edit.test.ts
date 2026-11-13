@@ -12,6 +12,7 @@ vi.mock('./session-inbox-overlay', () => ({
   forgetUnpromotedInbox: fixture.forget,
 }))
 vi.mock('./message-composer-restoration-cas', () => ({ commitComposerRestoration: fixture.commit, rollbackComposerRestoration: fixture.rollback }))
+vi.mock('./input-store', () => ({ useInputStore: { getState: () => ({ captureDraftRuntime: () => ({ transportIdentity: 'test', generation: 1 }) }) } }))
 
 const input = {
   sessionID: 'ses_test', inboxID: 'msg_test', directory: '/repo',
@@ -99,6 +100,12 @@ it('fences runtime changes during authority fetch', async () => {
 it('rejects a chip from an older runtime generation before any request', async () => {
   expect(await editSessionInboxIntoDraft({ ...input, runtimeGeneration: 0 })).toBe(false)
   expect(fixture.fetch).not.toHaveBeenCalled()
+})
+it('rejects a draft from a different transport before reading or cancelling an inbox item', async () => {
+  expect(await editSessionInboxIntoDraft({ ...input, targetKey: { ...input.targetKey, transportIdentity: 'other' } })).toBe(false)
+  expect(fixture.fetch).not.toHaveBeenCalled()
+  expect(fixture.commit).not.toHaveBeenCalled()
+  expect(fixture.cancel).not.toHaveBeenCalled()
 })
 it('does not update overlay or focus after a runtime switch during cancellation', async () => {
   fixture.cancel.mockImplementationOnce(async () => { fixture.current = false })

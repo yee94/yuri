@@ -20,9 +20,9 @@ describe('collapsed user message overflow clip', () => {
 
     test('user body and bubble expose clip hooks for collapsed files and radius', () => {
         expect(messageBodySource).toContain('data-user-message-body="true"');
-        const chatMessageSource = readFileSync(join(__dirname, '../../ChatMessage.tsx'), 'utf-8');
+        const userMessageBubbleSource = readFileSync(join(__dirname, '../UserMessageBubble.tsx'), 'utf-8');
         // Shell results omit the bubble hook; ordinary user rows set it to 'true'.
-        expect(chatMessageSource).toContain("data-user-message-bubble={isShellResult ? undefined : 'true'}");
+        expect(userMessageBubbleSource).toContain("data-user-message-bubble={isShellResult ? undefined : 'true'}");
     });
 });
 

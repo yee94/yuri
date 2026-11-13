@@ -4,10 +4,37 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { WorkingPlaceholder } from './WorkingPlaceholder';
 
+const motionState = vi.hoisted(() => ({ reducedMotion: true }));
+const animations: {
+  finish: () => void;
+  stop: ReturnType<typeof vi.fn>;
+  element: HTMLElement;
+  target: { opacity: number };
+}[] = [];
+
 vi.mock('@/lib/i18n', () => ({
   useI18n: () => ({
     locale: 'en',
     t: (key: string) => key,
+  }),
+}));
+
+vi.mock('motion/react', () => ({
+  useReducedMotion: () => motionState.reducedMotion,
+}));
+
+vi.mock('motion/mini', () => ({
+  animate: vi.fn((element: HTMLElement, target: { opacity: number }) => {
+    let onFinish = () => {};
+    const controls = {
+      stop: vi.fn(),
+      then: (callback: () => void) => { onFinish = callback; },
+      finish: () => onFinish(),
+      element,
+      target,
+    };
+    animations.push(controls);
+    return controls;
   }),
 }));
 
@@ -20,6 +47,8 @@ describe('WorkingPlaceholder status stickiness', () => {
   let root: Root;
 
   beforeEach(() => {
+    motionState.reducedMotion = true;
+    animations.length = 0;
     vi.useFakeTimers({
       toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
     });
@@ -124,6 +153,69 @@ describe('WorkingPlaceholder status stickiness', () => {
       isGenericStatus: false,
     });
     expect(text()).toContain('Editing file');
+  });
+
+  test('fades out then in on the same text node and coalesces rapid updates', async () => {
+    motionState.reducedMotion = false;
+    await render({ isWorking: true, statusText: 'Running command' });
+    const label = container.querySelector('.animate-text-shimmer');
+    const orb = container.querySelector('[data-testid="orb"]');
+    expect(animations).toHaveLength(0);
+
+    await render({ isWorking: true, statusText: 'Thinking' });
+    await render({ isWorking: true, statusText: 'Reading file' });
+    expect(animations).toHaveLength(1);
+    expect(label?.textContent).toBe('Running command');
+    expect(container.querySelector('[role="status"]')?.getAttribute('aria-label')).toBe('Reading file');
+
+    await act(async () => animations[0].finish());
+    expect(label?.textContent).toBe('Reading file');
+    expect(animations).toHaveLength(2);
+    expect(container.querySelector('.animate-text-shimmer')).toBe(label);
+    expect(container.querySelector('[data-testid="orb"]')).toBe(orb);
+    expect(animations[0].element).toBe(label?.parentElement);
+    expect(animations[0].target).toEqual({ opacity: 0 });
+    expect(animations[1].element).toBe(label?.parentElement);
+    expect(animations[1].target).toEqual({ opacity: 1 });
+    expect(label?.classList.contains('flex-1')).toBe(false);
+    expect(label?.parentElement?.classList.contains('gap-1.5')).toBe(true);
+
+    for (let index = 0; index < 50; index += 1) {
+      await render({ isWorking: true, statusText: 'Reading file', turnStartedAt: Date.now() - index * 1000 });
+    }
+    expect(animations).toHaveLength(2);
+    expect(container.querySelector('.animate-text-shimmer')).toBe(label);
+    const timer = container.querySelector('.tabular-nums');
+    expect(timer?.parentElement).toBe(label?.parentElement);
+    expect(timer?.previousElementSibling).toBe(label);
+  });
+
+  test('reduced motion cancels an in-flight fade and stale completion cannot restore old text', async () => {
+    motionState.reducedMotion = false;
+    await render({ isWorking: true, statusText: 'Running command' });
+    await render({ isWorking: true, statusText: 'Thinking' });
+    motionState.reducedMotion = true;
+    await render({ isWorking: true, statusText: 'Reading file' });
+    expect(animations[0].stop).toHaveBeenCalledOnce();
+    await act(async () => animations[0].finish());
+    expect(container.querySelector('.animate-text-shimmer')?.textContent).toBe('Reading file');
+    expect(animations).toHaveLength(1);
+  });
+
+  test('elapsed minutes and seconds have a thin space and tabular digits', async () => {
+    await render({ isWorking: true, statusText: 'Thinking', turnStartedAt: Date.now() - 65_000 });
+    expect(container.querySelector('.tabular-nums')?.textContent).toBe('1m\u20095s');
+  });
+
+  test('settling during fade cancels animation without delayed text or fade-in', async () => {
+    motionState.reducedMotion = false;
+    await render({ isWorking: true, statusText: 'Running command' });
+    await render({ isWorking: true, statusText: 'Thinking' });
+    await render({ isWorking: true, statusText: 'Thinking', isTurnSettled: true });
+    expect(animations[0].stop).toHaveBeenCalledOnce();
+    await act(async () => animations[0].finish());
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(animations).toHaveLength(1);
   });
 
   test('isWorking false then true within 600ms keeps the status text', async () => {

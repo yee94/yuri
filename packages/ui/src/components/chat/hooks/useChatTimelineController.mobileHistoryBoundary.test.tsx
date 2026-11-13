@@ -34,7 +34,8 @@ vi.mock('@/lib/desktop', () => ({
     isVSCodeRuntime: () => false,
 }));
 
-vi.mock('@/lib/runtime-switch', () => ({
+vi.mock('@/lib/runtime-switch', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/lib/runtime-switch')>(),
     getRuntimeKey: () => runtimeSurface.runtimeKey,
     getRuntimeGeneration: () => runtimeSurface.generation,
 }));

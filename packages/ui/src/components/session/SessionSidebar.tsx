@@ -49,12 +49,16 @@ import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
 import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { SessionGroupSection } from './sidebar/SessionGroupSection';
 import { SidebarHeader } from './sidebar/SidebarHeader';
-import { SidebarPinnedSessions } from './sidebar/SidebarPinnedSessions';
+import { SidebarPinnedSessions, type PinnedItem } from './sidebar/SidebarPinnedSessions';
+import { getSessionActivityUpdatedAt } from '@/lib/sessionActivity';
 import { SidebarDisplayModeMenu } from './sidebar/SidebarDisplayModeMenu';
 import { SidebarFooter } from './sidebar/SidebarFooter';
 import { SidebarProjectsList } from './sidebar/SidebarProjectsList';
+import { useRemoteProjectNavigation } from './sidebar/hooks/useRemoteProjectNavigation';
+import { parseRemoteProject } from '@/lib/remote-projects/types';
+import { openRemoteProjectDraft, openRemoteProjectSession } from '@/router/openRemoteProjectSession';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { SidebarBrandMark } from '@/components/layout/SidebarBrandMark';
-import { useDesktopWindowFullscreen } from '@/hooks/useDesktopWindowFullscreen';
 import { GlobalSearchButton } from '@/components/layout/GlobalSearchButton';
 import { useSidebarBrandStore } from '@/stores/useSidebarBrandStore';
 import { SessionNodeItem } from './sidebar/SessionNodeItem';
@@ -81,7 +85,7 @@ import {
   type SessionFocusScope,
 } from '@/stores/useSessionFocusStore';
 import { type SessionGroup, type SessionNode } from './sidebar/types';
-import { derivePinnedSessions, listInProgressHomeSessions, resolveTopSectionSecondaryMeta, PINNED_SESSION_ORDER_SCOPE } from './sidebar/pinnedSessions';
+import { derivePinnedSessions, listInProgressHomeSessions, rankByManualOrder, resolveTopSectionSecondaryMeta, PINNED_SESSION_ORDER_SCOPE } from './sidebar/pinnedSessions';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
 import {
   compareSessionsByPinnedAndTime,
@@ -231,10 +235,13 @@ const EMPTY_UNSEEN: Readonly<Record<string, number>> = {};
 
 const useStableRenderCallback = <Args extends unknown[], Return>(
   handler: (...args: Args) => Return,
+  renderKey: string,
 ): ((...args: Args) => Return) => {
   const handlerRef = React.useRef(handler);
   handlerRef.current = handler;
-  return React.useMemo(() => (...args: Args) => handlerRef.current(...args), []);
+  // The key invalidates memoized consumers; the ref supplies the latest handler.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return React.useMemo(() => (...args: Args) => handlerRef.current(...args), [renderKey]);
 };
 
 const SidebarUpdateDialog = React.memo(function SidebarUpdateDialog({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
@@ -324,10 +331,15 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const [activeSessionByProject, setActiveSessionByProject] = React.useState<
     Map<string, string>
   >(() => readStoredStringMap(PROJECT_ACTIVE_SESSION_STORAGE_KEY));
+  const lastVisibleSidebarNavigationRef = React.useRef<{
+    pinned: readonly SessionNavigationTarget[];
+    project: readonly SessionNavigationTarget[];
+  } | null>(null);
 
   React.useEffect(() => {
     return subscribeRuntimeEndpointChanged((detail) => {
       if (!isRuntimeInstanceChange(detail)) return;
+      lastVisibleSidebarNavigationRef.current = null;
       setCollapsedGroups(readStoredStringSet(GROUP_COLLAPSE_STORAGE_KEY));
       setGroupOrderByProject(readStoredStringArrayMap(GROUP_ORDER_STORAGE_KEY));
       setActiveSessionByProject(readStoredStringMap(PROJECT_ACTIVE_SESSION_STORAGE_KEY));
@@ -345,7 +357,23 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const setDirectory = useDirectoryStore((state) => state.setDirectory);
 
-  const projects = useProjectsStore((state) => state.projects);
+  const allProjects = useProjectsStore((state) => state.projects);
+  const projects = React.useMemo(() => allProjects.filter((project) => !project.hostId), [allProjects]);
+  const remoteProjects = React.useMemo(() => allProjects.filter((project) => project.hostId).map(parseRemoteProject), [allProjects]);
+  const [remoteActivityItems, setRemoteActivityItems] = React.useState<Map<string, PinnedItem[]>>(() => new Map());
+  const handleRemoteActivityItems = useEvent((projectId: string, items: PinnedItem[]) => {
+    setRemoteActivityItems((previous) => {
+      if (!items.length && !previous.has(projectId)) return previous;
+      const next = new Map(previous);
+      if (items.length) next.set(projectId, items); else next.delete(projectId);
+      return next;
+    });
+  });
+  const remoteNavigation = useRemoteProjectNavigation(isVisible);
+  const [remoteNavigationTargets, setRemoteNavigationTargets] = React.useState<Map<string, SessionNavigationTarget[]>>(new Map());
+  const handleRemoteNavigationTargets = useEvent((projectId: string, targets: SessionNavigationTarget[]) => {
+    setRemoteNavigationTargets((previous) => JSON.stringify(previous.get(projectId)) === JSON.stringify(targets) ? previous : new Map(previous).set(projectId, targets));
+  });
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const removeProject = useProjectsStore((state) => state.removeProject);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
@@ -446,7 +474,9 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const deferredGlobalActiveSessions =
     React.useDeferredValue(globalActiveSessions);
   const archivedSessions = React.useDeferredValue(archivedSessionsRaw);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const selectedLocalSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const hasRemoteSession = useSessionNavigationStore((state) => state.remoteSession !== null);
+  const currentSessionId = hasRemoteSession ? null : selectedLocalSessionId;
   const sessionFocus = useSessionFocusStore((state) => state.focus);
   const sessionSwitchIntent = React.useSyncExternalStore(
     subscribeSessionSwitchIntent,
@@ -456,6 +486,16 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const newSessionDraftOpen = useSessionUIStore((state) =>
     Boolean(state.newSessionDraft?.open),
   );
+  const draftProjectId = useSessionUIStore((state) =>
+    state.newSessionDraft?.open && !state.currentSessionId
+      ? state.newSessionDraft.selectedProjectId ?? null
+      : null,
+  );
+  const projectRevealTarget = React.useMemo(() =>
+    !mobileVariant && activeMainTab === 'chat' && draftProjectId && sessionSwitchIntent.sessionId === null
+      ? { projectId: draftProjectId, revision: sessionSwitchIntent.revision }
+      : null,
+  [mobileVariant, activeMainTab, draftProjectId, sessionSwitchIntent]);
   const setCurrentSession = useSessionUIStore(
     (state) => state.setCurrentSession,
   );
@@ -480,6 +520,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     typeof openNewSessionDraft
   >(
     (options) => {
+      const remote = remoteProjects.find((project) => project.id === (options?.selectedProjectId ?? useProjectsStore.getState().activeProjectId));
+      if (remote) {
+        void openRemoteProjectDraft(remote, mobileVariant).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+        return;
+      }
+      useSessionNavigationStore.getState().clearRemoteSession();
       openNewSessionDraft(options);
       if (isVSCode) {
         window.dispatchEvent(
@@ -599,14 +645,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   }, []);
 
   const isDesktopShellRuntime = React.useMemo(() => isDesktopShell(), []);
-  const isDesktopWindowFullscreen = useDesktopWindowFullscreen();
   // Empty brand config hides the mark entirely. Desktop then keeps global search
   // next to the titlebar collapse control (web parity) and reserves no empty row.
   const hasSidebarBrand = useSidebarBrandStore(
     (state) => state.sidebarBrandName.trim().length > 0,
   );
 
-  const { isTablet } = useDeviceInfo();
+  const { isTablet, isDesktop } = useDeviceInfo();
   const alwaysShowSidebarActions = mobileVariant || isTablet;
 
   const {
@@ -709,11 +754,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   }, [setNewWorktreeDialogOpen]);
 
   const handleWorktreeCreated = React.useCallback(
-    (worktreePath: string, options?: { sessionId?: string }) => {
+    (worktreePath: string, options?: { sessionId?: string; remote?: boolean }) => {
       setActiveMainTab("chat");
       if (mobileVariant) {
         setSessionSwitcherOpen(false);
       }
+      if (options?.remote) return;
       if (options?.sessionId) {
         setCurrentSession(options.sessionId, worktreePath);
         return;
@@ -762,18 +808,19 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     setSettingsDialogOpen(true);
   }, [mobileVariant, setSessionSwitcherOpen, setSettingsDialogOpen]);
 
-  const handleNewTask = React.useCallback(() => {
+  const handleNewTask = useEvent(() => {
+    const remote = remoteProjects.find((project) => project.id === useProjectsStore.getState().activeProjectId);
+    if (remote) {
+      void openRemoteProjectDraft(remote, mobileVariant).catch((error: unknown) => toast.error(error instanceof Error ? error.message : String(error)));
+      return;
+    }
+    useSessionNavigationStore.getState().clearRemoteSession();
     setActiveMainTab("chat");
     openNewSessionDraft();
     if (mobileVariant) {
       setSessionSwitcherOpen(false);
     }
-  }, [
-    mobileVariant,
-    openNewSessionDraft,
-    setActiveMainTab,
-    setSessionSwitcherOpen,
-  ]);
+  });
 
   const handleOpenScheduledTasks = React.useCallback(() => {
     if (!mobileVariant) {
@@ -849,6 +896,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       projectId?: string | null,
       renderContext: SessionFocusScope = "project",
     ) => {
+      useSessionNavigationStore.getState().clearRemoteSession();
       const focus = {
         sessionId,
         scope: renderContext,
@@ -1275,6 +1323,14 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       }>;
   }, [projects]);
 
+  const projectLabelsById = React.useMemo(
+    () => new Map(normalizedProjects.map((project) => [
+      project.id,
+      formatDirectoryName(project.normalizedPath) || project.normalizedPath,
+    ])),
+    [normalizedProjects],
+  );
+
   const normalizedProjectPaths = React.useMemo(
     () => normalizedProjects.map((project) => project.normalizedPath),
     [normalizedProjects],
@@ -1566,7 +1622,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     if (editingId) return;
     void reorderSessions(
       PINNED_SESSION_ORDER_SCOPE,
-      pinnedSessions.map((session) => session.id),
+      pinnedItems.map((item) => item.node.session.id),
       activeSessionId,
       overSessionId,
       {},
@@ -1586,7 +1642,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     );
   }, [hasSessionSearchQuery, pinnedSessionIds, runningSessionIds, sessions, unseenBySession]);
 
-  const { pinnedItems, inProgressItems } = React.useMemo(() => {
+  const { pinnedItems: localPinnedItems, inProgressItems } = React.useMemo(() => {
     const toItem = (session: Session) => {
       const existing = sessionSidebarMetaById.get(session.id);
       const sessionDirectory = normalizePath(
@@ -1661,6 +1717,18 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     sortedProjects,
     worktreeMetadata,
   ]);
+
+  const remoteTopItems = React.useMemo(
+    () => remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []),
+    [remoteProjects, remoteActivityItems]);
+  const pinnedItems = React.useMemo(
+    () => rankByManualOrder([...localPinnedItems, ...remoteTopItems.filter((item) => item.pinned)],
+      (item) => item.node.session.id, sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]),
+    [localPinnedItems, remoteTopItems, sessionOrderByScope]);
+  const displayInProgressItems = React.useMemo(() => [...inProgressItems,
+    ...remoteTopItems.filter((item) => !item.pinned),
+  ].sort((a, b) => getSessionActivityUpdatedAt(b.node.session) - getSessionActivityUpdatedAt(a.node.session)),
+  [inProgressItems, remoteTopItems]);
 
   const sectionsForSidebarRender = React.useMemo(() => {
     return sectionsForRender.map((section) => ({
@@ -1737,7 +1805,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     }
     // Pinned rows first, then the unlabeled in-progress rows; both live in the
     // top `pinned` scope (VS Code included — its pinned list is simply empty).
-    return [...pinnedItems, ...inProgressItems].map((item, visibleIndex) => {
+    return [...pinnedItems, ...displayInProgressItems].map((item, visibleIndex) => {
       const session = item.node.session;
       return {
         scope: "pinned",
@@ -1750,7 +1818,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         visibleIndex,
       };
     });
-  }, [hasSessionSearchQuery, inProgressItems, pinnedItems]);
+  }, [hasSessionSearchQuery, displayInProgressItems, pinnedItems]);
 
   const [visiblePinnedShortcutSessionIds, setVisiblePinnedShortcutSessionIds] =
     React.useState<readonly string[] | null>(null);
@@ -1778,23 +1846,40 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     );
   }, [pinnedNavigationTargets, visiblePinnedShortcutSessionIds]);
 
+  const sidebarNavigationTargets = React.useMemo(() => (
+    !isVisible && lastVisibleSidebarNavigationRef.current
+      ? lastVisibleSidebarNavigationRef.current
+      : { pinned: visiblePinnedNavigationTargets, project: visibleProjectNavigationTargets }
+  ), [isVisible, visiblePinnedNavigationTargets, visibleProjectNavigationTargets]);
+
+  React.useLayoutEffect(() => {
+    if (isVisible) lastVisibleSidebarNavigationRef.current = sidebarNavigationTargets;
+  }, [isVisible, sidebarNavigationTargets]);
+
   const numberedSidebarSessionTargets = React.useMemo(
     () =>
       mobileVariant
         ? []
         : buildSidebarNumberedSessionTargets({
-            pinnedTargets: visiblePinnedNavigationTargets,
-            projectTargets: visibleProjectNavigationTargets,
+            pinnedTargets: sidebarNavigationTargets.pinned,
+            projectTargets: allProjects.flatMap((project) => project.hostId ? remoteNavigationTargets.get(project.id) ?? [] : sidebarNavigationTargets.project.filter((target) => target.projectId === project.id)),
           }),
     [
       mobileVariant,
-      visiblePinnedNavigationTargets,
-      visibleProjectNavigationTargets,
+      sidebarNavigationTargets,
+      allProjects,
+      remoteNavigationTargets,
     ],
   );
 
   const handleNumberedSidebarSessionActivate = React.useCallback(
     (target: SessionNavigationTarget) => {
+      const remote = remoteProjects.find((project) => project.id === target.projectId);
+      if (remote && remoteNavigation.registry) {
+        const activityItem = remoteActivityItems.get(remote.id)?.find((item) => item.identity === target.sessionId);
+        openRemoteProjectSession(remote, remoteNavigation.registry, activityItem?.remoteSessionId ?? target.sessionId, target.directory ?? remote.path, mobileVariant);
+        return;
+      }
       setActiveMainTab("chat");
       setSessionSwitcherOpen(false);
       if (target.scope === "project" && target.projectId) {
@@ -1812,6 +1897,10 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       setActiveMainTab,
       setActiveProjectIdOnly,
       setSessionSwitcherOpen,
+      remoteProjects,
+      remoteNavigation.registry,
+      remoteActivityItems,
+      mobileVariant,
     ],
   );
 
@@ -1894,14 +1983,14 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   React.useLayoutEffect(
     () =>
       publishSessionNavigationSnapshot({
-        pinned: visiblePinnedNavigationTargets,
-        project: visibleProjectNavigationTargets,
+        pinned: sidebarNavigationTargets.pinned,
+        project: sidebarNavigationTargets.project,
       }),
-    [visiblePinnedNavigationTargets, visibleProjectNavigationTargets],
+    [sidebarNavigationTargets],
   );
 
   React.useLayoutEffect(() => {
-    if (isProjectSessionsSyncing) {
+    if (!isVisible || isProjectSessionsSyncing) {
       return;
     }
 
@@ -1917,6 +2006,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     syncSidebarVisualSelection(reconciledFocus);
   }, [
     currentSessionId,
+    isVisible,
     isProjectSessionsSyncing,
     projectFocusIdentities,
     pinnedFocusIdentities,
@@ -2097,6 +2187,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         }
       />
     ),
+    JSON.stringify([...sidebarShortcutNumberByFocusKey]),
   );
 
   const toggleCollapsedGroup = React.useCallback(
@@ -2159,6 +2250,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
           ),
         )}
         projectId={projectId}
+        projectLabel={projectId ? projectLabelsById.get(projectId) ?? null : null}
         hideGroupLabel={hideGroupLabel}
         compactBodyPadding={compactBodyPadding}
         hasSessionSearchQuery={hasSessionSearchQuery}
@@ -2220,6 +2312,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       hasSessionSearchQuery,
       normalizedSessionSearchQuery,
       groupSearchDataByGroup,
+      projectLabelsById,
       archivedLoadingDirectories,
       collectDirectoriesForProjectId,
       visibleSessionCountByGroup,
@@ -2281,7 +2374,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   // Desktop brand+search sit above the scroll region so the logo never scrolls.
   // Mobile still keeps the mark inside the scrollable leading content.
   const desktopBrandHeader =
-    isDesktopShellRuntime && !isDesktopWindowFullscreen && hasSidebarBrand && !isVSCode && !hasSessionSearchQuery ? (
+    isDesktopShellRuntime && hasSidebarBrand && !isVSCode && !hasSessionSearchQuery ? (
       <div className="shrink-0 px-3">
         <div className="flex items-center justify-between">
           <SidebarBrandMark className="min-w-0 flex-1" />
@@ -2291,63 +2384,70 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     ) : null;
   // Leading action buttons stay web/desktop/mobile-only; the pinned/in-progress
   // top section also renders in VS Code (its pinned group is just empty).
+  // Desktop pins the nav rows with the logo; mobile and search keep them in the scroll body.
+  // Web desktop layout counts too — Electron shell is not required. The logo stays
+  // shell-only because the web titlebar already owns that slot.
   const showSidebarActionButtons = !isVSCode && !hasSessionSearchQuery;
+  const pinSidebarActionButtons = showSidebarActionButtons && isDesktop && !mobileVariant;
   const showPinnedTopSection =
-    !hasSessionSearchQuery && (pinnedItems.length > 0 || inProgressItems.length > 0);
+    !hasSessionSearchQuery && (pinnedItems.length > 0 || displayInProgressItems.length > 0);
+  const sidebarActionButtons = (
+    <div className="space-y-0.5 py-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "w-full justify-start px-2 font-normal",
+          mobileVariant && "h-11",
+        )}
+        onClick={handleNewTask}
+      >
+        <Icon name="chat-new" className="size-4" />
+        <span className="truncate">
+          {t("sessions.sidebar.header.actions.newSession")}
+        </span>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "w-full justify-start px-2 font-normal",
+          activeMainTab === "schedule" && "bg-interactive-selection text-interactive-selection-foreground",
+          mobileVariant && "h-11",
+        )}
+        onClick={handleOpenScheduledTasks}
+      >
+        <Icon name="time" className="size-4" />
+        <span className="truncate">{t("sessions.sidebar.header.actions.scheduledTasks")}</span>
+        {isVisible ? <ScheduledNavigationActivity /> : null}
+      </Button>
+      {assistantCapability.data?.supported && assistantCapability.data?.enabled ? <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "w-full justify-start px-2 font-normal",
+          activeMainTab === "assistant" && "bg-interactive-selection text-interactive-selection-foreground",
+          mobileVariant && "h-11",
+        )}
+        onClick={handleOpenAssistants}
+      >
+        <AssistantNavigationIcon className="size-4 shrink-0 [&[data-assistant-navigation-avatar]]:scale-125" />
+        <span className="truncate">{t("assistants.title")}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          <AssistantNavigationUnreadBadge className="h-3.5 min-w-3.5 px-1 text-[10px]" />
+          {isVisible ? <AssistantNavigationActivity /> : null}
+        </span>
+      </Button> : null}
+      <GuiPluginTitlebarItems sidebar mobile={mobileVariant} />
+    </div>
+  );
   const topContent =
-    showSidebarActionButtons || showPinnedTopSection ? (
+    (showSidebarActionButtons && !pinSidebarActionButtons) || showPinnedTopSection ? (
       <>
-        {showSidebarActionButtons ? (
+        {showSidebarActionButtons && !pinSidebarActionButtons ? (
           <>
             {mobileVariant && hasSidebarBrand ? <SidebarBrandMark /> : null}
-            <div className="space-y-0.5 py-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "w-full justify-start px-2 font-normal",
-                  mobileVariant && "h-11",
-                )}
-                onClick={handleNewTask}
-              >
-                <Icon name="chat-new" className="size-4" />
-                <span className="truncate">
-                  {t("sessions.sidebar.header.actions.newSession")}
-                </span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "w-full justify-start px-2 font-normal",
-                  activeMainTab === "schedule" && "bg-interactive-selection text-interactive-selection-foreground",
-                  mobileVariant && "h-11",
-                )}
-                onClick={handleOpenScheduledTasks}
-              >
-                <Icon name="time" className="size-4" />
-                <span className="truncate">{t("sessions.sidebar.header.actions.scheduledTasks")}</span>
-                {isVisible ? <ScheduledNavigationActivity /> : null}
-              </Button>
-              {assistantCapability.data?.supported && assistantCapability.data?.enabled ? <Button
-                variant="ghost"
-                size="sm"
-                className={cn(
-                  "w-full justify-start px-2 font-normal",
-                  activeMainTab === "assistant" && "bg-interactive-selection text-interactive-selection-foreground",
-                  mobileVariant && "h-11",
-                )}
-                onClick={handleOpenAssistants}
-              >
-                <AssistantNavigationIcon className="size-4 shrink-0 [&[data-assistant-navigation-avatar]]:scale-125" />
-                <span className="truncate">{t("assistants.title")}</span>
-                <span className="ml-auto flex shrink-0 items-center gap-2">
-                  <AssistantNavigationUnreadBadge className="h-3.5 min-w-3.5 bg-[oklch(from_var(--primary-base)_calc(l_*_0.78)_c_h)] px-1 text-[10px] text-[var(--color-white)] shadow-none" />
-                  {isVisible ? <AssistantNavigationActivity /> : null}
-                </span>
-              </Button> : null}
-              <GuiPluginTitlebarItems sidebar mobile={mobileVariant} />
-            </div>
+            {sidebarActionButtons}
           </>
         ) : null}
         {showPinnedTopSection ? (
@@ -2355,7 +2455,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
             items={pinnedItems}
             reorderEnabled
             onSessionsReordered={handlePinnedSessionsReordered}
-            inProgressItems={inProgressItems}
+            inProgressItems={displayInProgressItems}
             renderSessionNode={renderSessionNode}
             currentSessionId={currentSessionId}
             editingId={editingId}
@@ -2416,14 +2516,26 @@ export const SessionSidebar = React.memo(function SessionSidebar({
 
       {desktopBrandHeader}
 
+      {pinSidebarActionButtons ? (
+        <div className="shrink-0 px-3">{sidebarActionButtons}</div>
+      ) : null}
+
       {isVisible ? (
       <SidebarProjectsList
+        remoteProjects={remoteProjects}
+        hostRegistry={remoteNavigation.registry}
+        projectOrderIds={sortProjectEntries(allProjects, projectSortOrder).map((project) => project.id)}
+        onRemoteActivityItems={handleRemoteActivityItems}
+        remoteSearch={sessionSearchQuery}
+        remoteError={remoteNavigation.catalog.error?.message}
+        onRemoteNavigationTargets={handleRemoteNavigationTargets}
         topContent={topContent}
         hasLeadingSection={topContent !== null && (pinnedItems.length > 0 || inProgressItems.length > 0)}
         headerAccessory={projectHeaderActions}
         sectionsForRender={sectionsForSidebarRender}
         projectSections={projectSections}
         activeProjectId={activeProjectId}
+        projectRevealTarget={projectRevealTarget}
         showOnlyMainWorkspace={showOnlyMainWorkspace}
         hasSessionSearchQuery={hasSessionSearchQuery}
         emptyState={emptyState}

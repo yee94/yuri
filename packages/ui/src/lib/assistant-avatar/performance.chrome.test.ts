@@ -71,6 +71,7 @@ test.skip('standalone avatar CPU budgets and production lifecycle', async () => 
     expect(await pointerListeners()).toBe(0);
     expect(await page.evaluate('avatarPerformance.pointerBurst()')).toEqual({ reads: 0, writes: 0, commits: 0 });
     expect(await page.evaluate('avatarPerformance.steady()')).toEqual({ commits: 0, writes: 0, active: 20 });
+    expect(await page.evaluate('avatarPerformance.synchronized("idle")')).toEqual(Array(60).fill(true));
     expect(await page.evaluate('avatarPerformance.synchronized()')).toEqual(Array(60).fill(true));
     expect(await pointerListeners()).toBe(0);
     const synchronized = await page.evaluate<{ commits: number; writes: number; active: number }>('avatarPerformance.steady()');

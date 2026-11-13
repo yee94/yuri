@@ -1,4 +1,5 @@
 import type { SettingsPageSlug } from '@/lib/settings/metadata';
+import type { HostLocation } from '@/lib/remote-projects/location';
 import type {
   DiffScope,
   ScheduleView,
@@ -13,6 +14,8 @@ export type NavigationIntent =
   | {
       type: 'session';
       sessionId: string;
+      location?: HostLocation;
+      projectId?: string;
       tab?: WorkspaceTab | string | null;
       file?: string | null;
       scope?: DiffScope | null;
@@ -32,7 +35,7 @@ export type NavigationIntent =
       focusSessionId?: string | null;
       replace?: boolean;
     }
-  | { type: 'new-session'; replace?: boolean }
+  | { type: 'new-session'; replace?: boolean; location?: HostLocation; projectId?: string }
   | {
       type: 'settings';
       slug?: SettingsPageSlug | string;

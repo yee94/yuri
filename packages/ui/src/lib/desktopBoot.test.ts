@@ -8,6 +8,10 @@ import {
 } from './desktopBoot';
 
 describe('resolveDesktopBootView', () => {
+  test('routes an expired pairing to pairing recovery', () => {
+    expect(resolveDesktopBootView({ isDesktopShell: true, bootOutcome: { target: 'remote', status: 'pairing-expired', hostId: 'remote', url: 'https://example.test' } }))
+      .toEqual({ screen: 'recovery', variant: 'remote-pairing-expired', hostId: 'remote', url: 'https://example.test' });
+  });
   test('returns chooser for first launch (not-configured)', () => {
     expect(
       resolveDesktopBootView({

@@ -22,23 +22,24 @@ const fixture = (mode: 'managed' | 'external' = 'managed'): DesktopSshInstance =
 
 afterEach(() => vi.restoreAllMocks());
 
-async function renderEditor(instance = fixture(), removeInstance = vi.fn().mockResolvedValue(undefined)) {
+async function renderEditor(instance = fixture(), removeInstance = vi.fn().mockResolvedValue(undefined), isNewInstance = false) {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   let hosts = [{ id: 'fixture' }, { id: 'other-relay' }];
   let defaultHostId = 'fixture';
   const setSelectedId = vi.fn();
   const upsertInstance = vi.fn().mockResolvedValue(undefined);
+  const connectWithPortRecovery = vi.fn().mockResolvedValue(undefined);
   const toast = { success: vi.fn(), error: vi.fn() };
   const scope: Record<string, unknown> = {
-    React, useEvent, SettingsActionHeader, SettingsGroup, SettingsRow, removeInstance, setSelectedId, upsertInstance, toast,
+    React, useEvent, SettingsActionHeader, SettingsGroup, SettingsRow, removeInstance, setSelectedId, upsertInstance, toast, connectWithPortRecovery,
     t: (key: string) => key, cn: (...values: unknown[]) => values.filter(Boolean).join(' '),
     setDirectHosts: (update: (current: typeof hosts) => typeof hosts) => { hosts = update(hosts); },
     setDirectDefaultHostId: (update: (current: string) => string) => { defaultHostId = update(defaultHostId); },
-    selectedInstance: instance, isSaving: false, hasChanges: true, statusPhase: 'idle', status: null, reconnectAppearsStuck: false,
+    selectedInstance: instance, isNewInstance, isSaving: false, hasChanges: true, statusPhase: 'idle', status: null, reconnectAppearsStuck: false,
     canDisconnect: false, isPrimaryActionPending: false, isRetryPending: false, canRetry: false, isConnecting: false, isReconnecting: false,
     primaryButtonLabel: 'connect', retryButtonLabel: 'retry', error: null,
     phaseDotClass: () => '', phaseLabelKey: () => 'idle',
-    handlePrimaryConnectionAction: vi.fn(), handleRetryAction: vi.fn(), handleOpenLogs: vi.fn(), handleOpenCurrentInstance: vi.fn(),
+    handleRetryAction: vi.fn(), handleOpenLogs: vi.fn(), handleOpenCurrentInstance: vi.fn(),
     Button: ({ children, variant: _variant, size: _size, ...props }: React.ComponentProps<'button'> & { variant?: string; size?: string }) => <button {...props}>{children}</button>,
     Input: (props: React.ComponentProps<'input'>) => <input {...props} />,
     NumberInput: ({ value, onValueChange, onClear: _onClear, emptyLabel: _emptyLabel, ...props }: React.ComponentProps<'input'> & { onValueChange: (value: number) => void; onClear: () => void; emptyLabel: string }) =>
@@ -50,14 +51,17 @@ async function renderEditor(instance = fixture(), removeInstance = vi.fn().mockR
   }
   const normalize = source.slice(source.indexOf('const normalizeForSave'), source.indexOf('const SshConnectionButton'));
   const handlers = source.slice(source.indexOf('  const updateDraft ='), source.indexOf('  const createImportedInstance ='));
+  const connectionHandler = source.slice(source.indexOf('  const handlePrimaryConnectionAction ='), source.indexOf('  const handleRetryAction ='));
   const editorStart = source.indexOf('  const instanceTitle = draft.');
   const editor = source.slice(editorStart, source.indexOf('\n      <SyncConfigDialog', editorStart));
   const compiled = ts.transpileModule(`${normalize}
     function Surface({ instance }) {
       const [draft, setDraft] = React.useState(instance);
       const [isRemoving, setIsRemoving] = React.useState(false);
+      const [isPrimaryActionPending, setIsPrimaryActionPending] = React.useState(false);
       const removingRef = React.useRef(false);
       ${handlers}
+      ${connectionHandler}
       ${editor}
       </DialogContent></Dialog>);
     }`, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -66,7 +70,7 @@ async function renderEditor(instance = fixture(), removeInstance = vi.fn().mockR
   const root = createRoot(host);
   await act(async () => root.render(<Surface instance={instance} />));
   return {
-    host, toast, setSelectedId, upsertInstance, hosts: () => hosts, defaultHostId: () => defaultHostId,
+    host, toast, setSelectedId, upsertInstance, connectWithPortRecovery, hosts: () => hosts, defaultHostId: () => defaultHostId,
     deleteButton: () => host.querySelector<HTMLButtonElement>('button[aria-label="settings.common.actions.delete"]')!,
     saveButton: () => [...host.querySelectorAll('button')].find((node) => node.textContent === 'settings.common.actions.saveChanges')!,
     dispose: async () => { await act(async () => root.unmount()); vi.unstubAllGlobals(); },
@@ -91,11 +95,40 @@ it('managed SSH shows only command, name and SSH authentication in shared Settin
   } finally { await editor.dispose(); }
 });
 
+it('new SSH uses the full editor and saves once before selecting the created connection', async () => {
+  const editor = await renderEditor(fixture(), undefined, true);
+  try {
+    expect(editor.host.querySelector(`input[aria-label="${fieldKey('sshPasswordOptional')}"]`)).not.toBeNull();
+    expect(editor.deleteButton()).toBeNull();
+    expect(editor.host.textContent).not.toContain('settings.remoteInstances.page.actions.logs');
+    expect(editor.upsertInstance).not.toHaveBeenCalled();
+    const create = [...editor.host.querySelectorAll('button')].find((node) => node.textContent === 'settings.common.actions.create')!;
+    await act(async () => create.click());
+    expect(editor.upsertInstance).toHaveBeenCalledOnce();
+    expect(editor.setSelectedId).toHaveBeenCalledExactlyOnceWith('fixture');
+  } finally { await editor.dispose(); }
+});
+
 it('existing external connections retain their necessary remote port and server authentication', async () => {
   const editor = await renderEditor(fixture('external'));
   try {
     expect(editor.host.querySelector(`input[aria-label="${fieldKey('preferredRemotePort')}"]`)).not.toBeNull();
     expect(editor.host.querySelector(`input[aria-label="${fieldKey('uiPasswordOptional')}"]`)).not.toBeNull();
+  } finally { await editor.dispose(); }
+});
+
+it('Connect saves the new editor before connecting and does not connect when saving fails', async () => {
+  const editor = await renderEditor(fixture(), undefined, true);
+  try {
+    const connect = [...editor.host.querySelectorAll('button')].find((node) => node.textContent === 'connect')!;
+    editor.upsertInstance.mockRejectedValueOnce(new Error('save failed'));
+    await act(async () => connect.click());
+    expect(editor.connectWithPortRecovery).not.toHaveBeenCalled();
+    expect(editor.setSelectedId).not.toHaveBeenCalled();
+    expect(editor.toast.error).toHaveBeenCalledOnce();
+    await act(async () => connect.click());
+    expect(editor.connectWithPortRecovery).toHaveBeenCalledExactlyOnceWith(editor.upsertInstance.mock.calls[1][0]);
+    expect(editor.upsertInstance.mock.invocationCallOrder[1]).toBeLessThan(editor.connectWithPortRecovery.mock.invocationCallOrder[0]);
   } finally { await editor.dispose(); }
 });
 

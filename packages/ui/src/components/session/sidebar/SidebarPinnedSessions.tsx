@@ -13,7 +13,7 @@ import { useSessionFocusStore } from '@/stores/useSessionFocusStore';
 import { SessionFolderDndScope } from './sessionFolderDnd';
 import { PINNED_SESSION_ORDER_SCOPE } from './pinnedSessions';
 
-type PinnedItem = {
+export type PinnedItem = {
   node: SessionNode;
   projectId: string | null;
   groupDirectory: string | null;
@@ -21,6 +21,11 @@ type PinnedItem = {
     projectLabel?: string | null;
     branchLabel?: string | null;
   } | null;
+  content?: React.ReactNode;
+  /** Remote items published for the top section: true = pinned list, otherwise in-progress. */
+  pinned?: boolean;
+  identity?: string;
+  remoteSessionId?: string;
 };
 
 type Props = {
@@ -125,7 +130,7 @@ export function SidebarPinnedSessions({
 
   const renderRows = (rows: PinnedItem[]): React.ReactNode =>
     rows.map((item) => {
-      const row = renderSessionNode(
+       const row = item.content ?? renderSessionNode(
           item.node,
           0,
           item.groupDirectory,
@@ -135,7 +140,7 @@ export function SidebarPinnedSessions({
           'pinned',
           getRenderExtras(item.node),
       );
-      return <React.Fragment key={item.node.session.id}>{row}</React.Fragment>;
+      return <React.Fragment key={item.identity ?? item.node.session.id}>{row}</React.Fragment>;
     });
 
   return (

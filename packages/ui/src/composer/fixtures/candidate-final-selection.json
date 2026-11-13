@@ -1,0 +1,8 @@
+{
+  "source": ".scratch/remote-projects/performance/candidate-final/electron-isolation.json",
+  "controlReplyIDs": ["2ad876a4-de57-4792-8568-460c2cce190e", "15c298ad-f939-4b0b-b65d-8e629b385f44", "b71185fe-6357-4752-be3d-c5e13cd4f059"],
+  "sessionID": "ses_e33ca27c3ffe5gwS9t8vdDqMPL",
+  "before": { "value": "Local preserved draft — same path, different host. Selection must remain local.", "start": 6, "end": 21 },
+  "remote": { "value": "", "start": 0, "end": 0 },
+  "after": { "value": "Local preserved draft — same path, different host. Selection must remain local.", "start": 0, "end": 0, "focused": false }
+}

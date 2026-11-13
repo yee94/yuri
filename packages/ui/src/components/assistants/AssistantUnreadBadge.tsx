@@ -6,7 +6,7 @@ export function AssistantUnreadBadge({ count, className }: { count: number; clas
   const { t } = useI18n();
   if (!(count > 0)) return null;
   return <span
-    className={cn('inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--status-info)] px-1.5 typography-micro font-semibold leading-none text-[var(--status-info-foreground)] tabular-nums shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--status-info-foreground)_15%,transparent)]', className)}
+    className={cn('inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--assistant-unread-fill)] px-1.5 typography-micro font-semibold leading-none text-[var(--assistant-unread-foreground)] tabular-nums', className)}
     aria-label={t('assistants.unread.label', { count })}
     data-assistant-unread-count={count}
   >{count > 99 ? '99+' : count}</span>;

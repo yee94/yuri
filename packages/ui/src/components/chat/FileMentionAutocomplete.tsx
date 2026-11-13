@@ -1,4 +1,10 @@
 import React from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import type { HostRuntimeEntry, HostRuntimeRegistry } from '@/lib/remote-projects/registry';
+import { rawAgentsQueryOptions } from '@/queries/configCatalogQueries';
+import { remoteComposerFilesQueryOptions, remoteComposerSessionsQueryOptions } from '@/queries/remoteComposerQueries';
+import type { FilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
 import { useEvent } from '@reactuses/core';
 import { cn, truncatePathMiddle } from '@/lib/utils';
 import { useFileSearchStore } from '@/stores/useFileSearchStore';
@@ -58,6 +64,7 @@ export interface FileMentionHandle {
 }
 
 interface FileMentionAutocompleteProps {
+  currentSessionId?: string | null;
   searchQuery: string;
   onFileSelect: (file: FileInfo) => void;
   onAgentSelect?: (agentName: string) => void;
@@ -68,7 +75,59 @@ interface FileMentionAutocompleteProps {
   onRowsChange?: (rows: ComposerAutocompleteVisibleRows) => void;
 }
 
-export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileMentionAutocompleteProps>(({
+export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileMentionAutocompleteProps>((props, ref) => {
+  const host = useHostRuntime();
+  return host?.entry.location.hostId
+    ? <RemoteFileMentionAutocomplete key={JSON.stringify(host.entry.queryScope)} {...props} ref={ref} entry={host.entry} registry={host.registry} />
+    : <LocalFileMentionAutocomplete {...props} ref={ref} />;
+});
+
+const LocalFileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileMentionAutocompleteProps>((props, ref) => {
+  const currentDirectory = useChatSearchDirectory() ?? '';
+  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const activeSessions = useGlobalSessionsStore((state) => state.activeSessions);
+  const liveSessions = useAllLiveSessions({ enabled: Boolean(props.onSessionSelect) });
+  const activeProjectId = useProjectsStore((state) => state.activeProjectId);
+  const projects = useProjectsStore((state) => state.projects);
+  const projectRoot = React.useMemo(() => {
+    const candidate = projects.find((project) => project.id === activeProjectId)?.path || currentDirectory;
+    return candidate ? candidate.replace(/\\/g, '/').replace(/\/+$/, '') : null;
+  }, [activeProjectId, projects, currentDirectory]);
+  const projectTabs = useFilesViewTabsStore((state) => projectRoot ? state.byRoot[projectRoot] : undefined);
+  const agentCatalog = useConfigStore((state) => state.agents);
+  const searchFiles = useFileSearchStore((state) => state.searchFiles);
+  // Sidebar rows overlay live directory titles onto the index/global catalog.
+  // Mentions must use the same catalog or @search shows a stale title.
+  const sessions = React.useMemo(() => props.onSessionSelect ? mergeLiveSessionCatalog(activeSessions, liveSessions) : [], [activeSessions, liveSessions, props.onSessionSelect]);
+  return <FileMentionAutocompleteView {...props} ref={ref} currentDirectory={currentDirectory} currentSessionId={props.currentSessionId ?? currentSessionId}
+    projectRoot={projectRoot} projectTabs={projectTabs} agentCatalog={agentCatalog} sessions={sessions} searchFiles={searchFiles} />;
+});
+
+const EMPTY_SESSIONS: Session[] = [];
+const EMPTY_AGENTS: ReturnType<typeof useConfigStore.getState>['agents'] = [];
+const RemoteFileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileMentionAutocompleteProps & { entry: HostRuntimeEntry; registry: HostRuntimeRegistry }>((props, ref) => {
+  const { entry, registry } = props;
+  const client = useQueryClient();
+  const agents = useQuery({ ...rawAgentsQueryOptions(entry.location.directory, undefined, entry), enabled: Boolean(props.onAgentSelect) });
+  const sessions = useQuery({ ...remoteComposerSessionsQueryOptions(registry, entry), enabled: Boolean(props.onSessionSelect) });
+  const projectTabs = useFilesViewTabsStore((state) => state.byRoot[entry.key]);
+  const searchFiles = useEvent((_directory: string, query: string, limit = 60, options?: Parameters<ReturnType<typeof useFileSearchStore.getState>['searchFiles']>[3]) =>
+    client.fetchQuery(remoteComposerFilesQueryOptions(entry, query, limit, options)));
+  return <FileMentionAutocompleteView {...props} ref={ref} currentDirectory={entry.location.directory} projectRoot={entry.location.directory.replace(/\\/g, '/').replace(/\/+$/, '')}
+    projectTabs={projectTabs} agentCatalog={agents.data ?? EMPTY_AGENTS} sessions={sessions.data ?? EMPTY_SESSIONS} searchFiles={searchFiles}
+    catalogError={agents.error ?? sessions.error} assertCurrent={() => { entry.sdk(); }} />;
+});
+
+const FileMentionAutocompleteView = React.forwardRef<FileMentionHandle, FileMentionAutocompleteProps & {
+  currentDirectory: string;
+  projectRoot: string | null;
+  projectTabs: FilesViewTabsStore['byRoot'][string] | undefined;
+  agentCatalog: ReturnType<typeof useConfigStore.getState>['agents'];
+  sessions: Session[];
+  searchFiles: ReturnType<typeof useFileSearchStore.getState>['searchFiles'];
+  catalogError?: Error | null;
+  assertCurrent?: () => void;
+}>(({
   searchQuery,
   onFileSelect,
   onAgentSelect,
@@ -77,30 +136,15 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
   onClose,
   style,
   onRowsChange,
+  currentDirectory, currentSessionId, projectRoot, projectTabs, agentCatalog, sessions, searchFiles, catalogError, assertCurrent,
 }, ref) => {
   const { t } = useI18n();
-  const currentDirectory = useChatSearchDirectory() ?? '';
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const activeSessions = useGlobalSessionsStore((state) => state.activeSessions);
-  const liveSessions = useAllLiveSessions({ enabled: Boolean(onSessionSelect) });
-  const activeProjectId = useProjectsStore((state) => state.activeProjectId);
-  const projects = useProjectsStore((state) => state.projects);
-  const activeProjectPath = React.useMemo(
-    () => projects.find((project) => project.id === activeProjectId)?.path ?? null,
-    [activeProjectId, projects],
-  );
-  const projectRoot = React.useMemo(() => {
-    const candidate = activeProjectPath || currentDirectory;
-    return candidate ? candidate.replace(/\\/g, '/').replace(/\/+$/, '') : null;
-  }, [activeProjectPath, currentDirectory]);
-  const projectTabs = useFilesViewTabsStore((state) => projectRoot ? state.byRoot[projectRoot] : undefined);
-  const agentCatalog = useConfigStore((state) => state.agents);
-  const searchFiles = useFileSearchStore((state) => state.searchFiles);
   const debouncedQuery = useDebouncedValue(searchQuery, 180);
   const showHidden = useDirectoryShowHidden();
   const showGitignored = useFilesViewShowGitignored();
   const [pathHits, setPathHits] = React.useState<FileInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
+  const [searchError, setSearchError] = React.useState<Error | null>(null);
   const [selectedIndex, setSelectedIndex] = React.useState(0);
   const selectedIndexRef = React.useRef(0);
   const previousResultsRef = React.useRef({ query: searchQuery, directory: currentDirectory, ids: [] as string[] });
@@ -160,14 +204,12 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
   const visibleSessions = React.useMemo(() => {
     if (!onSessionSelect) return [];
 
-    // Sidebar rows overlay live directory titles onto the index/global catalog.
-    // Mentions must use the same catalog or @search shows a stale title.
     return getVisibleSessionMentionCandidates({
-      sessions: mergeLiveSessionCatalog(activeSessions, liveSessions),
-      currentSessionId,
+      sessions,
+      currentSessionId: currentSessionId ?? null,
       searchQuery: normalizedSearchQuery,
     });
-  }, [activeSessions, currentSessionId, liveSessions, normalizedSearchQuery, onSessionSelect]);
+  }, [sessions, currentSessionId, normalizedSearchQuery, onSessionSelect]);
   const visibleRecentFiles = recentFiles;
   const visiblePathHits = pathHits;
   const rows = React.useMemo(() => buildMentionRows({
@@ -203,6 +245,8 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
   React.useEffect(() => {
     if (!currentDirectory) {
       setPathHits([]);
+      setLoading(false);
+      setSearchError(null);
       return;
     }
 
@@ -211,11 +255,14 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
 
     if (!normalizedQueryLower) {
       setPathHits([]);
+      setLoading(false);
+      setSearchError(null);
       return;
     }
 
     let cancelled = false;
     setLoading(true);
+    setSearchError(null);
 
     const searchOptions = {
       includeHidden: showHidden,
@@ -248,9 +295,9 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
           limit: 20,
         }));
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!cancelled) {
-          setPathHits([]);
+          setSearchError(error instanceof Error ? error : new Error(String(error)));
         }
       })
       .finally(() => {
@@ -400,6 +447,10 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
   });
 
   const acceptMentionIndex = (index: number) => {
+    try { assertCurrent?.(); } catch (error) {
+      setSearchError(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
     const total = rows.length;
     if (total === 0) return;
     const safeIndex = ((index % total) + total) % total;
@@ -483,6 +534,7 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
       >
         <ScrollableOverlay preventOverscroll outerClassName="flex-1 min-h-0" className="px-0">
           <div className="py-1">
+            {catalogError || skillsQuery.error || searchError ? <div role="alert" className="px-3 py-2 typography-ui-label text-muted-foreground">{(catalogError ?? skillsQuery.error ?? searchError)?.message}</div> : null}
             {rows.map((row, rowIndex) => {
               const isPath = row.id.startsWith('file:') || row.id.startsWith('recent:');
               const displayTitle = isPath ? truncatePathMiddle(row.title, { maxLength: 60 }) : row.title;

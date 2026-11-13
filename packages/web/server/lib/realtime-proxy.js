@@ -14,7 +14,9 @@ const isAllowedSsePath = (pathname) => {
 const isAllowedWebSocketPath = (pathname) => {
   return pathname === '/api/event/ws'
     || pathname === '/api/global/event/ws'
-    || pathname === '/api/terminal/ws'
+     || pathname === '/api/terminal/ws'
+     || pathname === '/api/gui-network/ws'
+     || /^\/api\/hosts\/[^/]+\/api\/gui-network\/ws$/.test(pathname)
     || pathname === '/api/remote-desktop/ws';
 };
 
@@ -201,7 +203,7 @@ export const attachRealtimeProxy = ({ app, server, getDesktopRuntimeConfig, getU
     }
 
     const upstream = new WebSocket(resolved.target.toString(), {
-      headers: resolved.requestHeaders,
+      headers: { ...resolved.requestHeaders, Origin: resolved.target.origin.replace(/^ws/, 'http') },
     });
     const pending = [];
 

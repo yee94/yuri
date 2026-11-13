@@ -3,6 +3,7 @@ import { redactSensitiveUrl } from '@/lib/desktopHosts';
 export type RecoveryVariant =
   | 'local-unavailable'
   | 'remote-unreachable'
+  | 'remote-pairing-expired'
   | 'remote-incompatible'
   | 'remote-wrong-service'
   | 'remote-missing'
@@ -72,6 +73,22 @@ export function getDesktopRecoveryConfig(
         useLocalLabelKey: 'onboarding.desktopRecovery.common.useLocal',
         useRemoteLabel: 'Use Remote',
         useRemoteLabelKey: 'onboarding.desktopRecovery.common.useRemote',
+      };
+
+    case 'remote-pairing-expired':
+      return {
+        title: 'Pairing expired',
+        description: 'Get a new connection link from the other computer.',
+        titleKey: 'mobile.connect.pairing.expired',
+        descriptionKey: 'desktopHostSwitcher.pairing.reconnectHint',
+        iconKey: 'remote',
+        showRetry: false,
+        showUseLocal: true,
+        showUseRemote: true,
+        useLocalLabel: 'Use Local',
+        useLocalLabelKey: 'onboarding.desktopRecovery.common.useLocal',
+        useRemoteLabel: 'Manage instances',
+        useRemoteLabelKey: 'settings.remoteInstances.openLocalManager',
       };
 
     case 'remote-unreachable': {

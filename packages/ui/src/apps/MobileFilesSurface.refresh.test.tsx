@@ -24,8 +24,11 @@ vi.mock('@/lib/runtime-switch', () => ({
   isRuntimeEndpointIdentityChange: () => false,
 }));
 vi.mock('@/lib/runtime-auth', () => ({
+  getRuntimeAuthGeneration: () => 0,
+  subscribeRuntimeAuthGeneration: () => () => {},
   acquireRuntimeUrlAuthToken: () => () => {}, refreshRuntimeUrlAuthToken: async () => 'fixture-url-token', subscribeRuntimeUrlAuthToken: () => () => {},
 }));
+vi.mock('@/lib/preview/project-file-preview', () => ({ resolveProjectFilePreview: async () => ({ src: 'about:blank', expiresAt: Date.now() + 30 * 60_000, release: async () => {} }) }));
 vi.mock('@/lib/runtime-file-resource', () => ({ directFileResource: () => ({ url: 'about:blank' }), readRuntimeFile: vi.fn() }));
 vi.mock('@/lib/relay/runtime-tunnel', () => ({ isRelayModeActive: () => false }));
 vi.mock('@/components/gui-plugins/GuiFileLinkBridge', () => ({

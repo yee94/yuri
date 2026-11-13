@@ -1,5 +1,5 @@
 import React from 'react';
-import { useClickOutside, useEvent, useTimeoutFn } from '@reactuses/core';
+import { useEvent, useTimeoutFn } from '@reactuses/core';
 import type { Session } from '@/lib/opencode/v2-types';
 import { isSessionSharingAvailable } from '@/sync/session-sharing-availability';
 import { ContextMenu } from '@base-ui/react/context-menu';
@@ -30,12 +30,13 @@ import { messagesFromTranscriptData } from '@/sync/transcript-repository-observe
 import { useSync } from '@/sync/use-sync';
 import { useViewportStore, viewportSessionKey } from '@/sync/viewport-store';
 import { DraggableSessionRow } from './sessionFolderDnd';
+import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
 import { nodeContainsSessionId, resolvedSessionRenderKey } from './sessionNodeItemUtils';
 import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './sessionNodeItemUtils';
 import type { SessionNode } from './types';
 import { formatSessionCompactDateLabel, formatSessionDateLabel, normalizePath, renderHighlightedText, SIDEBAR_ROW_ACTIVE_CLASS, SIDEBAR_ROW_HOVER_CLASS, getSidebarRowPaddingLeft } from './utils';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
-import { useSessionUnseenCount } from '@/sync/notification-store';
+import { markSessionUnread, markSessionViewed, useSessionUnseenCount } from '@/sync/notification-store';
 import { useSessionMultiSelectStore } from '@/stores/useSessionMultiSelectStore';
 import { useI18n } from '@/lib/i18n';
 import { useShiftKeyHeld } from '@/hooks/useShiftKeyHeld';
@@ -330,7 +331,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     handleCancelEdit,
     toggleParent,
     handleSessionSelect,
-    handleSessionDoubleClick,
     togglePinnedSession,
     handleShareSession,
     copiedSessionId,
@@ -401,11 +401,9 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   const editingIdRef = React.useRef(editingId);
   editingIdRef.current = editingId;
   const pendingRenameRef = React.useRef<{ id: string; title: string } | null>(null);
-  const handleSaveEditRef = React.useRef(handleSaveEdit);
-  handleSaveEditRef.current = handleSaveEdit;
   const [renameDraft, setRenameDraft] = React.useState(editTitle);
-  const renameDraftRef = React.useRef(renameDraft);
-  renameDraftRef.current = renameDraft;
+  // Pinned and project rows share a session ID, but only the initiating row edits.
+  const [ownsRename, setOwnsRename] = React.useState(editingId === node.session.id);
   const renameTargetRef = React.useRef<string | null>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
   const renameInputRef = React.useRef<HTMLInputElement>(null);
@@ -661,29 +659,19 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     });
   });
 
-  // Capture outside-clicks to save edits — immune to focus-race with onBlur.
-  // useClickOutside owns the document listener; enabled only while this row is
-  // being renamed so other rows do not attach listeners.
-  useClickOutside(
-    formRef,
-    () => {
-      handleSaveEditRef.current(renameDraftRef.current);
-    },
-    editingId === session.id,
-  );
-
   React.useLayoutEffect(() => {
     if (editingId !== session.id) {
+      if (ownsRename) setOwnsRename(false);
       if (renameTargetRef.current === session.id) {
         renameTargetRef.current = null;
       }
       return;
     }
-    if (renameTargetRef.current === session.id) return;
+    if (!ownsRename || renameTargetRef.current === session.id) return;
     renameTargetRef.current = session.id;
     setRenameDraft(editTitle);
     queueMicrotask(() => renameInputRef.current?.select());
-  }, [editingId, editTitle, session.id]);
+  }, [editingId, editTitle, session.id, ownsRename]);
 
   // Event handlers live above the rename early-return so useEvent hook order is
   // stable across edit vs display modes (rules-of-hooks).
@@ -691,6 +679,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     if (!open && pendingRenameRef.current) {
       const { id, title } = pendingRenameRef.current;
       pendingRenameRef.current = null;
+      setOwnsRename(true);
       setEditingId(id);
       setEditTitle(title);
     }
@@ -809,6 +798,11 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     const target = event.target as HTMLElement | null;
     if (target?.closest('button, a, input, [role="menuitem"], [role="menu"]')) return;
     handleRowSelect(event as unknown as React.MouseEvent<HTMLButtonElement>);
+    const titleButton = event.currentTarget.querySelector<HTMLButtonElement>('[data-session-title]');
+    if (titleButton && !mobileVariant) {
+      titleButton.focus({ preventScroll: true });
+      mouseFocusedTitleRef.current = true;
+    }
   });
 
   const handleRowMouseDown = useEvent((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -831,14 +825,13 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     if (event.key !== 'Enter' || !mouseFocusedTitleRef.current) return;
     event.preventDefault();
     event.stopPropagation();
-    handleSessionDoubleClick(session.id, sessionTitle);
+    setOwnsRename(true);
+    setEditingId(session.id);
+    setEditTitle(sessionTitle);
   });
   const handleTitleClick = useEvent((event: React.MouseEvent<HTMLButtonElement>) => {
     handleRowSelect(event);
     if (!mouseFocusedTitleRef.current) return;
-    // Keep focus after an explicit mouse click so Enter can arm inline rename.
-    // Row mouse-leave (below) blurs when the pointer leaves so :focus-within
-    // does not stick hover chrome after the card dismisses.
     const titleButton = event.currentTarget;
     window.requestAnimationFrame(() => {
       mouseFocusedTitleRef.current = true;
@@ -848,16 +841,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   const handleRowBlur = useEvent(() => {
     mouseFocusedTitleRef.current = false;
   });
-  const handleRowMouseLeave = useEvent((event: React.MouseEvent<HTMLDivElement>) => {
-    if (!mouseFocusedTitleRef.current) return;
-    const next = event.relatedTarget;
-    if (next instanceof Node && event.currentTarget.contains(next)) return;
-    const focused = document.activeElement;
-    if (!(focused instanceof HTMLElement) || !event.currentTarget.contains(focused)) return;
-    focused.blur();
-    mouseFocusedTitleRef.current = false;
-  });
-
   const toggleSubsessionTree = useEvent(() => {
     if (!isExpanded && !isLoadingChildren) {
       setIsLoadingChildren(true);
@@ -868,7 +851,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     toggleParent(expansionKey);
   });
 
-  if (editingId === session.id) {
+  if (editingId === session.id && ownsRename) {
     const handleEnableSmartTitle = async () => {
       handleCancelEdit();
       try {
@@ -892,6 +875,9 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
               event.preventDefault();
               handleSaveEdit(renameDraft);
             }}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) handleCancelEdit();
+            }}
           >
             <input
               ref={renameInputRef}
@@ -910,6 +896,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             />
             <button
               type="button"
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => { void handleEnableSmartTitle(); }}
               aria-label={t('sessions.sidebar.session.rename.smartTitle')}
               title={t('sessions.sidebar.session.rename.smartTitle')}
@@ -919,6 +906,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             </button>
             <button
               type="submit"
+              onMouseDown={(event) => event.preventDefault()}
               aria-label={t('sessions.sidebar.session.rename.save')}
               title={t('sessions.sidebar.session.rename.save')}
               className="shrink-0 text-muted-foreground hover:text-foreground"
@@ -1052,6 +1040,22 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     SubContent: React.ElementType;
   }) => (
     <>
+      <Item onClick={() => togglePinnedSession(session.id)} className="[&>svg]:mr-1">
+        {isPinnedSession ? <Icon name="unpin" className="mr-1 h-4 w-4" /> : <Icon name="pushpin" className="mr-1 h-4 w-4" />}
+        {isPinnedSession ? t('sessions.sidebar.session.menu.unpin') : t('sessions.sidebar.session.menu.pin')}
+      </Item>
+      {!isSubtaskSession ? (
+        <Item onClick={() => {
+          if (unseenCount > 0) {
+            markSessionViewed(session.id);
+          } else {
+            void markSessionUnread(session.id, sessionDirectory || undefined).catch(() => toast.error(t('sessions.sidebar.session.menu.markUnreadFailed')));
+          }
+        }} className="[&>svg]:mr-1">
+          <Icon name={unseenCount > 0 ? 'mail-open' : 'mail'} className="mr-1 h-4 w-4" />
+          {unseenCount > 0 ? t('sessions.sidebar.session.menu.markRead') : t('sessions.sidebar.session.menu.markUnread')}
+        </Item>
+      ) : null}
       <Item
         onClick={() => {
           // Defer rename until dropdown close transition completes.
@@ -1063,10 +1067,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
       >
         <Icon name="pencil-ai" className="mr-1 h-4 w-4" />
         {t('sessions.sidebar.session.menu.rename')}
-      </Item>
-      <Item onClick={() => togglePinnedSession(session.id)} className="[&>svg]:mr-1">
-        {isPinnedSession ? <Icon name="unpin" className="mr-1 h-4 w-4" /> : <Icon name="pushpin" className="mr-1 h-4 w-4" />}
-        {isPinnedSession ? t('sessions.sidebar.session.menu.unpin') : t('sessions.sidebar.session.menu.pin')}
       </Item>
       {isSessionSharingAvailable() && !resolvedSession.share ? (
         <Item onClick={() => handleShareSession(resolvedSession)} className="[&>svg]:mr-1">
@@ -1131,7 +1131,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                 </Item>
                 {currentFolderId ? (
                   <Item onClick={() => { removeSessionFromFolder(sessionDirectory, session.id); }} className="text-destructive focus:text-destructive">
-                    <Icon name="close" className="mr-1 h-4 w-4" />
+                    <Icon name="close" className="mr-1 h-4 w-4 text-inherit" />
                     {t('sessions.sidebar.folders.removeFromFolder')}
                   </Item>
                 ) : null}
@@ -1219,8 +1219,10 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
         <ContextMenu.Root open={isContextMenuOpen} onOpenChange={handleContextMenuOpenChange} onOpenChangeComplete={handleMenuOpenChangeComplete}>
           <ContextMenu.Trigger
             render={
-              <div
+              <SessionRowLayout
                 ref={rowElementRef}
+                active={isActive}
+                selected={isRowSelected}
                 data-session-row={session.id}
                 data-session-scope={sessionDirectory ?? ''}
                 data-session-focus-scope={renderContext}
@@ -1229,11 +1231,9 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                 data-session-archived={archivedBucket ? '1' : '0'}
                 data-session-depth={depth}
                 onClick={handleRowBackgroundClick}
-                onMouseLeave={handleRowMouseLeave}
                 className={cn(
                   // Full-width chip; nest indent lives on the inner content row
                   // so ContextMenu render-prop merges cannot drop paddingLeft.
-                  'group relative my-0.5 flex cursor-pointer items-center rounded-lg py-1.5 pr-2',
                   // Codex-style: inset neutral chip — never theme/primary tint.
                   isActive && !isRowSelected && SIDEBAR_ROW_ACTIVE_CLASS,
                   isRowSelected && SIDEBAR_ROW_ACTIVE_CLASS,
@@ -1243,17 +1243,15 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             }
           >
           {subsessionChevron}
-          <div
-            className="flex min-w-0 flex-1 items-center"
-            style={{ paddingLeft: getSidebarRowPaddingLeft(depth) }}
-          >
+          <SessionRowContent depth={depth}>
           <div className="flex min-w-0 flex-1 items-center">
               {/* Inherit sidebar TooltipProvider — no delayDuration here, so
                   Base UI grouping can hand the hover card between rows. */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button
+                  <SessionRowTitle
                     type="button"
+                    data-session-title
                     onPointerDown={handleRowPointerDown}
                     onPointerUp={handleRowPointerEnd}
                     onPointerCancel={handleRowPointerEnd}
@@ -1263,12 +1261,13 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                     onClick={handleTitleClick}
                     onDoubleClick={(e) => {
                       e.stopPropagation();
-                      handleSessionDoubleClick(session.id, sessionTitle);
+                      if (!mobileVariant && canUseElectronDesktopIPC()) {
+                        handleOpenMiniChatWindow();
+                      }
                     }}
                     className={cn(
                       // No padding transition: busy ring / unread dot must snap away
                       // the moment hover reveals actions (no slide-with-padding).
-                      'relative flex min-w-0 flex-1 cursor-pointer flex-col gap-0 overflow-hidden rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 text-foreground select-none has-[[data-sidebar-shortcut-number]]:!pr-0',
                       isTouchPressed && 'bg-[color-mix(in_srgb,var(--surface-foreground)_8%,transparent)]',
                       alwaysShowActions
                         ? (isVSCode ? revealPaddingClass : alwaysActionPaddingClass)
@@ -1319,7 +1318,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       ) : null}
                       {shortcutNumber ? <SessionShortcutHint number={shortcutNumber} /> : null}
                     </div>
-                  </button>
+                  </SessionRowTitle>
                 </TooltipTrigger>
                 {/* VS Code already shows project context via workspace headers, so
                     the per-row metadata card is redundant noise there.
@@ -1359,7 +1358,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                 ) : null}
               </Tooltip>
           </div>
-          </div>
+          </SessionRowContent>
 
           {streamingIndicator && !mobileVariant ? (
             <div className={cn('absolute top-1/2 -translate-y-1/2 z-10', isMinimalMode ? 'right-0' : 'right-[30px]')}>
@@ -1367,7 +1366,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             </div>
           ) : null}
 
-          <div className={cn(
+          <SessionRowActions visible={isSessionMenuOpen || (alwaysShowActions && !isVSCode)} className={cn(
             // Instant show/hide with the trailing status marker — no opacity fade.
             'absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 transition-none group-has-[[data-sidebar-shortcut-number]]:hidden',
             isSessionMenuOpen
@@ -1450,7 +1449,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
               onArchive={handleQuickArchiveClick}
               onDelete={handleQuickHardDeleteClick}
             />
-          </div>
+          </SessionRowActions>
           </ContextMenu.Trigger>
           {contextMenuContent}
         </ContextMenu.Root>

@@ -4,6 +4,7 @@ import { ContentIndexOnboarding } from '@/components/onboarding/ContentIndexOnbo
 import { MobileAutoReadProvider, MobileAutoReadMenuItem } from '@/mobile/chat/MobileAutoRead';
 import { SetupTourHost } from '@/components/onboarding/SetupTourHost';
 import { useEvent } from '@reactuses/core';
+import { useQuery } from '@tanstack/react-query';
 import { useStartupCatalogRecovery } from '@/hooks/useStartupCatalogRecovery';
 import { toast } from 'sonner';
 
@@ -18,19 +19,26 @@ import { MobileAppUpdateToast } from '@/components/update/MobileAppUpdateToast';
 import { MobileOtaUpdateNotice } from '@/components/update/MobileOtaUpdateNotice';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { YuriLogo } from '@/components/ui/YuriLogo';
 import { MobileConnectionWelcome } from './MobileConnectionWelcome';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { MobileGlobalSearchHost } from '@/mobile/MobileGlobalSearchHost';
-import { ChatView } from '@/components/views/ChatView';
+import { MobileHtmlPreviewSheet as UnscopedMobileHtmlPreviewSheet } from '@/mobile/MobileHtmlPreviewSheet';
+import { SelectedProjectHostBoundary } from '@/contexts/SelectedProjectHostBoundary';
+import { RemoteProjectsBootstrap } from '@/contexts/RemoteProjectsBootstrap';
+import { useRemoteMobileSession } from './remoteMobileSession';
+import { RemoteMobileHeader } from './remoteMobileHeader';
+import { ChatView as UnscopedChatView } from '@/components/views/ChatView';
 import { AssistantView } from '@/components/assistants/AssistantView';
 import { AssistantShareWelcome } from '@/components/assistants/AssistantShareWelcome';
 import { useAssistantCapabilityQuery } from '@/queries/assistantQueries';
-import { DiffView } from '@/components/views/DiffView';
+import { DiffView as UnscopedDiffView } from '@/components/views/DiffView';
 import { SettingsView } from '@/components/views/SettingsView';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { MobileSurfaceHeader } from '@/components/ui/MobileSurfaceHeader';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { getMobileWindowMotionController, MOBILE_SESSIONS_WINDOW_ID } from '@/components/ui/MobileWindowMotionRegistry';
 import { MobileSessionStatusBar } from '@/components/chat/MobileSessionStatusBar';
 import { RuntimeAPIProvider } from '@/contexts/RuntimeAPIProvider';
@@ -50,7 +58,6 @@ import { useOrientation } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
 import { getCapgoUpdater } from '@/lib/mobile-updates/capgoAdapter';
 import { MOBILE_SETTINGS_PAGE_SLUGS } from '@/lib/settings/metadata';
-import { getNativeIosComposerPlugin } from '@/lib/native-ios-composer';
 import { isIPadApp } from '@/lib/platform';
 import { resolveProjectForDirectory, resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { formatQuotaResetLabel, formatQuotaValueLabel, formatWindowLabel, quotaProviders } from '@/lib/quota';
@@ -64,7 +71,7 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useGitHubAuthStore } from '@/stores/useGitHubAuthStore';
 import { useGitStatus, useGitStore, useIsGitRepo } from '@/stores/useGitStore';
 import { useMcpConfigStore, type McpDraft } from '@/stores/useMcpConfigStore';
-import { useMcpConfigsQuery, useMcpStatusQuery } from '@/queries/mcpQueries';
+import { mcpConfigsQueryOptions, mcpStatusQueryOptions } from '@/queries/mcpQueries';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
 import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
@@ -80,18 +87,16 @@ import { SettingsGroup } from '@/components/sections/shared/SettingsGroup';
 import { SyncProvider, useSessionContextUsage, useCurrentSessionEntity, useParentSessionTarget, useSessionMessages } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
 
+import { nativeImeHeader, startNativeImeHeader } from '@/mobile/nativeImeHeader';
+import { NATIVE_IOS_COMPOSER_CLASS } from '@/lib/native-ios-composer';
 import { SyncAppEffects } from './AppEffects';
 import {
-  cssPxFromNativeImeHeight,
-  getAndroidComposerImeStateAction,
   isComposerKeyboardFocusTransfer,
   isComposerKeyboardTarget,
-  shouldCorrectArmedImeLift,
   shouldDeferWebKeyboardToNativeComposer,
-  shouldReserveChatScrollInset,
 } from './composerKeyboardLift';
-import { MobileChangesSurface } from './MobileChangesSurface';
-import { MobileFilesSurface } from './MobileFilesSurface';
+import { MobileChangesSurface as UnscopedMobileChangesSurface } from './MobileChangesSurface';
+import { MobileFilesSurface as UnscopedMobileFilesSurface } from './MobileFilesSurface';
 import { BusyDots } from '@/components/chat/message/parts/BusyDots';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobilePhoneShell } from '@/mobile/MobilePhoneShell';
@@ -103,7 +108,7 @@ import {
   ContextProgressIcon,
   getLatestUserMessageModel,
   getNumericLimit,
-  MobileChatScreen,
+  MobileChatScreen as UnscopedMobileChatScreen,
   useMobileTranscriptSyncHint,
   type MobileContextDisplay,
 } from '@/mobile/chat';
@@ -111,7 +116,7 @@ import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { mobileBackNavigationCoordinator, useMobileNavigationDriver } from '@/mobile/mobileBackNavigation';
 import { DedicatedMobileAppProvider, type MobileAppActions } from './mobileAppContext';
 import { autoConnectLastInstance, connectionDisplayUrl, getAutoConnectTargetLabel, isActiveRuntimeConnection, reprobeActiveConnection, useMobileConnection, type UseMobileConnection } from './mobileConnections';
-import { MobileConnectionMethodDivider, MobilePairingLinkForm } from './MobilePairingLinkForm';
+import { MobilePairingLinkForm } from './MobilePairingLinkForm';
 import { isQrScanSupported, scanConnectionQr } from './mobileQrScan';
 import { reconnectAppForTransportSwitch, resetAppForRuntimeEndpointChange } from './runtimeEndpointReset';
 import { useAppFontEffects } from './useAppFontEffects';
@@ -125,6 +130,25 @@ import { useNativeLiveActivity } from './useNativeLiveActivity';
 import { useAndroidNotifications } from './useAndroidNotifications';
 import { MobileShareBridge } from './MobileShareBridge';
 import { handlePendingNativeAssistantOpen } from './nativeAssistantShortcut';
+
+function MobileChatScreen(props: React.ComponentProps<typeof UnscopedMobileChatScreen>) {
+  return <SelectedProjectHostBoundary><UnscopedMobileChatScreen {...props} /></SelectedProjectHostBoundary>;
+}
+function ChatView(props: React.ComponentProps<typeof UnscopedChatView>) {
+  return <SelectedProjectHostBoundary><UnscopedChatView {...props} /></SelectedProjectHostBoundary>;
+}
+function DiffView(props: React.ComponentProps<typeof UnscopedDiffView>) {
+  return <SelectedProjectHostBoundary><UnscopedDiffView {...props} /></SelectedProjectHostBoundary>;
+}
+function MobileFilesSurface(props: React.ComponentProps<typeof UnscopedMobileFilesSurface>) {
+  return <SelectedProjectHostBoundary><UnscopedMobileFilesSurface {...props} /></SelectedProjectHostBoundary>;
+}
+function MobileChangesSurface(props: React.ComponentProps<typeof UnscopedMobileChangesSurface>) {
+  return <SelectedProjectHostBoundary><UnscopedMobileChangesSurface {...props} /></SelectedProjectHostBoundary>;
+}
+function MobileHtmlPreviewSheet() {
+  return <SelectedProjectHostBoundary><UnscopedMobileHtmlPreviewSheet /></SelectedProjectHostBoundary>;
+}
 
 const MOBILE_DIRECT_DIFF_WINDOW_ID = 'mobile-direct-diff';
 const MOBILE_TURN_DIFF_WINDOW_ID = 'mobile-turn-diff';
@@ -276,7 +300,7 @@ export const useNativeMobileChrome = (): void => {
     // the browser-hosted PWA (which handles the keyboard via dvh / interactive-widget).
     root.classList.add('yuri-capacitor-app');
     // Platform marker for Android-specific safe-area / status-bar CSS. Keyboard
-    // geometry is shared with iOS: full-height WebView + transform FLIP (WeChat-style).
+    // Android's native viewport owner resizes from the bottom; iOS keeps its web path.
     const capacitorPlatform = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.();
     if (capacitorPlatform === 'android') {
       root.classList.add('yuri-platform-android');
@@ -322,6 +346,10 @@ export const useNativeMobileChrome = (): void => {
       const { App } = await import('@capacitor/app');
       const stateHandle = await App.addListener('appStateChange', ({ isActive }) => {
         if (isActive) void applyStatusBar();
+        if (!isActive && platform === 'ios') {
+          const active = document.activeElement;
+          if (active instanceof HTMLElement && isComposerKeyboardTarget(active)) active.blur();
+        }
       });
       if (disposed) {
         void stateHandle.remove();
@@ -333,19 +361,13 @@ export const useNativeMobileChrome = (): void => {
     void import('@capacitor/keyboard').then(async ({ Keyboard }) => {
       if (disposed) return;
       // Keyboard choreography:
-      //   iOS — resize:none + immediate shell shrink (--yuri-kb-layout). Header
-      //            stays pinned; the composer sits at the new shell bottom so
-      //            the full input is visible above the IME. No transform FLIP.
-      //   Android — adjustNothing + an early composer-only CSS FLIP. Android's
-      //            keyboardWillShow and WebView viewport signals arrive after IME
-      //            movement starts, so ChatInput keyboard intent (and focusin
-      //            only when the focused field is the bottom composer) starts a
-      //            short (~200ms) transform from the cached IME height. Hide is
-      //            shorter (~100ms) because close signals often arrive after the
-      //            system IME has already begun dismissing. The state-only native
-      //            event calibrates and caches the final height once per open.
-      //            Non-composer fields (question cards, settings, etc.) must not
-      //            arm this path — only the bottom chat input lifts.
+      //   Android/iOS bottom WebView composers — the native IME owner
+      //            translates the WebView with the system keyboard animation;
+      //            a pinned header WebView holds the header during motion and
+      //            the page absorbs the height at its top once the keyboard rests.
+      //   iOS with the native liquid-glass composer — resize:none + shell
+      //            shrink (--yuri-kb-layout); the native overlay pins itself.
+      //   Ordinary fields — only local overlay/scroll insets, no page lift.
       const platform = (window as typeof window & { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.();
       const isAndroid = platform === 'android';
       await Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined);
@@ -384,39 +406,9 @@ export const useNativeMobileChrome = (): void => {
         }
         return null;
       };
-      const getKbMovers = (anchor?: EventTarget | null): Array<{ el: HTMLElement; factor: number }> => {
-        const movers: Array<{ el: HTMLElement; factor: number }> = [];
-        const anchorElement = anchor instanceof Element ? anchor : null;
-        // When the focus anchor is known and is not the bottom composer, never
-        // fall back to lifting a visible composer (question / other fields).
-        if (anchorElement && !isComposerKeyboardTarget(anchorElement)) {
-          return movers;
-        }
-        const anchoredComposer = anchorElement?.closest<HTMLElement>('.yuri-mobile-composer') ?? null;
-        const composer = anchoredComposer && isVisibleKbMover(anchoredComposer)
-          ? anchoredComposer
-          : findVisibleKbMover<HTMLElement>('.yuri-mobile-composer');
-        if (composer) movers.push({ el: composer, factor: 1 });
-        // Draft title only rides along when the bottom composer is lifting.
-        if (composer) {
-          const draftCenter = findVisibleKbMover<HTMLElement>('.yuri-draft-center');
-          if (draftCenter) movers.push({ el: draftCenter, factor: 0.5 });
-        }
-        return movers;
-      };
       const isTextFieldLike = (node: unknown): boolean =>
         node instanceof HTMLElement
         && (node.tagName === 'TEXTAREA' || node.tagName === 'INPUT' || node.isContentEditable);
-      // ChatInput dispatches yuri:keyboard-intent before focus lands. Treat that as
-      // composer-scoped unless another text field already owns focus (question).
-      const shouldLiftComposerForIntent = (): boolean => {
-        const active = document.activeElement;
-        if (isTextFieldLike(active) && !isComposerKeyboardTarget(active)) return false;
-        return true;
-      };
-      const shouldLiftComposerForFocus = (anchor: EventTarget | null | undefined): boolean => (
-        isComposerKeyboardTarget(anchor)
-      );
       const clearKbMovers = () => {
         for (const el of document.querySelectorAll<HTMLElement>('.yuri-mobile-composer, .yuri-draft-center')) {
           el.style.transition = '';
@@ -428,284 +420,106 @@ export const useNativeMobileChrome = (): void => {
         safeBottomPx = shell ? parseFloat(getComputedStyle(shell).paddingBottom) || 0 : 0;
       };
 
-      // ── Android: pre-focus CSS FLIP from cached IME height ────────────────
-      if (isAndroid) {
-        const IME_RATIO_STORAGE_KEY = 'yuri.androidImeHeightRatio.v2';
-        // Open starts from intent/focus before the IME moves; keep it short.
-        // Close usually begins after the system IME has already started (or
-        // finished) dismissing, so a long hide leaves the composer hanging.
-        const SHOW_MS = 200;
-        const CORRECT_MS = 60;
-        const HIDE_MS = 100;
-        const SHOW_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
-        const HIDE_EASING = 'cubic-bezier(0.4, 0, 1, 1)';
-        let androidTimer: number | null = null;
-        let composerLiftArmed = false;
-
-        const isTextField = isTextFieldLike;
-
-        const clampRatio = (value: number): number => (
-          Number.isFinite(value) ? Math.min(0.68, Math.max(0.28, value)) : 0.39
+      // ── Native IME owner (bottom WebView composers only) ────────────────
+      // Native translates the WebView with the system keyboard animation and
+      // a pinned header WebView holds the header; JS only receives bookends.
+      // iOS hands the keyboard back to the web path below whenever the native
+      // liquid-glass composer is active (it owns its own keyboard pin).
+      const iosNativeIme = !isAndroid && platform === 'ios';
+      let nativeImeEnabled: boolean | null = null;
+      const syncNativeIme = () => {
+        const active = document.activeElement;
+        const deferred = iosNativeIme && shouldDeferWebKeyboardToNativeComposer(
+          root.classList.contains(NATIVE_IOS_COMPOSER_CLASS), active,
         );
-        const readCachedRatio = (): number => {
-          try {
-            return clampRatio(Number.parseFloat(localStorage.getItem(IME_RATIO_STORAGE_KEY) ?? ''));
-          } catch {
-            return 0.39;
-          }
-        };
-        let imeHeight = Math.round(window.innerHeight * readCachedRatio());
-        // Keep the height that armed this keyboard session separate from the
-        // measured cache. The native state event refreshes the next-open cache;
-        // rewriting an in-flight transform from that event creates a second rise.
-        let armedImeHeight = 0;
-        const persistHeight = (height: number) => {
-          imeHeight = Math.max(0, Math.round(height));
-          if (imeHeight <= 0 || window.innerHeight <= 0) return;
-          try {
-            localStorage.setItem(IME_RATIO_STORAGE_KEY, String(clampRatio(imeHeight / window.innerHeight)));
-          } catch {
-            // Restricted storage keeps the in-memory value for this app run.
-          }
-        };
-        const clearAndroidTimer = () => {
-          if (androidTimer === null) return;
-          window.clearTimeout(androidTimer);
-          androidTimer = null;
-        };
-        const getAndroidSlide = (height: number) => Math.max(0, Math.round(height - safeBottomPx));
-        const getAndroidTransform = (slide: number, factor: number) => `translate3d(0, ${-slide * factor}px, 0)`;
-        const liftMovers = (height: number, durationMs: number, easing: string, anchor?: EventTarget | null): number => {
-          clearAndroidTimer();
-          const slide = getAndroidSlide(height);
-          const movers = getKbMovers(anchor);
-          root.classList.add('yuri-kb-animating');
-          for (const { el, factor } of movers) {
-            el.style.transition = `transform ${durationMs}ms ${easing}`;
-            el.style.transform = getAndroidTransform(slide, factor);
-          }
-          androidTimer = window.setTimeout(() => {
-            androidTimer = null;
-            root.classList.remove('yuri-kb-animating');
-            for (const { el } of movers) {
-              el.style.transition = '';
-            }
-          }, durationMs + 20);
-          return slide;
-        };
-
-        const reserveFieldScrollInset = (height: number) => {
-          measureSafeBottom();
-          const resolvedHeight = Math.max(0, Math.round(height));
-          keyboardOpen = true;
-          composerLiftArmed = false;
-          armedImeHeight = resolvedHeight;
-          root.classList.remove('yuri-keyboard-open', 'yuri-kb-animating');
-          setInset(resolvedHeight);
-          setVar('--yuri-kb-layout', 0);
-          setVar('--yuri-kb-scroll-inset', getAndroidSlide(resolvedHeight));
-          clearAndroidTimer();
-          clearKbMovers();
-          dispatchKb('yuri:keyboard-settled', { open: true });
-        };
-
-        const markOpen = (
-          anchor?: EventTarget | null,
-          source: 'intent' | 'focus' | 'ime' = 'focus',
-        ) => {
-          // Only the bottom chat composer arms the transform FLIP. Question
-          // cards and other text fields open the IME without lifting chrome.
-          if (source === 'intent') {
-            if (!shouldLiftComposerForIntent()) return;
-          } else if (source === 'focus') {
-            if (!shouldLiftComposerForFocus(anchor)) return;
-          } else if (!keyboardOpen && !shouldLiftComposerForFocus(document.activeElement)) {
-            // IME open for a non-composer field: leave composer state untouched.
-            return;
-          }
-          measureSafeBottom();
-          if (keyboardOpen) {
-            const activeImeHeight = armedImeHeight || imeHeight;
-            const slide = getAndroidSlide(activeImeHeight);
-            const movers = getKbMovers(source === 'focus' ? anchor : undefined);
-            if (movers.length === 0) return;
-            composerLiftArmed = true;
-            root.classList.add('yuri-keyboard-open');
-            setInset(0);
-            setVar('--yuri-kb-scroll-inset', 0);
-            const alreadyPositioned = movers.every(
-              ({ el, factor }) => el.style.transform === getAndroidTransform(slide, factor),
-            );
-            if (alreadyPositioned) return;
-            liftMovers(activeImeHeight, CORRECT_MS, SHOW_EASING, source === 'focus' ? anchor : undefined);
-            dispatchKb('yuri:keyboard-anim', {
-              phase: 'show',
-              slide,
-              durationMs: CORRECT_MS,
-              easing: SHOW_EASING,
-            });
-            dispatchKb('yuri:keyboard-settled', { open: true });
-            return;
-          }
-          keyboardOpen = true;
-          composerLiftArmed = true;
-          root.classList.add('yuri-keyboard-open');
-          setInset(0);
-          setVar('--yuri-kb-layout', 0);
-          setVar('--yuri-kb-scroll-inset', 0);
-          armedImeHeight = imeHeight;
-          const slide = liftMovers(armedImeHeight, SHOW_MS, SHOW_EASING, source === 'focus' ? anchor : undefined);
-          dispatchKb('yuri:keyboard-anim', {
-            phase: 'show',
-            slide,
-            durationMs: SHOW_MS,
-            easing: SHOW_EASING,
-          });
-          dispatchKb('yuri:keyboard-settled', { open: true });
-        };
-        const markClosed = (blur: boolean) => {
-          // Native close events can arrive after focus moved into a settings or
-          // overlay field. Blur ownership stays with the bottom chat composer.
-          // focusout and yuri:ime-state can both fire for one dismissal; restarting
-          // the hide transition mid-flight is what parks the composer above the
-          // already-gone IME for an extra beat.
-          if (!keyboardOpen) {
-            if (blur && isTextField(document.activeElement) && isComposerKeyboardTarget(document.activeElement)) {
-              (document.activeElement as HTMLElement).blur();
-            }
-            return;
-          }
-          const activeImeHeight = armedImeHeight || imeHeight;
-          const hadComposerLift = composerLiftArmed;
-          keyboardOpen = false;
-          composerLiftArmed = false;
-          armedImeHeight = 0;
-          if (blur && isTextField(document.activeElement) && isComposerKeyboardTarget(document.activeElement)) {
-            (document.activeElement as HTMLElement).blur();
-          }
-          root.classList.remove('yuri-keyboard-open');
-          setInset(0);
-          setVar('--yuri-kb-layout', 0);
-          setVar('--yuri-kb-scroll-inset', 0);
-          dispatchKb('yuri:keyboard-intent', { open: false });
-          const slide = getAndroidSlide(activeImeHeight);
-          if (!hadComposerLift) {
-            clearAndroidTimer();
-            clearKbMovers();
-            dispatchKb('yuri:keyboard-settled', { open: false });
-            return;
-          }
-          // Start the transform first so the same frame collapses chrome + lift.
-          liftMovers(0, HIDE_MS, HIDE_EASING);
-          dispatchKb('yuri:keyboard-anim', {
-            phase: 'hide',
-            slide,
-            durationMs: HIDE_MS,
-            easing: HIDE_EASING,
-          });
-          clearAndroidTimer();
-          androidTimer = window.setTimeout(() => {
-            androidTimer = null;
-            root.classList.remove('yuri-kb-animating');
-            clearKbMovers();
-            dispatchKb('yuri:keyboard-settled', { open: false });
-          }, HIDE_MS + 20);
-        };
-
-        // ChatInput intent runs before focus (pre-IME). focusin lifts only the
-        // bottom composer; other text fields reserve chat scroll room.
-        const handleFocusIn = (event: FocusEvent) => {
-          if (!isTextField(event.target)) return;
-          if (isComposerKeyboardTarget(event.target)) {
-            markOpen(event.target, 'focus');
-            return;
-          }
-          reserveFieldScrollInset(armedImeHeight || imeHeight);
-        };
-        const handleFocusOut = (event: FocusEvent) => {
-          if (!isTextField(event.target)) return;
-          // During focusout, activeElement is often still the field being blurred.
-          // relatedTarget is the authoritative next focus for same-document moves.
-          // Stay open only when focus remains inside the bottom composer; moving
-          // to a question card (or any other field) must drop the lift.
-          if (isComposerKeyboardFocusTransfer(event.relatedTarget)) return;
-          if (shouldReserveChatScrollInset(event.relatedTarget)) {
-            dispatchKb('yuri:keyboard-intent', { open: false });
-            reserveFieldScrollInset(armedImeHeight || imeHeight);
-            return;
-          }
-          // Prefer the earliest close signal. A zero-timeout waits a full task and
-          // lets the system IME finish before the composer starts dropping.
-          markClosed(false);
-        };
+        // A plain blur can start interactive dismissal. Retain its native owner
+        // through the close animation; a newly focused ordinary field releases
+        // it immediately, even when the IME sends no further frame change.
+        const enabled = !deferred && (isTextFieldLike(active)
+          ? isComposerKeyboardTarget(active)
+          : nativeImeEnabled === true);
+        if (enabled === nativeImeEnabled) return;
+        nativeImeEnabled = enabled;
+        // Leave no previous owner's shell lift behind on either handoff.
+        setInset(enabled ? 0 : keyboardHeight);
+        setVar('--yuri-kb-layout', 0);
+        measureSafeBottom();
+        setVar('--yuri-kb-scroll-inset', enabled ? 0 : Math.max(0, keyboardHeight - safeBottomPx));
+        root.classList.remove('yuri-keyboard-open', 'yuri-kb-animating', 'yuri-kb-caret-hold', 'yuri-kb-hide');
+        layoutApplied = false;
+        keyboardOpen = !enabled && keyboardHeight > 0;
+        root.classList.toggle('yuri-native-ime', enabled);
+        void nativeImeHeader.setImeSync({ enabled }).catch(() => undefined);
+      };
+      if (isAndroid || iosNativeIme) {
+        setInset(0);
+        setVar('--yuri-kb-layout', 0);
+        setVar('--yuri-kb-scroll-inset', 0);
         const handleImeState = (event: Event) => {
-          type ImeStateEvent = Event & {
+          type ImeState = {
             open?: boolean;
             height?: number;
-            detail?: { open?: boolean; height?: number };
+            phase?: 'start' | 'settled';
+            durationMs?: number;
           };
-          const nativeEvent = event as ImeStateEvent;
+          const nativeEvent = event as Event & ImeState & { detail?: ImeState };
+          if (iosNativeIme && !nativeImeEnabled) return;
           // Capacitor triggerJSEvent exposes payload fields on the event object;
           // CustomEvent detail remains supported for browser/test dispatches.
           const detail = nativeEvent.detail ?? nativeEvent;
-          if (detail?.open === true) {
-            const measured = cssPxFromNativeImeHeight(detail.height ?? 0, window.devicePixelRatio || 1);
-            const action = getAndroidComposerImeStateAction(composerLiftArmed, document.activeElement);
-            if (measured > 0 && (action === 'open' || action === 'cache')) {
-              // A model-picker search field can have a different IME silhouette
-              // from the composer. Keep the cache scoped to composer-owned opens.
-              persistHeight(measured);
-            }
-            // The state event may beat focusin on a fast keyboard. In that case
-            // it starts the single composer lift with the measured height. Once
-            // a focus/intent lift is armed, this event only refreshes next-open
-            // cache data and leaves its transform untouched.
-            if (action === 'open') markOpen(document.activeElement, 'ime');
-            if (action === 'cache' && shouldCorrectArmedImeLift(armedImeHeight || imeHeight, measured)) {
-              // The estimate that armed this lift under-cleared the keyboard;
-              // re-lift from the measured height so the composer is not covered
-              // for the rest of the keyboard session.
-              armedImeHeight = measured;
-              const slide = liftMovers(
-                measured,
-                CORRECT_MS,
-                SHOW_EASING,
-                isComposerKeyboardTarget(document.activeElement) ? document.activeElement : undefined,
-              );
-              dispatchKb('yuri:keyboard-anim', { phase: 'show', slide, durationMs: CORRECT_MS, easing: SHOW_EASING });
-            }
-            if (action === 'field') reserveFieldScrollInset(measured || imeHeight);
+          if (typeof detail.open !== 'boolean') return;
+          if (typeof detail.height === 'number') {
+            keyboardHeight = detail.open ? detail.height / (isAndroid ? window.devicePixelRatio || 1 : 1) : 0;
           }
-          if (detail?.open === false) markClosed(true);
-        };
-        const handleKeyboardIntent = (event: Event) => {
-          const detail = (event as CustomEvent<{ open?: boolean }>).detail;
-          // ChatInput is the only intent source (pre-focus composer expand).
-          if (detail?.open === true) markOpen(undefined, 'intent');
+          if (isAndroid && !nativeImeEnabled) {
+            // No native translation for ordinary inputs. Only their local
+            // overlay/scroll region reserves keyboard space, never the shell.
+            setInset(keyboardHeight);
+            measureSafeBottom();
+            setVar('--yuri-kb-scroll-inset', Math.max(0, keyboardHeight - safeBottomPx));
+            root.classList.remove('yuri-keyboard-open', 'yuri-kb-animating');
+            dispatchKb('yuri:keyboard-settled', { open: detail.open, nativeResize: false });
+            return;
+          }
+          const animating = detail.phase === 'start';
+          root.classList.toggle('yuri-keyboard-open', detail.open || animating);
+          root.classList.toggle('yuri-kb-animating', animating);
+          if (animating) {
+            dispatchKb('yuri:keyboard-anim', {
+              phase: detail.open ? 'show' : 'hide',
+              durationMs: detail.durationMs ?? 0,
+              nativeResize: true,
+            });
+            return;
+          }
+          // Android Back ends editing at settled close. iOS close also occurs
+          // during reloadInputViews / hardware keyboard minimization: it owns
+          // presentation only, not the focused field's editing lifetime.
+          const composerFocused = isComposerKeyboardTarget(document.activeElement);
+          if (isAndroid && !detail.open && isTextFieldLike(document.activeElement) && composerFocused) {
+            (document.activeElement as HTMLElement).blur();
+          }
+          if (!detail.open && (isAndroid || !composerFocused)) dispatchKb('yuri:keyboard-intent', { open: false });
+          dispatchKb('yuri:keyboard-settled', { open: detail.open, nativeResize: true });
         };
 
-        document.addEventListener('focusin', handleFocusIn, true);
-        document.addEventListener('focusout', handleFocusOut, true);
         window.addEventListener('yuri:ime-state', handleImeState);
-        window.addEventListener('yuri:keyboard-intent', handleKeyboardIntent);
-
-        if (disposed) {
-          clearAndroidTimer();
-          document.removeEventListener('focusin', handleFocusIn, true);
-          document.removeEventListener('focusout', handleFocusOut, true);
-          window.removeEventListener('yuri:ime-state', handleImeState);
-          window.removeEventListener('yuri:keyboard-intent', handleKeyboardIntent);
-          return;
-        }
-        cleanup.push(
-          clearAndroidTimer,
-          () => document.removeEventListener('focusin', handleFocusIn, true),
-          () => document.removeEventListener('focusout', handleFocusOut, true),
-          () => window.removeEventListener('yuri:ime-state', handleImeState),
-          () => window.removeEventListener('yuri:keyboard-intent', handleKeyboardIntent),
-        );
-        return;
+        cleanup.push(() => window.removeEventListener('yuri:ime-state', handleImeState));
+        // Pinned header WebView + top layout offset (see nativeImeHeader).
+        if (!disposed) cleanup.push(startNativeImeHeader());
+        syncNativeIme();
+        document.addEventListener('focusin', syncNativeIme, true);
+        const composerObserver = new MutationObserver(syncNativeIme);
+        composerObserver.observe(root, { attributes: true, attributeFilter: ['class'] });
+        cleanup.push(() => {
+          composerObserver.disconnect();
+          document.removeEventListener('focusin', syncNativeIme, true);
+          root.classList.remove('yuri-native-ime');
+          void nativeImeHeader.setImeSync({ enabled: false }).catch(() => undefined);
+        });
+        if (isAndroid) return;
       }
+      const webKeyboardActive = () => !(iosNativeIme && nativeImeEnabled);
 
       // ── iOS: shrink the shell immediately (no transform FLIP) ────────────
       const IOS_IME_RATIO_STORAGE_KEY = 'yuri.iosImeHeightRatio.v1';
@@ -755,6 +569,7 @@ export const useNativeMobileChrome = (): void => {
         return slide;
       };
       const handleIosKeyboardIntent = (event: Event) => {
+        if (!webKeyboardActive()) return;
         if (shouldDeferWebKeyboardToNativeComposer(
           root.classList.contains('yuri-native-ios-composer'),
           document.activeElement,
@@ -782,6 +597,7 @@ export const useNativeMobileChrome = (): void => {
       window.addEventListener('yuri:keyboard-intent', handleIosKeyboardIntent);
 
       const showHandle = await Keyboard.addListener('keyboardWillShow', (info) => {
+        if (!webKeyboardActive()) return;
         if (shouldDeferWebKeyboardToNativeComposer(
           root.classList.contains('yuri-native-ios-composer'),
           document.activeElement,
@@ -821,16 +637,6 @@ export const useNativeMobileChrome = (): void => {
         dispatchKb('yuri:keyboard-anim', { phase: 'show', slide, durationMs: 0, easing: KB_ANIM_EASING });
       });
 
-      const blurActiveTextField = () => {
-        const active = document.activeElement;
-        if (!(active instanceof HTMLElement)) return;
-        // keyboardWillHide must not steal overlay/settings search focus. A
-        // model-picker tap can race the previous field's hide, and WKWebView
-        // also emits hide when the keyboard-inset overlay resizes under IME.
-        if (!isComposerKeyboardTarget(active)) return;
-        active.blur();
-      };
-
       const snapWindowScroll = () => {
         if (keyboardOpen) return;
         window.scrollTo(0, 0);
@@ -857,27 +663,23 @@ export const useNativeMobileChrome = (): void => {
       };
 
       const runHide = () => {
+        if (!webKeyboardActive()) {
+          // Native owns layout. A keyboard hide is not an editing-end request.
+          return;
+        }
         if (root.classList.contains('yuri-native-ios-composer')) {
           unwindKeyboardShell();
-          void getNativeIosComposerPlugin().blur();
           dispatchKb('yuri:keyboard-settled', { open: false });
           return;
         }
         if (!keyboardOpen) return;
         keyboardOpen = false;
         clearSettle();
-        // Collapse chrome first (ChatInput flushSync), then blur. Intent-before-blur
-        // lets focusout run after collapse so interactive IME dismiss is less likely
-        // to see a still-focused composer and bail. One short confirm retries if
-        // WKWebView restored focus onto the textarea without reopening the keyboard.
-        dispatchKb('yuri:keyboard-intent', { open: false });
-        blurActiveTextField();
-        window.setTimeout(() => {
-          if (keyboardOpen) return;
-          if (!isComposerKeyboardTarget(document.activeElement)) return;
-          blurActiveTextField();
+        // Unwind presentation without revoking hardware input. Actual blur,
+        // navigation and explicit composer actions own editing termination.
+        if (!isComposerKeyboardTarget(document.activeElement)) {
           dispatchKb('yuri:keyboard-intent', { open: false });
-        }, 80);
+        }
         if (caretTimer !== null) {
           window.clearTimeout(caretTimer);
           caretTimer = null;
@@ -913,6 +715,7 @@ export const useNativeMobileChrome = (): void => {
         node instanceof HTMLElement
         && (node.tagName === 'TEXTAREA' || node.tagName === 'INPUT' || node.isContentEditable);
       const handleFocusOut = (event: FocusEvent) => {
+        if (!webKeyboardActive()) return;
         if (!keyboardOpen) return;
         if (!isTextInput(event.target)) return;
         // Drop composer lift when focus leaves the bottom composer (question
@@ -1111,49 +914,65 @@ const MobileInstancesSurface: React.FC<{
   const conn = connection;
   const {
     connections, isBusy, isPasswordBusy, error, pendingConnection,
-    connect, submitPassword, cancelPassword, saveConnection, removeConnection, subscribeConnected, setError,
+    connect, submitPassword, cancelPassword, renameConnection, removeConnection, subscribeConnected, setError,
   } = conn;
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const editingConnection = editingId ? connections.find((connection) => connection.id === editingId) ?? null : null;
-  const isRelayOnlyEditing = editingConnection ? !editingConnection.candidates.some((c) => c.kind === 'direct') : false;
   const [confirmingDeleteId, setConfirmingDeleteId] = React.useState<string | null>(null);
-  const [url, setUrl] = React.useState('');
   const [label, setLabel] = React.useState('');
-  const [clientToken, setClientToken] = React.useState('');
+  const [pairingLink, setPairingLink] = React.useState('');
+  const [addOpen, setAddOpen] = React.useState(false);
+  const addSheetId = React.useId();
+  const editSheetId = React.useId();
   const [password, setPassword] = React.useState('');
   const [isScanning, setIsScanning] = React.useState(false);
   const qrScanSupported = React.useMemo(() => isQrScanSupported(), []);
-  // The manual add/edit form is hidden until asked for — the sheet leads with
-  // the list of instances (with live status), not a wall of inputs.
-  const [formOpen, setFormOpen] = React.useState(false);
   // Which row is being connected to, for the per-row spinner.
   const [connectingId, setConnectingId] = React.useState<string | null>(null);
-  const handleConnected = useEvent(onConnect);
+  // The row whose last attempt failed, so a connection error is shown under that
+  // instance instead of inside the add section at the bottom.
+  const [failedId, setFailedId] = React.useState<string | null>(null);
+  const handleConnected = useEvent(() => {
+    setAddOpen(false);
+    setPairingLink('');
+    onConnect();
+  });
 
   React.useEffect(
     () => subscribeConnected(handleConnected),
     [handleConnected, subscribeConnected],
   );
 
-  // Populate/clear the form imperatively (on edit tap / cancel / save) rather than via
-  // an effect keyed on the derived connection object. With an effect, any churn of the
-  // connections list re-fires it and overwrites what the user is typing — the keyboard
-  // "resets" mid-edit. Imperative population is immune to that.
+  // Populate/clear the rename form imperatively (on edit tap / cancel / save)
+  // rather than via an effect keyed on the derived connection object. With an
+  // effect, any churn of the connections list re-fires it and overwrites what the
+  // user is typing — the keyboard "resets" mid-edit. Imperative population is
+  // immune to that.
   const resetForm = useEvent(() => {
     setEditingId(null);
-    setUrl('');
     setLabel('');
-    setClientToken('');
+    setFailedId(null);
     setError(null);
-    setFormOpen(false);
+    setAddOpen(false);
   });
 
-  const saveInstance = useEvent((event: React.FormEvent) => {
+  const closeAddSheet = useEvent(() => {
+    if (isBusy || isScanning) return;
+    setAddOpen(false);
+    setError(null);
+  });
+
+  const closeEditSheet = useEvent(() => {
+    if (isBusy || isScanning) return;
+    resetForm();
+  });
+
+  const saveLabel = useEvent((event: React.FormEvent) => {
     event.preventDefault();
-    // The id is what makes this an EDIT: saveConnection uses it to preserve the
-    // existing relay/https candidates (and the Keychain token they key) instead
-    // of rebuilding the instance from the single URL field.
-    void saveConnection({ id: editingId ?? undefined, url, label, clientToken }).then((saved) => {
+    if (!editingId || !label.trim()) return;
+    // Rename only: transport candidates and the Keychain token belong to the
+    // pairing handshake, so the editor never rebuilds them from typed values.
+    void renameConnection(editingId, label).then((saved) => {
       if (saved) resetForm();
     });
   });
@@ -1167,21 +986,18 @@ const MobileInstancesSurface: React.FC<{
     setError(t('mobile.connect.link.invalid'));
   });
 
-  // Scan a pairing QR into the add/edit form fields (does not change edit mode, so
-  // the form-reset effect doesn't wipe the scanned values). The user reviews + saves.
+  // Scan a pairing QR. Pairing codes redeem immediately, and legacy token QRs
+  // carry everything needed, so both connect directly — same as the home scan.
   const handleScanInstance = useEvent(async () => {
     if (isScanning) return;
     setError(null);
+    setFailedId(null);
     setIsScanning(true);
     try {
       const result = await scanConnectionQr();
       switch (result.status) {
         case 'ok':
-          // Legacy token QR: prefill the manual form for review before saving.
-          setUrl(result.url);
-          if (result.label) setLabel(result.label);
-          if (result.clientToken) setClientToken(result.clientToken);
-          setFormOpen(true);
+          await connect({ url: result.url, label: result.label, clientToken: result.clientToken });
           break;
         case 'pairing':
           await conn.redeemPairingConnection(result.pairing);
@@ -1202,6 +1018,8 @@ const MobileInstancesSurface: React.FC<{
         default:
           break;
       }
+    } catch {
+      setError(t('mobile.connect.scan.failed'));
     } finally {
       setIsScanning(false);
     }
@@ -1240,6 +1058,29 @@ const MobileInstancesSurface: React.FC<{
   const inputClass = 'h-12 w-full rounded-[16px] border border-border/70 bg-surface-elevated px-4 text-[16px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20';
 
   if (pendingConnection) {
+    if (pendingConnection.reason === 'pairing') {
+      return (
+        <div className="yuri-settings-page-content">
+          <SettingsGroup label={t('mobile.connect.pairing.expired')} itemId="instances.manage">
+            <div className="yuri-settings-group-row flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <Icon name="computer" className="size-6 shrink-0 text-muted-foreground" />
+                <p className="min-w-0 flex-1 truncate typography-ui-label">{pendingConnection.label}</p>
+                {connections.some((item) => item.id === pendingConnection.id) ? (
+                  <Button variant="ghost" size="icon" disabled={isBusy || isScanning} aria-label={t('mobile.instances.deleteAria', { label: pendingConnection.label })} onClick={() => { setConfirmingDeleteId(pendingConnection.id); cancelPasswordPrompt(); }}>
+                    <Icon name="delete-bin" className="size-5" />
+                  </Button>
+                ) : null}
+              </div>
+              <p className="typography-small text-muted-foreground">{t('mobile.connect.pairing.reconnectHint')}</p>
+              {error ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+              {qrScanSupported ? <Button size="lg" disabled={isBusy || isScanning} onClick={() => void handleScanInstance()}><Icon name="scan-2" className="size-5" />{t('mobile.connect.scanQr')}</Button> : null}
+              <Button variant={qrScanSupported ? 'ghost' : 'default'} size="lg" disabled={isBusy || isScanning} onClick={() => { cancelPasswordPrompt(); setAddOpen(true); }}>{t('mobile.connect.link.useLink')}</Button>
+            </div>
+          </SettingsGroup>
+        </div>
+      );
+    }
     return (
       <div className="yuri-settings-page-content">
         <SettingsGroup
@@ -1268,7 +1109,7 @@ const MobileInstancesSurface: React.FC<{
               autoFocus
               className={inputClass}
             />
-            {error ? <p className="px-1 typography-small text-[var(--status-error)]">{error}</p> : null}
+            {error ? <p role="alert" className="px-1 typography-small text-[var(--status-error)]">{error}</p> : null}
             <Button type="submit" size="lg" className="mt-1 h-12 w-full" disabled={isPasswordBusy || !password.trim()}>
               {isPasswordBusy ? t('mobile.connect.connecting') : t('mobile.connect.unlockButton')}
             </Button>
@@ -1280,6 +1121,31 @@ const MobileInstancesSurface: React.FC<{
       </div>
     );
   }
+
+  const labelForm = (
+    <form className="flex flex-col gap-3" onSubmit={saveLabel}>
+      <label className="block space-y-1.5">
+        <span className="block typography-ui-label text-foreground">{t('mobile.instances.label.label')}</span>
+        <Input
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder={t('mobile.instances.label.placeholder')}
+          autoComplete="off"
+          autoCapitalize="words"
+          autoCorrect="off"
+          spellCheck={false}
+          maxLength={120}
+          autoFocus
+          disabled={isBusy || isScanning}
+          className="h-12 w-full text-[16px]"
+        />
+      </label>
+      {error ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+      <Button type="submit" size="lg" className="w-full" disabled={isBusy || isScanning || !label.trim()}>
+        {t('mobile.instances.saveEdit')}
+      </Button>
+    </form>
+  );
 
   return (
     <div className="yuri-settings-page-content">
@@ -1300,91 +1166,98 @@ const MobileInstancesSurface: React.FC<{
                 ? t('mobile.instances.status.connected')
                 : t('mobile.instances.status.saved');
             return (
-              <div
-                key={connection.id}
-                className={cn(
-                  'yuri-settings-group-row relative flex items-center',
-                  confirming && 'bg-[color-mix(in_srgb,var(--destructive)_8%,transparent)]',
-                )}
-              >
-                {/* Full-card hit target so the whole row switches instances; action
-                    buttons sit above with z-10 and keep their own clicks. */}
-                <button
-                  type="button"
-                  aria-label={t('desktopHostSwitcher.actions.switchToAria', { instance: connection.label })}
-                  data-mobile-press-feedback="none"
-                  className="absolute inset-0 z-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:pointer-events-none"
-                  onClick={() => {
-                    if (isActive) return;
-                    setConnectingId(connection.id);
-                    void connect({ id: connection.id, candidates: connection.candidates, clientToken: connection.clientToken, label: connection.label })
-                      .finally(() => setConnectingId(null));
-                  }}
-                  disabled={isActive || (isBusy && !isConnectingRow) || confirming}
-                  style={{ touchAction: 'manipulation' }}
-                />
-                <div className="pointer-events-none relative z-[1] flex min-w-0 flex-1 items-center gap-3">
-                  <span className="relative flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-interactive-hover text-foreground">
-                    <Icon name="server" className="size-[18px]" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="block truncate typography-ui-label text-foreground">{connection.label}</span>
-                    </span>
-                    <span className={cn(
-                      'block truncate typography-small',
-                      isActive && !isConnectingRow ? 'text-[var(--status-success)]' : 'text-muted-foreground',
-                    )}>
-                      {statusText}
-                    </span>
-                  </span>
-                </div>
-                <div className="relative z-10 flex shrink-0 items-center gap-0.5 pr-2">
-                  {confirming ? (
-                    <button
-                      type="button"
-                      aria-label={t('mobile.instances.confirmDeleteAria', { label: connection.label })}
-                      className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-destructive px-3 text-destructive-foreground transition-opacity active:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
-                      onClick={() => confirmDelete(connection.id)}
-                      style={{ touchAction: 'manipulation' }}
-                    >
-                      <Icon name="delete-bin" className="size-[18px]" />
-                      <span className="typography-ui-label">{t('mobile.instances.delete')}</span>
-                    </button>
-                  ) : isConnectingRow ? (
-                    <span className="flex size-9 items-center justify-center text-muted-foreground" aria-hidden>
-                      <Icon name="loader-4" className="size-[18px] animate-spin" />
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={t('mobile.instances.edit')}
-                      className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      onClick={() => {
-                        setEditingId(connection.id);
-                        setUrl(connection.candidates.some((c) => c.kind === 'direct') ? connectionDisplayUrl(connection) : '');
-                        setLabel(connection.label);
-                        setClientToken(connection.clientToken || '');
-                        setError(null);
-                      }}
-                      style={{ touchAction: 'manipulation' }}
-                    >
-                      <Icon name="edit" className="size-[18px]" />
-                    </button>
+              <React.Fragment key={connection.id}>
+                <div
+                  className={cn(
+                    'yuri-settings-group-row relative flex items-center',
+                    confirming && 'bg-[color-mix(in_srgb,var(--destructive)_8%,transparent)]',
                   )}
+                >
+                  {/* Full-card hit target so the whole row switches instances; action
+                      buttons sit above with z-10 and keep their own clicks. */}
                   <button
                     type="button"
-                    aria-label={confirming
-                      ? t('mobile.instances.cancelDeleteAria', { label: connection.label })
-                      : t('mobile.instances.deleteAria', { label: connection.label })}
-                    className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    onClick={() => toggleConfirmDelete(connection.id)}
+                    aria-label={t('desktopHostSwitcher.actions.switchToAria', { instance: connection.label })}
+                    data-mobile-press-feedback="none"
+                    className="absolute inset-0 z-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:pointer-events-none"
+                    onClick={() => {
+                      if (isActive) return;
+                      setError(null);
+                      setFailedId(connection.id);
+                      setConnectingId(connection.id);
+                      void connect({ id: connection.id, candidates: connection.candidates, clientToken: connection.clientToken, label: connection.label })
+                        .finally(() => setConnectingId(null));
+                    }}
+                    disabled={isActive || (isBusy && !isConnectingRow) || confirming}
                     style={{ touchAction: 'manipulation' }}
-                  >
-                    <Icon name={confirming ? 'close' : 'delete-bin'} className="size-[18px]" />
-                  </button>
+                  />
+                  <div className="pointer-events-none relative z-[1] flex min-w-0 flex-1 items-center gap-3">
+                    <span className="relative flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-interactive-hover text-foreground">
+                      <Icon name="server" className="size-[18px]" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="block truncate typography-ui-label text-foreground">{connection.label}</span>
+                      </span>
+                      <span className={cn(
+                        'block truncate typography-small',
+                        isActive && !isConnectingRow ? 'text-[var(--status-success)]' : 'text-muted-foreground',
+                      )}>
+                        {statusText}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="relative z-10 flex shrink-0 items-center gap-0.5 pr-2">
+                    {confirming ? (
+                      <button
+                        type="button"
+                        aria-label={t('mobile.instances.confirmDeleteAria', { label: connection.label })}
+                        className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-destructive px-3 text-destructive-foreground transition-opacity active:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+                        onClick={() => confirmDelete(connection.id)}
+                        style={{ touchAction: 'manipulation' }}
+                      >
+                        <Icon name="delete-bin" className="size-[18px]" />
+                        <span className="typography-ui-label">{t('mobile.instances.delete')}</span>
+                      </button>
+                    ) : isConnectingRow ? (
+                      <span className="flex size-9 items-center justify-center text-muted-foreground" aria-hidden>
+                        <Icon name="loader-4" className="size-[18px] animate-spin" />
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={t('mobile.instances.edit')}
+                        className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onClick={() => {
+                          setEditingId(connection.id);
+                          setLabel(connection.label);
+                          setFailedId(null);
+                          setError(null);
+                        }}
+                        style={{ touchAction: 'manipulation' }}
+                      >
+                        <Icon name="edit" className="size-[18px]" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      aria-label={confirming
+                        ? t('mobile.instances.cancelDeleteAria', { label: connection.label })
+                        : t('mobile.instances.deleteAria', { label: connection.label })}
+                      className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      onClick={() => toggleConfirmDelete(connection.id)}
+                      style={{ touchAction: 'manipulation' }}
+                    >
+                      <Icon name={confirming ? 'close' : 'delete-bin'} className="size-[18px]" />
+                    </button>
+                  </div>
                 </div>
-              </div>
+                {error && failedId === connection.id && !confirming ? (
+                  <div className="yuri-settings-group-row" role="alert">
+                    <p className="typography-small text-[var(--status-error)]">{error}</p>
+                  </div>
+                ) : null}
+              </React.Fragment>
             );
           })
         ) : (
@@ -1394,107 +1267,83 @@ const MobileInstancesSurface: React.FC<{
         )}
       </SettingsGroup>
 
-      {/* QR pairing is the primary path; the manual form stays hidden until
-          asked for (or until a row's edit button opens it). */}
-      <SettingsGroup
-        label={editingConnection ? t('mobile.instances.editTitle') : t('mobile.instances.addTitle')}
-        cardClassName={!formOpen && !editingConnection ? '!bg-background' : undefined}
-      >
-        {!formOpen && !editingConnection ? (
-          <div className="yuri-settings-group-row flex flex-col items-stretch gap-2">
-              {qrScanSupported ? (
-                <Button
-                  type="button"
-                  size="lg"
-                  className="h-12 w-full"
-                  onClick={() => void handleScanInstance()}
-                  disabled={isScanning}
-                >
-                  <Icon name="scan-2" className={cn('size-[18px]', isScanning && 'animate-pulse')} />
-                  {t('mobile.connect.scanQr')}
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                size="lg"
-                className="h-12 w-full"
-                onClick={() => { setError(null); setFormOpen(true); }}
-              >
-                <Icon name="add" className="size-[18px]" />
-                {t('mobile.instances.addManual')}
-              </Button>
-              {error ? <p className="px-1 text-center typography-small text-[var(--status-error)]">{error}</p> : null}
-          </div>
-        ) : (
-          <div className="yuri-settings-group-row flex flex-col gap-3">
-              <div className="flex min-h-8 items-center justify-end px-1">
-                <Button type="button" variant="ghost" size="xs" onClick={resetForm}>
-                  {t('mobile.instances.cancelEdit')}
-                </Button>
-              </div>
-              <form className="flex flex-col gap-3" onSubmit={saveInstance}>
-                {!isRelayOnlyEditing ? (
-                  <label className="block space-y-1.5">
-                    <span className="block px-1 typography-ui-label text-foreground">{t('mobile.connect.url.label')}</span>
-                    <input
-                      {...mobileInputKeyboardProps}
-                      value={url}
-                      onChange={(event) => setUrl(event.target.value)}
-                      placeholder={t('mobile.connect.url.placeholder')}
-                      type="url"
-                      inputMode="url"
-                      autoCapitalize="none"
-                      className={inputClass}
-                    />
-                  </label>
-                ) : null}
-                <label className="block space-y-1.5">
-                  <span className="block px-1 typography-ui-label text-foreground">{t('mobile.instances.label.label')}</span>
-                  <input
-                    value={label}
-                    onChange={(event) => setLabel(event.target.value)}
-                    placeholder={t('mobile.instances.label.placeholder')}
-                    autoComplete="off"
-                    autoCapitalize="words"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className={inputClass}
-                  />
-                </label>
-                <label className="block space-y-1.5">
-                  <span className="block px-1 typography-ui-label text-foreground">{t('mobile.connect.token.label')}</span>
-                  <input
-                    {...mobileInputKeyboardProps}
-                    value={clientToken}
-                    onChange={(event) => setClientToken(event.target.value)}
-                    placeholder={t('mobile.connect.token.placeholder')}
-                    autoCapitalize="none"
-                    className={inputClass}
-                  />
-                  <p className="px-1 typography-micro text-muted-foreground">{t('mobile.connect.token.hint')}</p>
-                </label>
-                <Button type="submit" size="lg" className="mt-1 h-12 w-full">
-                  {editingConnection ? t('mobile.instances.saveEdit') : t('mobile.instances.saveNew')}
-                </Button>
-              </form>
-              {/* Pairing link is available when adding (not while editing an existing row). */}
-              {!editingConnection ? (
-                <>
-                  <MobileConnectionMethodDivider label={t('mobile.connect.link.divider')} />
-                  <MobilePairingLinkForm
-                    disabled={isBusy || isScanning}
-                    isBusy={isBusy}
-                    inputClassName={inputClass}
-                    onRedeem={handlePairingLinkRedeem}
-                    onInvalid={handlePairingLinkInvalid}
-                  />
-                </>
-              ) : null}
-              {error ? <p className="px-1 typography-small text-[var(--status-error)]">{error}</p> : null}
-          </div>
-        )}
+      {/* Adding an instance uses the same two entries as the welcome screen:
+          scan a pairing QR, or redeem a connection link. Editing opens its own
+          sheet — transports and tokens belong to the pairing handshake, so the
+          sheet only renames. */}
+      <SettingsGroup label={t('mobile.instances.addTitle')}>
+        <div className="yuri-settings-group-row flex flex-col gap-3">
+          {qrScanSupported ? (
+            <Button
+              type="button"
+              size="lg"
+              className="w-full"
+              onClick={() => void handleScanInstance()}
+              disabled={isBusy || isScanning}
+            >
+              <Icon name="scan-2" className={cn('size-[18px]', isScanning && 'animate-pulse')} />
+              {t('mobile.connect.scanQr')}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant={qrScanSupported ? 'ghost' : 'default'}
+            size="lg"
+            className="w-full"
+            disabled={isBusy || isScanning}
+            onClick={() => { setFailedId(null); setError(null); setAddOpen(true); }}
+          >
+            {t('mobile.connect.link.useLink')}
+          </Button>
+          {error && !addOpen && !editingConnection && !failedId ? <p role="alert" className="typography-small text-[var(--status-error)]">{error}</p> : null}
+        </div>
       </SettingsGroup>
+
+      <MobileResizableSheet
+        id={`mobile-instance-edit-${editSheetId}`}
+        open={editingConnection !== null}
+        onOpenChange={(open) => { if (!open) closeEditSheet(); }}
+        fitContent
+        ariaLabel={t('mobile.instances.editTitle')}
+        closeAriaLabel={t('mobile.surface.closeAria')}
+        resizeAriaLabel={t('mobile.connect.options.resize')}
+      >
+        {/* No sheet header: the field label is the whole title. Dismissal stays
+            on the sheet's own gesture / scrim, so no close button is needed. */}
+        <ScrollableOverlay className="px-5 pb-5 pt-1" disableHorizontal fillContainer={false}>
+          {labelForm}
+        </ScrollableOverlay>
+      </MobileResizableSheet>
+
+      <MobileResizableSheet
+        id={`mobile-instance-add-${addSheetId}`}
+        open={addOpen}
+        onOpenChange={(open) => { if (!open) closeAddSheet(); }}
+        fitContent
+        title={<h2 className="truncate typography-ui-label font-semibold">{t('mobile.connect.link.useLink')}</h2>}
+        ariaLabel={t('mobile.connect.link.useLink')}
+        closeAriaLabel={t('mobile.surface.closeAria')}
+        resizeAriaLabel={t('mobile.connect.options.resize')}
+      >
+        <ScrollableOverlay className="px-5 py-5" disableHorizontal fillContainer={false}>
+          <div className="flex flex-col gap-5">
+            <p className="typography-small text-muted-foreground">{t('mobile.connect.link.help')}</p>
+            <MobilePairingLinkForm
+              value={pairingLink}
+              onValueChange={(value) => { setPairingLink(value); setError(null); }}
+              showPasteButton
+              disabled={isBusy || isScanning}
+              isBusy={isBusy}
+              inputClassName="min-w-0 flex-1 text-[16px]"
+              buttonVariant="default"
+              buttonClassName="yuri-welcome-primary w-full"
+              error={error}
+              onRedeem={handlePairingLinkRedeem}
+              onInvalid={handlePairingLinkInvalid}
+            />
+          </div>
+        </ScrollableOverlay>
+      </MobileResizableSheet>
     </div>
   );
 };
@@ -1917,7 +1766,6 @@ const MobileSessionMetadataButton = React.memo(function MobileSessionMetadataBut
   const savedSessionModel = useSelectionStore(savedSessionModelSelector);
   const quotaResults = useQuotaStore((state) => state.results);
   const loadQuotaSettings = useQuotaStore((state) => state.loadSettings);
-  const fetchAllQuotas = useQuotaStore((state) => state.fetchAllQuotas);
   const isQuotaLoading = useQuotaStore((state) => state.isLoading);
   const quotaDisplayMode = useQuotaStore((state) => state.displayMode);
   const dropdownProviderIds = useQuotaStore((state) => state.dropdownProviderIds);
@@ -1948,13 +1796,9 @@ const MobileSessionMetadataButton = React.memo(function MobileSessionMetadataBut
   }, [dropdownProviderIds]);
 
   React.useEffect(() => {
-    if (!open || isQuotaLoading) return;
-    const missingEnabledProvider = dropdownProviderIds.some((providerId) => (
-      !quotaResults.some((result) => result?.providerId === providerId)
-    ));
-    if (!missingEnabledProvider) return;
-    void fetchAllQuotas();
-  }, [dropdownProviderIds, fetchAllQuotas, isQuotaLoading, open, quotaResults]);
+    if (!open || useQuotaStore.getState().isLoading) return;
+    void useQuotaStore.getState().fetchAllQuotas();
+  }, [open]);
 
   const latestMessageModel = React.useMemo(
     () => getLatestUserMessageModel(activeSessionMessages),
@@ -2088,7 +1932,7 @@ type MobileHeaderSurfaceShortcuts = {
   onToggleChanges: () => void;
 };
 
-const MobileHeader: React.FC<{
+const LocalMobileHeader: React.FC<{
   onOpenSessions: () => void;
   menuOpen: boolean;
   onToggleMenu: () => void;
@@ -2227,6 +2071,12 @@ const MobileHeader: React.FC<{
   );
 };
 
+const MobileHeader: React.FC<React.ComponentProps<typeof LocalMobileHeader>> = (props) => {
+  const scope = useRemoteMobileSession();
+  if (!scope.enabled) return <LocalMobileHeader {...props} />;
+  return <RemoteMobileHeader {...props} scope={scope} />;
+};
+
 type PendingMobileChangesDiff = {
   path: string;
   staged: boolean;
@@ -2264,7 +2114,7 @@ const MobileShell: React.FC<{
   /** Optional file to expand/scroll when the turn-diff sheet opens (from Changes preview row). */
   const [turnDiffTargetFilePath, setTurnDiffTargetFilePath] = React.useState<string | null>(null);
   const [turnDiffNavigationKey, setTurnDiffNavigationKey] = React.useState(0);
-  const [mcpOpen, setMcpOpen] = React.useState(false);
+  const [mcpRequested, setMcpOpen] = React.useState(false);
   const [isMcpRefreshing, setIsMcpRefreshing] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [updateOpen, setUpdateOpen] = React.useState(false);
@@ -2277,23 +2127,34 @@ const MobileShell: React.FC<{
     setOverflowOpen(false);
     setRemoteDesktopOpen(true);
   });
+  const openProjectRemoteDesktop = useEvent(() => {
+    setOverflowOpen(false);
+    if (remoteScope.enabled) {
+      toast.info(t('remoteProjects.nativeCapabilityUnavailable', { capability: t('remoteDesktop.title') }));
+      return;
+    }
+    openRemoteDesktop();
+  });
   const closeRemoteDesktop = useEvent(() => setRemoteDesktopOpen(false));
   const [isTranscriptRefreshing, setIsTranscriptRefreshing] = React.useState(false);
   const toggleOverflowMenu = useEvent(() => setOverflowOpen((open) => !open));
   const closeOverflowMenu = useEvent(() => setOverflowOpen(false));
   // When set, the Changes surface opens directly into the per-file diff for this path.
   const [pendingChangesDiff, setPendingChangesDiff] = React.useState<PendingMobileChangesDiff | null>(null);
+  const remoteScope = useRemoteMobileSession();
+  const mcpOpen = mcpRequested && !remoteScope.enabled;
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const setSettingsPage = useUIStore((state) => state.setSettingsPage);
   const updateAvailable = useUpdateStore((state) => state.available);
   const updateRuntimeType = useUpdateStore((state) => state.runtimeType);
   const showCapacitorOnlyFeatures = React.useMemo(() => isCapacitorMobileApp(), []);
   const qrScanSupported = React.useMemo(() => isQrScanSupported(), []);
-  const { data: mcpServers = [], refetch: refetchMcpConfigs } = useMcpConfigsQuery(currentDirectory ?? null, { enabled: mcpOpen });
-  const { refetch: refetchMcpStatus } = useMcpStatusQuery(currentDirectory ?? null, { enabled: mcpOpen });
+  const mcpDirectory = currentDirectory ?? null;
+  const { data: mcpServers = [], refetch: refetchMcpConfigs } = useQuery({ ...mcpConfigsQueryOptions(mcpDirectory), enabled: mcpOpen });
+  const { refetch: refetchMcpStatus } = useQuery({ ...mcpStatusQueryOptions(mcpDirectory), enabled: mcpOpen });
   const setMcpDraft = useMcpConfigStore((state) => state.setMcpDraft);
   const setSelectedMcp = useMcpConfigStore((state) => state.setSelectedMcp);
-  const gitStatus = useGitStatus(normalizePath(currentDirectory) || null);
+  const gitStatus = useGitStatus(remoteScope.enabled ? remoteScope.entry?.key ?? null : normalizePath(currentDirectory) || null);
   const dirtyChangeCount = gitStatus?.files?.length ?? 0;
 
   React.useEffect(() => sessionEvents.onDirectoryRequest(() => setDirectoryDialogOpen(true)), []);
@@ -2301,6 +2162,18 @@ const MobileShell: React.FC<{
   // iPad (Capacitor): sessions live in a persistent full-height left sidebar
   // and Changes/Files in a right sidebar, instead of phone sheets/surfaces.
   const isIPad = React.useMemo(() => isIPadApp(), []);
+  const phoneSecondaryKind = useMobileNavigationStore((state) => state.secondary?.kind ?? null);
+  const localSessionId = useSessionUIStore((state) => remoteScope.enabled ? null : state.currentSessionId);
+  const currentSessionId = remoteScope.enabled ? remoteScope.sessionId : localSessionId;
+  const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
+  const currentSessionDirectorySelector = React.useMemo(
+    () => (state: ReturnType<typeof useSessionUIStore.getState>) => (
+      !remoteScope.enabled && currentSessionId ? state.getDirectoryForSession(currentSessionId) : null
+    ),
+    [currentSessionId, remoteScope.enabled],
+  );
+  const localSessionDirectory = useSessionUIStore(currentSessionDirectorySelector);
+  const currentSessionDirectory = remoteScope.enabled ? remoteScope.entry?.location.directory : localSessionDirectory;
   const orientation = useOrientation();
   const isPortrait = orientation === 'portrait';
   const [ipadSidebarOpen, setIpadSidebarOpen] = React.useState(isIPad && !isPortrait);
@@ -2619,38 +2492,45 @@ const MobileShell: React.FC<{
 
   const phoneSecondaryBackRef = React.useRef<(() => boolean) | null>(null);
   const chatMainRef = React.useRef<HTMLElement>(null);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
-  const currentSessionDirectorySelector = React.useMemo(
-    () => (state: ReturnType<typeof useSessionUIStore.getState>) => (
-      currentSessionId ? state.getDirectoryForSession(currentSessionId) : null
-    ),
-    [currentSessionId],
-  );
-  const currentSessionDirectory = useSessionUIStore(currentSessionDirectorySelector);
-  const parentSessionTarget = useParentSessionTarget(currentSessionId, currentSessionDirectory || currentDirectory || undefined);
+  const localParentSessionTarget = useParentSessionTarget(remoteScope.enabled ? null : currentSessionId, remoteScope.enabled ? undefined : currentSessionDirectory || currentDirectory || undefined);
+  const remoteParentId = remoteScope.session?.parentID;
+  const parentSessionTarget = remoteScope.enabled
+    ? remoteParentId ? { id: remoteParentId, directory: currentSessionDirectory } : null
+    : localParentSessionTarget;
+  const returnToParent = useEvent(() => {
+    if (!parentSessionTarget) return;
+    if (remoteScope.enabled) remoteScope.openSession(parentSessionTarget.id);
+    else setCurrentSession(parentSessionTarget.id, parentSessionTarget.directory);
+  });
   useNativeLiveActivity();
+  const transcriptRefreshFlight = React.useRef(0);
+  React.useEffect(() => {
+    transcriptRefreshFlight.current += 1;
+    setIsTranscriptRefreshing(false);
+    return () => { transcriptRefreshFlight.current += 1; };
+  }, [currentSessionId, remoteScope.key, remoteScope.entry]);
   const refreshCurrentTranscript = useEvent(() => {
     const sessionID = currentSessionId;
     if (!sessionID || isTranscriptRefreshing) return;
     const directory = currentSessionDirectory || currentDirectory || undefined;
+    const flight = ++transcriptRefreshFlight.current;
 
     setIsTranscriptRefreshing(true);
     void (async () => {
       try {
-        await sync.refreshSessionTranscript(sessionID, { directory });
-        toast.success(t('sessions.sidebar.session.menu.refreshTranscriptSuccess'));
+        if (remoteScope.enabled) await remoteScope.refresh();
+        else await sync.refreshSessionTranscript(sessionID, { directory });
+        if (flight === transcriptRefreshFlight.current) toast.success(t('sessions.sidebar.session.menu.refreshTranscriptSuccess'));
       } catch {
-        toast.error(t('sessions.sidebar.session.menu.refreshTranscriptFailed'));
+        if (flight === transcriptRefreshFlight.current) toast.error(t('sessions.sidebar.session.menu.refreshTranscriptFailed'));
       } finally {
-        setIsTranscriptRefreshing(false);
+        if (flight === transcriptRefreshFlight.current) setIsTranscriptRefreshing(false);
       }
     })();
   });
 
   // Re-bind when the chat subtree mounts: on phone it only exists while the
   // secondary page is open; on iPad it is always mounted.
-  const phoneSecondaryKind = useMobileNavigationStore((state) => state.secondary?.kind ?? null);
   const phoneChatMounted = !isIPad && (phoneSecondaryKind === 'chat' || phoneSecondaryKind === 'draft');
   // Overflow menu is anchored to the chat/detail header. Leaving that page or
   // switching sessions must dismiss it so it cannot float over another surface.
@@ -2661,7 +2541,7 @@ const MobileShell: React.FC<{
   }, [isIPad, phoneChatMounted]);
   React.useEffect(() => {
     setOverflowOpen(false);
-  }, [currentSessionId]);
+  }, [currentSessionId, remoteScope.key]);
 
   // A right-to-left swipe across the chat body opens the Session List
   // half-sheet. The opposite direction remains unclaimed for page-back.
@@ -2774,7 +2654,7 @@ const MobileShell: React.FC<{
       return true;
     }
     if (parentSessionTarget) {
-      setCurrentSession(parentSessionTarget.id, parentSessionTarget.directory);
+      returnToParent();
       return true;
     }
     return false;
@@ -2785,6 +2665,10 @@ const MobileShell: React.FC<{
   const showUpdateItem = updateAvailable && (updateRuntimeType === 'desktop' || updateRuntimeType === 'web');
 
   const openMcpCreateSettings = useEvent(() => {
+    if (remoteScope.enabled) {
+      toast.info(t('remoteProjects.configurationReadOnly'));
+      return;
+    }
     const baseName = 'new-mcp-server';
     let newName = baseName;
     let counter = 1;
@@ -2818,6 +2702,10 @@ const MobileShell: React.FC<{
 
   const refreshMcpOverlay = useEvent(() => {
     if (isMcpRefreshing) return;
+    if (remoteScope.enabled && !remoteScope.entry) {
+      toast.error(t('remoteProjects.host-unavailable'));
+      return;
+    }
     setIsMcpRefreshing(true);
     const minSpinPromise = new Promise((resolve) => window.setTimeout(resolve, 500));
     void Promise.all([
@@ -2838,6 +2726,16 @@ const MobileShell: React.FC<{
           icon: 'chat-new',
           label: t('mobile.menu.newSession'),
           onSelect: () => {
+            if (remoteScope.enabled) {
+              if (!remoteScope.entry) {
+                toast.error(t('remoteProjects.host-unavailable'));
+                return;
+              }
+              remoteScope.openSession(null);
+              if (isIPad) setActiveMainTab('chat');
+              else useMobileNavigationStore.getState().openRemoteProject();
+              return;
+            }
             if (isIPad) {
               setActiveMainTab('chat');
               openNewSessionDraft();
@@ -2865,12 +2763,14 @@ const MobileShell: React.FC<{
           },
         );
       }
-      items.push({
-        key: 'mcp',
-        iconNode: <McpIcon className="size-5 shrink-0 text-muted-foreground" />,
-        label: t('mobile.menu.mcp'),
-        onSelect: () => setMcpOpen(true),
-      });
+      if (!remoteScope.enabled) {
+        items.push({
+          key: 'mcp',
+          iconNode: <McpIcon className="size-5 shrink-0 text-muted-foreground" />,
+          label: t('mobile.menu.mcp'),
+          onSelect: () => setMcpOpen(true),
+        });
+      }
       if (showUpdateItem) {
         items.push({
           key: 'update',
@@ -2902,16 +2802,16 @@ const MobileShell: React.FC<{
       items.push({
         key: 'remote-desktop',
         icon: 'computer',
-        label: t('remoteDesktop.title'),
-        onSelect: openRemoteDesktop,
+          label: t('remoteDesktop.title'),
+          onSelect: openProjectRemoteDesktop,
       });
       return items;
     },
-    [currentSessionId, dirtyChangeCount, isIPad, isTranscriptRefreshing, openChangesSurface, openFilesSurface, openNewSessionDraft, openRemoteDesktop, openSettingsSurface, refreshCurrentTranscript, setActiveMainTab, showUpdateItem, t],
+    [currentSessionId, dirtyChangeCount, isIPad, isTranscriptRefreshing, openChangesSurface, openFilesSurface, openNewSessionDraft, openProjectRemoteDesktop, openSettingsSurface, refreshCurrentTranscript, remoteScope, setActiveMainTab, showUpdateItem, t],
   );
 
   return (
-    <MobileAutoReadProvider sessionId={currentSessionId ?? ''} directory={currentSessionDirectory || currentDirectory || undefined} active={isIPad ? activeMainTab !== 'assistant' : phoneSecondaryKind === 'chat'}>
+    <MobileAutoReadProvider remote={remoteScope.enabled} remoteState={remoteScope.owner?.state} sessionId={currentSessionId ?? ''} directory={currentSessionDirectory || currentDirectory || undefined} active={isIPad ? activeMainTab !== 'assistant' : phoneSecondaryKind === 'chat' || (remoteScope.enabled && phoneSecondaryKind === 'draft')}>
     <DedicatedMobileAppProvider actions={mobileActions}>
       <MobileGlobalSearchHost>
       <div
@@ -3042,7 +2942,7 @@ const MobileShell: React.FC<{
               ) : undefined}
               parentSessionTarget={
                 parentSessionTarget
-                  ? { id: parentSessionTarget.id, directory: parentSessionTarget.directory }
+                  ? { id: parentSessionTarget.id, directory: parentSessionTarget.directory ?? null, ...(remoteScope.enabled ? { onSelect: returnToParent } : {}) }
                   : null
               }
               registerSecondaryBackHandler={registerPhoneSecondaryBack}
@@ -3055,8 +2955,9 @@ const MobileShell: React.FC<{
               )}
               renderChat={(target) => (
                 <MobileChatScreen
-                  sessionId={target.sessionId}
-                  directory={target.directory}
+                  sessionId={remoteScope.enabled ? remoteScope.sessionId ?? '' : target.sessionId}
+                  directory={remoteScope.enabled ? remoteScope.entry?.location.directory : target.directory}
+                  title={remoteScope.enabled ? remoteScope.session?.title : undefined}
                   onBack={() => {
                     closeOverflowMenu();
                     mobileBackNavigationCoordinator.requestAnimatedBack('root');
@@ -3072,9 +2973,9 @@ const MobileShell: React.FC<{
                           readOnly={!target.active}
                           active={target.active}
                           selectionOverride={{
-                            sessionId: target.sessionId || null,
-                            directory: target.directory,
-                            viewKey: target.viewKey,
+                            sessionId: remoteScope.enabled ? remoteScope.sessionId : target.sessionId || null,
+                            directory: remoteScope.enabled ? remoteScope.entry?.location.directory ?? null : target.directory,
+                            viewKey: remoteScope.enabled ? `${remoteScope.key}:${remoteScope.sessionId ?? 'draft'}` : target.viewKey,
                           }}
                         />
                       </ErrorBoundary>
@@ -3831,6 +3732,8 @@ export function MobileApp({ apis }: MobileAppProps) {
     const run = async () => {
       await Promise.all(
         projects.map(async (project) => {
+          // Remote catalogs are demand-driven and must never probe the Hub filesystem.
+          if (project.hostId) return;
           const projectPath = normalizePath(project.path);
           if (!projectPath) return;
           try {
@@ -3988,11 +3891,13 @@ export function MobileApp({ apis }: MobileAppProps) {
     <ErrorBoundary>
       <SyncProvider key={runtimeEndpointEpoch} sdk={opencodeClient.getSdkClient()} directory={currentDirectory || ''} bootstrapDirectory={!(newSessionDraftOpen && currentSessionId === null)}>
         <RuntimeAPIProvider apis={apis}>
+          <RemoteProjectsBootstrap />
           <GuiPluginsProvider ready={isInitialized}>
           <TooltipProvider delayDuration={300} skipDelayDuration={150}>
             <div className="h-full bg-background text-foreground">
               <SessionStartupCoordinator />
               <MobileShareBridge />
+              <MobileHtmlPreviewSheet />
               <SyncAppEffects embeddedBackgroundWorkEnabled={isInitialized} />
               <OpenCodeUpdateToast />
               <MobileAppUpdateToast />

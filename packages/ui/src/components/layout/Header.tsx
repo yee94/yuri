@@ -1,4 +1,12 @@
 import React, { useEffect } from 'react';
+import { skipToken, useQuery, type UseQueryOptions } from '@tanstack/react-query';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import type { HostRuntimeRegistry, HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { queryClient } from '@/lib/queryRuntime';
+import { providerCatalogQueryOptions } from '@/queries/configCatalogQueries';
+import { useSelectionStore } from '@/sync/selection-store';
+import { buildSessionContextUsage, scanContextTokenBaseline } from '@/sync/context-token-baseline';
+import { getTranscriptRepository, transcriptScope, subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision } from '@/sync/transcript-repository-runtime';
 import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitlebarItems';
 import { useEvent, useResizeObserver } from '@reactuses/core';
 import {
@@ -64,11 +72,18 @@ import type { GitHubAuthStatus } from '@/lib/api/types';
 import type { SessionContextUsage } from '@/stores/types/sessionTypes';
 import { DesktopHostSwitcherDialog } from '@/components/desktop/DesktopHostSwitcher';
 import { DesktopCurrentHostButton } from '@/components/desktop/DesktopCurrentHostButton';
+import { RemoteHostErrorIndicator } from '@/components/session/RemoteHostErrorIndicator';
 import { OpenInAppButton } from '@/components/desktop/OpenInAppButton';
 import { ProjectActionsButton } from '@/components/layout/ProjectActionsButton';
 import { resolveServicesPanelIntent } from '@/components/layout/servicesPanelIntent';
 import { SessionSwitcherDropdown } from '@/components/session/SessionSwitcherDropdown';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { locationKey } from '@/lib/remote-projects/location';
+import type { RemoteHostSummaries } from '@/queries/remoteProjectQueries';
+import type { SessionInfo } from '@/lib/opencode/v2-types';
+import { resolveRemoteProjectOwner } from '@/lib/remote-projects/summaries';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { useRemoteProjectRuntime, useRemoteHostSummaries } from '@/queries/remoteProjectQueries';
 import { canUseElectronDesktopIPC, getElectronPlatform, invokeDesktop, isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime, startDesktopWindowDrag } from '@/lib/desktop';
 import { desktopHostsGet, getDesktopHostApiUrl, locationMatchesHost, redactSensitiveUrl } from '@/lib/desktopHosts';
 import { Icon } from "@/components/icon/Icon";
@@ -476,7 +491,7 @@ const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
                                     </span>
                                   ) : null}
                                 </div>
-                                <span className="shrink-0 whitespace-nowrap typography-ui-label tabular-nums text-foreground">
+                                <span className="min-w-0 max-w-[55%] shrink-0 break-words text-right typography-ui-label tabular-nums text-foreground">
                                   {metricLabel === '-' ? '' : metricLabel}
                                 </span>
                               </div>
@@ -643,11 +658,70 @@ interface HeaderProps {
   rightDrawerOpen?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({
+export const Header: React.FC<HeaderProps> = (props) => {
+  const hostId = useProjectsStore((state) => state.projects.find((project) => project.id === state.activeProjectId)?.hostId);
+  return hostId ? <RemoteHeader {...props} hostId={hostId} /> : <HeaderContent {...props} />;
+};
+
+const RemoteHeader: React.FC<HeaderProps & { hostId: string }> = ({ hostId, ...props }) => {
+  const host = useHostRuntime();
+  const runtime = useRemoteProjectRuntime(true);
+  const summaries = useRemoteHostSummaries(runtime.registry, hostId);
+  const hostName = runtime.catalog?.hosts.find((host) => host.id === hostId)?.name ?? hostId;
+  return <HeaderContent {...props} remoteSummaries={summaries.data} remoteHostName={hostName} remoteRegistry={host?.registry ?? runtime.registry} />;
+};
+
+const RemoteHeaderSessionTitle = React.memo(({ entry, sessionId, fallback }: { entry: HostRuntimeEntry; sessionId: string; fallback: string }) => {
+  const options = React.useMemo<UseQueryOptions<SessionInfo, Error, string | null>>(() => ({
+    queryKey: [...entry.queryScope, 'chat', sessionId, 'session'],
+    queryFn: skipToken,
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    select: (session: SessionInfo) => session.id === sessionId ? session.title?.trim() || null : null,
+  }), [entry, sessionId]);
+  const title = useQuery(options, queryClient).data;
+  return <>{title ?? fallback}</>;
+});
+
+/** Observe the already-demanded transcript; usage never creates a second content lease. */
+const RemoteHeaderContextUsage = React.memo(({ entry, sessionId, onClick, pressed }: { entry: HostRuntimeEntry; sessionId: string; onClick: () => void; pressed: boolean }) => {
+  const location = entry.location;
+  const revision = React.useSyncExternalStore(subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision, getTranscriptRepositoryBindingRevision);
+  const repository = getTranscriptRepository(location);
+  const binding = React.useMemo(() => ({ revision, scope: repository ? transcriptScope(location, sessionId) : null }), [repository, location, sessionId, revision]);
+  const scope = binding.scope;
+  const subscribe = React.useMemo(() => (notify: () => void) => repository && scope ? repository.subscribe(scope, notify) : () => {}, [repository, scope]);
+  const read = React.useMemo(() => () => repository && scope ? repository.getTranscript(scope) : null, [repository, scope]);
+  const transcript = React.useSyncExternalStore(subscribe, read, read);
+  const providerOptions = React.useMemo(() => ({ ...providerCatalogQueryOptions(location.directory, getRuntimeTransportIdentity(), entry), enabled: false, staleTime: Infinity, gcTime: Infinity }), [entry, location.directory]);
+  const providers = useQuery(providerOptions, queryClient);
+  const selection = useSelectionStore((state) => state.getSessionModelSelection(sessionId, location));
+  const baseline = React.useMemo(() => {
+    if (!transcript) return null;
+    for (let index = transcript.messageOrder.length - 1; index >= 0; index--) {
+      const message = transcript.messagesByID[transcript.messageOrder[index]];
+      if (!message) continue;
+      const result = scanContextTokenBaseline([message], (id) => transcript.partsByMessageID[id]);
+      if (result) return result;
+    }
+    return null;
+  }, [transcript]);
+  const info = baseline && 'messageId' in baseline && transcript ? transcript.messagesByID[baseline.messageId] as { providerID?: string; modelID?: string } : undefined;
+  const model = providers.data?.providers.find((provider) => provider.id === (selection?.providerId ?? info?.providerID))?.models[selection?.modelId ?? info?.modelID ?? ''];
+  const usage = buildSessionContextUsage(baseline, model?.limit?.context ?? 0, model?.limit?.output ?? 0);
+  if (!usage) return null;
+  return <ContextUsageDisplay pending={usage.pending} totalTokens={usage.totalTokens} percentage={usage.contextLimit > 0 ? Math.min(999, usage.totalTokens / usage.contextLimit * 100) : 0} colorPercentage={usage.percentage} contextLimit={usage.contextLimit} outputLimit={usage.outputLimit ?? 0} size="compact" appearance="subtle" onClick={onClick} pressed={pressed} />;
+});
+
+const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummaries; remoteHostName?: string; remoteRegistry?: HostRuntimeRegistry }> = ({
   onToggleLeftDrawer,
   onToggleRightDrawer,
   leftDrawerOpen,
   rightDrawerOpen,
+  remoteSummaries,
+  remoteHostName,
+  remoteRegistry,
 }) => {
   const { t } = useI18n();
   const setSessionSwitcherOpen = useUIStore((state) => state.setSessionSwitcherOpen);
@@ -666,16 +740,31 @@ export const Header: React.FC<HeaderProps> = ({
   const getCurrentModel = useConfigStore((state) => state.getCurrentModel);
   const runtimeApis = useRuntimeAPIs();
 
-  const isNewSessionDraftOpen = useSessionUIStore((state) => Boolean(state.newSessionDraft?.open));
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const currentSessionMessagesResolved = useSessionMessagesResolved(currentSessionId ?? '');
-  const currentSession = useCurrentSessionEntity(currentSessionId);
+  const localDraftOpen = useSessionUIStore((state) => Boolean(state.newSessionDraft?.open));
+  const localSessionId = useSessionUIStore((state) => state.currentSessionId);
   const activeProject = useProjectsStore((state) => {
     if (!state.activeProjectId) {
       return null;
     }
     return state.projects.find((project) => project.id === state.activeProjectId) ?? null;
   });
+  const isRemoteProject = !!activeProject?.hostId;
+  const remoteSelection = useSessionNavigationStore((state) => state.remoteSession);
+  const remoteSession = activeProject?.hostId && remoteSelection?.projectId === activeProject.id && remoteSelection.location.hostId === activeProject.hostId
+    && (!activeProject.hubId || remoteSelection.location.hubId === activeProject.hubId) ? remoteSelection : null;
+  const currentSessionId = isRemoteProject ? remoteSession?.sessionId ?? null : localSessionId;
+  const isNewSessionDraftOpen = isRemoteProject ? !remoteSession?.sessionId : localDraftOpen;
+  const currentSessionMessagesResolved = useSessionMessagesResolved(isRemoteProject ? '' : currentSessionId ?? '');
+  const localSession = useCurrentSessionEntity(isRemoteProject ? null : currentSessionId);
+  const projects = useProjectsStore((state) => state.projects);
+  const currentSession = React.useMemo(() => {
+    if (!isRemoteProject) return localSession;
+    const directory = remoteSession?.location.directory ?? activeProject?.path;
+    const hubId = activeProject?.hubId ?? remoteRegistry?.hubId;
+    const hostId = activeProject?.hostId;
+    if (!directory || !hubId || !hostId || resolveRemoteProjectOwner(projects, hubId, hostId, directory, remoteSummaries?.worktrees)?.id !== activeProject?.id) return undefined;
+    return remoteSummaries?.directories.find((item) => item.directory === directory)?.sessions.find((session) => session.id === currentSessionId && session.directory === directory);
+  }, [isRemoteProject, localSession, remoteSession?.location.directory, activeProject, remoteRegistry?.hubId, projects, remoteSummaries, currentSessionId]);
   const activeProjectLabel = React.useMemo(() => {
     if (!activeProject) {
       return null;
@@ -759,7 +848,7 @@ export const Header: React.FC<HeaderProps> = ({
     : null;
   const contextLimit = (limit && typeof limit.context === 'number' ? limit.context : 0);
   const outputLimit = (limit && typeof limit.output === 'number' ? limit.output : 0);
-  const measuredContextUsage = useSessionContextUsage(currentSessionId ?? '', contextLimit, outputLimit);
+  const measuredContextUsage = useSessionContextUsage(isRemoteProject ? '' : currentSessionId ?? '', contextLimit, outputLimit);
   const contextUsage = isNewSessionDraftOpen ? null : measuredContextUsage;
   const [stableDesktopContextUsage, setStableDesktopContextUsage] = React.useState<SessionContextUsage | null>(null);
   const isContextUsageResolvedForSession = !currentSessionId || currentSessionMessagesResolved;
@@ -971,7 +1060,7 @@ export const Header: React.FC<HeaderProps> = ({
   }, [fetchAllQuotas, isUsageRefreshSpinning]);
 
   const worktreePath = useSessionUIStore((state) => {
-    if (!currentSessionId) return '';
+    if (isRemoteProject || !currentSessionId) return '';
     return state.worktreeMetadata.get(currentSessionId)?.path ?? '';
   });
 
@@ -992,15 +1081,17 @@ export const Header: React.FC<HeaderProps> = ({
   });
 
   const openDirectory = React.useMemo(() => {
-    return worktreeDirectory || sessionDirectory || draftDirectory;
-  }, [draftDirectory, sessionDirectory, worktreeDirectory]);
+    return isRemoteProject ? remoteSession?.location.directory ?? activeProject?.path ?? '' : worktreeDirectory || sessionDirectory || draftDirectory;
+  }, [isRemoteProject, remoteSession?.location.directory, activeProject?.path, draftDirectory, sessionDirectory, worktreeDirectory]);
 
   // Same directory ContextPanel reads — keeps open/close keyed to the visible panel.
   const effectiveDirectory = useEffectiveDirectory();
+  const effectiveLocationKey = remoteSession ? locationKey(remoteSession.location) : activeProject?.hostId && activeProject.hubId
+    ? locationKey({ hubId: activeProject.hubId, hostId: activeProject.hostId, directory: effectiveDirectory ?? activeProject.path }) : '';
 
   const contextActionDirectory = React.useMemo(() => {
-    return normalize(effectiveDirectory || openDirectory || activeProject?.path || '');
-  }, [activeProject?.path, effectiveDirectory, openDirectory]);
+    return isRemoteProject ? effectiveLocationKey : normalize(effectiveDirectory || openDirectory || activeProject?.path || '');
+  }, [isRemoteProject, effectiveLocationKey, activeProject?.path, effectiveDirectory, openDirectory]);
   const currentContextPanel = useUIStore((state) => getContextPanelState(state, contextActionDirectory));
   const isPreviewPanelOpen = Boolean(currentContextPanel?.isOpen);
   const handleTogglePreviewPanel = useEvent(() => toggleContextPanel(contextActionDirectory));
@@ -1014,18 +1105,18 @@ export const Header: React.FC<HeaderProps> = ({
   }, [activeProjectLabel, currentSession?.title, currentSessionId]);
 
   const actionDirectory = React.useMemo(() => {
-    return normalize(openDirectory || activeProject?.path || '');
-  }, [activeProject?.path, openDirectory]);
+    return isRemoteProject ? openDirectory : normalize(openDirectory || activeProject?.path || '');
+  }, [isRemoteProject, activeProject?.path, openDirectory]);
 
   const activeProjectRef = React.useMemo(() => {
     if (!activeProject) {
       return null;
     }
-    return { id: activeProject.id, path: activeProject.path };
+    return { id: activeProject.id, path: activeProject.path, hostId: activeProject.hostId, hubId: activeProject.hubId };
   }, [activeProject]);
 
   const lastProjectActionsContextRef = React.useRef<{
-    projectRef: { id: string; path: string };
+    projectRef: { id: string; path: string; hostId?: string; hubId?: string };
     directory: string;
   } | null>(null);
 
@@ -1106,6 +1197,7 @@ export const Header: React.FC<HeaderProps> = ({
   }, [blurActiveElement, isMobile, isSessionSwitcherOpen, setSessionSwitcherOpen, toggleSidebar]);
 
   const handleOpenDraftMiniChat = React.useCallback(() => {
+    if (isRemoteProject) return;
     void invokeDesktop('desktop_open_draft_mini_chat_window', {
       directory: normalize(openDirectory || activeProject?.path || ''),
       projectId: activeProject?.id ?? null,
@@ -1114,9 +1206,10 @@ export const Header: React.FC<HeaderProps> = ({
     }).catch((error) => {
       console.warn('[header] failed to open draft mini chat window', error);
     });
-  }, [activeProject?.id, activeProject?.path, openDirectory]);
+  }, [isRemoteProject, activeProject?.id, activeProject?.path, openDirectory]);
 
   const handleOpenCurrentMiniChat = React.useCallback(() => {
+    if (isRemoteProject) return;
     if (isNewSessionDraftOpen) {
       handleOpenDraftMiniChat();
       return;
@@ -1133,7 +1226,7 @@ export const Header: React.FC<HeaderProps> = ({
     }).catch((error) => {
       console.warn('[header] failed to open session mini chat window', error);
     });
-  }, [activeProject?.path, currentSessionId, handleOpenDraftMiniChat, isNewSessionDraftOpen, openDirectory]);
+  }, [isRemoteProject, activeProject?.path, currentSessionId, handleOpenDraftMiniChat, isNewSessionDraftOpen, openDirectory]);
 
   const handleOpenContextPanel = React.useCallback(() => {
     const directory = contextActionDirectory;
@@ -1543,7 +1636,7 @@ export const Header: React.FC<HeaderProps> = ({
     return <React.Fragment key={tab.id}>{tabButton}</React.Fragment>;
   };
 
-  const showMiniChatHeaderAction = hasElectronDesktopIPC && (isNewSessionDraftOpen || Boolean(currentSessionId));
+  const showMiniChatHeaderAction = !isRemoteProject && hasElectronDesktopIPC && (isNewSessionDraftOpen || Boolean(currentSessionId));
 
   // Run after the overflow menu closes so panel/dock updates aren't lost mid-dismiss.
   const runSessionMenuAction = React.useCallback((action: () => void) => {
@@ -1661,10 +1754,10 @@ export const Header: React.FC<HeaderProps> = ({
 
   const desktopSidebarActions = (
     <>
-      {!isMobile && !isVSCode && activeMainTab === 'chat' ? (
+      {!isRemoteProject && !isMobile && !isVSCode && activeMainTab === 'chat' ? (
         <WorkStatusToggle />
       ) : null}
-      <OpenInAppButton directory={actionDirectory} />
+      {!isRemoteProject ? <OpenInAppButton directory={actionDirectory} /> : null}
       {isDesktopApp && <DesktopCurrentHostButton open={isDesktopServicesOpen && desktopServicesTab === 'instance'} onClick={() => applyServicesPanelOpen('instance')} />}
       <HeaderIconActionButton
         title={t('header.actions.rightSidebarWithShortcut', { shortcut: shortcutLabel('toggle_right_sidebar') })}
@@ -1718,7 +1811,7 @@ export const Header: React.FC<HeaderProps> = ({
           via padding (see headerStyle) when the sidebar is collapsed. */}
       <div className="flex min-w-0 flex-1 items-center">
         <div className="app-region-no-drag mr-3 flex min-w-0 items-center gap-0.5">
-          <SessionSwitcherDropdown>
+          <SessionSwitcherDropdown scopeProjectId={isRemoteProject ? activeProject?.id : null}>
             <button
               type="button"
               aria-label={t('sessions.switcher.openAria')}
@@ -1726,10 +1819,17 @@ export const Header: React.FC<HeaderProps> = ({
               className="inline-flex h-8 min-w-0 max-w-full items-center rounded-md px-2.5 text-left transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:bg-interactive-hover focus-visible:ring-2 focus-visible:ring-primary"
             >
               <span className="truncate typography-ui-label text-[14px] font-normal leading-tight text-foreground">
-                {isNewSessionDraftOpen ? t('sessions.switcher.draftTitle') : currentSessionTitle}
+                {isNewSessionDraftOpen ? t('sessions.switcher.draftTitle') : isRemoteProject && remoteRegistry && remoteSession?.sessionId
+                  ? <RemoteHeaderSessionTitle key={locationKey(remoteSession.location)} entry={remoteRegistry.resolve(remoteSession.location)} sessionId={remoteSession.sessionId} fallback={currentSessionTitle} />
+                  : currentSessionTitle}
               </span>
             </button>
           </SessionSwitcherDropdown>
+          {isRemoteProject ? <span data-remote-header-host={activeProject?.hostId} className="inline-flex min-w-0 max-w-36 items-center gap-1 typography-meta text-muted-foreground" title={remoteHostName}>
+            <Icon name="computer" className="size-3 shrink-0" />
+            <span className="truncate">{remoteHostName}</span>
+            {remoteRegistry && activeProject?.hostId ? <RemoteHostErrorIndicator registry={remoteRegistry} hostId={activeProject.hostId} /> : null}
+          </span> : null}
         </div>
 
         {tabs.length > 0 && (
@@ -1742,6 +1842,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="flex shrink-0 items-center gap-1">
           {sessionOverflowMenu}
+          {isRemoteProject && !isVSCode && activeMainTab === 'chat' && remoteRegistry && remoteSession?.sessionId ? <RemoteHeaderContextUsage key={locationKey(remoteSession.location)} entry={remoteRegistry.resolve(remoteSession.location)} sessionId={remoteSession.sessionId} onClick={handleOpenContextPanel} pressed={isContextPanelActive} /> : null}
           {showDesktopHeaderContextUsage && stableDesktopContextUsage ? (
             <ContextUsageDisplay
               pending={stableDesktopContextUsage.pending}
@@ -1806,6 +1907,10 @@ export const Header: React.FC<HeaderProps> = ({
 
       {(!isSessionSwitcherOpen || Boolean(onToggleLeftDrawer)) && (
         <>
+          {isRemoteProject ? <span data-remote-header-host={activeProject?.hostId} className="inline-flex max-w-28 shrink-0 items-center gap-1 typography-meta text-muted-foreground" title={remoteHostName}>
+            <span className="truncate">{remoteHostName}</span>
+            {remoteRegistry && activeProject?.hostId ? <RemoteHostErrorIndicator registry={remoteRegistry} hostId={activeProject.hostId} /> : null}
+          </span> : null}
           <div className="app-region-no-drag flex min-w-0 flex-1 items-center">
             <div className="flex min-w-0 flex-1 overflow-x-auto overflow-y-hidden scrollbar-hidden touch-pan-x overscroll-x-contain">
               <div className="flex w-max items-center gap-1 pr-1">
@@ -2072,7 +2177,7 @@ export const Header: React.FC<HeaderProps> = ({
                                             </span>
                                           ) : null}
                                         </div>
-                                        <span className="shrink-0 whitespace-nowrap typography-ui-label text-foreground tabular-nums">
+                                        <span className="min-w-0 max-w-[55%] shrink-0 break-words text-right typography-ui-label text-foreground tabular-nums">
                                           {metricLabel === '-' ? '' : metricLabel}
                                         </span>
                                       </div>

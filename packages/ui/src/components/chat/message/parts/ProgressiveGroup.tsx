@@ -1,3 +1,4 @@
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { cn } from '@/lib/utils';
@@ -643,6 +644,8 @@ const StaticToolRowInner: React.FC<{
     const icon = getToolIcon(toolName);
     const isReadGroup = toolName.toLowerCase() === 'read';
     const runtime = React.useContext(RuntimeAPIContext);
+    const hostRuntime = useHostRuntime();
+    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const mobileActions = useMobileAppActions();
     const fallbackDirectory = useDirectoryStore((state) => state.currentDirectory);
     const sessionSurface = useSessionSurface();
@@ -706,12 +709,12 @@ const StaticToolRowInner: React.FC<{
             return;
         }
 
-        if (runtime?.editor) {
+        if (!hostScope && runtime?.editor) {
             void runtime.editor.openFile(absolutePath, offset);
             return;
         }
 
-        if (!isFilePathWithinDirectory(absolutePath, currentDirectory)) {
+        if (!hostScope && !isFilePathWithinDirectory(absolutePath, currentDirectory)) {
             void ensureOutsideFileGrantForDesktop(absolutePath, currentDirectory).then(() => {
                 const uiStore = useUIStore.getState();
                 const contextDirectory = currentDirectory || getDirectoryForFilePath(currentDirectory, absolutePath);
@@ -725,7 +728,7 @@ const StaticToolRowInner: React.FC<{
         }
 
         const uiStore = useUIStore.getState();
-        const contextDirectory = getDirectoryForFilePath(currentDirectory, absolutePath);
+        const contextDirectory = hostScope?.key ?? getDirectoryForFilePath(currentDirectory, absolutePath);
         if (offset && Number.isFinite(offset)) {
             uiStore.openContextFileAtLine(contextDirectory, absolutePath, Math.max(1, Math.trunc(offset)), 1);
             return;
@@ -746,13 +749,13 @@ const StaticToolRowInner: React.FC<{
                 return;
             }
             const uiStore = useUIStore.getState();
-            const contextDirectory = currentDirectory || getDirectoryForFilePath('', absolutePath);
+            const contextDirectory = hostScope?.key ?? (currentDirectory || getDirectoryForFilePath('', absolutePath));
             uiStore.openContextFile(contextDirectory, absolutePath);
         };
 
         // Skill files are commonly outside the active workspace; mint a grant
         // first so the right-hand FilesView can read them without a 403.
-        if (currentDirectory && !isFilePathWithinDirectory(absolutePath, currentDirectory)) {
+        if (!hostScope && currentDirectory && !isFilePathWithinDirectory(absolutePath, currentDirectory)) {
             void ensureOutsideFileGrantForDesktop(absolutePath, currentDirectory).then(openInContext);
             return;
         }
@@ -1348,9 +1351,9 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                             // Locked-open live headers are not a disclosure control — drop chip hover/cursor.
                             !disclosureLockedOpen && TOOL_ROW_INTERACTIVE_CHROME_CLASS,
                             disclosureLockedOpen && `yuri-tool-row -mx-2 ${TOOL_ROW_CHIP_GEOMETRY_CLASS} cursor-default`,
-                            // Mobile only: drop chip pr so the chevron has no dead trailing slot.
+                            // Mobile trailing chevrons need no dead slot; elapsed summaries retain the content inset.
                             // Desktop keeps px-2 so hover wash padding matches left (symmetric rounded chip).
-                            isMobile && 'pr-0',
+                            isMobile && (isElapsedHeader ? 'pr-2' : 'pr-0'),
                         )}
                         data-mobile-press-feedback={disclosureLockedOpen ? undefined : 'soft'}
                         onClick={disclosureLockedOpen ? undefined : handleToggle}
@@ -1379,7 +1382,7 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                                     : activityStatusLabel}
                                 <Icon
                                     name={effectivelyExpanded ? 'arrow-down-s' : 'arrow-right-s'}
-                                    className="size-3.5 shrink-0 opacity-0 group-hover/tool:opacity-70 group-focus-visible/tool:opacity-70"
+                                    className="size-3.5 shrink-0 opacity-70"
                                 />
                             </span>
                         ) : <><span

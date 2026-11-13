@@ -1,6 +1,6 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider, QueryObserver } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
@@ -179,6 +179,9 @@ describe('assistant platform channel query boundary', () => {
     const hooks = await hookFor('feishu');
     const hostAKey = assistantChannelQueryOptions('bot', 'feishu', 'host-a').queryKey;
     queryClient.setQueryData(hostAKey, { ...state.response, status: 'connected' });
+    const retainedHost = new QueryObserver(queryClient, { ...assistantChannelQueryOptions('bot', 'feishu', 'host-a'), enabled: false });
+    const release = retainedHost.subscribe(() => {});
+    try {
     let pending: Promise<unknown>;
     await act(async () => {
       pending = hooks.mutation.mutateAsync({ type: 'save', clientID: 'cli_1', ownerID: 'ou_1' }).catch((error: Error) => error);
@@ -186,10 +189,11 @@ describe('assistant platform channel query boundary', () => {
     });
     await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
     state.transport = 'host-b'; state.generation++;
-    finish!(Response.json({ ...state.response, status: 'connected' }));
+    finish!(Response.json({ ...state.response, status: 'error' }));
     let result: unknown;
     await act(async () => { result = await pending!; });
     expect(result).toMatchObject({ message: 'runtime_stale' });
     expect(queryClient.getQueryData(assistantChannelQueryOptions('bot', 'feishu', 'host-a').queryKey)).toMatchObject({ status: 'connected' });
+    } finally { release(); retainedHost.destroy(); }
   });
 });

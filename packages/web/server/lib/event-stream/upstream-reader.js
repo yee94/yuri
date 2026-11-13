@@ -23,7 +23,7 @@ function waitForReconnectDelay(ms, signal) {
       signal?.removeEventListener('abort', onAbort);
       resolve();
     };
-    const timeout = setTimeout(finish, Math.max(0, ms));
+    const timeout = setTimeout(finish, Math.max(0, typeof ms === 'function' ? ms() : ms));
     const onAbort = () => {
       clearTimeout(timeout);
       finish();

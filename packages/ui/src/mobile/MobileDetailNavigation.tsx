@@ -18,6 +18,7 @@ export type MobileDetailNavigationAction = {
 
 export type MobileDetailNavigationProps = {
   title: ReactNode;
+  className?: string;
   /** WeChat-style whisper under the title (e.g. syncing messages). */
   subtitle?: ReactNode;
   backAriaLabel: string;
@@ -40,6 +41,7 @@ export type MobileDetailNavigationProps = {
 /** Shared safe-area navigation for mobile secondary pages. */
 export function MobileDetailNavigation({
   title,
+  className,
   subtitle,
   backAriaLabel,
   onBack,
@@ -64,6 +66,7 @@ export function MobileDetailNavigation({
         // Single z-index: elevated menus must sit above the z-50 overflow
         // backdrop so a second tap on the same control can toggle closed.
         actionElevated ? 'z-[60]' : overlay ? 'z-30' : undefined,
+        className,
       )}
     >
       <div

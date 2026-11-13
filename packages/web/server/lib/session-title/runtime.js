@@ -156,6 +156,7 @@ const extractSessionStatus = (payload) => {
 export const isSystemOwnedSession = (sessionOrInfo) => {
   const yuri = sessionOrInfo?.metadata?.yuri;
   if (!yuri || typeof yuri !== 'object') return false;
+  if (typeof yuri.worker?.parentSessionID === 'string' && yuri.worker.parentSessionID) return true;
   if (yuri.assigned?.from === 'contact') return false;
   if (typeof yuri.assistant?.assistantID === 'string' && yuri.assistant.assistantID) return true;
   if (typeof yuri.scheduledTask?.taskID === 'string' && yuri.scheduledTask.taskID) return true;

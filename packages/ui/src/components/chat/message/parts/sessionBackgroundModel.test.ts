@@ -211,6 +211,22 @@ describe('blocking vs background-running tool parts', () => {
 });
 
 describe('projectSessionBackgroundFromMessages', () => {
+    test('a running report overrides period-completed metadata and an earlier terminal report', () => {
+        const completed = {
+            role: 'user',
+            parts: [{ type: 'text', text: '<subagent sessionID="ses_child_bg" state="completed">Earlier round</subagent>' }],
+        };
+        const running = {
+            role: 'user',
+            metadata: { source: 'subagent', childID: 'ses_child_bg', state: 'completed' },
+            parts: [{ type: 'text', text: '<subagent sessionID="ses_child_bg" state="running">Background work still running</subagent>' }],
+        };
+        const messages = [{ role: 'assistant', parts: [officialSubagentBackgroundPart] }, completed, running];
+        expect(collectBackgroundCompletions(messages).byChildSessionID.has('ses_child_bg')).toBe(false);
+        expect(projectSessionBackgroundFromMessages(messages).backgroundTasks.map(task => task.id)).toEqual(['ses_child_bg']);
+        expect(projectSessionBackgroundFromMessages([...messages, completed]).backgroundTasks).toEqual([]);
+    });
+
     test('projects blocking and background tasks; completion notices clear background entries', () => {
         const messages = [
             {

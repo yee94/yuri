@@ -293,6 +293,8 @@ export const ICON_NAME_MAP = {
   "lock-unlock": { lucide: "lock-open", fill: false },
   "loop-right-ai": { lucide: "refresh-cw", fill: false },
   "macbook": { lucide: "laptop", fill: false },
+  "mail": { lucide: "mail", fill: false },
+  "mail-open": { lucide: "mail-open", fill: false },
   "menu-2": { lucide: "menu", fill: false },
   "menu-fold-2": { lucide: "panel-left-close", fill: false },
   "menu-search": { lucide: "search", fill: false },

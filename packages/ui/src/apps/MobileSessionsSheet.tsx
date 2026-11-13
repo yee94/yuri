@@ -2,6 +2,7 @@ import React from 'react';
 import type { Session } from '@/lib/opencode/v2-types';
 import { useEvent } from '@reactuses/core';
 import { useSessionOrderSync } from '@/hooks/useSessionOrderSync';
+import { useSessionReadMenuAction } from '@/mobile/useSessionReadMenuAction';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { createSessionNodeComparator, buildSessionActivitySnapshot } from '@/components/session/sidebar/sessionSortableOrder';
 import { DraggableSessionRow, SessionFolderDndScope } from '@/components/session/sidebar/sessionFolderDnd';
@@ -64,6 +65,8 @@ import { selectVisibleSessions } from '@/components/session/sidebar/sessionNavig
 
 import { MobileProjectEditSurface } from './MobileProjectEditSurface';
 import { MobileDeleteWorktreeDialog } from './MobileDeleteWorktreeDialog';
+import { useRemoteProjectRuntime } from '@/queries/remoteProjectQueries';
+import { RemoteProjectSection } from '@/components/session/sidebar/RemoteProjectSection';
 import {
   getMobileSessionDefaultVisibleCount,
   getMobileSessionShowMoreIncrement,
@@ -282,7 +285,7 @@ const MobileActionButton: React.FC<{
     onClick={onClick}
     style={{ touchAction: 'manipulation' }}
   >
-    <Icon name={icon} className="size-5 shrink-0" />
+    <Icon name={icon} className="size-5 shrink-0 text-inherit" />
     <span className="truncate">{label}</span>
   </Button>
 );
@@ -498,7 +501,11 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const liveSessions = useAllLiveSessions();
   const globalActiveSessions = useGlobalSessionsStore((state) => state.activeSessions);
   const activePaginationByDirectory = useGlobalSessionsStore((state) => state.activePaginationByDirectory);
-  const projects = useProjectsStore((state) => state.projects);
+  const allProjects = useProjectsStore((state) => state.projects);
+  const projects = React.useMemo(() => allProjects.filter((project) => !project.hostId), [allProjects]);
+  const hasRemoteProjects = allProjects.some((project) => Boolean(project.hostId));
+  const remoteRuntime = useRemoteProjectRuntime(open && hasRemoteProjects);
+  const remoteProjects = remoteRuntime.catalog?.projects ?? [];
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
@@ -535,6 +542,10 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const [newWorktreeDialogOpen, setNewWorktreeDialogOpen] = React.useState(false);
   const [worktreeDialogProjectId, setWorktreeDialogProjectId] = React.useState<string | null>(null);
   const [actionTarget, setActionTarget] = React.useState<MobileActionTarget | null>(null);
+  const actionSession = actionTarget?.kind === 'session' ? actionTarget.session : null;
+  const { unread: actionSessionUnread, onToggleRead } = useSessionReadMenuAction(
+    actionSession, actionSession ? getSessionDirectory(actionSession) : undefined,
+  );
   const [closingProject, setClosingProject] = React.useState<ProjectMeta | null>(null);
   const [pressedActionKey, setPressedActionKey] = React.useState<string | null>(null);
   const [renamingSession, setRenamingSession] = React.useState<Session | null>(null);
@@ -1382,6 +1393,11 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     return buildSessionMenuItems({
       pinned: pinnedSessionIds.has(session.id),
       shared,
+      unread: actionSessionUnread,
+      onToggleRead: onToggleRead ? () => {
+        closeActionMenu();
+        onToggleRead();
+      } : undefined,
       onRename: () => {
         closeActionMenu();
         setRenameDraft(session.title?.trim() || t('mobile.sessions.untitled'));
@@ -1421,6 +1437,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     });
   }, [
     actionTarget,
+    actionSessionUnread,
     closeActionMenu,
     handleArchiveFromMenu,
     handleCopyShareUrl,
@@ -1428,6 +1445,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     handleNewWorktree,
     handleShareFromMenu,
     handleUnshareFromMenu,
+    onToggleRead,
     pinnedSessionIds,
     startSessionDraftForDirectory,
     syncProjectSessions,
@@ -1449,7 +1467,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         );
         if (!item.separated) return button;
         return (
-          <div key={item.id} className="mt-3 border-t border-[var(--surface-subtle)] pt-3">
+          <div key={item.id} className={actionTarget?.kind === 'project' ? 'border-t border-[var(--yuri-popup-divider)]' : 'mt-3 border-t border-[var(--surface-subtle)] pt-3'}>
             {button}
           </div>
         );
@@ -1483,7 +1501,10 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         </div>
 
         <ScrollShadow className="overlay-scrollbar-container min-h-0 flex-1 overflow-y-auto pb-4">
-          {projectsMeta.length === 0 ? (
+          {hasRemoteProjects && remoteRuntime.registry && remoteProjects.map((project) => <RemoteProjectSection
+            key={project.id} project={project} registry={remoteRuntime.registry!} search={query} mobile reorderEnabled={false}
+          />)}
+          {projectsMeta.length === 0 && !hasRemoteProjects ? (
             <MobileSessionsEmpty
               title={t('mobile.sessions.empty.noProjectsTitle')}
               description={t('mobile.sessions.empty.noProjectsDescription')}
@@ -1498,7 +1519,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
                 </Button>
               }
             />
-          ) : hasNoMatches ? (
+          ) : hasNoMatches && !hasRemoteProjects ? (
             <MobileSessionsEmpty
               title={t('mobile.sessions.empty.searchTitle')}
               description={t('mobile.sessions.empty.searchDescription')}

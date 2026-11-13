@@ -1,17 +1,20 @@
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import type { EditorAPI } from '@/lib/api/types';
 import {
   isDesktopBinaryPath,
+  isDesktopDirectoryPath,
   isDesktopLocalOriginActive,
   isDesktopShell,
   isVSCodeRuntime,
+  openDesktopPath,
 } from '@/lib/desktop';
 import { getDirectoryForFilePath, isFilePathWithinDirectory, toAbsoluteFilePath } from '@/lib/path-utils';
 import { getImageMimeType, isHtmlFile, isImageFile } from '@/lib/toolHelpers';
 import { useUIStore } from '@/stores/useUIStore';
 import type { ToolPopupContent } from './message/types';
-import { isLikelyFilePath } from './fileReferenceDecorate';
+import { isLikelyFilePath, isLocalPathHref } from './fileReferenceDecorate';
 import {
   isAbsoluteReferencePath,
   isLikelyFileReferencePath,
@@ -25,6 +28,7 @@ export type FileReferenceInfo = { exists: boolean; isBinary: boolean };
 type ResolvedFileReference = ParsedFileReference & { resolvedPath: string };
 
 export type OpenFileReferenceOptions = {
+  scope?: HostRuntimeEntry;
   effectiveDirectory: string;
   referenceKind?: 'path' | 'href';
   editor?: EditorAPI;
@@ -42,8 +46,8 @@ const VSCODE_FILE_REFERENCE_LINK_LIMIT = 40;
 
 const FILE_REFERENCE_STAT_CACHE = new Map<string, Promise<FileReferenceInfo>>();
 const FILE_REFERENCE_INFO_SNAPSHOT = new Map<string, FileReferenceInfo>();
-const fileReferenceCacheKey = (path: string, directory: string): string =>
-  JSON.stringify([getRuntimeTransportIdentity(), directory, path]);
+const fileReferenceCacheKey = (path: string, directory: string, scope?: HostRuntimeEntry): string =>
+  JSON.stringify([scope?.queryScope ?? getRuntimeTransportIdentity(), directory, path]);
 let activeFileReferenceStatCount = 0;
 const pendingFileReferenceStats: Array<() => void> = [];
 
@@ -76,12 +80,12 @@ const storeStatRequest = (normalizedPath: string, request: Promise<FileReference
   FILE_REFERENCE_STAT_CACHE.set(normalizedPath, request);
 };
 
-export const peekFileReferenceInfo = (resolvedPath: string, effectiveDirectory = ''): FileReferenceInfo | undefined => {
+export const peekFileReferenceInfo = (resolvedPath: string, effectiveDirectory = '', scope?: HostRuntimeEntry): FileReferenceInfo | undefined => {
   const normalizedPath = normalizeReferencePath(resolvedPath);
   if (!normalizedPath) {
     return undefined;
   }
-  return FILE_REFERENCE_INFO_SNAPSHOT.get(fileReferenceCacheKey(normalizedPath, effectiveDirectory));
+  return FILE_REFERENCE_INFO_SNAPSHOT.get(fileReferenceCacheKey(normalizedPath, effectiveDirectory, scope));
 };
 
 export const extractPathCandidateFromElement = (element: HTMLElement): string => {
@@ -106,7 +110,7 @@ export const getResolvedReference = (
     // file: URLs are already decoded by the parser; ordinary filesystem paths are literal.
     try { parsed.path = decodeURIComponent(parsed.path); } catch { /* Keep malformed escapes literal. */ }
   }
-  if (!parsed || !isLikelyFileReferencePath(parsed.path)) {
+  if (!parsed || (referenceKind === 'href' ? !isLocalPathHref(rawValue) : !isLikelyFileReferencePath(parsed.path))) {
     return null;
   }
 
@@ -123,13 +127,13 @@ export const getResolvedReference = (
   };
 };
 
-export const getFileReferenceInfo = (resolvedPath: string, effectiveDirectory = ''): Promise<FileReferenceInfo> => {
+export const getFileReferenceInfo = (resolvedPath: string, effectiveDirectory = '', scope?: HostRuntimeEntry): Promise<FileReferenceInfo> => {
   const normalizedPath = normalizeReferencePath(resolvedPath);
   if (!normalizedPath) {
     return Promise.resolve({ exists: false, isBinary: false });
   }
 
-  const cacheKey = fileReferenceCacheKey(normalizedPath, effectiveDirectory);
+  const cacheKey = fileReferenceCacheKey(normalizedPath, effectiveDirectory, scope);
   const cached = FILE_REFERENCE_STAT_CACHE.get(cacheKey);
   if (cached) {
     FILE_REFERENCE_STAT_CACHE.delete(cacheKey);
@@ -140,7 +144,7 @@ export const getFileReferenceInfo = (resolvedPath: string, effectiveDirectory = 
   const request = new Promise<FileReferenceInfo>((resolve, reject) => {
     const run = () => {
       activeFileReferenceStatCount += 1;
-      void runtimeFetch(`/api/fs/stat?path=${encodeURIComponent(normalizedPath)}&optional=true`, {
+      void (scope ? scope.fetch.bind(scope) : runtimeFetch)(`/api/fs/stat?path=${encodeURIComponent(normalizedPath)}&optional=true`, {
         method: 'GET',
         cache: 'no-store',
         ...(effectiveDirectory ? { query: { directory: effectiveDirectory } } : {}),
@@ -154,6 +158,7 @@ export const getFileReferenceInfo = (resolvedPath: string, effectiveDirectory = 
             throw new Error('Invalid file reference probe response');
           }
           const info = { exists: payload.exists !== false, isBinary: payload.isBinary === true };
+          scope?.sdk();
           rememberFileReferenceInfo(cacheKey, info);
           resolve(info);
         })
@@ -185,12 +190,13 @@ export const getFileReferenceInfo = (resolvedPath: string, effectiveDirectory = 
 export const probeFileReference = (
   resolvedPath: string,
   effectiveDirectory: string,
+  scope?: HostRuntimeEntry,
 ): Promise<FileReferenceInfo> => {
-  const canGrantOutsideFile = isDesktopShell()
+  const canGrantOutsideFile = !scope && isDesktopShell()
     && isDesktopLocalOriginActive()
     && !isFilePathWithinDirectory(resolvedPath, effectiveDirectory);
   if (!canGrantOutsideFile) {
-    return getFileReferenceInfo(resolvedPath, effectiveDirectory);
+    return getFileReferenceInfo(resolvedPath, effectiveDirectory, scope);
   }
 
   const normalizedPath = normalizeReferencePath(resolvedPath);
@@ -248,6 +254,15 @@ export const openFileReference = async (
     return;
   }
 
+  options.scope?.sdk();
+  if (!options.scope && options.referenceKind === 'href' && isDesktopShell() && isDesktopLocalOriginActive()
+    && await isDesktopDirectoryPath(resolved.resolvedPath)) {
+    await openDesktopPath(resolved.resolvedPath);
+    return;
+  }
+
+  if (!isLikelyFileReferencePath(resolved.path)) return;
+
   if (isImageFile(resolved.resolvedPath) && options.onShowPopup) {
     const filename = resolved.resolvedPath.split('/').filter(Boolean).pop() ?? resolved.resolvedPath;
     options.onShowPopup({
@@ -268,9 +283,9 @@ export const openFileReference = async (
     return;
   }
 
-  const contextDirectory = getContextDirectory(options.effectiveDirectory, resolved.resolvedPath);
+  const contextDirectory = options.scope?.key ?? getContextDirectory(options.effectiveDirectory, resolved.resolvedPath);
   const htmlPreview = isHtmlFile(resolved.resolvedPath);
-  if (options.preferRuntimeEditor && options.editor && !htmlPreview) {
+  if (!options.scope && options.preferRuntimeEditor && options.editor && !htmlPreview) {
     void options.editor.openFile(
       resolved.resolvedPath,
       Number.isFinite(resolved.line ?? Number.NaN)

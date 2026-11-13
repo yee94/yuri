@@ -58,6 +58,7 @@ test('getMenuLabels returns English for the default and invalid locales', () => 
   assert.equal(en.trayUsageWithMode, 'Usage ({mode})');
   assert.equal(en.trayShowYuri, 'Show Yuri');
   assert.equal(en.quit, 'Quit Yuri');
+  assert.equal(en.quitShortcutHint, 'Press ⌘Q again to quit Yuri');
   assert.equal(fallback.settings, en.settings);
   assert.equal(fallback.newWindow, en.newWindow);
   assert.equal(fallback.file, 'File');
@@ -82,6 +83,7 @@ test('getMenuLabels returns zh-CN translations for key menu and tray items', () 
   assert.equal(labels.trayNoActiveSessions, '暂无活动会话');
   assert.equal(labels.trayShowYuri, '显示 Yuri');
   assert.equal(labels.trayMoreCount, '还有 {count} 项…');
+  assert.equal(labels.quitShortcutHint, '再按一次 ⌘Q 退出 Yuri');
   assert.notEqual(labels.settings, getMenuLabels('en').settings);
   assert.notEqual(labels.trayNeedsYourAttention, getMenuLabels('en').trayNeedsYourAttention);
 });

@@ -7,10 +7,10 @@ import { NativeGuiSession } from './native';
 import type { NativeGuiBridge } from './native-types';
 
 const hosts: GuiPluginHost[] = [];
-function host(focusFile?: (path: string, directory: string) => Promise<void>, openPage?: (key: string) => boolean) {
+function host(focusFile?: (path: string, directory: string) => Promise<void>, openPage?: (key: string) => boolean, mobileNetworkRequired = false) {
     const files: FilesAPI = { listDirectory: vi.fn(async () => ({ directory: '/work', entries: [] })), search: vi.fn(async () => []), createDirectory: vi.fn(), readFile: vi.fn(async (path) => ({ path, content: path })) };
     const rpc = vi.fn();
-    const result = new GuiPluginHost({ client: { rpc } as unknown as OpenCodeClient, files, queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }), storage: localStorage, transport: 'test-runtime', locale: 'en', mode: 'dark', narrow: false, focusFile, openPage });
+    const result = new GuiPluginHost({ client: { rpc } as unknown as OpenCodeClient, files, queryClient: new QueryClient({ defaultOptions: { queries: { retry: false } } }), storage: localStorage, transport: 'test-runtime', locale: 'en', mode: 'dark', narrow: false, focusFile, openPage, mobileNetworkRequired });
     hosts.push(result);
     return result;
 }
@@ -18,6 +18,20 @@ const bundle = (setup: string, revision = '1', declarations = ''): PluginGuiBund
 afterEach(() => { for (const item of hosts.splice(0)) item.dispose(); localStorage.clear(); document.body.replaceChildren(); });
 
 describe('GUI plugin host with the actual official Solid SDK', () => {
+    it('blocks even CJS evaluation until the required mobile network is ready', () => {
+        const value = host(undefined, undefined, true);
+        const input = bundle(`document.body.dataset.guiSetup = 'yes'`);
+        input.code = `document.body.dataset.guiEvaluated = 'yes'; ${input.code}`;
+        expect(() => value.install('mobile', input)).toThrow('Mobile plugin Relay is not ready');
+        expect(document.body.dataset.guiEvaluated).toBeUndefined();
+        expect(document.body.dataset.guiSetup).toBeUndefined();
+        value.setMobilePageNetworkReady(true);
+        value.install('mobile', input);
+        expect(document.body.dataset.guiEvaluated).toBe('yes');
+        expect(document.body.dataset.guiSetup).toBe('yes');
+        delete document.body.dataset.guiEvaluated;
+        delete document.body.dataset.guiSetup;
+    });
     it('allows React development prop inspection without touching private capability proxies', () => {
         const value = host();
         value.install('inspection', bundle(''));
@@ -108,7 +122,7 @@ describe('GUI plugin host with the actual official Solid SDK', () => {
         } finally { Reflect.deleteProperty(globalThis, '__guiPageCounts'); }
     });
 
-    it('isolates page ids, replaces mounts, rejects reserved contracts and keeps mobile inactive', () => {
+    it('isolates page ids, replaces mounts, rejects reserved contracts and gates mobile mounts on the network', () => {
         const open = vi.fn(() => true);
         const value = host(undefined, open);
         const code = bundle(`
@@ -126,12 +140,20 @@ describe('GUI plugin host with the actual official Solid SDK', () => {
         expect(node.children).toHaveLength(0);
         value.setAppearance({ locale: 'en', mode: 'dark', narrow: true });
         value.runCommand('one.open');
-        value.mountPage(second.key, node);
+        expect(() => value.mountPage(second.key, node)).toThrow('Mobile page Relay is not ready');
         expect(node.children).toHaveLength(0);
         expect(open).not.toHaveBeenCalled();
-        value.setAppearance({ locale: 'en', mode: 'dark', narrow: false });
+        value.setMobilePageNetworkReady(true);
         value.runCommand('one.open');
         expect(open).toHaveBeenCalledExactlyOnceWith(second.key);
+        const stopMobile = value.mountPage(second.key, node);
+        expect(node.children).toHaveLength(1);
+        stopMobile();
+        value.setMobilePageNetworkReady(false);
+        expect(() => value.mountPage(second.key, node)).toThrow('Mobile page Relay is not ready');
+        value.setAppearance({ locale: 'en', mode: 'dark', narrow: false });
+        value.runCommand('one.open');
+        expect(open).toHaveBeenCalledTimes(2);
         value.install('invalid', bundle(`ctx.add(G.Registry.define('yuri.page'),{id:'bad',title:'Bad'})`));
         expect(value.getSnapshot().plugins.find((p)=>p.id==='invalid')?.status).toBe('failed');
         value.install('reserved', bundle(`ctx.provide(G.Contract.define('yuri.pages'),{})`));
@@ -193,6 +215,27 @@ describe('GUI plugin host with the actual official Solid SDK', () => {
             value.runTitlebarItem(item.key);
             expect(counts.runs).toBe(1);
         } finally { Reflect.deleteProperty(globalThis, '__guiTitlebarCounts'); }
+    });
+
+    it('publishes self-contained titlebar images, reacts to icon changes and isolates invalid artwork', () => {
+        const value = host();
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2 2h20v20H2z"/></svg>';
+        const png = 'data:image/png;base64,iVBORw0KGgo=';
+        value.install('images', bundle(`
+            const [icon,setIcon]=S.createSignal(${JSON.stringify(svg)});
+            ctx.add(G.TitlebarItem,()=>({id:'image',label:'Image',icon:icon(),run(){}}));
+            ctx.add(G.TitlebarItem,{id:'invalid',label:'Invalid',icon:'data:text/html;base64,PHNjcmlwdC8+'});
+            ctx.add(G.TitlebarItem,{id:'named',label:'Named',icon:'globe'});
+            ctx.add(G.Command,{id:'change',title:'Change',run(){setIcon(${JSON.stringify(png)})}});
+        `));
+        expect(value.getSnapshot().plugins[0].status).toBe('active');
+        expect(value.getSnapshot().titlebarItems.map((item) => item.icon)).toEqual([
+            `data:image/svg+xml,${encodeURIComponent(svg)}`, undefined, 'globe',
+        ]);
+        value.runCommand('images.change');
+        expect(value.getSnapshot().titlebarItems[0].icon).toBe(png);
+        value.uninstall('images');
+        expect(value.getSnapshot().titlebarItems).toEqual([]);
     });
 
     it('isolates titlebar IDs and action failures, and replaces stale actions on reload', async () => {

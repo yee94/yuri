@@ -3,6 +3,11 @@ import { runtimeFetch } from './runtime-fetch';
 import { openRuntimeWebSocket } from './relay/runtime-socket';
 import { type RelayTunnelWebSocket } from './relay/tunnel-client';
 import { refreshRuntimeUrlAuthToken } from './runtime-auth';
+import type { HostRuntimeEntry } from './remote-projects/registry';
+import { hostApiPath } from './remote-projects/location';
+import { captureProjectScope } from './api/project-scope';
+import { subscribeRuntimeEndpointChanged } from './runtime-switch';
+import { subscribeRuntimeAuthGeneration } from './runtime-auth';
 
 interface TerminalWebSocketDescriptor {
   path: string;
@@ -135,6 +140,10 @@ const createTransportError = (code: string | undefined): Error => {
 };
 
 class TerminalTransportManager {
+  constructor(
+    private readonly resolveSocketUrl = normalizeWebSocketPath,
+    private readonly assertCurrent: () => void = () => {},
+  ) {}
   private socket: RelayTunnelWebSocket | null = null;
   private socketUrl = '';
   private boundSessionId: string | null = null;
@@ -460,6 +469,8 @@ class TerminalTransportManager {
         // Local runtimes without auth can connect without a URL token.
       }
 
+      if (this.closed) return null;
+
       return new Promise<RelayTunnelWebSocket | null>((resolve) => {
       let settled = false;
       let connectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -478,16 +489,19 @@ class TerminalTransportManager {
       };
 
       try {
-        const socket = openRuntimeWebSocket(normalizeWebSocketPath(this.socketUrl));
+        this.assertCurrent();
+        const socket = openRuntimeWebSocket(this.resolveSocketUrl(this.socketUrl));
         socket.binaryType = 'arraybuffer';
 
         socket.onopen = () => {
+          try { this.assertCurrent(); } catch { socket.close(); settle(null); return; }
           this.socket = socket;
           this.startKeepalive();
           settle(socket);
         };
 
         socket.onmessage = (event) => {
+          try { this.assertCurrent(); } catch { this.close(); return; }
           void this.handleSocketMessage(event.data);
         };
 
@@ -880,6 +894,81 @@ const sendTerminalInputHttp = async (sessionId: string, data: string): Promise<v
     const error = await response.json().catch(() => ({ error: 'Failed to send terminal input' }));
     throw new Error(error.error || 'Failed to send terminal input');
   }
+};
+
+/** Explicit project owner; never shares capabilities, bind ids or cursors with the Hub manager. */
+export const createProjectTerminalAPI = (entry: HostRuntimeEntry) => {
+  const scope = captureProjectScope(entry);
+  let disposed = false;
+  const current = () => {
+    if (disposed) throw new DOMException('Terminal disposed', 'AbortError');
+    scope.assertCurrent();
+  };
+  const manager = new TerminalTransportManager((path) => {
+    current();
+    if (!/^\/api\/terminal\/(?:ws|[^/?#]+\/ws)(?:\?|$)/.test(path)) throw new Error('Invalid terminal socket path');
+    return getRuntimeUrlResolver().websocket(hostApiPath(entry.location.hostId, path));
+  }, current);
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true; manager.close(); stopEndpoint(); stopAuth();
+  };
+  const stopEndpoint = subscribeRuntimeEndpointChanged(dispose);
+  const stopAuth = subscribeRuntimeAuthGeneration(dispose);
+  let streamPath = DEFAULT_TERMINAL_WS_PATH;
+  const apply = (session: TerminalSession) => {
+    current();
+    if (session.capabilities?.stream && !isWsTransportSupported(session.capabilities.stream)) {
+      throw new Error('Remote project terminal requires WebSocket transport');
+    }
+    streamPath = session.capabilities?.stream?.ws?.path ?? DEFAULT_TERMINAL_WS_PATH;
+    return session;
+  };
+  const request = async <T>(path: string, method: string, body?: unknown): Promise<T> => {
+    current();
+    return scope.json<T>(path, { method, headers: { 'Content-Type': 'application/json', 'x-opencode-directory': entry.location.directory },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  };
+  const terminalPath = (id: string) => `/api/terminal/${encodeURIComponent(id)}`;
+  const acceptCreatedSession = async (session: TerminalSession) => {
+    if (disposed) {
+      // A completed create still belongs to its captured Host, even after the
+      // surface leaves. Release that late PTY without resolving the new selection.
+      const response = await scope.fetch(terminalPath(session.sessionId), { method: 'DELETE' });
+      if (!response.ok) throw new Error(`Terminal cleanup failed (${response.status})`);
+      current();
+    }
+    return apply(session);
+  };
+  return {
+    createTerminalSession: async (options: CreateTerminalOptions) => acceptCreatedSession(await request<TerminalSession>('/api/terminal/create', 'POST', {
+      ...options, cols: options.cols ?? 80, rows: options.rows ?? 24,
+    })),
+    restartTerminalSession: async (id: string, options: CreateTerminalOptions) => {
+      const session = await acceptCreatedSession(await request<TerminalSession>(`${terminalPath(id)}/restart`, 'POST', options));
+      manager.unbindSession(id);
+      return session;
+    },
+    connectTerminalStream: (id: string, onEvent: (event: TerminalStreamEvent) => void, onError?: (error: Error, fatal?: boolean) => void, options?: ConnectStreamOptions) => {
+      current(); manager.configure(streamPath);
+      return manager.subscribe(id, onEvent, onError, options);
+    },
+    sendTerminalInput: async (id: string, data: string) => {
+      current();
+      if (await manager.sendInput(id, data)) { current(); return; }
+      const response = await scope.fetch(`${terminalPath(id)}/input`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: data });
+      if (!response.ok) throw new Error(`Terminal input failed (${response.status})`);
+      current();
+    },
+    resizeTerminal: (id: string, cols: number, rows: number) => request(`${terminalPath(id)}/resize`, 'POST', { cols, rows }),
+    closeTerminal: async (id: string) => {
+      current();
+      const response = await scope.fetch(terminalPath(id), { method: 'DELETE' });
+      if (!response.ok) throw new Error(`Terminal close failed (${response.status})`);
+      current(); manager.unbindSession(id);
+    },
+    dispose,
+  };
 };
 
 export async function createTerminalSession(options: CreateTerminalOptions): Promise<TerminalSession> {

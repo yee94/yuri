@@ -8,11 +8,14 @@ cover screenshots are shared by both languages.
 - `workspace-diff.webp`: desktop conversation with code diff review and file tree.
 - `workspace-preview.webp`: desktop conversation with an interactive page preview.
 - `schedule.webp` / `en-schedule.webp`: desktop Schedule.
+- `remote-projects.webp` / `en-remote-projects.webp`: desktop Remote Projects workspace.
+- `remote-projects-sidebar.webp` / `en-remote-projects-sidebar.webp`: sidebar close-up showing local and remote host repos.
 - `m-home.webp` / `en-m-home.webp`: mobile Projects.
 - `m-swipe.webp` / `en-m-swipe.webp`: mobile Project row with the pin/archive
   rail revealed.
 - `m-assistants.webp` / `en-m-assistants.webp`: assistant contacts.
 - `m-schedule.webp` / `en-m-schedule.webp`: scheduled tasks.
+- `m-asr-send.webp` / `en-m-asr-send.webp`: mobile session composer with active voice dictation.
 
 ## Current capture set
 
@@ -21,11 +24,12 @@ lossless sRGB WebP without resizing or cropping and with embedded metadata remov
 They show a customized workspace, including plugin branding, and are not separate
 localized captures. They replace the former `home.webp` / `en-home.webp` pair.
 
-The remaining set (2026-10) contains four theme previews
+The remaining set contains four theme previews
 (`theme-cursor-dark`, `theme-tokyonight-dark`, `theme-vitesse-dark-dark`,
-`theme-nord-dark`, plus the English equivalents) and the schedule/project/
-assistant captures above. Desktop captures are 1440×900, phone captures
-390×844, stored as lossless sRGB WebP.
+`theme-nord-dark`, plus the English equivalents), 2× Remote Projects captures
+(`2880×1800` full window and `520×760` sidebar focus), desktop captures at
+`1440×900`, and 3× Retina phone captures at `1170×2532` (`390×844` @ 3×) stored
+as sRGB WebP.
 
 Those captures come from the running web UI. Before each shot, visible copy is
 rewritten to neutral examples: project and worktree names, session titles,

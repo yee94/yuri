@@ -269,6 +269,7 @@ export const registerOpenCodeProxy = (app, deps) => {
     /** Optional DI: `{ allowMissingContract: true }` for unit factories only. */
     getRuntimeContractGateOptions = null,
     getOpenCodeAuthHeaders,
+    isRequestOriginAllowed = null,
     buildOpenCodeUrl,
     ensureOpenCodeApiPrefix,
     onInteractiveSessionRequest,
@@ -285,6 +286,29 @@ export const registerOpenCodeProxy = (app, deps) => {
     /** Best-effort Host metadata cleanup after successful upstream session delete. */
     onSessionDeleted = null,
   } = deps;
+
+  const approvedClientOrigins = new WeakSet();
+  const fetchMetadataHeaders = ['sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest', 'sec-fetch-user'];
+  // UI/tunnel authentication already ran. Validate against Yuri's origin policy
+  // before terminating browser metadata at this server-to-server boundary.
+  // Unknown origins keep their metadata and remain subject to upstream rejection.
+  app.use('/api', async (req, _res, next) => {
+    if (req.headers.origin && fetchMetadataHeaders.some(name => req.headers[name]) && isRequestOriginAllowed) {
+      try {
+        if (await isRequestOriginAllowed(req)) approvedClientOrigins.add(req);
+      } catch {
+        // Failed approval never grants provenance translation.
+      }
+    }
+    next();
+  });
+  const forwardRequestHeaders = (req) => {
+    const headers = normalizeForwardedDirectoryHeaders(collectForwardProxyHeaders(req.headers, getOpenCodeAuthHeaders()));
+    if (approvedClientOrigins.has(req)) {
+      for (const name of fetchMetadataHeaders) delete headers[name];
+    }
+    return headers;
+  };
 
   const storeConfigured = typeof getStoredSessionMetadata === 'function';
   if (deps.sessionDelivery) {
@@ -636,9 +660,7 @@ export const registerOpenCodeProxy = (app, deps) => {
       const strippedUrl = stripIncludeReasoningParam(requestUrl);
       const eventUrl = new URL(strippedUrl, 'http://yuri.invalid');
       const upstreamPath = `/api/event${eventUrl.search}`;
-      const headers = normalizeForwardedDirectoryHeaders(
-        collectForwardProxyHeaders(req.headers, getOpenCodeAuthHeaders())
-      );
+      const headers = forwardRequestHeaders(req);
       headers.accept ??= 'text/event-stream';
       headers['cache-control'] ??= 'no-cache';
 
@@ -726,6 +748,7 @@ export const registerOpenCodeProxy = (app, deps) => {
 
       if (subscribeGlobalUiEvent) {
         unsubscribeHostEvents = subscribeGlobalUiEvent((payload, options = {}) => {
+          if (options.targetFilter && !options.targetFilter(res)) return;
           const envelope = { directory: options.directory || 'global', payload };
           const block = `data: ${JSON.stringify(envelope)}\n\n`;
           const filtered = outboundSseFilter ? filterSseBlock(block, outboundSseFilter) : block;
@@ -827,7 +850,7 @@ export const registerOpenCodeProxy = (app, deps) => {
   const fetchSessionListPayload = async (upstreamPath, { req = null, timeoutMs = null, method = 'GET' } = {}) => {
     const headers = req
       ? {
-          ...normalizeForwardedDirectoryHeaders(collectForwardProxyHeaders(req.headers, getOpenCodeAuthHeaders())),
+          ...forwardRequestHeaders(req),
           accept: 'application/json',
           'accept-encoding': 'identity',
         }
@@ -1285,6 +1308,9 @@ export const registerOpenCodeProxy = (app, deps) => {
     router: () => resolveProxyTarget(),
     on: {
       proxyReq: (proxyReq, req) => {
+        if (approvedClientOrigins.has(req)) {
+          for (const name of fetchMetadataHeaders) proxyReq.removeHeader(name);
+        }
         // Inject OpenCode auth headers
         const authHeaders = getOpenCodeAuthHeaders();
         if (authHeaders.Authorization) {
@@ -1368,9 +1394,7 @@ export const registerOpenCodeProxy = (app, deps) => {
   app.use('/api', async (req, res, next) => {
     if (req.method !== 'GET' || req.path !== '/plugin/gui') return next();
     const upstreamPath = toUpstreamOpenCodeApiPath(req.url);
-    const gui = preparePluginGuiRequest(req.method, upstreamPath, normalizeForwardedDirectoryHeaders(
-      collectForwardProxyHeaders(req.headers, getOpenCodeAuthHeaders()),
-    ));
+    const gui = preparePluginGuiRequest(req.method, upstreamPath, forwardRequestHeaders(req));
     if (!gui) return next();
 
     const controller = new AbortController();

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -190,7 +190,7 @@ describe('realtime proxy', () => {
     }
   });
 
-  it('proxies WebSocket upgrades using query params from the raw upgrade request URL', async () => {
+  it.each(['/api/global/event/ws', '/api/gui-network/ws', '/api/hosts/remote-a/api/gui-network/ws'])('proxies %s with runtime headers and target Origin', async pathname => {
     let upstreamRequest = null;
     const upstreamServer = http.createServer();
     const upstreamWs = new WebSocketServer({ server: upstreamServer });
@@ -204,7 +204,7 @@ describe('realtime proxy', () => {
     const { origin, runtime } = await startProxyServer({ apiBaseUrl: upstreamOrigin });
 
     try {
-      const target = `${upstreamOrigin.replace(/^http:/, 'ws:')}/api/global/event/ws?lastEventId=evt-1`;
+      const target = `${upstreamOrigin.replace(/^http:/, 'ws:')}${pathname}?lastEventId=evt-1`;
       const client = new WebSocket(buildRealtimeProxyWsUrl(origin, target), {
         headers: { Origin: 'yuri-ui://app' },
       });
@@ -219,8 +219,9 @@ describe('realtime proxy', () => {
       });
 
       expect(message).toBe('echo:ping');
-      expect(upstreamRequest?.url).toBe('/api/global/event/ws?lastEventId=evt-1');
+      expect(upstreamRequest?.url).toBe(`${pathname}?lastEventId=evt-1`);
       expect(upstreamRequest?.headers['x-proxy-auth']).toBe('secret');
+      expect(upstreamRequest?.headers.origin).toBe(upstreamOrigin);
       client.close();
       upstreamWs.close();
     } finally {

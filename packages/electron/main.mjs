@@ -13,6 +13,9 @@ import { DesktopOta } from './desktop-ota.mjs';
 import { DEEP_LINK_PROTOCOLS, isAppDeepLink } from './deep-link-protocol.mjs';
 import { LEGACY_UI_PROTOCOL, prepareDesktopMigration, migrateDesktopOrigin } from './brand-migration.mjs';
 import { loadDesktopBackend } from './desktop-backend.mjs';
+import { createDesktopRemoteHostsAdapter } from './remote-hosts.mjs';
+import { registerBrowserRelayNetwork } from './browser-relay-network.mjs';
+import { nativeNotificationIdentity } from './notification-identity.mjs';
 import { importHostBrandData } from '@yuriai/web/server/lib/brand-migration.js';
 import { isBinaryFile } from '@yuriai/web/server/lib/fs/binary-file.js';
 import { DesktopInstaller } from './desktop-installer.mjs';
@@ -20,6 +23,7 @@ import { createDesktopUpdateAdapter } from './host-update.mjs';
 import { createRemoteDesktopAdapter } from './remote-desktop.mjs';
 import electronUpdater from 'electron-updater';
 import { ElectronSshManager, planOpenCodeConfigSync, parseSshCommand } from './ssh-manager.mjs';
+import { createSessionConnections } from './session-connections.mjs';
 import { buildSshEditorUrl, sshEditorAppIds } from './ssh-editor.mjs';
 import { createDirectConfigSyncController, createDirectTargetExecutor } from './direct-config-sync.mjs';
 import { probeHostAuthentication } from './host-auth-probe.mjs';
@@ -38,6 +42,7 @@ import {
 import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
 import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
 import { resolveQuitInterception } from './quit-confirmation.mjs';
+import { createQuitShortcut, QUIT_SHORTCUT_INTERVAL_MS } from './quit-shortcut.mjs';
 import { isRemoteIpcCommandAllowed } from './ipc-command-gate.mjs';
 import { getMenuLabels, normalizeMenuLocale } from './menu-i18n.mjs';
 let desktopBackendPromise;
@@ -515,6 +520,7 @@ const shutdownSshSessions = async () => {
 };
 
 const prepareForQuit = ({ installingUpdate = false } = {}) => {
+  quitShortcut.cancel();
   clearTimeout(desktopOtaReadyTimer);
   state.quitRequested = true;
   state.quitConfirmed = true;
@@ -550,6 +556,20 @@ const performConfirmedQuit = async () => {
   await shutdownBackgroundServices();
   app.exit(0);
 };
+
+const quitShortcut = createQuitShortcut({
+  quit: () => void performConfirmedQuit(),
+  showHint: (contents) => {
+    if (!contents || contents.isDestroyed()) return;
+    contents.send('yuri:quit-hint', {
+      message: getMenuLabels(menuLocale).quitShortcutHint,
+      duration: QUIT_SHORTCUT_INTERVAL_MS,
+    });
+  },
+  hideHint: (contents) => {
+    if (contents && !contents.isDestroyed()) contents.send('yuri:quit-hint', null);
+  },
+});
 
 // Hard-stop signals (`Ctrl+C` on `electron:dev`, an external `kill`/SIGTERM,
 // terminal close) await the shared in-process server teardown before exiting.
@@ -934,8 +954,23 @@ const readWindowStates = () => {
 const desktopWindowRoute = (value) => {
   if (typeof value !== 'string') return '/index.html';
   try {
-    const route = new URL(value, 'https://window.invalid').pathname;
-    return /^\/(session|new|assistant|schedule|settings|plugins)(\/|$)/.test(route) ? route : '/index.html';
+    const url = new URL(value, 'https://window.invalid');
+    const route = url.pathname;
+    if (!/^\/(session|new|assistant|schedule|settings|plugins)(\/|$)/.test(route)) return '/index.html';
+    const remote = ['hubId', 'hostId', 'instanceId'].some((key) => url.searchParams.has(key));
+    if (!remote || !/^\/(session|new)(\/|$)/.test(route)) return route;
+    const query = url.searchParams;
+    const fields = ['hubId', 'hostId', 'directory', 'instanceId', 'projectId'];
+    for (const key of [...query.keys()]) if (!fields.includes(key)) query.delete(key);
+    for (const key of fields) {
+      const field = url.searchParams.get(key);
+      if (['hubId', 'hostId', 'directory'].includes(key) && !field) return '/index.html';
+      if (field !== null) {
+        if (!field.trim() || /[\x00-\x1f]/.test(field) || field.length > 16_384) return '/index.html';
+        query.set(key, field);
+      }
+    }
+    return `${route}?${query}`;
   } catch {
     return '/index.html';
   }
@@ -1442,19 +1477,9 @@ const activeNotifications = new Set();
 const nativeNotificationClaims = new Map();
 const NATIVE_NOTIFICATION_DEDUPE_TTL_MS = 5000;
 
-const getNativeNotificationClaimKey = (payload) => {
-  const tag = typeof payload?.tag === 'string' ? payload.tag.trim() : '';
-  if (tag) return tag;
-  return [payload?.sessionId, payload?.kind, payload?.title, payload?.body]
-    .filter((value) => typeof value === 'string' && value.trim())
-    .map((value) => value.trim())
-    .join('|');
-};
-
 const claimNativeNotification = (payload, owner) => {
-  const payloadKey = getNativeNotificationClaimKey(payload);
-  if (!payloadKey) return true;
-  const key = `${owner?.id ?? 'local'}:${payloadKey}`;
+  const key = nativeNotificationIdentity(payload, owner?.id ?? 'local');
+  if (!key) return true;
 
   const now = Date.now();
   for (const [claimKey, claimedAt] of nativeNotificationClaims) {
@@ -1528,7 +1553,8 @@ const maybeShowNativeNotification = (rawInput, sourceWindow) => {
     if (assistantID) {
       emitToWindow(owner, 'yuri:open-assistant', { assistantID });
     } else if (sessionId) {
-      emitToWindow(owner, 'yuri:open-session', { sessionId, directory });
+      emitToWindow(owner, 'yuri:open-session', { sessionId, directory,
+        ...(payload.hostId ? { hostId: payload.hostId, hubId: payload.hubId } : {}) });
     }
     release();
   });
@@ -1723,6 +1749,10 @@ const spawnLocalServer = async () => {
   const { startWebUiServer } = backend;
 
   const handle = await startWebUiServer({
+    remoteHostsAdapter: createDesktopRemoteHostsAdapter({ readHosts: readDesktopHostsConfig, sshManager,
+      subscribe: settingsStore.subscribe }),
+    remoteConnectionsAdapter: createSessionConnections({ sshManager, getLocalExecutor: getLocalSyncExecutor,
+      getLocalHost: () => ({ apiUrl: state.sidecarUrl || state.localOrigin, clientToken: readDesktopLocalClientToken() }) }),
     remoteDesktopAdapter,
     hostUpdateStateFile: path.join(app.getPath('userData'), 'host-update.json'),
     getHostUpdateVersion: () => desktopOta?.version ?? APP_VERSION,
@@ -1730,8 +1760,8 @@ const spawnLocalServer = async () => {
       getOperation: () => desktopLocalUpdateOperation,
       getOta: () => desktopOta, getInstaller: () => desktopInstaller,
       isSupported: app.isPackaged && !isPreviewDesktop,
-      isBusy: () => state.installingUpdate || desktopUpdateActionBusy,
-      download: async (kind) => { desktopUpdateKind = kind; await downloadPendingUpdate({ remote: true }); },
+      isBusy: () => state.installingUpdate || desktopUpdateActionBusy || Boolean(desktopDownloadTask),
+      download: async (kind) => { await downloadPendingUpdate({ remote: true, kind }); },
       restart: async () => {
         if (desktopUpdateKind === 'installer') desktopInstaller.assertPending();
         else await desktopOta.assertPending();
@@ -1768,8 +1798,10 @@ const spawnLocalServer = async () => {
   state.serverHandle = handle;
   state.sidecarUrl = url;
 
+  const clientToken = await handle.ensureDesktopLocalClientToken(readDesktopLocalClientToken());
   await mutateSettingsRoot((root) => {
     root.desktopLocalPort = port;
+    root.desktopLocalClientToken = clientToken;
   });
 
   return url;
@@ -1929,9 +1961,8 @@ const computeBootOutcome = ({ envTargetUrl, probe, config, localAvailable }) => 
   return { target: 'remote', status, hostId: host.id, url: host.apiUrl || host.url };
 };
 
-const buildStartupSplashHtml = () => {
+const buildStartupSplashHtml = (hostId = readWindowStates()[0]?.hostId || readDesktopHostsConfig().defaultHostId) => {
   const settings = readSettingsRoot();
-  const hostId = readWindowStates()[0]?.hostId || readDesktopHostsConfig().defaultHostId;
   const connectingRemote = Boolean(process.env.YURI_SERVER_URL || (hostId && hostId !== LOCAL_HOST_ID));
   const status = connectingRemote ? getMenuLabels(normalizeMenuLocale(app.getLocale())).startupConnectingRemote : '';
   const splashBgLight = typeof settings.splashBgLight === 'string' ? settings.splashBgLight.trim() : '#FFFCF0';
@@ -2437,7 +2468,7 @@ const switchToHostById = async (rawId) => {
       log.warn('[electron] deep-link host not found:', id);
       return;
     }
-    targetUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url;
+    targetUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
     apiBaseUrl = host.apiUrl || host.url;
     clientToken = host.clientToken || '';
     requestHeaders = sanitizeRuntimeRequestHeaders(host.requestHeaders || {});
@@ -3081,7 +3112,7 @@ const createBrowserWindow = ({ label, restoreGeometry, savedState, url, runtimeC
   } else {
     void navigateWindow(
       browserWindow,
-      `data:text/html;charset=utf-8,${encodeURIComponent(buildStartupSplashHtml())}`,
+      `data:text/html;charset=utf-8,${encodeURIComponent(buildStartupSplashHtml(windowHostId || undefined))}`,
       { allowAbort: true },
     );
   }
@@ -3139,7 +3170,7 @@ const openMainWindow = async () => {
   }
 
   const config = readDesktopHostsConfig();
-  const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
+  const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
   const host = config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID
     ? config.hosts.find((entry) => entry.id === config.defaultHostId)
     : null;
@@ -3160,10 +3191,7 @@ const openMainWindow = async () => {
   const apiBaseUrl = host?.apiUrl || host?.url || state.sidecarUrl || state.apiBaseUrl || '';
   const clientToken = host?.clientToken || resolveStoredClientTokenForUrl(apiBaseUrl, config) || state.clientToken || '';
   const requestHeaders = sanitizeRuntimeRequestHeaders(host?.requestHeaders || {});
-  const targetUrl = host?.url && apiBaseUrl && !state.unreachableHosts.has(apiBaseUrl)
-    ? (shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url)
-    : localUiUrl;
-  return activateMainWindow(targetUrl, state.localOrigin, state.bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
+  return activateMainWindow(localUiUrl, state.localOrigin, state.bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
 };
 
 const createAdditionalWindow = async (url, runtimeConfig = {}) => {
@@ -3358,6 +3386,13 @@ const focusAssistantMiniChatTarget = async (browserWindow, args) => {
   const taskID = typeof args.taskID === 'string' ? args.taskID.trim() : '';
   const projectID = typeof args.projectID === 'string' ? args.projectID.trim() : '';
   const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
+  const remoteTarget = args.target;
+  if (remoteTarget !== undefined && (!remoteTarget || typeof remoteTarget !== 'object' || Array.isArray(remoteTarget) || !sessionId || !directory
+    || ['hubId', 'hostId', 'instanceId'].some((key) => typeof remoteTarget[key] !== 'string'
+      || !remoteTarget[key].trim() || remoteTarget[key] !== remoteTarget[key].trim()
+      || remoteTarget[key].length > 512 || /[\x00-\x1f]/.test(remoteTarget[key])))) {
+    throw new Error('Invalid remote session target');
+  }
   const route = taskID && projectID ? `/schedule/tasks/${encodeURIComponent(projectID)}/${encodeURIComponent(taskID)}`
     : sessionId ? `/session/${encodeURIComponent(sessionId)}`
     : `/assistant/${encodeURIComponent(assistantID || browserWindow.__yuriMiniChatAssistantID || '')}`;
@@ -3370,16 +3405,19 @@ const focusAssistantMiniChatTarget = async (browserWindow, args) => {
   if (!target) {
     const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(route) : route, state.localUiOrigin || state.localOrigin || state.sidecarUrl);
     if (directory) url.searchParams.set('directory', directory);
+    if (remoteTarget) for (const key of ['hubId', 'hostId', 'instanceId']) url.searchParams.set(key, remoteTarget[key]);
     target = await createAdditionalWindow(url.toString(), runtimeConfig);
     if (!target) throw new Error('Main window is not available');
   } else if (target.webContents.isLoading()) {
     const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(route) : route, state.localUiOrigin || state.localOrigin || state.sidecarUrl);
     if (directory) url.searchParams.set('directory', directory);
+    if (remoteTarget) for (const key of ['hubId', 'hostId', 'instanceId']) url.searchParams.set(key, remoteTarget[key]);
     await navigateWindow(target, url.toString());
   } else if (taskID && projectID) {
     emitToWindow(target, 'yuri:open-scheduled-task', { projectID, taskID });
   } else if (sessionId) {
-    emitToWindow(target, 'yuri:open-session', { sessionId, directory });
+    emitToWindow(target, 'yuri:open-session', { sessionId, directory,
+      ...(remoteTarget ? { hubId: remoteTarget.hubId, hostId: remoteTarget.hostId, instanceId: remoteTarget.instanceId } : {}) });
   } else {
     emitToWindow(target, 'yuri:open-assistant', { assistantID: assistantID || browserWindow.__yuriMiniChatAssistantID });
   }
@@ -3451,23 +3489,30 @@ const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, local
     probe = await probeHostWithTimeout(apiBaseUrl, 2_000, clientToken, requestHeaders);
     if (probe.status === 'unreachable') probe = await probeHostWithTimeout(apiBaseUrl, 10_000, clientToken, requestHeaders);
   }
-  const initialUrl = host && !relayHostId && probe?.status !== 'unreachable' && !shouldUsePackagedUi()
-    ? host.url : localUiUrl;
+  const initialUrl = localUiUrl;
   return {
     initialUrl, localOrigin, localUiUrl, apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId,
     bootOutcome: computeBootOutcome({ envTargetUrl: null, probe, config: { ...config, defaultHostId: hostId }, localAvailable: Boolean(localUrl) }),
   };
 };
 
-const restoreAdditionalDesktopWindows = async (entries, local) => {
-  for (const entry of entries) {
+const restoreAdditionalDesktopWindows = async (entries, local, windows) => {
+  await Promise.all(entries.map(async (entry, index) => {
+    const browserWindow = windows[index];
+    if (browserWindow.isDestroyed() || state.quitRequested) return;
     const target = await resolveDesktopStartupTarget(entry.hostId, { ...local, restoreSession: true });
+    if (browserWindow.isDestroyed() || state.quitRequested) return;
     const url = new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(entry.route) : entry.route, target.initialUrl).toString();
-    createBrowserWindow({ label: nextWindowLabel(), savedState: entry, url, runtimeConfig: target });
-  }
+    const runtime = buildRendererRuntimeConfig(url, target);
+    browserWindow.__yuriRuntimeConfig = runtime;
+    browserWindow.__yuriHostId = target.hostId;
+    browserWindow.__yuriBootOutcome = target.bootOutcome;
+    browserWindow.__yuriInitScript = buildInitScript(local.localOrigin, target.bootOutcome, runtime.apiBaseUrl, runtime.clientToken, runtime.requestHeaders);
+    await navigateWindow(browserWindow, url, { allowAbort: true });
+  }));
 };
 
-const resolveInitialUrl = async () => {
+const resolveInitialUrl = async ({ deferWindowRestore = false } = {}) => {
   const hmrApiPort = process.env.YURI_HMR_API_PORT || '3901';
   const hmrUiPort = process.env.YURI_HMR_UI_PORT || '5173';
   const hmrApiUrl = `http://127.0.0.1:${hmrApiPort}`;
@@ -3501,6 +3546,9 @@ const resolveInitialUrl = async () => {
   const config = readDesktopHostsConfig();
   if (!envTarget) {
     const savedWindow = readWindowStates()[0];
+    if (savedWindow && deferWindowRestore) {
+      return { initialUrl, localOrigin, localUiUrl, apiBaseUrl, clientToken, requestHeaders };
+    }
     const hostId = savedWindow?.hostId || config.defaultHostId;
     return resolveDesktopStartupTarget(hostId, { localUrl, localUiUrl, localOrigin, restoreSession: Boolean(savedWindow) });
   }
@@ -3537,6 +3585,18 @@ const resolveInitialUrl = async () => {
 
 let desktopUpdateActionBusy = false;
 let desktopLocalUpdateOperation = null;
+let desktopDownloadTask = null;
+let desktopUpdateProgress = null;
+let desktopLastUpdateInfo = null;
+const desktopDownloadSnapshot = () => ({
+  downloading: Boolean(desktopDownloadTask),
+  progress: desktopDownloadTask ? desktopUpdateProgress : null,
+});
+const busyTargetVersion = () => {
+  if (!desktopDownloadTask) return null;
+  if (desktopUpdateKind === 'installer') return desktopInstaller?.version ?? null;
+  return desktopOta?.decision?.ota?.bundle?.releaseVersion ?? null;
+};
 const prepareDesktopUpdateRestart = () => {
   state.quitRequested = true;
   state.installingUpdate = true;
@@ -3563,19 +3623,30 @@ const beginLocalUpdateOperation = (status) => {
     kind: desktopUpdateKind === 'installer' ? 'installer' : 'ota', status, progress: null, error: null,
   };
 };
-const downloadPendingUpdate = async ({ remote = false } = {}) => {
+const downloadPendingUpdate = async ({ remote = false, kind } = {}) => {
   if (!desktopOta) throw new Error('Desktop OTA requires a packaged app');
   if (state.installingUpdate) throw new Error('An update is already being installed');
-  if (desktopUpdateActionBusy || (!remote && state.serverHandle?.hostUpdates?.isBusy())) throw new Error('An update operation is in progress');
-  desktopUpdateActionBusy = true;
-  if (!remote) beginLocalUpdateOperation('downloading');
-  emitToAllWindows('yuri:update-progress', mapUpdaterProgressEvent({ event: 'Started', data: {} }));
-  try {
-    if (desktopUpdateKind === 'installer') await desktopInstaller.download();
+  // Multiple windows share one download: later callers join the running task.
+  if (desktopDownloadTask) return desktopDownloadTask;
+  const downloadKind = kind ?? desktopUpdateKind;
+  desktopUpdateKind = downloadKind;
+  const run = (async () => {
+    if (!remote) beginLocalUpdateOperation('downloading');
+    desktopUpdateProgress = null;
+    emitToAllWindows('yuri:update-progress', mapUpdaterProgressEvent({ event: 'Started', data: {} }));
+    if (downloadKind === 'installer') await desktopInstaller.download();
     else await desktopOta.download();
     emitToAllWindows('yuri:update-progress', mapUpdaterProgressEvent({ event: 'Finished', data: {} }));
-    emitToAllWindows('yuri:update-ready', { version: desktopUpdateKind === 'installer' ? desktopInstaller.version : desktopOta.state.queued?.releaseVersion, downloaded: true });
-  } finally { desktopUpdateActionBusy = false; if (!remote) desktopLocalUpdateOperation = null; setTaskbarProgress(-1); }
+    emitToAllWindows('yuri:update-ready', { version: downloadKind === 'installer' ? desktopInstaller.version : desktopOta.state.queued?.releaseVersion, downloaded: true });
+  })();
+  const task = run.finally(() => {
+    if (desktopDownloadTask === task) desktopDownloadTask = null;
+    if (!remote) desktopLocalUpdateOperation = null;
+    desktopUpdateProgress = null;
+    setTaskbarProgress(-1);
+  });
+  desktopDownloadTask = task;
+  return task;
 };
 
 const buildInstalledAppsCachePath = () => path.join(path.dirname(settingsFilePath()), INSTALLED_APPS_CACHE_FILE);
@@ -4166,7 +4237,7 @@ const prepareDesktopHost = async (hostId, browserWindow) => {
   let host = readDesktopHostsConfig().hosts.find((entry) => entry.id === hostId);
   if (!host) throw new Error('Host not found');
   if (sshManager.readInstances().instances.some((entry) => entry.id === hostId)) {
-    if (!isLocalSender(browserWindow?.webContents)) {
+    if (!isLocalUiSender(browserWindow?.webContents)) {
       if (host.relay) return host;
       throw new Error('SSH preparation requires a local desktop page');
     }
@@ -4423,6 +4494,16 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const stats = await fsp.stat(targetPath);
       if (!stats.isFile()) return false;
       return isBinaryFile(targetPath, fsp);
+    }
+
+    case 'desktop_is_directory_path': {
+      if (browserWindow?.__yuriRuntimeConfig?.relayHostId
+        || !sameOrigin(browserWindow?.__yuriRuntimeConfig?.apiBaseUrl || state.localOrigin, state.sidecarUrl)) {
+        throw new Error('Local runtime required');
+      }
+      const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
+      if (!targetPath) throw new Error('Path is required');
+      return (await fsp.stat(targetPath)).isDirectory();
     }
 
     case 'desktop_open_external_url': {
@@ -4728,27 +4809,40 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_check_for_updates': {
-      if (desktopUpdateActionBusy || state.serverHandle?.hostUpdates?.isBusy()) throw new Error('An update operation is in progress');
-      desktopUpdateActionBusy = true;
-      beginLocalUpdateOperation('checking');
+      // A check never rejects because another window is checking or downloading;
+      // it reports the live download state instead so auto-update keeps running.
+      const tracked = !desktopUpdateActionBusy && !desktopDownloadTask;
+      if (tracked) { desktopUpdateActionBusy = true; beginLocalUpdateOperation('checking'); }
       try {
         if (isPreviewDesktop) throw new Error('Preview uses a separate application identity; install Preview updates manually');
         if (!desktopOta) throw new Error('Desktop OTA requires a packaged app');
         if (state.installingUpdate) throw new Error('An update is already being installed');
-        desktopInstaller.assertIdle();
-        const info = await desktopOta.check(args?.channelOverride);
+        if (desktopDownloadTask && desktopLastUpdateInfo) {
+          // A download owns the selection: report it without a competing request.
+          return { ...desktopLastUpdateInfo, version: busyTargetVersion() ?? desktopLastUpdateInfo.version, downloaded: false, ...desktopDownloadSnapshot() };
+        }
+        const busy = Boolean(desktopDownloadTask);
+        const info = await desktopOta.check(args?.channelOverride, { select: !busy });
+        if (busy) {
+          // Keep the in-flight target: never re-point the UI at another release.
+          return { ...info, version: busyTargetVersion() ?? info.version, downloaded: false, ...desktopDownloadSnapshot() };
+        }
         if (info.manualUpdate) {
           desktopUpdateKind = 'installer';
-          const version = desktopOta.decision.native.version;
+          const version = info.version;
           const result = await desktopInstaller.check(version, {
             channel: desktopOta.state.channel, rollback: info.isChannelRollback,
           });
-          return { ...info, ...result, version, manualUpdate: false, inAppApply: false };
+          const response = { ...info, ...result, version, manualUpdate: false, inAppApply: false, ...desktopDownloadSnapshot() };
+          if (!desktopDownloadTask) desktopLastUpdateInfo = response;
+          return response;
         }
         desktopInstaller.clear();
         desktopUpdateKind = 'ota';
-        return info;
-      } finally { desktopUpdateActionBusy = false; desktopLocalUpdateOperation = null; }
+        const response = { ...info, ...desktopDownloadSnapshot() };
+        if (!desktopDownloadTask) desktopLastUpdateInfo = response;
+        return response;
+      } finally { if (tracked) { desktopUpdateActionBusy = false; desktopLocalUpdateOperation = null; } }
     }
 
     case 'desktop_ota_ready':
@@ -4821,10 +4915,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         || state.clientToken
         || readDesktopLocalClientToken();
       const requestHeaders = sanitizeRuntimeRequestHeaders(host?.requestHeaders || state.requestHeaders || {});
-      const targetUrl = host?.url && apiBaseUrl && !state.unreachableHosts.has(apiBaseUrl)
-        ? (shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url)
-        : localUiUrl;
-      await createAdditionalWindow(targetUrl, {
+      await createAdditionalWindow(localUiUrl, {
         apiBaseUrl: normalizeHostUrl(apiBaseUrl) || apiBaseUrl,
         clientToken: sanitizeClientTokenForStorage(clientToken),
         requestHeaders,
@@ -4885,7 +4976,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const hostId = typeof args.hostId === 'string' ? args.hostId.trim() : '';
       const host = await prepareDesktopHost(hostId, browserWindow);
       if (host.relay) {
-        const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
+        const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
         await createAdditionalWindow(windowUrl, {
           apiBaseUrl: '',
           clientToken: host.clientToken || '',
@@ -4896,7 +4987,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       }
       const targetUrl = normalizeHostUrl(host.apiUrl || host.url);
       if (!targetUrl) throw new Error('Invalid URL');
-      const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : targetUrl;
+      const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
       await createAdditionalWindow(windowUrl, {
         apiBaseUrl: targetUrl,
         clientToken: host.clientToken || '',
@@ -4919,7 +5010,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const providedToken = typeof args.clientToken === 'string' ? args.clientToken : '';
       const clientToken = preparedHost?.clientToken || sanitizeClientTokenForStorage(providedToken) || resolveStoredClientTokenForUrl(targetUrl, config);
       const requestHeaders = sanitizeRuntimeRequestHeaders(preparedHost?.requestHeaders || args.requestHeaders || savedHost?.requestHeaders || {});
-      let windowUrl = targetUrl;
+      let windowUrl = state.localUiOrigin || state.sidecarUrl || state.localOrigin;
       const runtimeConfig = { apiBaseUrl: targetUrl, clientToken, requestHeaders };
       if (shouldUsePackagedUi()) {
         windowUrl = buildPackagedUiUrl('/index.html');
@@ -5273,7 +5364,17 @@ const buildMacMenu = () => {
         { role: 'hide', label: labels.hide },
         { role: 'hideOthers', label: labels.hideOthers },
         { type: 'separator' },
-        { role: 'quit', label: labels.quit },
+        {
+          label: labels.quit,
+          accelerator: 'Cmd+Q',
+          click: (_item, window, event) => {
+            if (event.triggeredByAccelerator) {
+              quitShortcut.request(window?.webContents ?? null);
+            } else {
+              app.quit();
+            }
+          },
+        },
       ],
     },
     {
@@ -5544,6 +5645,20 @@ const loadUrlInsideWebContents = (contents, rawUrl) => {
 };
 
 app.on('web-contents-created', (_event, contents) => {
+  if (process.platform === 'darwin') {
+    let shortcutOwner = contents;
+    contents.on('before-input-event', (event, input) => {
+      const owner = contents.getOwnerBrowserWindow();
+      if (!owner || owner.isDestroyed()) return;
+      shortcutOwner = owner.webContents;
+      quitShortcut.handleInput(event, input, shortcutOwner);
+    });
+    contents.on('blur', () => quitShortcut.cancel(shortcutOwner));
+    contents.on('destroyed', () => quitShortcut.cancel(shortcutOwner));
+    contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
+      if (isMainFrame) quitShortcut.cancel(shortcutOwner);
+    });
+  }
   if (contents.getType() !== 'webview') return;
 
   contents.setWindowOpenHandler(({ url }) => {
@@ -5663,6 +5778,11 @@ ipcMain.on('yuri:window-runtime', (event) => {
 });
 
 ipcMain.handle('yuri:invoke', async (event, command, args) => {
+  if (['desktop_host_prepare', 'desktop_new_window', 'desktop_new_window_for_host', 'desktop_new_window_at_url'].includes(command)
+    && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame
+      || (isLocalUiSender(event.sender) && !isGuiPluginWindow(event)))) {
+    throw new Error('Host switching requires the main desktop application frame');
+  }
   if ((command === 'desktop_open_local_host_settings' || command === 'desktop_switch_to_local')
     && (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)) {
     throw new Error('Local window navigation requires the main desktop frame');
@@ -5844,6 +5964,8 @@ ipcMain.handle('yuri:preview-gateway:ensure', async (event) => {
   gateway.markOwnerPresent();
   return { origin: started.origin };
 });
+
+registerBrowserRelayNetwork({ app, ipcMain, session, authorize: requireLocalAssetSender });
 
 ipcMain.handle('yuri:preview-gateway:release', async (event) => {
   requireLocalPreviewGatewaySender(event, 'preview-gateway:release');
@@ -6208,6 +6330,7 @@ app.whenReady().then(async () => {
     electronUpdater.autoUpdater.logger = log;
     desktopInstaller = new DesktopInstaller(electronUpdater.autoUpdater, {
       onProgress: (progress) => {
+        desktopUpdateProgress = { downloaded: progress.transferred, total: progress.total };
         if (desktopLocalUpdateOperation) desktopLocalUpdateOperation.progress = progress.percent;
         state.serverHandle?.hostUpdates?.progress(progress.percent);
         setTaskbarProgress(progress.percent / 100);
@@ -6221,6 +6344,7 @@ app.whenReady().then(async () => {
       nativeVersion: APP_VERSION,
       requireBackend: true,
       onProgress: (progress) => {
+        desktopUpdateProgress = { downloaded: progress.downloaded, total: progress.total };
         if (desktopLocalUpdateOperation) desktopLocalUpdateOperation.progress = progress.downloaded / progress.total * 100;
         state.serverHandle?.hostUpdates?.progress(progress.downloaded / progress.total * 100);
         setTaskbarProgress(progress.downloaded / progress.total);
@@ -6258,17 +6382,21 @@ app.whenReady().then(async () => {
 
   const savedWindows = process.env.YURI_SERVER_URL ? [] : readWindowStates();
   restoringWindowSession = true;
-  state.mainWindow = createBrowserWindow({
-    label: 'main',
-    restoreGeometry: true,
+  const startupWindows = (savedWindows.length > 0 ? savedWindows : [null]).map((entry, index) => createBrowserWindow({
+    label: nextWindowLabel(),
+    restoreGeometry: index === 0,
+    savedState: entry,
     url: null,
-  });
+    runtimeConfig: { hostId: entry?.hostId },
+  }));
+  state.mainWindow = startupWindows[0];
 
   const initial = extractInitialDeepLinks();
   if (initial.length > 0) handleDeepLinks(initial);
 
-  const initialTarget = await resolveInitialUrl();
-  const { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId } = initialTarget;
+  const initialTarget = await resolveInitialUrl({ deferWindowRestore: true });
+  const { localOrigin, localUiUrl } = initialTarget;
+  state.localOrigin = localOrigin;
   if (desktopOta?.state.trial) {
     desktopOtaReadyTimer = setTimeout(() => {
       if (!desktopOta.state.trial || state.quitRequested) return;
@@ -6281,12 +6409,22 @@ app.whenReady().then(async () => {
     }, 60_000);
     desktopOtaReadyTimer.unref();
   }
-  const mainRoute = savedWindows[0]?.route;
-  const mainUrl = mainRoute ? new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(mainRoute) : mainRoute, initialUrl).toString() : initialUrl;
-  await activateMainWindow(mainUrl, localOrigin, bootOutcome, { apiBaseUrl, clientToken, requestHeaders, relayHostId, hostId });
-  if (!process.env.YURI_SERVER_URL) {
-    await restoreAdditionalDesktopWindows(savedWindows.slice(1), { localUrl: state.sidecarUrl, localUiUrl, localOrigin });
-  }
+  const local = { localUrl: state.sidecarUrl, localUiUrl, localOrigin };
+  const activateFirstWindow = async () => {
+    const first = startupWindows[0];
+    if (first.isDestroyed() || state.quitRequested) return;
+    const target = savedWindows[0]
+      ? await resolveDesktopStartupTarget(savedWindows[0].hostId, { ...local, restoreSession: true })
+      : initialTarget;
+    if (first.isDestroyed() || state.quitRequested || state.mainWindow !== first) return;
+    const mainRoute = savedWindows[0]?.route;
+    const mainUrl = mainRoute ? new URL(shouldUsePackagedUi() ? buildPackagedUiUrl(mainRoute) : mainRoute, target.initialUrl).toString() : target.initialUrl;
+    await activateMainWindow(mainUrl, localOrigin, target.bootOutcome, target);
+  };
+  await Promise.all([
+    activateFirstWindow(),
+    restoreAdditionalDesktopWindows(savedWindows.slice(1), local, startupWindows.slice(1)),
+  ]);
   restoringWindowSession = false;
   await writeWindowState(state.mainWindow);
   initialStartupComplete = true;

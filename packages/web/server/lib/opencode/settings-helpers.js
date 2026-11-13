@@ -26,6 +26,7 @@ export const projectBootstrapSettingsResponse = (response) => {
   copyString('defaultVariant');
   copyString('defaultAgent');
   copyBoolean('autoCreateWorktree');
+  copyBoolean('hasRemoteProjects');
   copyBoolean('gitmojiEnabled');
   copyBoolean('defaultFileViewerPreview');
   copyString('zenModel');
@@ -179,6 +180,20 @@ export const createSettingsHelpers = (dependencies) => {
 
     const candidate = payload;
     const result = {};
+
+    if (Object.hasOwn(candidate, 'hubProjectLayout')) {
+      const layout = candidate.hubProjectLayout;
+      const validId = (id) => typeof id === 'string' && id.length > 0 && id.length <= 512;
+      if (!layout || typeof layout !== 'object' || Array.isArray(layout)
+        || !validId(layout.hubId) || !Array.isArray(layout.order) || layout.order.length > 10000
+        || !layout.order.every(validId) || !layout.collapsed || typeof layout.collapsed !== 'object'
+        || Array.isArray(layout.collapsed) || Object.keys(layout.collapsed).length > 10000
+        || !Object.entries(layout.collapsed).every(([id, value]) => validId(id) && typeof value === 'boolean')) {
+        throw Object.assign(new Error('Invalid Hub project layout'), { status: 400 });
+      }
+      result.hubProjectLayout = { hubId: layout.hubId, order: [...new Set(layout.order)],
+        collapsed: Object.fromEntries(Object.entries(layout.collapsed)) };
+    }
 
     if (typeof candidate.themeId === 'string' && candidate.themeId.length > 0) {
       result.themeId = candidate.themeId;
@@ -906,6 +921,17 @@ export const createSettingsHelpers = (dependencies) => {
       ),
       typographySizes: nextTypographySizes
     };
+
+    if (changes.hubProjectLayout) {
+      const incoming = changes.hubProjectLayout;
+      const prior = current.hubProjectLayout?.hubId === incoming.hubId ? current.hubProjectLayout : null;
+      next.hubProjectLayout = { hubId: incoming.hubId,
+        order: [...new Set([...incoming.order, ...(prior?.order || [])])],
+        collapsed: { ...prior?.collapsed, ...incoming.collapsed } };
+      if (next.hubProjectLayout.order.length > 10000 || Object.keys(next.hubProjectLayout.collapsed).length > 10000) {
+        throw Object.assign(new Error('Hub project layout exceeds capacity'), { status: 400 });
+      }
+    }
 
     return next;
   };

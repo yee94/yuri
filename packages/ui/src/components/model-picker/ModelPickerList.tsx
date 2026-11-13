@@ -1,4 +1,5 @@
 import React from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   DndContext,
   MouseSensor,
@@ -18,8 +19,9 @@ import { toast } from '@/components/ui/toast';
 import { ModelLogo } from '@/components/ui/ModelLogo';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
+import { Tooltip, TooltipContent } from '@/components/ui/tooltip';
+import { useI18n } from '@/lib/i18n';
+import { formatCompactNumber, formatUsdCurrency } from '@/lib/intlFormatters';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { mergeModelMetadataWithLiveModel } from '@/lib/modelMetadata';
 import { getModelDisplayName as getSharedModelDisplayName } from '@/lib/modelDisplay';
@@ -108,20 +110,6 @@ type IndexSelectionStore = {
   set: (value: number) => void;
 };
 
-const formatCompactNumber = (value: number) => new Intl.NumberFormat(getCurrentIntlLocale(), {
-  notation: 'compact',
-  compactDisplay: 'short',
-  maximumFractionDigits: 1,
-  minimumFractionDigits: 0,
-}).format(value);
-
-const formatUsdCurrency = (value: number) => new Intl.NumberFormat(getCurrentIntlLocale(), {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 4,
-  minimumFractionDigits: 2,
-}).format(value);
-
 const getModelDisplayName = (model: Record<string, unknown>) => {
   return getSharedModelDisplayName(model, undefined, { maxLength: 40 });
 };
@@ -157,9 +145,10 @@ const ModelPickerRowTooltip: React.FC<{
   providerID: string;
   modelID: string;
   active: boolean;
+  anchor: () => HTMLElement | null;
   labels: ModelPickerListProps['labels'];
   children: React.ReactElement;
-}> = ({ metadata, providerName, providerID, modelID, active, labels, children }) => {
+}> = ({ metadata, providerName, providerID, modelID, active, anchor, labels, children }) => {
   const { t } = useI18n();
   const [delayedActive, setDelayedActive] = React.useState(false);
   const modelIdentifier = `${providerID}/${modelID}`;
@@ -173,73 +162,74 @@ const ModelPickerRowTooltip: React.FC<{
     return () => window.clearTimeout(timeout);
   }, [active]);
 
-  if (!hasTooltipMetadata(metadata, providerName)) return children;
-
-  const capabilityIcons = getCapabilityIcons(metadata, labels);
+  const showTooltip = active && delayedActive && hasTooltipMetadata(metadata, providerName);
+  const capabilityIcons = showTooltip ? getCapabilityIcons(metadata, labels) : [];
   const hasCost = metadata?.cost?.input !== undefined || metadata?.cost?.output !== undefined;
 
   return (
-    <Tooltip delayDuration={0} open={active && delayedActive} onOpenChange={() => {}}>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      {active && delayedActive ? (
-        <TooltipContent side="right" sideOffset={8} className="min-w-52 max-w-xs text-left transition-none data-[starting-style]:opacity-100 data-[starting-style]:scale-100 data-[ending-style]:opacity-100 data-[ending-style]:scale-100">
-          <div className="flex flex-col gap-2 text-left text-xs">
-            {providerName && labels.provider ? (
-              <div className="flex items-center justify-between gap-3 text-muted-foreground">
-                <span className="typography-meta font-medium">{labels.provider}</span>
-                <span className="typography-meta text-foreground">{providerName}</span>
-              </div>
-            ) : null}
-            {capabilityIcons.length > 0 ? (
-              <div className="flex items-center justify-between gap-3 text-muted-foreground">
-                <span className="typography-meta font-medium shrink-0">{labels.capabilities}</span>
-                <div className="flex flex-wrap items-center justify-end gap-1">
-                  {capabilityIcons.map(({ key, icon, label }) => (
-                    <CapabilityIconBadge key={key} iconName={icon} label={label} />
-                  ))}
+    <>
+      {children}
+      {showTooltip ? (
+        <Tooltip open onOpenChange={() => {}}>
+          <TooltipContent anchor={anchor} side="right" sideOffset={8} className="min-w-52 max-w-xs text-left transition-none data-[starting-style]:opacity-100 data-[starting-style]:scale-100 data-[ending-style]:opacity-100 data-[ending-style]:scale-100">
+            <div className="flex flex-col gap-2 text-left text-xs">
+              {providerName && labels.provider ? (
+                <div className="flex items-center justify-between gap-3 text-muted-foreground">
+                  <span className="typography-meta font-medium">{labels.provider}</span>
+                  <span className="typography-meta text-foreground">{providerName}</span>
                 </div>
-              </div>
-            ) : null}
-            {hasCost ? (
-              <div className="flex items-start justify-between gap-3 text-muted-foreground">
-                {labels.costPerMillion ? (
-                  <span className="typography-meta font-medium shrink-0">{labels.costPerMillion}</span>
-                ) : null}
-                <div className="flex flex-col items-end gap-0.5 min-w-0">
-                  <div className="flex items-center justify-end gap-1.5 min-w-0">
-                    {labels.costInput ? <span className="typography-meta shrink-0">{labels.costInput}</span> : null}
-                    <span className="typography-meta text-foreground tabular-nums">{formatCost(metadata?.cost?.input)}</span>
-                  </div>
-                  <div className="flex items-center justify-end gap-1.5 min-w-0">
-                    {labels.costOutput ? <span className="typography-meta shrink-0">{labels.costOutput}</span> : null}
-                    <span className="typography-meta text-foreground tabular-nums">{formatCost(metadata?.cost?.output)}</span>
+              ) : null}
+              {capabilityIcons.length > 0 ? (
+                <div className="flex items-center justify-between gap-3 text-muted-foreground">
+                  <span className="typography-meta font-medium shrink-0">{labels.capabilities}</span>
+                  <div className="flex flex-wrap items-center justify-end gap-1">
+                    {capabilityIcons.map(({ key, icon, label }) => (
+                      <CapabilityIconBadge key={key} iconName={icon} label={label} />
+                    ))}
                   </div>
                 </div>
-              </div>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="xs"
-              className="h-auto min-h-0 w-full min-w-0 justify-end gap-0 rounded-none p-0 text-right cursor-copy font-normal text-muted-foreground hover:bg-transparent active:bg-transparent"
-              aria-label={t('onboarding.common.copyToClipboard')}
-              title={modelIdentifier}
-              onClick={async (event) => {
-                event.stopPropagation();
-                try {
-                  const result = await copyTextToClipboard(modelIdentifier);
-                  if (result.ok) toast.success(t('contextSidebar.actions.copied'));
-                  else toast.error(t('filesView.toast.copyFailed'));
-                } catch {
-                  toast.error(t('filesView.toast.copyFailed'));
-                }
-              }}
-            >
-              <span className="block w-full min-w-0 truncate text-right text-[10px] leading-tight">{modelIdentifier}</span>
-            </Button>
-          </div>
-        </TooltipContent>
+              ) : null}
+              {hasCost ? (
+                <div className="flex items-start justify-between gap-3 text-muted-foreground">
+                  {labels.costPerMillion ? (
+                    <span className="typography-meta font-medium shrink-0">{labels.costPerMillion}</span>
+                  ) : null}
+                  <div className="flex flex-col items-end gap-0.5 min-w-0">
+                    <div className="flex items-center justify-end gap-1.5 min-w-0">
+                      {labels.costInput ? <span className="typography-meta shrink-0">{labels.costInput}</span> : null}
+                      <span className="typography-meta text-foreground tabular-nums">{formatCost(metadata?.cost?.input)}</span>
+                    </div>
+                    <div className="flex items-center justify-end gap-1.5 min-w-0">
+                      {labels.costOutput ? <span className="typography-meta shrink-0">{labels.costOutput}</span> : null}
+                      <span className="typography-meta text-foreground tabular-nums">{formatCost(metadata?.cost?.output)}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="xs"
+                className="h-auto min-h-0 w-full min-w-0 justify-end gap-0 rounded-none p-0 text-right cursor-copy font-normal text-muted-foreground hover:bg-transparent active:bg-transparent"
+                aria-label={t('onboarding.common.copyToClipboard')}
+                title={modelIdentifier}
+                onClick={async (event) => {
+                  event.stopPropagation();
+                  try {
+                    const result = await copyTextToClipboard(modelIdentifier);
+                    if (result.ok) toast.success(t('contextSidebar.actions.copied'));
+                    else toast.error(t('filesView.toast.copyFailed'));
+                  } catch {
+                    toast.error(t('filesView.toast.copyFailed'));
+                  }
+                }}
+              >
+                <span className="block w-full min-w-0 truncate text-right text-[10px] leading-tight">{modelIdentifier}</span>
+              </Button>
+            </div>
+          </TooltipContent>
+        </Tooltip>
       ) : null}
-    </Tooltip>
+    </>
   );
 };
 
@@ -461,6 +451,7 @@ interface ModelPickerListProps {
   footerContent?: React.ReactNode | ((activeEntry: ModelPickerEntry | undefined) => React.ReactNode);
   renderVersion?: number;
   tooltipsEnabled?: boolean;
+  virtualize?: boolean;
 }
 
 export const ModelPickerList: React.FC<ModelPickerListProps> = ({
@@ -502,6 +493,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
   footerContent,
   renderVersion,
   tooltipsEnabled = true,
+  virtualize = false,
 }) => {
   const selectionStoreRef = React.useRef<IndexSelectionStore | null>(null);
   if (!selectionStoreRef.current) selectionStoreRef.current = createIndexSelectionStore();
@@ -599,16 +591,61 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     })
     .filter((provider) => provider.models.length > 0), [allowedProviderSet, isAllowedModel, isHidden, matchesQuery, orderedProviders]);
 
-  const flatModelList = React.useMemo(() => {
+  const { flatModelList, modelRowIndices } = React.useMemo(() => {
     const items: ModelPickerEntry[] = [];
-    if (!effectiveCollapsedSections.has('favorites')) filteredFavorites.forEach((entry) => items.push(entry));
-    if (!effectiveCollapsedSections.has('recent')) filteredRecents.forEach((entry) => items.push(entry));
+    const modelRowIndices = new Map<string, number>();
+    const append = (entry: ModelPickerEntry, section: string) => {
+      modelRowIndices.set(`${section}:${entry.providerID}:${entry.modelID}`, items.length);
+      items.push(entry);
+    };
+    if (!effectiveCollapsedSections.has('favorites')) filteredFavorites.forEach((entry) => append(entry, 'fav'));
+    if (!effectiveCollapsedSections.has('recent')) filteredRecents.forEach((entry) => append(entry, 'recent'));
     filteredProviders.forEach((provider) => {
       if (effectiveCollapsedSections.has(`provider:${provider.id}`)) return;
-      provider.models.forEach((model) => items.push({ model, providerID: provider.id, modelID: model.id as string }));
+      provider.models.forEach((model) => append({ model, providerID: provider.id, modelID: model.id as string }, 'provider'));
     });
-    return items;
+    return { flatModelList: items, modelRowIndices };
   }, [effectiveCollapsedSections, filteredFavorites, filteredProviders, filteredRecents]);
+
+  const [rootFontSize, setRootFontSize] = React.useState(16);
+  React.useLayoutEffect(() => {
+    if (virtualize) setRootFontSize(Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
+  }, [virtualize]);
+  const virtualLayout = React.useMemo(() => {
+    if (!virtualize) return [];
+    const slots: Array<{ key: string; height: number; modelIndex: number }> = [];
+    let modelIndex = 0;
+    const addSection = (key: string, entries: ModelPickerEntry[], rowHeight: number, separated: boolean) => {
+      slots.push({ key, height: (1.5 + (separated ? 0.625 : 0)) * rootFontSize, modelIndex: -1 });
+      if (effectiveCollapsedSections.has(key)) return;
+      for (const entry of entries) slots.push({ key: `${key}:${entry.providerID}:${entry.modelID}`, height: rowHeight * rootFontSize, modelIndex: modelIndex++ });
+    };
+    if (filteredFavorites.length) addSection('favorites', filteredFavorites, 2.5, false);
+    if (filteredRecents.length) addSection('recent', filteredRecents, 2.5, filteredFavorites.length > 0);
+    filteredProviders.forEach((provider, index) => addSection(
+      `provider:${provider.id}`,
+      provider.models.map((model) => ({ model, providerID: provider.id, modelID: model.id as string })),
+      2,
+      index > 0 || filteredFavorites.length > 0 || filteredRecents.length > 0,
+    ));
+    return slots;
+  }, [effectiveCollapsedSections, filteredFavorites, filteredProviders, filteredRecents, rootFontSize, virtualize]);
+  const virtualMeasurements = React.useMemo(() => ({
+    estimateSize: (index: number) => virtualLayout[index].height,
+    getItemKey: (index: number) => virtualLayout[index].key,
+  }), [virtualLayout]);
+  const rowVirtualizer = useVirtualizer({
+    enabled: virtualize,
+    count: virtualLayout.length,
+    getScrollElement: () => scrollRef.current,
+    ...virtualMeasurements,
+    paddingStart: 0.375 * rootFontSize,
+    paddingEnd: 0.375 * rootFontSize,
+    overscan: 6,
+    initialRect: { width: 400, height: 400 },
+  });
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const visibleModelIndices = new Set(virtualItems.map((item) => virtualLayout[item.index].modelIndex));
 
   const hasResults = flatModelList.length > 0;
   const favoriteSortingEnabled = Boolean(onReorderFavorite) && searchQuery.trim().length === 0 && filteredFavorites.length > 1;
@@ -684,9 +721,12 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     sectionHeaderClassName,
   );
 
-  let currentFlatIndex = 0;
-
-  const renderRow = (entry: ModelPickerEntry, keyPrefix: string, showProviderLogo: boolean, rowIndex: number, dragHandleProps?: SortableFavoriteHandleProps | null) => {
+  const renderRow = (entry: ModelPickerEntry, keyPrefix: string, showProviderLogo: boolean, dragHandleProps?: SortableFavoriteHandleProps | null) => {
+    const rowIndex = modelRowIndices.get(`${keyPrefix}:${entry.providerID}:${entry.modelID}`);
+    if (rowIndex === undefined) return null;
+    if (virtualize && !dragHandleProps?.isDragging && !(virtualItems.length ? visibleModelIndices.has(rowIndex) : rowIndex < 12)) {
+      return <div key={`${keyPrefix}-${entry.providerID}-${entry.modelID}`} ref={(element) => { itemRefs.current[rowIndex] = element; }} className="model-picker-row-placeholder" data-model-section={keyPrefix} aria-hidden="true" />;
+    }
     const metadata = mergeModelMetadataWithLiveModel(entry.providerID, entry.model, getMetadata?.(entry.providerID, entry.modelID));
     const providerName = providerById.get(entry.providerID)?.name || entry.providerID;
     const contextTokens = formatModelContextTokens(metadata?.limit?.context);
@@ -713,7 +753,10 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
             <div
               ref={(el) => { itemRefs.current[rowIndex] = el; }}
               role="option"
+              data-model-section={keyPrefix}
               aria-selected={isSelected}
+              aria-setsize={virtualize ? flatModelList.length : undefined}
+              aria-posinset={virtualize ? rowIndex + 1 : undefined}
               aria-disabled={disabled || undefined}
               tabIndex={-1}
               onClick={() => { if (!disabled) onSelect(entry); }}
@@ -727,25 +770,32 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
               onMouseEnter={handleMouseActivity}
               onMouseMove={handleMouseActivity}
               className={cn(
-                'w-full text-left px-2 py-1.5 rounded-md typography-meta flex items-center gap-2 cursor-pointer',
+                'model-picker-row w-full text-left px-2 py-1.5 rounded-md typography-meta flex items-center gap-2 cursor-pointer',
                 !disabled && (isHighlighted ? 'bg-interactive-selection' : 'hover:bg-interactive-hover/50'),
                 disabled && 'cursor-not-allowed opacity-60',
                 rowClassName,
               )}
             >
-              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+              <div className="model-picker-row-main flex items-center gap-1.5 flex-1 min-w-0">
                 {dragHandleProps ? (
                   <button type="button" ref={dragHandleProps.setActivatorNodeRef} {...dragHandleProps.attributes} {...dragHandleProps.listeners} disabled={disabled} onClick={(event) => { event.preventDefault(); event.stopPropagation(); }} className="model-favorite-drag-handle flex size-4 flex-shrink-0 items-center justify-center text-muted-foreground hover:text-foreground disabled:pointer-events-none" aria-label={reorderFavoriteAriaLabel} title={reorderFavoriteTitle}>
                     <Icon name="draggable" className="size-3.5" />
                   </button>
                 ) : null}
                 {showProviderLogo ? <ModelLogo modelId={entry.modelID} providerId={entry.providerID} className="h-3.5 w-3.5 flex-shrink-0" /> : null}
-                <span className="font-medium truncate">{getModelDisplayName(entry.model)}</span>
-                {contextTokens ? <span className="typography-micro text-muted-foreground flex-shrink-0">{contextTokens}</span> : null}
+                <span className="model-picker-row-labels contents">
+                  <span className="model-picker-row-name font-medium truncate">{getModelDisplayName(entry.model)}</span>
+                  <span className="model-picker-row-meta contents">
+                    {keyPrefix !== 'provider' ? <span className="model-picker-row-provider hidden truncate">{providerName}</span> : null}
+                    {contextTokens ? <span className="model-picker-row-context typography-micro text-muted-foreground flex-shrink-0">{contextTokens}</span> : null}
+                  </span>
+                </span>
               </div>
               {count > 0 ? <span className="typography-micro text-muted-foreground flex-shrink-0">x{count}</span> : null}
               {renderRowEnd?.(entry, { isHighlighted, isSelected })}
-              {isSelected ? <Icon name="check" className="h-4 w-4 text-primary flex-shrink-0" /> : null}
+              <span className={cn('model-picker-row-selection size-4 shrink-0', !isSelected && 'hidden')}>
+                {isSelected ? <Icon name="check" className="h-4 w-4 text-primary" /> : null}
+              </span>
               {onToggleFavorite ? (
                 <button type="button" disabled={disabled} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleFavorite(entry); }} className={cn('model-favorite-button flex h-4 w-4 items-center justify-center hover:text-primary/80 flex-shrink-0 disabled:pointer-events-none', favorite ? 'text-primary' : 'text-muted-foreground')} aria-label={favorite ? labels.unfavorite : labels.favorite} title={favorite ? labels.unfavorite : labels.favorite}>
                   <Icon name={favorite ? 'star-fill' : 'star'} className="h-3.5 w-3.5" />
@@ -754,7 +804,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
             </div>
           );
 
-          return <ModelPickerRowTooltip metadata={metadata} providerName={providerName} providerID={entry.providerID} modelID={entry.modelID} active={tooltipsEnabled && isHighlighted} labels={labels}>{rowElement}</ModelPickerRowTooltip>;
+          return <ModelPickerRowTooltip metadata={metadata} providerName={providerName} providerID={entry.providerID} modelID={entry.modelID} active={tooltipsEnabled && isHighlighted} anchor={() => itemRefs.current[rowIndex]} labels={labels}>{rowElement}</ModelPickerRowTooltip>;
         }}
       </ModelPickerRowHighlight>
     );
@@ -861,17 +911,17 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     headerDragProps?: SortableFavoriteHandleProps,
   ) => (
     <>
-      {providerIndex > 0 ? <div className="h-px bg-border/40 my-1" /> : null}
+      {providerIndex > 0 ? <div className="model-picker-section-divider h-px bg-border/40 my-1" /> : null}
       {renderSectionHeader(`provider:${provider.id}`, <ProviderLogo providerId={provider.id} className="h-4 w-4 flex-shrink-0" />, provider.name || provider.id, headerDragProps)}
       {!isSectionCollapsed(`provider:${provider.id}`)
-        ? provider.models.map((model) => renderRow({ model, providerID: provider.id, modelID: model.id as string }, 'provider', true, currentFlatIndex++))
+        ? provider.models.map((model) => renderRow({ model, providerID: provider.id, modelID: model.id as string }, 'provider', true))
         : null}
     </>
   );
 
   return (
     <>
-      <div className="p-1.5 pb-1">
+      <div className="model-picker-search-area p-1.5 pb-1">
         <div className="relative">
           <Icon name="search" className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
@@ -887,7 +937,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
       </div>
 
       <ScrollableOverlay ref={scrollRef} outerClassName={maxHeightClassName} className="overlay-scrollbar-target--no-gutter" style={maxHeightStyle}>
-        <div className="px-1">
+        <div className="model-picker-list px-1">
           {includeNotSelected ? (
             <>
               <button
@@ -908,34 +958,33 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
           ) : null}
 
           {filteredFavorites.length > 0 ? (
-            <div>
+            <div className="model-picker-section">
               {renderSectionHeader('favorites', <Icon name="star-fill" className="h-4 w-4 text-primary" />, labels.favorites)}
               {!isSectionCollapsed('favorites') && (favoriteSortingEnabled ? (
                 <DndContext sensors={favoriteRowSensors} collisionDetection={closestCenter} onDragEnd={handleFavoriteDragEnd}>
                   <SortableContext items={filteredFavorites.map((entry) => `${entry.providerID}:${entry.modelID}`)} strategy={verticalListSortingStrategy}>
                     {filteredFavorites.map((entry) => {
-                      const rowIndex = currentFlatIndex++;
                       return (
                         <SortableFavoriteModelRow key={`fav-sortable-${entry.providerID}-${entry.modelID}`} id={`${entry.providerID}:${entry.modelID}`} disabled={disabled}>
-                          {(dragHandleProps) => renderRow(entry, 'fav', true, rowIndex, dragHandleProps)}
+                          {(dragHandleProps) => renderRow(entry, 'fav', true, dragHandleProps)}
                         </SortableFavoriteModelRow>
                       );
                     })}
                   </SortableContext>
                 </DndContext>
-              ) : filteredFavorites.map((entry) => renderRow(entry, 'fav', true, currentFlatIndex++)))}
+              ) : filteredFavorites.map((entry) => renderRow(entry, 'fav', true)))}
             </div>
           ) : null}
 
           {filteredRecents.length > 0 ? (
-            <div>
-              {filteredFavorites.length > 0 ? <div className="h-px bg-border/40 my-1" /> : null}
+            <div className="model-picker-section">
+              {filteredFavorites.length > 0 ? <div className="model-picker-section-divider h-px bg-border/40 my-1" /> : null}
               {renderSectionHeader('recent', <Icon name="time" className="h-4 w-4" />, labels.recent)}
-              {!isSectionCollapsed('recent') ? filteredRecents.map((entry) => renderRow(entry, 'recent', true, currentFlatIndex++)) : null}
+              {!isSectionCollapsed('recent') ? filteredRecents.map((entry) => renderRow(entry, 'recent', true)) : null}
             </div>
           ) : null}
 
-          {(filteredFavorites.length > 0 || filteredRecents.length > 0) && filteredProviders.length > 0 ? <div className="h-px bg-border/40 my-1" /> : null}
+          {(filteredFavorites.length > 0 || filteredRecents.length > 0) && filteredProviders.length > 0 ? <div className="model-picker-section-divider h-px bg-border/40 my-1" /> : null}
 
           {providerSortingEnabled ? (
             <DndContext sensors={providerSectionSensors} collisionDetection={closestCenter} onDragEnd={handleProviderDragEnd}>
@@ -957,7 +1006,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
         </div>
       </ScrollableOverlay>
 
-      <div className="px-3 pt-1 pb-1.5 border-t border-border/40 typography-micro text-muted-foreground">
+      <div className="model-picker-footer px-3 pt-1 pb-1.5 border-t border-border/40 typography-micro text-muted-foreground">
         <ModelPickerFooter store={selectionStore} flatModelList={flatModelList} footerContent={footerContent} fallback={labels.keyboardHint} />
       </div>
     </>

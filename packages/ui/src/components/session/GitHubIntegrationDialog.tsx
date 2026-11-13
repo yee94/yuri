@@ -11,10 +11,14 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import { useWorktreeGitHub } from './worktreeDialogRemote';
+import { WorktreeProjectBoundary } from './WorktreeProjectBoundary';
+import { resolveWorktreeDialogProject } from './newWorktreeDialogProject';
+import { toast } from '@/components/ui';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useGitHubAuthQuery } from '@/queries/githubAuthQueries';
 import { validateWorktreeCreate } from '@/lib/worktrees/worktreeManager';
 import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
@@ -31,6 +35,7 @@ import { useI18n } from '@/lib/i18n';
 type GitHubTab = 'issues' | 'prs';
 
 interface GitHubIntegrationDialogProps {
+  projectId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (result: {
@@ -49,28 +54,36 @@ function getValidationKey(projectDirectory: string, branchName: string) {
   return `${projectDirectory}\0${branchName}`;
 }
 
-export function GitHubIntegrationDialog({
+export function GitHubIntegrationDialog(props: GitHubIntegrationDialogProps) {
+  const project = useProjectsStore((state) => resolveWorktreeDialogProject(state.projects, state.activeProjectId, props.projectId));
+  return <WorktreeProjectBoundary project={project} open={props.open} onClose={() => props.onOpenChange(false)}><GitHubIntegrationDialogContent key={project?.id} {...props} /></WorktreeProjectBoundary>;
+}
+
+function GitHubIntegrationDialogContent({
   open,
   onOpenChange,
   onSelect,
+  projectId: requestedProjectId,
 }: GitHubIntegrationDialogProps) {
   const { t } = useI18n();
   const isMobile = useUIStore((state) => state.isMobile);
-  const { github } = useRuntimeAPIs();
-  const githubAuthQuery = useGitHubAuthQuery();
+  const host = useHostRuntime();
+  const entry = host?.entry.location.hostId ? host.entry : undefined;
+  const { git } = useProjectRuntimeAPIs();
+  const { github, auth: githubAuthQuery } = useWorktreeGitHub(entry, open);
   const githubAuthStatus = githubAuthQuery.data ?? null;
   const githubAuthChecked = githubAuthQuery.isFetched;
   const setSettingsDialogOpen = useUIStore((state) => state.setSettingsDialogOpen);
   const setSettingsPage = useUIStore((state) => state.setSettingsPage);
-  const activeProject = useProjectsStore((state) => state.getActiveProject());
+  const activeProject = useProjectsStore((state) => resolveWorktreeDialogProject(state.projects, state.activeProjectId, requestedProjectId));
   const projectId = activeProject?.id ?? null;
   const projectDirectory = activeProject?.path ?? null;
   const projectRef: ProjectRef | null = React.useMemo(() => {
     if (projectDirectory && projectId) {
-      return { id: projectId, path: projectDirectory };
+      return { id: projectId, path: projectDirectory, hostId: activeProject?.hostId, hubId: activeProject?.hubId };
     }
     return null;
-  }, [projectId, projectDirectory]);
+  }, [projectId, projectDirectory, activeProject?.hostId, activeProject?.hubId]);
 
   // State
   const [activeTab, setActiveTab] = React.useState<GitHubTab>('issues');
@@ -260,11 +273,12 @@ export function GitHubIntegrationDialog({
     const requestGeneration = validationGenerationRef.current;
 
     try {
-      const result = await validateWorktreeCreate(projectRef, {
+      const validationArgs = {
         mode: 'new',
         branchName,
         worktreeName: branchName,
-      });
+      } as const;
+      const result = entry ? await git.validateGitWorktree!(projectRef.path, validationArgs) : await validateWorktreeCreate(projectRef, validationArgs);
 
       if (requestGeneration !== validationGenerationRef.current) return;
 
@@ -303,6 +317,7 @@ export function GitHubIntegrationDialog({
   const isGitHubConnected = githubAuthChecked && githubAuthStatus?.connected === true;
 
   const openGitHubSettings = () => {
+    if (entry) { toast.info(t('remoteProjects.configurationReadOnly')); return; }
     setSettingsPage('github');
     setSettingsDialogOpen(true);
   };
@@ -355,6 +370,7 @@ export function GitHubIntegrationDialog({
   // Content for the dialog (shared between mobile and desktop)
   const dialogContent = (
     <>
+      {entry && githubAuthQuery.error ? <div role="alert" className="typography-small text-destructive">{githubAuthQuery.error.message}<Button variant="ghost" size="xs" onClick={() => { void githubAuthQuery.refetch(); }}>{t('remoteProjects.retry')}</Button></div> : null}
       {!isGitHubConnected ? (
         <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
           <Icon name="github" className="h-12 w-12 text-muted-foreground" />

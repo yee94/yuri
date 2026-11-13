@@ -1,5 +1,3 @@
-import './mediaPreviewTransition.css';
-
 function animateImageCrop(source: HTMLElement, image: HTMLImageElement, viewer: HTMLDivElement,
     closing: boolean, complete: () => void): (() => void) | undefined {
     const thumbnail = source instanceof HTMLImageElement ? source : source.querySelector('img');

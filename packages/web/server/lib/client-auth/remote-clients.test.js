@@ -17,6 +17,51 @@ const createRuntime = async () => {
 };
 
 describe('remote client auth runtime', () => {
+  it('establishes a reusable local desktop credential without a password or pairing grant', async () => {
+    const { dir, runtime } = await createRuntime();
+    try {
+      const token = await runtime.ensureDesktopLocalClientToken('');
+      expect((await runtime.authenticateBearerToken(token))?.client).toMatchObject({
+        clientKind: 'desktop-local', usesRelay: false, pairingId: null, expiresAt: null,
+      });
+      expect(await runtime.ensureDesktopLocalClientToken(token)).toBe(token);
+      expect(await runtime.listClients()).toHaveLength(1);
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it.each(['missing', 'expired', 'revoked', 'legacy', 'relay'])('repairs the local desktop credential when %s', async (state) => {
+    const { dir, runtime } = await createRuntime();
+    try {
+      const previous = await runtime.createClient({
+        label: 'Yuri Desktop',
+        ...(state !== 'legacy' ? { clientKind: 'desktop-local', dedupeKey: 'desktop-local' } : {}),
+        ...(state === 'expired' ? { expiresAt: '2000-01-01T00:00:00.000Z' } : {}),
+        ...(state === 'relay' ? { usesRelay: true, authMethod: 'pairing', pairingId: 'paired' } : {}),
+      });
+      if (state === 'revoked') await runtime.revokeClient(previous.client.id);
+      const token = await runtime.ensureDesktopLocalClientToken(state === 'missing' ? 'unknown-token' : previous.token);
+      expect(token).not.toBe(previous.token);
+      expect((await runtime.authenticateBearerToken(token))?.client).toMatchObject({ clientKind: 'desktop-local', usesRelay: false });
+      if (state === 'relay') expect((await runtime.authenticateBearerToken(previous.token))?.ok).toBe(true);
+      else expect(await runtime.authenticateBearerToken(previous.token)).toBe(null);
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('does not issue a local credential when its store cannot be read or written', async () => {
+    const { dir, runtime } = await createRuntime();
+    try {
+      const previous = await runtime.createClient({ label: 'Yuri Desktop' });
+      for (const operation of ['readFile', 'writeFile']) {
+        const failing = createRemoteClientAuthRuntime({ fsPromises: { ...fs,
+          [operation]: async () => { throw new Error('store unavailable'); } },
+          path, crypto, storePath: path.join(dir, 'remote-clients.json') });
+        await expect(failing.ensureDesktopLocalClientToken(previous.token)).rejects.toThrow('store unavailable');
+        expect((await runtime.authenticateBearerToken(previous.token))?.ok).toBe(true);
+        expect(await runtime.listClients()).toHaveLength(1);
+      }
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+
   it('authenticates migrated legacy token hashes and still enforces revocation', async () => {
     const { dir, runtime } = await createRuntime();
     try {

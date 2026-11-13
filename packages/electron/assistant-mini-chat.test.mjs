@@ -47,6 +47,22 @@ const makeHarness = (packaged = false) => {
 };
 
 describe('Assistant Mini Chat native contracts', () => {
+  it.each([false, true])('preserves remote authority on cold and warm main-window handoff (packaged=%s)', async (packaged) => {
+    const { api, events, createAdditionalWindow } = makeHarness(packaged);
+    const mini = await api.createMiniChatWindow({ mode: 'assistant', assistantID: 'a' });
+    const target = { hubId: 'hub', hostId: 'remote', instanceId: 'authority' };
+    await api.focusAssistantMiniChatTarget(mini, { sessionId: 'same-id', directory: '/same/path', target });
+    const primary = await createAdditionalWindow.mock.results[0].value;
+    const url = new URL(primary.url);
+    expect(url.pathname).toBe('/session/same-id');
+    for (const [key, value] of Object.entries(target)) expect(url.searchParams.get(key)).toBe(value);
+    expect(url.searchParams.get('directory')).toBe('/same/path');
+    await api.focusAssistantMiniChatTarget(mini, { sessionId: 'same-id', directory: '/same/path', target });
+    expect(events.at(-1).detail).toEqual({ sessionId: 'same-id', directory: '/same/path', ...target });
+    expect(createAdditionalWindow).toHaveBeenCalledOnce();
+    await expect(api.focusAssistantMiniChatTarget(mini, { sessionId: 'same-id', directory: '/same/path', target: { hostId: 'remote' } })).rejects.toThrow('Invalid remote');
+  });
+
   it.each([false, true])('opens a dedicated Bot URL and deduplicates without losing pin state (packaged=%s)', async (packaged) => {
     const { api, windows, state } = makeHarness(packaged);
     const options = { mode: 'assistant', assistantID: 'bot / one' };

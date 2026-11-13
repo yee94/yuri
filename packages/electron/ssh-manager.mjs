@@ -5,6 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   OPENCODE_AGENTS_ROOT_PROBE_MARKER,
@@ -75,6 +76,10 @@ const REMOTE_NODE_CANDIDATE_GLOBS = [
   '"$HOME"/.local/share/mise/installs/node/*/bin/node',
   '"$HOME"/.volta/bin/node',
   '/usr/local/n/versions/node/*/bin/node',
+  '/opt/homebrew/opt/node*/bin/node',
+  '/usr/local/opt/node*/bin/node',
+  '/usr/local/bin/node',
+  '/usr/bin/node',
 ];
 const LOCAL_HOST_ID = 'local';
 // This desktop starts the managed remote, so the operator token is the same
@@ -111,6 +116,8 @@ export const buildManagedServeEnvPrefix = (uiPassword) => {
 };
 
 export const MANAGED_SSH_BOOTSTRAP_ERROR_CODES = [
+  'shellStartup',
+  'configSync',
   'nodeRuntimeMissing',
   'packageManagerMissing',
   'nativeBinding',
@@ -206,6 +213,8 @@ export const buildManagedServeCommand = (instance, desiredPort, uiPassword, opti
  */
 export const classifyManagedSshBootstrapError = (raw) => {
   const text = String(raw || '');
+  if (/shell startup|fresh .* shell|SSH command did not start/i.test(text)) return 'shellStartup';
+  if (/Initial SSH config sync failed/i.test(text)) return 'configSync';
   if (/requires Node\.js \d+|no supported Node runtime/i.test(text)) return 'nodeRuntimeMissing';
   if (/neither bun nor npm/i.test(text)) return 'packageManagerMissing';
   if (/better-sqlite3|node_gyp_bins|gyp ERR|failed to prepare better-sqlite3/i.test(text)) return 'nativeBinding';
@@ -233,6 +242,8 @@ export const classifyManagedSshBootstrapError = (raw) => {
 };
 
 const SHORT_BOOTSTRAP_ERROR_DETAIL = {
+  shellStartup: 'Remote shell startup interfered with SSH commands; check shell startup files',
+  configSync: 'Initial SSH config sync failed; reconnect to retry local configuration sync',
   nodeRuntimeMissing: 'Managed SSH remote requires Node.js 22+; no supported Node runtime was found on the remote host',
   packageManagerMissing: 'Remote host has neither bun nor npm available to install Yuri',
   nativeBinding: 'failed to prepare better-sqlite3 for the selected remote Node runtime',
@@ -287,20 +298,21 @@ const compareRemoteNodeSemver = (left, right) => {
 
 /**
  * Whether `next` should replace `current` as the managed SSH Node runtime.
- * Policy: even LTS major beats odd; sibling `npm` beats a lone `node`; then highest semver.
- * @param {{ even: boolean, hasNpm?: boolean, version: string } | null} current
- * @param {{ even: boolean, hasNpm?: boolean, version: string } | null} next
+ * Policy: a working installed SQLite binding wins; then even LTS, sibling npm, and semver.
+ * @param {{ even: boolean, hasNpm?: boolean, sqliteCompatible?: boolean, version: string } | null} current
+ * @param {{ even: boolean, hasNpm?: boolean, sqliteCompatible?: boolean, version: string } | null} next
  */
 export const isPreferredRemoteManagedNode = (current, next) => {
   if (!next) return false;
   if (!current) return true;
+  if (Boolean(next.sqliteCompatible) !== Boolean(current.sqliteCompatible)) return Boolean(next.sqliteCompatible);
   if (next.even !== current.even) return next.even;
   if (Boolean(next.hasNpm) !== Boolean(current.hasNpm)) return Boolean(next.hasNpm);
   return compareRemoteNodeSemver(current.version, next.version) > 0;
 };
 
 /**
- * @param {Array<{ bin?: string, version: string, hasNpm?: boolean }>} candidates
+ * @param {Array<{ bin?: string, version: string, hasNpm?: boolean, sqliteCompatible?: boolean }>} candidates
  */
 export const selectPreferredRemoteManagedNode = (candidates) => {
   let best = null;
@@ -323,8 +335,20 @@ best_node_bin=""
 best_node_version=""
 best_node_even=""
 best_node_has_npm=""
+best_node_native=0
+best_node_yuri_bin=""
+discovered_yuri_bin="$(command -v yuri 2>/dev/null || true)"
+select_node() {
+  best_node_bin="$candidate"
+  best_node_version="$version"
+  best_node_even="$even"
+  best_node_has_npm="$has_npm"
+  best_node_native="$native"
+  best_node_yuri_bin="$installed_yuri"
+}
 consider_node() {
   candidate="$1"
+  if [ -z "$discovered_yuri_bin" ] && [ -x "$(dirname "$candidate")/yuri" ]; then discovered_yuri_bin="$(dirname "$candidate")/yuri"; fi
   [ -x "$candidate" ] || return 0
   version="$("$candidate" -p 'process.versions.node' 2>/dev/null || true)"
   major="\${version%%.*}"
@@ -334,39 +358,34 @@ consider_node() {
   [ "$((major % 2))" -eq 0 ] && even=1
   has_npm=0
   [ -x "$(dirname "$candidate")/npm" ] && has_npm=1
+  native=0
+  installed_yuri="$(dirname "$candidate")/yuri"
+  [ -x "$installed_yuri" ] || installed_yuri="$discovered_yuri_bin"
+  if [ -n "$installed_yuri" ] && "$candidate" -e 'const fs=require("node:fs"); const {createRequire}=require("node:module"); const entry=fs.realpathSync(process.argv[1]); const Database=createRequire(entry)("better-sqlite3"); const db=new Database(":memory:"); db.close()' "$installed_yuri" >/dev/null 2>&1; then native=1; fi
+  if [ -n "$best_node_version" ]; then
+    if [ "$best_node_native" -eq 1 ] && [ "$native" -eq 0 ]; then return 0; fi
+    if [ "$best_node_native" -eq 0 ] && [ "$native" -eq 1 ]; then best_node_version=""; fi
+  fi
   if [ -z "$best_node_version" ]; then
-    best_node_bin="$candidate"
-    best_node_version="$version"
-    best_node_even="$even"
-    best_node_has_npm="$has_npm"
+    select_node
     return 0
   fi
   if [ "$even" -eq 1 ] && [ "$best_node_even" -eq 0 ]; then
-    best_node_bin="$candidate"
-    best_node_version="$version"
-    best_node_even="$even"
-    best_node_has_npm="$has_npm"
+    select_node
     return 0
   fi
   if [ "$even" -eq 0 ] && [ "$best_node_even" -eq 1 ]; then
     return 0
   fi
   if [ "$has_npm" -eq 1 ] && [ "$best_node_has_npm" -eq 0 ]; then
-    best_node_bin="$candidate"
-    best_node_version="$version"
-    best_node_even="$even"
-    best_node_has_npm="$has_npm"
+    select_node
     return 0
   fi
   if [ "$has_npm" -eq 0 ] && [ "$best_node_has_npm" -eq 1 ]; then
     return 0
   fi
-  if [ "$(printf '%s\\n%s\\n' "$best_node_version" "$version" | sort -V | tail -n 1)" = "$version" ] \\
-    && [ "$version" != "$best_node_version" ]; then
-    best_node_bin="$candidate"
-    best_node_version="$version"
-    best_node_even="$even"
-    best_node_has_npm="$has_npm"
+  if awk -v current="$best_node_version" -v proposed="$version" 'BEGIN { split(current,a,"."); split(proposed,b,"."); for(i=1;i<=3;i++) { if(b[i]+0>a[i]+0) exit 0; if(b[i]+0<a[i]+0) exit 1; } exit 1; }'; then
+    select_node
   fi
 }
 `;
@@ -382,11 +401,31 @@ prepend_path "$HOME/.bun/bin"
 prepend_path "$HOME/.opencode/bin"
 prepend_path "$HOME/.local/bin"
 prepend_path "$HOME/.npm/node_modules/bin"
-if command -v node >/dev/null 2>&1; then consider_node "$(command -v node)"; fi
-for candidate in ${REMOTE_NODE_CANDIDATE_GLOBS.join(' ')}; do consider_node "$candidate"; done
-if [ -n "$best_node_bin" ]; then prepend_path "$(dirname "$best_node_bin")"; fi
+[ -r "$HOME/.config/yuri/ssh-runtime.sh" ] && . "$HOME/.config/yuri/ssh-runtime.sh"
+if [ -r "$HOME/.config/yuri/ssh-opencode-path" ]; then IFS= read -r YURI_SSH_OPENCODE < "$HOME/.config/yuri/ssh-opencode-path"; fi
+[ -x "$YURI_SSH_YURI" ] || YURI_SSH_YURI=""
+[ -x "$YURI_SSH_OPENCODE" ] || YURI_SSH_OPENCODE=""
+if [ -n "$YURI_SSH_NODE" ]; then consider_node "$YURI_SSH_NODE"; fi
+if [ -z "$best_node_bin" ]; then
+  yuri_candidate="$(command -v yuri 2>/dev/null || true)"
+  if [ -n "$yuri_candidate" ]; then consider_node "$(dirname "$yuri_candidate")/node"; fi
+  if command -v node >/dev/null 2>&1; then consider_node "$(command -v node)"; fi
+  for candidate in ${REMOTE_NODE_CANDIDATE_GLOBS.join(' ')}; do consider_node "$candidate"; done
+fi
+if [ -n "$best_node_bin" ]; then PATH="$(dirname "$best_node_bin"):$PATH"; fi
 if command -v npm >/dev/null 2>&1; then npm_prefix="$(npm prefix -g 2>/dev/null || true)"; [ -n "$npm_prefix" ] && prepend_path "$npm_prefix/bin"; fi
+if [ -n "$best_node_bin" ]; then PATH="$(dirname "$best_node_bin"):$PATH"; fi
+if [ -z "$best_node_yuri_bin" ]; then best_node_yuri_bin="$discovered_yuri_bin"; fi
+if [ -n "$best_node_yuri_bin" ]; then PATH="$(dirname "$best_node_yuri_bin"):$PATH"; fi
+if [ -x "$YURI_SSH_YURI" ]; then PATH="$(dirname "$YURI_SSH_YURI"):$PATH"; fi
+if [ -x "$YURI_SSH_OPENCODE" ]; then PATH="$(dirname "$YURI_SSH_OPENCODE"):$PATH"; fi
+if [ -n "$best_node_bin" ]; then PATH="$(dirname "$best_node_bin"):$PATH"; fi
 export PATH
+if [ -n "$YURI_SSH_YURI" ]; then yuri() { "$YURI_SSH_YURI" "$@"; }; fi
+if [ -n "$YURI_SSH_OPENCODE" ]; then
+  opencode() { "$YURI_SSH_OPENCODE" "$@"; }
+  export OPENCODE_BINARY="$YURI_SSH_OPENCODE"
+fi
 `;
 
 /**
@@ -401,14 +440,14 @@ export const buildRemoteNativeBindingRepairScript = (options = {}) => {
   const reinstallSpec = packageName && version ? `${packageName}@${version}` : '';
   const quotedSpec = reinstallSpec ? shellQuote(reinstallSpec) : '';
   return `
-yuri_bin="$(command -v yuri)"
+yuri_bin="\${YURI_SSH_YURI:-$(command -v yuri)}"
 if [ -z "$yuri_bin" ]; then
   echo "yuri CLI is not on PATH after managed install" >&2
   exit 1
 fi
 
 locate_yuri() {
-  yuri_bin="$(command -v yuri)"
+  yuri_bin="\${YURI_SSH_YURI:-$(command -v yuri)}"
   [ -n "$yuri_bin" ] || return 1
   yuri_entry="$(node -e "process.stdout.write(require('fs').realpathSync(process.argv[1]))" "$yuri_bin")"
   yuri_root="$(CDPATH= cd -- "$(dirname "$yuri_entry")/.." && pwd)"
@@ -429,6 +468,9 @@ probe_sqlite() {
 }
 
 prepare_native_toolchain() {
+  if [ -n "$PYTHON" ] && ! "$PYTHON" -c 'import sys; assert sys.version_info >= (3, 8)' >/dev/null 2>&1; then unset PYTHON npm_config_python; fi
+  if [ -n "$npm_config_python" ] && ! "$npm_config_python" -c 'import sys; assert sys.version_info >= (3, 8)' >/dev/null 2>&1; then unset npm_config_python; fi
+  if [ -z "$PYTHON" ] && [ -n "$npm_config_python" ]; then export PYTHON="$npm_config_python"; fi
   if [ -z "$PYTHON" ]; then
     for py in /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.10 /usr/bin/python3.9 /usr/bin/python3.8 /usr/bin/python3 /usr/local/bin/python3; do
       if [ -x "$py" ]; then export PYTHON="$py"; break; fi
@@ -778,18 +820,27 @@ const buildSshArgs = (parsed, preDestinationArgs = [], remoteCommand = null) => 
   return args;
 };
 
+const REMOTE_COMMAND_MARKER = '__YURI_SSH_COMMAND_STARTED__\n';
+const buildRemoteShellCommand = (script) => `env ENV= BASH_ENV= /bin/sh -c ${shellQuote(`printf '${REMOTE_COMMAND_MARKER}'\n${script}`)}`;
+const remoteCommandBody = (stdout) => {
+  const marker = Buffer.isBuffer(stdout) ? Buffer.from(REMOTE_COMMAND_MARKER) : REMOTE_COMMAND_MARKER;
+  const index = stdout.indexOf(marker);
+  if (index < 0) throw new Error('SSH command did not start; check remote shell startup files');
+  return stdout.slice(index + marker.length);
+};
+
 const runRemoteCommand = async (parsed, controlPath, script, timeoutSec = DEFAULT_CONNECTION_TIMEOUT_SEC) => {
   const args = buildSshArgs(parsed, [
     '-o', 'ControlMaster=no',
     '-o', `ControlPath=${controlPath}`,
     '-o', `ConnectTimeout=${timeoutSec}`,
     '-T',
-  ], `sh -lc ${shellQuote(script)}`);
+  ], buildRemoteShellCommand(script));
   const { code, stdout, stderr } = await runOutput('ssh', args);
   if (code !== 0) {
     throw new Error((stderr || stdout || 'Remote command failed').trim());
   }
-  return stdout;
+  return remoteCommandBody(stdout);
 };
 
 /**
@@ -807,7 +858,7 @@ const runRemoteCommandWithInput = async (parsed, controlPath, script, input, tim
     '-o', `ControlPath=${controlPath}`,
     '-o', `ConnectTimeout=${timeoutSec}`,
     '-T',
-  ], `sh -lc ${shellQuote(script)}`);
+  ], buildRemoteShellCommand(script));
 
   return await new Promise((resolve, reject) => {
     const child = spawn('ssh', args, {
@@ -834,7 +885,9 @@ const runRemoteCommandWithInput = async (parsed, controlPath, script, input, tim
         reject(new Error((stderr || stdout || 'Remote command failed').trim()));
         return;
       }
-      resolve({ code: exitCode, stdout, stderr });
+      try {
+        resolve({ code: exitCode, stdout: remoteCommandBody(stdout), stderr });
+      } catch (error) { reject(error); }
     });
 
     try {
@@ -864,7 +917,7 @@ const runRemoteCommandBinary = async (parsed, controlPath, script, timeoutSec = 
     '-o', `ControlPath=${controlPath}`,
     '-o', `ConnectTimeout=${timeoutSec}`,
     '-T',
-  ], `sh -lc ${shellQuote(script)}`);
+  ], buildRemoteShellCommand(script));
 
   return await new Promise((resolve, reject) => {
     const child = spawn('ssh', args, {
@@ -886,7 +939,7 @@ const runRemoteCommandBinary = async (parsed, controlPath, script, timeoutSec = 
         reject(new Error((stderr || 'Remote binary command failed').trim()));
         return;
       }
-      resolve(Buffer.concat(chunks));
+      try { resolve(remoteCommandBody(Buffer.concat(chunks))); } catch (error) { reject(error); }
     });
   });
 };
@@ -1075,6 +1128,7 @@ export class ElectronSshManager {
     this.emit = options.emit;
     this.logs = new Map();
     this.statuses = new Map();
+    this.statusListeners = new Map();
     this.sessions = new Map();
     this.monitorTimers = new Map();
     this.reconnectAttempts = new Map();
@@ -1156,6 +1210,18 @@ export class ElectronSshManager {
     };
     this.statuses.set(id, status);
     this.emit(SSH_STATUS_EVENT, status);
+    for (const listener of this.statusListeners.get(id) || []) listener(status);
+  }
+
+  subscribeStatus(id, listener) {
+    let listeners = this.statusListeners.get(id);
+    if (!listeners) this.statusListeners.set(id, listeners = new Set());
+    listeners.add(listener);
+    listener(this.statusSnapshotForInstance(id));
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) this.statusListeners.delete(id);
+    };
   }
 
   clearRetryAttempt(id) {
@@ -1262,6 +1328,23 @@ export class ElectronSshManager {
     return { instances: Array.isArray(root.desktopSshInstances) ? root.desktopSshInstances.map((instance) => this.migrateStoredInstance(instance)) : [] };
   }
 
+  async saveSessionConnection(input) {
+    const instance = this.sanitizeInstance(input);
+    let saved = instance;
+    await this.mutateSettingsRoot((root) => {
+      const instances = Array.isArray(root.desktopSshInstances) ? root.desktopSshInstances : [];
+      saved = instances.find(({ id }) => id === instance.id) ?? instance;
+      if (saved !== instance) return root;
+      root.desktopSshInstances = [...instances, instance];
+      const hosts = Array.isArray(root.desktopHosts) ? root.desktopHosts : [];
+      if (!hosts.some(({ id }) => id === instance.id)) {
+        root.desktopHosts = [...hosts, { id: instance.id, label: instance.nickname || instance.sshParsed.destination, url: 'http://127.0.0.1/' }];
+      }
+      return root;
+    });
+    return saved;
+  }
+
   async setInstances(config) {
     await this.mutateSettingsRoot((root) => {
       const previousSshIds = new Set(
@@ -1274,6 +1357,9 @@ export class ElectronSshManager {
 
       const hosts = Array.isArray(root.desktopHosts) ? root.desktopHosts.filter(Boolean) : [];
       const nextIds = new Set(instances.map((instance) => instance.id));
+      if (Array.isArray(root.desktopSshInitialConfigSyncPending)) {
+        root.desktopSshInitialConfigSyncPending = root.desktopSshInitialConfigSyncPending.filter((id) => nextIds.has(id));
+      }
 
       const filteredHosts = hosts.filter((entry) => {
         const id = String(entry?.id || '').trim();
@@ -1676,21 +1762,13 @@ export class ElectronSshManager {
   }
 
   async remoteCommandExists(parsed, controlPath, commandName) {
-    try {
-      const output = await this.runManagedRemoteCommand(parsed, controlPath, `command -v ${commandName} >/dev/null 2>&1 && echo yes || echo no`);
-      return output.trim() === 'yes';
-    } catch {
-      return false;
-    }
+    const output = await this.runManagedRemoteCommand(parsed, controlPath, `command -v ${commandName} >/dev/null 2>&1 && echo yes || echo no`);
+    return output.trim() === 'yes';
   }
 
   async currentRemoteYuriVersion(parsed, controlPath) {
-    try {
-      const output = await this.runManagedRemoteCommand(parsed, controlPath, 'yuri --version 2>/dev/null || true');
-      return parseVersionToken(output);
-    } catch {
-      return null;
-    }
+    const output = await this.runManagedRemoteCommand(parsed, controlPath, 'yuri --version 2>/dev/null || true');
+    return parseVersionToken(output);
   }
 
   async runManagedRemoteCommand(parsed, controlPath, script) {
@@ -1756,11 +1834,23 @@ const shell = process.env.SHELL || '/bin/sh';
 const kind = path.basename(shell);
 const quote = (value) => "'" + value.replace(/'/g, "'\\''") + "'";
 const directories = [...new Set([...process.argv.slice(1).filter(Boolean).map((p) => path.dirname(p)), path.dirname(process.execPath)])];
+const opencode = process.argv[1];
+const yuri = process.argv[2];
+const result = spawnSync(opencode, ['--version'], { encoding: 'utf8', timeout: 20000 });
+if (result.status !== 0 || !/(?:^|\s)v?2\.\d+\.\d+(?:\S*)?(?:\s|$)/m.test(result.stdout)) {
+  throw new Error('OpenCode CLI is unavailable at its absolute executable path');
+}
+const runtimeFile = path.join(home, '.config', 'yuri', 'ssh-runtime.sh');
+fs.mkdirSync(path.dirname(runtimeFile), { recursive: true });
+const runtime = 'YURI_SSH_NODE=' + quote(fs.realpathSync(process.execPath)) + '\n'
+  + 'YURI_SSH_YURI=' + quote(yuri || '') + '\n'
+  + 'YURI_SSH_OPENCODE=' + quote(opencode || '') + '\n'
+  + 'export PATH=' + quote([path.dirname(process.execPath), ...directories].join(':')) + ':"$PATH"\n';
+fs.writeFileSync(runtimeFile + '.tmp', runtime, { mode: 0o600 });
+fs.renameSync(runtimeFile + '.tmp', runtimeFile);
 const files = [];
 if (kind === 'zsh') {
-  const probe = spawnSync(shell, ['-c', 'printf "%s" "$ZDOTDIR"'], { encoding: 'utf8', timeout: 15000 });
-  const zdotdir = probe.stdout || home;
-  if (probe.status !== 0 || !path.isAbsolute(zdotdir)) throw new Error('OpenCode CLI: cannot resolve zsh startup directory');
+  const zdotdir = process.env.ZDOTDIR && path.isAbsolute(process.env.ZDOTDIR) ? process.env.ZDOTDIR : home;
   files.push(path.join(zdotdir, '.zprofile'), path.join(zdotdir, '.zshrc'));
 } else if (kind === 'bash') {
   files.push(path.join(home, '.bashrc'));
@@ -1769,8 +1859,6 @@ if (kind === 'zsh') {
   files.push(path.join(home, '.profile'));
 } else if (kind === 'fish') {
   files.push(path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'fish', 'config.fish'));
-} else {
-  throw new Error('OpenCode CLI: unsupported login shell ' + kind);
 }
 const envFile = path.join(home, '.config', 'yuri', kind === 'fish' ? 'ssh-path.fish' : 'ssh-path.sh');
 fs.mkdirSync(path.dirname(envFile), { recursive: true });
@@ -1781,22 +1869,17 @@ fs.writeFileSync(envFile + '.tmp', content, { mode: 0o600 });
 fs.renameSync(envFile + '.tmp', envFile);
 const line = (kind === 'fish' ? 'source ' : '. ') + quote(envFile) + ' # Yuri SSH CLI PATH';
 for (const file of files) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  if (!existing.split('\n').includes(line)) fs.appendFileSync(file, '\n' + line + '\n');
-}
-// Drop the managed PATH so a successful probe proves startup files actually work.
-for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-lic', '-ic'] : ['-lc'])) {
-  const result = spawnSync(shell, [flags, 'opencode --version'], {
-    env: { ...process.env, PATH: '/usr/local/bin:/usr/bin:/bin' }, encoding: 'utf8', timeout: 20000,
-  });
-  if (result.status !== 0 || !/(?:^|\s)v?2\.\d+\.\d+(?:\S*)?(?:\s|$)/m.test(result.stdout)) {
-    throw new Error('OpenCode CLI is unavailable in a fresh ' + kind + ' shell; check shell startup PATH overrides');
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    if (!existing.split('\n').includes(line)) fs.appendFileSync(file, '\n' + line + '\n');
+  } catch {
+    console.error('Remote shell startup PATH could not be configured for ' + path.basename(file));
   }
 }
 `;
     await this.runManagedRemoteCommand(parsed, controlPath,
-      `node -e ${shellQuote(script)} "$(command -v opencode)" "$(command -v yuri)"`);
+      `node -e ${shellQuote(script)} "\${YURI_SSH_OPENCODE:-$(command -v opencode)}" "\${YURI_SSH_YURI:-$(command -v yuri)}"`);
   }
 
   async ensureRemoteYuriNativeBinding(parsed, controlPath) {
@@ -1811,18 +1894,35 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
   }
 
   async currentRemoteOpenCodeVersion(parsed, controlPath) {
-    try {
-      const output = await this.runManagedRemoteCommand(
-        parsed,
-        controlPath,
-        'opencode --version 2>/dev/null || true',
-      );
-      const version = parseVersionToken(output);
-      if (!isOpenCode2xVersionToken(version)) return null;
-      return version;
-    } catch {
-      return null;
-    }
+    const output = await this.runManagedRemoteCommand(parsed, controlPath, 'opencode --version 2>/dev/null || true');
+    const version = parseVersionToken(output);
+    if (isOpenCode2xVersionToken(version)) return version;
+    const discovered = await this.runManagedRemoteCommand(parsed, controlPath, `
+try_opencode() {
+  case "$1" in /*) ;; *) return 1 ;; esac
+  [ -x "$1" ] || return 1
+  cli_version="$("$1" --version 2>/dev/null)" || return 1
+  printf '%s' "$cli_version" | grep -Eq '(^|[[:space:]])v?2\\.[0-9]+\\.[0-9]+([[:space:]]|[-+]|$)' || return 1
+  mkdir -p "$HOME/.config/yuri" || exit 1
+  (umask 077; printf '%s\\n' "$1" > "$HOME/.config/yuri/ssh-opencode-path.tmp") || exit 1
+  mv "$HOME/.config/yuri/ssh-opencode-path.tmp" "$HOME/.config/yuri/ssh-opencode-path" || exit 1
+  printf '%s\\n' "$cli_version"
+}
+find_opencode() {
+  for cli in "$HOME/.bun/bin/opencode" "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "$npm_prefix/bin/opencode"; do
+    if try_opencode "$cli"; then return 0; fi
+  done
+  saved_ifs="$IFS"; IFS=:
+  for directory in $PATH; do
+    if try_opencode "$directory/opencode"; then IFS="$saved_ifs"; return 0; fi
+  done
+  IFS="$saved_ifs"
+  return 0
+}
+find_opencode
+`);
+    const found = parseVersionToken(discovered);
+    return isOpenCode2xVersionToken(found) ? found : null;
   }
 
   async installYuriManaged(parsed, controlPath, version, preferred) {
@@ -1834,13 +1934,13 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
     const commands = [];
 
     if (preferred === 'bun') {
-      if (hasBun) commands.push(`bun add -g ${YURI_NPM_PACKAGE}@${version}`);
+      if (hasBun) commands.push(`bun add -g ${YURI_NPM_PACKAGE}@${version} --trust`);
       if (hasNpm) commands.push(npmInstall);
     } else if (preferred === 'npm') {
       if (hasNpm) commands.push(npmInstall);
-      if (hasBun) commands.push(`bun add -g ${YURI_NPM_PACKAGE}@${version}`);
+      if (hasBun) commands.push(`bun add -g ${YURI_NPM_PACKAGE}@${version} --trust`);
     } else {
-      if (hasBun) commands.push(`bun add -g ${YURI_NPM_PACKAGE}@${version}`);
+      if (hasBun) commands.push(`bun add -g ${YURI_NPM_PACKAGE}@${version} --trust`);
       if (hasNpm) commands.push(npmInstall);
     }
 
@@ -1852,8 +1952,8 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
     for (const command of commands) {
       try {
         await this.runManagedRemoteCommand(parsed, controlPath, command);
-        if (await this.currentRemoteYuriVersion(parsed, controlPath)) return;
-        lastError = new Error('Yuri installation completed but the executable is unavailable');
+        if (await this.currentRemoteYuriVersion(parsed, controlPath) === version) return;
+        lastError = new Error('Yuri installation completed but the executable is unavailable at the requested version');
       } catch (error) {
         lastError = error;
       }
@@ -2372,8 +2472,13 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
    * @param {{ direction?: 'push' | 'pull', selections?: object }} [options]
    */
   async applyOpencodeConfigSync(id, options = {}) {
+    return this.applyOpencodeConfigSyncToSession(this.resolveManagedReadySession(id), options);
+  }
+
+  async applyOpencodeConfigSyncToSession(connection, options = {}) {
+    const { id, session, target } = connection;
     return this.runExclusiveSync(id, 'apply', async ({ syncRunId, targetId }) => {
-      const { id: trimmed, session, target } = this.resolveManagedReadySession(id);
+      const trimmed = id;
       assertTargetCapability(target, 'tarExtract');
       const home = os.homedir();
       const { direction, selections } = this.normalizeSyncOptions(options);
@@ -2522,6 +2627,11 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
     this.setStatus(instance.id, 'remote_probe', 'Checking remote Yuri installation');
     await this.ensureManagedNodeRuntime(parsed, controlPath);
     const installedVersion = await this.currentRemoteYuriVersion(parsed, controlPath);
+    const firstInstall = !installedVersion && !(await this.remoteCommandExists(parsed, controlPath, 'yuri'));
+    if (!installedVersion && !firstInstall) {
+      await this.runManagedRemoteCommand(parsed, controlPath, 'yuri --version');
+      throw new Error('Yuri installation completed but the executable is unavailable');
+    }
     const servers = installedVersion ? await this.discoverManagedRemoteServers(parsed, controlPath) : [];
     const existing = servers.find((server) => server.port === instance.remoteYuri.preferredPort) || servers[0];
     const desiredPort = instance.remoteYuri.preferredPort || existing?.port || randomPortCandidate(instance.id);
@@ -2542,6 +2652,7 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
       if (!reusable || server.port !== existing.port) await this.stopRemoteServer(parsed, controlPath, server.port);
     }
     if (!installedVersion) {
+      if (firstInstall) await this.setInitialConfigSyncPending(instance.id, true);
       this.setStatus(instance.id, 'installing', 'Installing Yuri on remote host');
       await this.installYuriManaged(parsed, controlPath, this.appVersion, instance.remoteYuri.installMethod);
     } else if (installedVersion !== this.appVersion) {
@@ -2564,6 +2675,36 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
       throw new Error('Managed Yuri server failed to become reachable');
     }
     return { remotePort, startedByUs: true, uiPassword };
+  }
+
+  async setInitialConfigSyncPending(id, pending) {
+    await this.mutateSettingsRoot((root) => {
+      const ids = new Set(Array.isArray(root.desktopSshInitialConfigSyncPending) ? root.desktopSshInitialConfigSyncPending : []);
+      if (pending) ids.add(id); else ids.delete(id);
+      root.desktopSshInitialConfigSyncPending = [...ids];
+      return root;
+    });
+  }
+
+  async initializeRemoteConfig(id, session) {
+    if (session.instance.remoteYuri.mode !== 'managed'
+      || !this.readSettingsRoot().desktopSshInitialConfigSyncPending?.includes(id)) return;
+    this.setStatus(id, 'forwarding', 'Syncing initial local OpenCode configuration');
+    try {
+      const target = createSshSyncTarget(id, session.instance);
+      const magpie = await this.getLocalSyncExecutor().magpieInventory();
+      const result = await this.applyOpencodeConfigSyncToSession({ id, session, target }, {
+        direction: SYNC_DIRECTION_PUSH,
+        selections: { providerCredentials: !magpie.installed, magpie: magpie.installed && magpie.available },
+      });
+      if (result.magpieWarnings?.length) {
+        this.appendLogWithLevel(id, 'WARN', `Initial config sync Magpie warnings: ${result.magpieWarnings.join(', ')}`);
+      }
+      await this.setInitialConfigSyncPending(id, false);
+      return result;
+    } catch (error) {
+      throw new Error(`Initial SSH config sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async disconnectInternal(id, reportIdle) {
@@ -2705,11 +2846,19 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
     };
     this.sessions.set(id, session);
 
+    try {
+      session.initialConfigSyncResult = await this.initializeRemoteConfig(id, session);
+    } catch (error) {
+      const warning = summarizeManagedSshBootstrapError(error instanceof Error ? error.message : String(error));
+      this.appendLogWithLevel(id, 'WARN', warning);
+      extraErrors.push(warning);
+    }
+
     this.clearRetryAttempt(id);
     this.setStatus(
       id,
       'ready',
-      extraErrors.length === 0 ? 'SSH instance is ready' : `SSH instance is ready with forward warnings: ${extraErrors.join('; ')}`,
+      extraErrors.length === 0 ? 'SSH instance is ready' : `SSH instance is ready with warnings: ${extraErrors.join('; ')}`,
       localUrl,
       localPort,
       remotePort,
@@ -2791,6 +2940,23 @@ for (const flags of (kind === 'bash' || kind === 'zsh' || kind === 'fish' ? ['-l
       }
     };
     this.monitorTimers.set(id, setTimeout(tick, MONITOR_INITIAL_POLL_MS));
+  }
+
+  async ensureConnected(id) {
+    const trimmed = String(id || '').trim();
+    if (this.connecting.has(trimmed)) return this.connecting.get(trimmed);
+    const instance = this.readInstances().instances.find((entry) => entry?.id === trimmed);
+    const session = this.sessions.get(trimmed);
+    if (instance && session && this.statuses.get(trimmed)?.phase === 'ready') {
+      const desired = this.sanitizeInstance(instance);
+      const initialized = this.sanitizeInstance(session.instance);
+      // Bootstrap persists its chosen forward port, including an automatically allocated port.
+      if (desired.localForward.preferredLocalPort === session.localPort) {
+        initialized.localForward.preferredLocalPort = session.localPort;
+      }
+      if (isDeepStrictEqual(desired, initialized)) return;
+    }
+    return this.connect(trimmed);
   }
 
   async connect(id) {

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { useEvent } from '@reactuses/core';
 
 import { AssistantView } from '@/components/assistants/AssistantView';
@@ -167,6 +168,10 @@ export function MobilePhoneShell({
       popAssistantSettings();
       return true;
     }
+    if ((secondary?.kind === 'draft' || secondary?.kind === 'chat') && parentSessionTarget?.onSelect) {
+      parentSessionTarget.onSelect();
+      return true;
+    }
     if (secondary?.kind === 'chat' && secondary.routes.length > 1) {
       popChatSessionStore();
       return true;
@@ -191,12 +196,14 @@ export function MobilePhoneShell({
   // the current target here so the host re-renders when it changes (deep
   // links, edge swipe, draft materialization all flow through the store).
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const remoteSession = useSessionNavigationStore((state) => state.remoteSession);
   const currentSessionDirectory = useSessionUIStore((state) =>
     currentSessionId ? state.getDirectoryForSession(currentSessionId) : null,
   );
 
   React.useEffect(() => {
     const secondary = useMobileNavigationStore.getState().secondary;
+    if (remoteSession) return;
     if (secondary?.kind === 'draft' && currentSessionId) {
       materializeDraftSession({ sessionId: currentSessionId, directory: currentSessionDirectory });
       return;
@@ -213,18 +220,18 @@ export function MobilePhoneShell({
     ) {
       replaceChatSession({ sessionId: currentSessionId, directory: currentSessionDirectory });
     }
-  }, [currentSessionDirectory, currentSessionId, materializeDraftSession, replaceChatSession]);
+  }, [currentSessionDirectory, currentSessionId, materializeDraftSession, replaceChatSession, remoteSession]);
 
   React.useEffect(() => {
     const secondary = useMobileNavigationStore.getState().secondary;
-    if (secondary?.kind !== 'chat' || !parentSessionTarget) return;
+    if (secondary?.kind !== 'chat' || !parentSessionTarget || parentSessionTarget.onSelect || remoteSession) return;
     const top = secondary.routes.at(-1);
     if (!top || top.sessionId !== currentSessionId) return;
     reconcileChatPredecessor({
       sessionId: parentSessionTarget.id,
       directory: parentSessionTarget.directory,
     });
-  }, [currentSessionId, parentSessionTarget, reconcileChatPredecessor]);
+  }, [currentSessionId, parentSessionTarget, reconcileChatPredecessor, remoteSession]);
 
   const scheduledTabBody: React.ReactNode = typeof scheduledContent === 'function'
     ? scheduledContent(registerScheduledEditorBack, handleScheduledEditorActiveChange)
@@ -331,7 +338,7 @@ export function MobilePhoneShell({
       onBack: handleSecondaryBack,
       content: <MobileBtwPage route={btw} />,
     }] : [...originPages, ...chatPages];
-  }, [secondaryKind, navigation.secondary, handleSecondaryBack, pushAssistantSettings, instancesSecondaryPage, renderChat, t]);
+   }, [secondaryKind, navigation.secondary, handleSecondaryBack, pushAssistantSettings, instancesSecondaryPage, renderChat, t]);
 
   return (
     <MobileTabsRoot

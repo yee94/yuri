@@ -1,0 +1,198 @@
+.yuri-contact-conversation {
+  --contact-column-width: 42rem;
+  --contact-body-size: var(--text-markdown);
+  --contact-body-leading: 1.65;
+  --contact-avatar-gutter: 2.875rem;
+  --contact-bubble-radius: 1.125rem;
+  --contact-bubble-join-radius: 0.375rem;
+  --contact-time-size: 0.6875rem;
+}
+
+.yuri-contact-conversation[data-contact-layout="desktop"] {
+  --contact-column-width: 45.5rem;
+  --contact-body-size: var(--text-ui-label);
+  --contact-avatar-gutter: 2.125rem;
+  --contact-bubble-radius: 1rem;
+  --contact-time-size: 0.625rem;
+}
+
+.yuri-contact-conversation [data-assistant-contact-content] {
+  max-width: var(--contact-column-width);
+}
+
+.yuri-contact-conversation [data-contact-composer-column] {
+  width: 100%;
+  max-width: var(--contact-column-width);
+  margin-inline: auto;
+}
+
+.yuri-contact-conversation[data-composer-overlay] {
+  position: relative;
+}
+
+.yuri-contact-conversation[data-composer-overlay] [data-assistant-contact-transcript] {
+  padding-bottom: var(--contact-composer-height, 0px);
+  scroll-padding-bottom: var(--contact-composer-height, 0px);
+}
+
+.yuri-contact-conversation[data-composer-overlay] [data-assistant-contact-composer] {
+  position: absolute;
+  inset: auto 0 0;
+  pointer-events: none;
+}
+
+.yuri-contact-conversation[data-composer-overlay] [data-contact-composer-column] {
+  pointer-events: auto;
+}
+
+.yuri-contact-conversation[data-composer-overlay] [data-assistant-contact-avatar-rail] {
+  bottom: 0.5rem;
+}
+
+.yuri-contact-conversation[data-contact-layout="desktop"] [data-assistant-contact-composer] {
+  padding-left: 2rem;
+  padding-right: calc(2rem + var(--contact-scrollbar-width, 0px));
+}
+
+.yuri-contact-conversation[data-contact-layout="mobile"] [data-assistant-contact-composer] {
+  padding-left: 1rem;
+  padding-right: calc(1rem + var(--contact-scrollbar-width, 0px));
+}
+
+.yuri-contact-conversation[data-contact-layout="desktop"] :is([data-composer-layout="inline"], [data-composer-input-shell]) {
+  min-height: 2.5rem;
+}
+
+.yuri-contact-conversation[data-contact-layout="desktop"] :is([data-composer-inline-attach], [data-composer-inline-send]) {
+  height: 2.5rem;
+}
+
+.yuri-contact-conversation[data-contact-layout="desktop"] [data-assistant-contact-composer-surface] :is(textarea, [data-composer-highlight]) {
+  min-height: 2.5rem;
+  padding-block: 0.625rem;
+  font-size: var(--contact-body-size);
+  line-height: 1.25rem;
+}
+
+.yuri-contact-conversation[data-contact-layout="desktop"] [data-composer-send] {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.yuri-contact-conversation [data-composer-animated-resize] [data-composer-content] {
+  align-items: flex-end;
+}
+
+.yuri-contact-bubble {
+  position: relative;
+  isolation: isolate;
+  padding: 0.3125rem 0.625rem 0.375rem;
+  border-radius: var(--contact-bubble-radius, 1.125rem);
+  --contact-bubble-fill: var(--surface-muted);
+  --markdown-body-line-height: var(--contact-body-leading, 1.65);
+  --markdown-list-line-height: 1.5;
+  --markdown-paragraph-spacing: 0.5em;
+  color: var(--surface-foreground);
+  font-size: var(--contact-body-size, var(--text-markdown));
+  line-height: var(--contact-body-leading, 1.65);
+}
+
+.yuri-contact-bubble[data-contact-bubble-direction="outgoing"][data-contact-bubble-joined-before] {
+  border-top-right-radius: var(--contact-bubble-join-radius, 0.375rem);
+}
+
+.yuri-contact-bubble[data-contact-bubble-direction="incoming"][data-contact-bubble-joined-before] {
+  border-top-left-radius: var(--contact-bubble-join-radius, 0.375rem);
+}
+
+.yuri-contact-bubble[data-contact-bubble-direction="outgoing"] {
+  border-bottom-right-radius: var(--contact-bubble-join-radius, 0.375rem);
+}
+
+.yuri-contact-bubble[data-contact-bubble-direction="incoming"] {
+  border-bottom-left-radius: var(--contact-bubble-join-radius, 0.375rem);
+}
+
+.yuri-contact-bubble-outline {
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  left: -8px;
+  width: calc(100% + 16px);
+  height: 100%;
+  overflow: visible;
+  fill: var(--contact-bubble-fill);
+  pointer-events: none;
+}
+
+.yuri-contact-bubble-body { display: contents; white-space: pre-wrap; }
+
+@media (max-width: 639px) {
+  .yuri-contact-conversation[data-contact-layout="desktop"] [data-assistant-contact-composer] {
+    padding-left: 1rem;
+    padding-right: calc(1rem + var(--contact-scrollbar-width, 0px));
+  }
+}
+
+.yuri-contact-bubble-time-space,
+.yuri-contact-bubble-time {
+  font-size: var(--contact-time-size, 0.6875rem);
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.yuri-contact-bubble-time-space {
+  display: inline-block;
+  margin-left: 0.5rem;
+  visibility: hidden;
+}
+
+.yuri-contact-bubble-time {
+  position: absolute;
+  right: 0.625rem;
+  bottom: 0.1875rem;
+  opacity: 0.55;
+}
+
+.yuri-contact-bubble .markdown-content,
+.yuri-contact-bubble .markdown-renderer,
+.yuri-contact-bubble .markdown-renderer > .node-slot,
+.yuri-contact-bubble .node-slot > .node-content {
+  display: contents;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: normal;
+}
+
+.yuri-contact-bubble .markdown-content > p:last-child,
+.yuri-contact-bubble .markdown-renderer > .node-slot:last-of-type[data-node-type="paragraph"] > .node-content > p {
+  display: inline;
+  margin-bottom: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+@layer base {
+  .yuri-contact-conversation .yuri-contact-bubble .markdown-content :is(ul, ol) {
+    margin-block: 0.35em !important;
+  }
+
+  .yuri-contact-conversation .yuri-contact-bubble .markdown-content > [data-md-block]:last-child :is(ul, ol):last-child,
+  .yuri-contact-conversation .yuri-contact-bubble .markdown-renderer > .node-slot:last-of-type :is(ul, ol):last-child {
+    margin-bottom: 0 !important;
+  }
+}
+
+.yuri-contact-conversation .yuri-contact-bubble .markdown-content li {
+  margin-block: 0.15em;
+  line-height: var(--markdown-list-line-height);
+}
+
+.yuri-contact-conversation .yuri-contact-bubble .markdown-content li > :is(p, .paragraph-node) {
+  margin-block: 0;
+  line-height: inherit;
+}
+
+.yuri-contact-bubble[data-assistant-contact-media] { padding: 0; background: none; }

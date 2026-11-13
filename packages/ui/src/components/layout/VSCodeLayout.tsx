@@ -949,7 +949,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
                       <span className="flex min-w-0 flex-1 flex-col gap-2">
                               <span className="flex min-w-0 items-center justify-between gap-3">
                                 <span className="min-w-0 break-words typography-micro text-muted-foreground">{formatWindowLabel(window.label ?? label)}</span>
-                                <span className="shrink-0 whitespace-nowrap typography-ui-label text-foreground tabular-nums">
+                                <span className="min-w-0 max-w-[55%] shrink-0 break-words text-right typography-ui-label text-foreground tabular-nums">
                                   {metricLabel === '-' ? '' : metricLabel}
                                 </span>
                               </span>

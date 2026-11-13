@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => {
     switchCalls: 0,
     setCurrentSession: [] as Array<[string, string | null, string]>,
     setActiveMainTab: [] as string[],
+    remoteRoute: vi.fn(async () => undefined),
   };
 });
 
@@ -22,6 +23,7 @@ vi.mock('@/lib/desktopLocalRuntime', () => ({
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeKey: () => mocks.runtimeKey,
 }));
+vi.mock('@/lib/remote-projects/navigation', () => ({ applyRemoteProjectRoute: mocks.remoteRoute }));
 
 vi.mock('@/sync/session-ui-store', () => ({
   useSessionUIStore: {
@@ -59,6 +61,7 @@ describe('openSessionFromNotification', () => {
     mocks.switchCalls = 0;
     mocks.setCurrentSession.length = 0;
     mocks.setActiveMainTab.length = 0;
+    mocks.remoteRoute.mockClear();
   });
 
   afterEach(() => {
@@ -75,6 +78,27 @@ describe('openSessionFromNotification', () => {
   test('empty sessionId is a no-op', () => {
     openSessionFromNotification({ sessionId: '  ', directory: '/repo' });
     expect(mocks.switchCalls).toBe(0);
+    expect(mocks.setCurrentSession).toEqual([]);
+  });
+
+  test('explicit Host notifications never enter the local session lookup', async () => {
+    openSessionFromNotification({ sessionId: 'same-id', directory: 'C:\\repo', hubId: 'hub', hostId: 'host' });
+    await vi.dynamicImportSettled();
+    expect(mocks.remoteRoute).toHaveBeenCalledWith({ sessionId: 'same-id', directory: 'C:\\repo', hubId: 'hub', hostId: 'host', isNewSession: false }, expect.any(Function));
+    expect(mocks.setCurrentSession).toEqual([]);
+  });
+
+  test('incomplete remote identity is rejected without local fallback', () => {
+    openSessionFromNotification({ sessionId: 'same-id', directory: '/repo', hostId: 'host' });
+    expect(mocks.remoteRoute).not.toHaveBeenCalled();
+    expect(mocks.setCurrentSession).toEqual([]);
+  });
+
+  test('Mini Chat handoff retains instance identity through remote route resolution', async () => {
+    const target = { sessionId: 'same-id', directory: '/repo', hubId: 'hub', hostId: 'host', instanceId: 'instance' };
+    openSessionFromNotification(target);
+    await vi.dynamicImportSettled();
+    expect(mocks.remoteRoute).toHaveBeenCalledWith({ ...target, isNewSession: false }, expect.any(Function));
     expect(mocks.setCurrentSession).toEqual([]);
   });
 

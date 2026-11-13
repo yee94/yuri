@@ -15,9 +15,12 @@ import { YuriLogo } from '@/components/ui/YuriLogo';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
-import { getActiveRelayDescriptor, getRuntimeApiBaseUrl, getRuntimeKey, isRuntimeEndpointIdentityChange, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
-import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
+import { observeRuntimeSession } from '@/lib/runtime-session-recovery';
+import { activateRelayTunnel, deactivateRelayTunnel, getActiveRelayTunnel } from '@/lib/relay/runtime-tunnel';
+import { getRuntimeAuthGeneration, getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
+import { getActiveRelayDescriptor, getRuntimeApiBaseUrl, getRuntimeGeneration, getRuntimeKey, isRuntimeEndpointIdentityChange, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
+import { desktopHostsGet, desktopHostsSet, desktopOpenLocalHostSettings, getDesktopHostApiUrl, isPairedDesktopHost, normalizeHostUrl } from '@/lib/desktopHosts';
+import { getInjectedBootOutcome } from '@/lib/desktopBoot';
 import { resolveStatusCheckFailureState, type GateState } from './sessionAuthGateState';
 import {
   authenticateWithPasskey,
@@ -163,6 +166,20 @@ const shouldUseDesktopShellPasswordLogin = (): boolean => {
   return isDesktopShell() && !isLocalDesktopRuntime();
 };
 
+const activePairedDesktopHost = async () => {
+  if (!isDesktopShell()) return null;
+  const runtimeKey = getRuntimeKey();
+  const boot = getInjectedBootOutcome();
+  const hostId = runtimeKey.startsWith('host:') ? runtimeKey.slice(5)
+    : boot?.target === 'remote' && boot.status === 'ok' && sameOrigin(boot.url, getRuntimeApiBaseUrl()) ? boot.hostId : null;
+  if (!hostId) return null;
+  const config = await desktopHostsGet().catch(() => null);
+  if (getRuntimeKey() !== runtimeKey || !config) return undefined;
+  const host = config?.hosts.find((item) => item.id === hostId);
+  if (!host) return undefined;
+  return host && isPairedDesktopHost(host) ? host : null;
+};
+
 type DesktopPasswordLoginResult = {
   token: string;
   status?: number;
@@ -287,14 +304,14 @@ const ErrorScreen: React.FC<ErrorScreenProps> = ({ onRetry, errorType = 'network
       <div className="flex flex-col items-center gap-6 text-center">
         <div className="space-y-2">
           <h1 className="typography-ui-header font-semibold text-destructive">
-            {isRateLimit ? t('sessionAuth.error.rateLimitTitle') : t('sessionAuth.error.networkTitle')}
+            {isRateLimit ? t('sessionAuth.error.rateLimitTitle') : errorType === 'relay-auth' ? t('sessionAuth.error.relayAuthTitle') : t('sessionAuth.error.networkTitle')}
           </h1>
           <p className="typography-meta text-muted-foreground max-w-xs">
             {isRateLimit
               ? (minutes > 1
                 ? t('sessionAuth.error.rateLimitDescriptionPlural', { minutes })
                 : t('sessionAuth.error.rateLimitDescriptionSingle', { minutes }))
-              : t('sessionAuth.error.networkDescription')}
+              : errorType === 'relay-auth' ? t('sessionAuth.error.relayAuthDescription') : t('sessionAuth.error.networkDescription')}
           </p>
         </div>
         <Button type="button" onClick={onRetry} className="w-full max-w-xs">
@@ -312,7 +329,7 @@ interface SessionAuthGateProps {
 
 interface ErrorScreenProps {
   onRetry: () => void;
-  errorType?: 'network' | 'rate-limit';
+  errorType?: 'network' | 'rate-limit' | 'relay-auth';
   retryAfter?: number;
   children?: React.ReactNode;
 }
@@ -338,6 +355,9 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   const [settingsReady, setSettingsReady] = React.useState(skipAuth);
   const passwordInputRef = React.useRef<HTMLInputElement | null>(null);
   const hasResyncedRef = React.useRef(skipAuth);
+  const statusCheckSequenceRef = React.useRef(0);
+
+  React.useEffect(() => () => { statusCheckSequenceRef.current += 1; }, []);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') {
@@ -351,12 +371,17 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
       return defaultPasskeyStatus;
     }
 
+    const runtimeKey = getRuntimeKey();
+    const runtimeGeneration = getRuntimeGeneration();
+    const authGeneration = getRuntimeAuthGeneration();
+    const isCurrent = () => runtimeKey === getRuntimeKey() && runtimeGeneration === getRuntimeGeneration()
+      && authGeneration === getRuntimeAuthGeneration();
     try {
       const nextStatus = await fetchPasskeyStatus();
-      setPasskeyStatus(nextStatus);
+      if (isCurrent()) setPasskeyStatus(nextStatus);
       return nextStatus;
     } catch {
-      setPasskeyStatus(defaultPasskeyStatus);
+      if (isCurrent()) setPasskeyStatus(defaultPasskeyStatus);
       return defaultPasskeyStatus;
     }
   }, [skipAuth]);
@@ -425,19 +450,32 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
 
   React.useEffect(() => clearTransientRetry, [clearTransientRetry]);
 
-  const checkStatus = React.useCallback(async () => {
+  const checkStatus = React.useCallback(async (confirmedResponse?: Response) => {
     if (skipAuth) {
       setState('authenticated');
       return;
     }
 
+    const sequence = ++statusCheckSequenceRef.current;
+    const runtimeKey = getRuntimeKey();
+    const runtimeGeneration = getRuntimeGeneration();
+    const authGeneration = getRuntimeAuthGeneration();
+    const isCurrent = () => sequence === statusCheckSequenceRef.current && runtimeKey === getRuntimeKey()
+      && runtimeGeneration === getRuntimeGeneration() && authGeneration === getRuntimeAuthGeneration();
+    const relay = isDesktopShell() ? getActiveRelayTunnel() : null;
+    if (relay?.getStatus().failureCode === 'relay_authentication_rejected') {
+      resetTransientRetry();
+      setState('relay-auth-error');
+      return;
+    }
     setState((prev) => (prev === 'authenticated' ? prev : 'pending'));
     try {
       const [response, latestPasskeyStatus] = await Promise.all([
-        fetchSessionStatus(),
-        refreshPasskeyStatus(),
+        confirmedResponse ?? fetchSessionStatus(),
+        confirmedResponse ? defaultPasskeyStatus : refreshPasskeyStatus(),
       ]);
       const responseText = await response.text();
+      if (!isCurrent()) return;
 
         if (response.ok) {
           resetTransientRetry();
@@ -447,7 +485,26 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           setRetryAfter(undefined);
           return;
         }
-        if (response.status === 401) {
+        if (response.status === 401 || (response.status === 403 && (relay || isDesktopShell()))) {
+          const host = relay ? true : await activePairedDesktopHost();
+          if (!isCurrent()) return;
+          if (host === undefined) {
+            resetTransientRetry();
+            setState('error');
+            return;
+          }
+          if (host) {
+            resetTransientRetry();
+            setIsTunnelLocked(false);
+            setState('pairing-expired');
+            setRetryAfter(undefined);
+            return;
+          }
+          if (response.status === 403) {
+            if (scheduleTransientRetry()) return;
+            setState('error');
+            return;
+          }
           let data: { tunnelLocked?: boolean; debug?: { hasRefreshToken: boolean; message: string } } = {};
           try {
             data = JSON.parse(responseText);
@@ -456,7 +513,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           }
           resetTransientRetry();
           setIsTunnelLocked(data.tunnelLocked === true);
-          setPasskeyStatus(latestPasskeyStatus);
+          if (!confirmedResponse) setPasskeyStatus(latestPasskeyStatus);
           setState('locked');
           setRetryAfter(undefined);
           return;
@@ -480,7 +537,21 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
       setState('error');
       setIsTunnelLocked(false);
     } catch (error) {
+      if (!isCurrent()) return;
       console.warn('Failed to check session status:', error);
+      if (relay?.getStatus().failureCode === 'relay_authentication_rejected') {
+        resetTransientRetry();
+        setState('relay-auth-error');
+        return;
+      }
+      const pairedHost = relay ? true : await activePairedDesktopHost();
+      if (!isCurrent()) return;
+      if (pairedHost || pairedHost === undefined) {
+        if (scheduleTransientRetry()) return;
+        setState('error');
+        setIsTunnelLocked(false);
+        return;
+      }
       if (resolveStatusCheckFailureState({ shouldUseDesktopShellPasswordLogin: shouldUseDesktopShellPasswordLogin() }) === 'locked') {
         setState('locked');
         setRetryAfter(undefined);
@@ -505,6 +576,19 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
     }
     void checkStatus();
   }, [checkStatus, skipAuth]);
+
+  React.useEffect(() => {
+    if (skipAuth || state !== 'authenticated') return;
+    return observeRuntimeSession((rejection) => {
+      if (rejection.kind === 'relay-authentication') {
+        statusCheckSequenceRef.current += 1;
+        resetTransientRetry();
+        setState('relay-auth-error');
+      } else {
+        void checkStatus(rejection.response);
+      }
+    }, { desktop: isDesktopShell() });
+  }, [checkStatus, resetTransientRetry, skipAuth, state]);
 
   // The startup splash lives outside the React root so App can retain it while
   // session startup is in progress. When authentication blocks App from
@@ -557,7 +641,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   }, [checkStatus, resetTransientRetry, skipAuth]);
 
   React.useEffect(() => {
-    if (!skipAuth && state === 'locked') {
+    if (!skipAuth && (state === 'locked' || state === 'pairing-expired')) {
       hasResyncedRef.current = false;
       setSettingsReady(false);
     }
@@ -846,6 +930,40 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
 
   if (state === 'rate-limited') {
     return <ErrorScreen onRetry={() => void checkStatus()} errorType="rate-limit" retryAfter={retryAfter} />;
+  }
+
+  if (state === 'pairing-expired') {
+    return (
+      <AuthShell>
+        <div className="flex w-full max-w-xs flex-col items-center gap-6 text-center">
+          <Icon name="computer" className="size-8 text-muted-foreground" />
+          <div className="space-y-2">
+            <h1 className="text-xl font-semibold">{t('mobile.connect.pairing.expired')}</h1>
+            <p className="typography-meta text-muted-foreground">{t('desktopHostSwitcher.pairing.reconnectHint')}</p>
+          </div>
+          <Button type="button" className="w-full" onClick={() => { void desktopOpenLocalHostSettings().catch(() => toast.error(t('sessionAuth.error.networkTitle'))); }}>
+            {t('settings.remoteInstances.openLocalManager')}
+          </Button>
+          <DesktopHostSwitcherInline />
+        </div>
+      </AuthShell>
+    );
+  }
+
+  if (state === 'relay-auth-error') {
+    return (
+      <ErrorScreen errorType="relay-auth" onRetry={() => {
+        const descriptor = getActiveRelayDescriptor();
+        if (descriptor) {
+          deactivateRelayTunnel();
+          activateRelayTunnel(descriptor);
+        }
+        resetTransientRetry();
+        void checkStatus();
+      }}>
+        {showHostSwitcher && <DesktopHostSwitcherInline />}
+      </ErrorScreen>
+    );
   }
 
   if (state === 'locked') {

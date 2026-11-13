@@ -15,6 +15,8 @@ import { create } from "zustand"
 import type { Message, Part } from '@/lib/opencode/v2-types'
 
 import { runtimeFetch } from "../lib/runtime-fetch"
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry'
+import { locationSessionKey, type HostLocation } from '@/lib/remote-projects/location'
 import {
   isSessionCompactionCard,
   messageIDFromEventID,
@@ -34,6 +36,7 @@ export type SessionInboxCompaction = {
 }
 
 export type PostSessionCompactInput = {
+  scope?: HostRuntimeEntry
   sessionID: string
   directory: string
   messageID?: string
@@ -212,10 +215,10 @@ export async function postSessionCompact(
   if (input.messageID) body.id = input.messageID
   if (input.delivery) body.delivery = input.delivery
 
-  const response = await runtimeFetch(path, {
+  const response = await (input.scope ? input.scope.fetch : runtimeFetch)(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    query: { directory: input.directory },
+    query: { directory: input.scope?.location.directory ?? input.directory },
     body: JSON.stringify(body),
     signal: input.signal,
   })
@@ -225,7 +228,11 @@ export async function postSessionCompact(
   }
 
   const item = parseSessionInboxCompaction(await parseJsonBody(response, "session compact"))
-  setSessionCompactionBarrier(item.sessionID, true)
+  if (input.scope) {
+    input.scope.sdk()
+    if (item.sessionID !== input.sessionID) throw new Error('Remote compaction session mismatch')
+  }
+  setSessionCompactionBarrier(input.scope ? locationSessionKey(input.scope.location, item.sessionID) : item.sessionID, true)
   return item
 }
 
@@ -287,7 +294,7 @@ function upsertCompactionCard(
  */
 export function applySessionCompactionLiveEvent(
   draft: CompactionLiveDraft,
-  event: { id?: string; type?: string; properties?: unknown },
+  event: { id?: string; type?: string; properties?: unknown; clientLocation?: HostLocation },
 ): boolean {
   const type = String(event.type ?? "")
   if (!type.startsWith("session.compaction.")) return false
@@ -295,6 +302,7 @@ export function applySessionCompactionLiveEvent(
   if (!props) return false
   const sessionID = asString(props.sessionID)
   if (!sessionID) return false
+  const barrierID = event.clientLocation ? locationSessionKey(event.clientLocation, sessionID) : sessionID
 
   const inputID = asString(props.inputID)
   const existingID = findCompactionMessageID(draft, sessionID)
@@ -310,7 +318,7 @@ export function applySessionCompactionLiveEvent(
       reason: props.reason === "auto" ? "auto" : "manual",
       ...(typeof props.recent === "string" ? { recent: props.recent } : {}),
     }), asNumber(props.eventCreated))
-    setSessionCompactionBarrier(sessionID, true)
+    setSessionCompactionBarrier(barrierID, true)
     return true
   }
   if (type === "session.compaction.delta") {
@@ -322,11 +330,11 @@ export function applySessionCompactionLiveEvent(
       status: "running",
       summary: (current.summary ?? "") + delta,
     }))
-    setSessionCompactionBarrier(sessionID, true)
+    setSessionCompactionBarrier(barrierID, true)
     return true
   }
   if (type === "session.compaction.ended") {
-    setSessionCompactionBarrier(sessionID, false)
+    setSessionCompactionBarrier(barrierID, false)
     // The end event has no checkpoint identity. A completed HTTP snapshot may
     // already have replaced the running row; recover missed starts via GET,
     // rather than inventing a second checkpoint from the end event's ID.
@@ -341,7 +349,7 @@ export function applySessionCompactionLiveEvent(
     return true
   }
   if (type === "session.compaction.failed") {
-    setSessionCompactionBarrier(sessionID, false)
+    setSessionCompactionBarrier(barrierID, false)
     if (!existingID && !inputID) return false
     const error = record(props.error) ? props.error : {}
     upsertCompactionCard(draft, sessionID, messageID, (current) => ({

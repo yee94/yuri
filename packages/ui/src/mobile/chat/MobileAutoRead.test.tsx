@@ -7,12 +7,15 @@ import { AutoReadContext, AutoReadPlaybackContext, useAutoReadRenderedReply } fr
 const mocks = vi.hoisted(() => ({
     messages: [{ id: 'old', role: 'assistant', time: { created: 10, completed: 20 } }],
     resolved: true, play: vi.fn(), stop: vi.fn(), unlock: vi.fn(), acquire: vi.fn(), release: vi.fn(),
-    runtimeChanged: () => {},
+    runtimeChanged: () => {}, localRead: vi.fn(),
 }));
-vi.mock('@/sync/sync-context', () => ({ useSessionMessages: () => mocks.messages, useSessionMessagesResolved: () => mocks.resolved }));
+vi.mock('@/sync/sync-context', () => ({ useSessionMessages: () => { mocks.localRead(); return mocks.messages; }, useSessionMessagesResolved: () => { mocks.localRead(); return mocks.resolved; } }));
 vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => ({ isPlaying: true, play: mocks.play, stop: mocks.stop, unlock: mocks.unlock }) }));
 vi.mock('@/lib/voice/screen-awake', () => ({ acquireScreenAwake: mocks.acquire }));
-vi.mock('@/lib/runtime-switch', () => ({ subscribeRuntimeEndpointChanged: (callback: () => void) => { mocks.runtimeChanged = callback; return () => {}; } }));
+vi.mock('@/lib/runtime-switch', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/lib/runtime-switch')>(),
+    subscribeRuntimeEndpointChanged: (callback: () => void) => { mocks.runtimeChanged = callback; return () => {}; },
+}));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: translate }) }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
 const translate = (key: string) => key;
@@ -36,6 +39,7 @@ async function render(id = 'old', created = 10, completed = true, sessionId = 's
     await act(async () => vi.advanceTimersByTime(40));
 }
 beforeEach(async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     vi.useFakeTimers(); vi.clearAllMocks();
     localStorage.removeItem('yuri.auto-read');
     mocks.messages = [{ id: 'old', role: 'assistant', time: { created: 10, completed: 20 } }];
@@ -44,6 +48,76 @@ beforeEach(async () => {
     mocks.release.mockResolvedValue(undefined); mocks.acquire.mockResolvedValue(mocks.release);
     host = document.createElement('div'); root = createRoot(host);
     await render();
+});
+
+function remoteFixture(hostId: string, count = 1) {
+    let recordReads = 0;
+    const history = { id: 'history', role: 'assistant', time: { created: 100, completed: 110 } };
+    const listeners = new Set<() => void>();
+    const infos: Record<string, typeof history> = { history };
+    for (let i = 1; i < count; i++) infos[`old-${i}`] = { ...history, id: `old-${i}` };
+    let transcript = { messageOrder: Object.keys(infos), messagesByID: new Proxy(infos, { get(target, id) { recordReads++; return Reflect.get(target, id); } }) };
+    const remote = {
+        entry: { key: `host:${hostId}`, location: { hubId: 'hub', hostId, directory: '/project' } },
+        scope: (sessionID: string) => ({ sessionID }),
+        repository: {
+            subscribe: (_scope: unknown, notify: () => void) => { listeners.add(notify); return () => listeners.delete(notify); },
+            getTranscript: () => transcript, getRequestState: () => ({ status: 'ready' }),
+        },
+    } as unknown as NonNullable<React.ComponentProps<typeof MobileAutoReadProvider>['remoteState']>;
+    return { remote, reads: () => recordReads, publish: () => { transcript = { ...transcript }; for (const notify of listeners) notify(); } };
+}
+
+it('remote explicit state never reads the retained same-ID Hub history and scans only on enable', async () => {
+    const remote = remoteFixture('a', 10_000);
+    mocks.localRead.mockClear();
+    const renderRemote = async (id = 'history', created = 100) => {
+        await act(async () => root.render(<MobileAutoReadProvider remote remoteState={remote.remote} sessionId="s1" directory="/project" active>
+            <Probe id={id} created={created} sessionId="s1" />
+        </MobileAutoReadProvider>));
+        await act(async () => vi.advanceTimersByTime(40));
+    };
+    await renderRemote(); await enable();
+    expect(mocks.localRead).not.toHaveBeenCalled(); expect(mocks.play).not.toHaveBeenCalled();
+    const initialReads = remote.reads();
+    expect(initialReads).toBe(10_000);
+    for (let i = 0; i < 50; i++) await act(async () => remote.publish());
+    expect(remote.reads()).toBe(initialReads);
+    await renderRemote('reply', 120);
+    expect(mocks.play).toHaveBeenCalledTimes(1);
+    expect(mocks.play.mock.calls[0][0]).toBe('reply reply');
+});
+
+it('same-ID remote Host change stops speech and fences a late completion without replaying history', async () => {
+    const a = remoteFixture('a'), b = remoteFixture('b');
+    const mount = async (remoteState: typeof a.remote, id: string, created: number) => {
+        await act(async () => root.render(<MobileAutoReadProvider remote remoteState={remoteState} sessionId="s1" directory="/project" active>
+            <Probe id={id} created={created} sessionId="s1" />
+        </MobileAutoReadProvider>));
+        await act(async () => vi.advanceTimersByTime(40));
+    };
+    await mount(a.remote, 'history', 100); await enable(); await mount(a.remote, 'new-a', 120);
+    const finish = mocks.play.mock.calls[0][1];
+    await mount(b.remote, 'history', 100);
+    expect(mocks.release).toHaveBeenCalled();
+    await act(async () => finish());
+    expect(mocks.play).toHaveBeenCalledTimes(1);
+    await mount(b.remote, 'new-b', 130);
+    expect(mocks.play).toHaveBeenCalledTimes(2);
+});
+
+it('switching local/remote/Host sources never remounts the mobile shell children', async () => {
+    const a = remoteFixture('a'), b = remoteFixture('b');
+    const mount = async (remoteState?: typeof a.remote) => {
+        await act(async () => root.render(<MobileAutoReadProvider remote={Boolean(remoteState)} remoteState={remoteState} sessionId="s1" directory="/project" active>
+            <input data-shell-draft defaultValue="preserved" />
+        </MobileAutoReadProvider>));
+    };
+    await mount(); const input = host.querySelector<HTMLInputElement>('[data-shell-draft]')!;
+    input.value = 'in progress';
+    await mount(a.remote); await mount(b.remote); await mount();
+    expect(host.querySelector('[data-shell-draft]')).toBe(input);
+    expect(input.value).toBe('in progress');
 });
 afterEach(async () => { await act(async () => root.unmount()); vi.useRealTimers(); });
 const enable = async () => { await act(async () => context!.toggle()); await act(async () => vi.advanceTimersByTime(40)); };

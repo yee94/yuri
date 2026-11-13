@@ -3,6 +3,34 @@
 ## Purpose
 This module provides OpenCode server integration utilities for the web server runtime, including configuration management and provider authentication.
 
+## Hub-only project layout and discovery
+
+Production settings routes receive a synchronous SQLite projection from the
+current Remote Host store. Full settings and both bootstrap variants expose
+read-only `hasRemoteProjects:boolean`; clients cannot persist or override it.
+Bootstrap excludes layout and project/Host contents. The projection creates no
+upstream IO, timer or subscription. Reference changes invalidate through the
+existing safe `yuri:project-order-changed` global event.
+
+Full GET/PUT `/api/config/settings` exposes `hubProjectLayout`:
+`{hubId:string, order:string[], collapsed:Record<string,boolean>}`. IDs identify
+local projects or current-Hub remote references, never remote paths or remote
+project IDs. Missing layout reads as current Hub + empty order/map. A foreign
+Hub layout is not projected; writes with the wrong Hub ID return 409. Malformed
+shape/capacity returns 400 before commit. Each list/map is bounded to 10,000
+entries and each ID to 512 characters.
+
+The existing settings write lock reads strict disk state and merges incoming
+order first, then omitted previous order entries; collapse merges by key (false
+explicitly expands). This is layout only, not collection replacement: omitted
+projects/references are never removed. Local filesystem validation is not run
+on layout IDs and no layout is written upstream. Concurrent saves serialize;
+failed or unchanged saves emit no order tip, and failed writes preserve the
+previous atomic settings file. Existing local `projects` update validation is
+unchanged. After a changed commit, existing `yuri:project-order-changed` prompts
+other clients to fetch current settings. A write may contain only layout; do not
+serialize remote paths into `projects`.
+
 OpenCode upstream calls are V2-only: startup/readiness probes use `/api/info`
 without a legacy health fallback. Both Host SSE entrypoints forward upstream
 to `/api/event`; the Host-owned global WebSocket route is unchanged. Status
@@ -10,6 +38,12 @@ diagnostics use provider/location/session-active V2 routes and location query
 encoding, not removed V1 endpoints.
 
 ## Entrypoints and structure
+- `v2-client.js` retains default Hub-local runtime write admission. Its internal
+  `executionAdmission: 'target-yuri-proxy'` option requires an explicit scoped
+  transport and delegates admission to an authenticated target Yuri proxy, never
+  to a guessed OpenCode endpoint. `../remote-hosts/task-client.js` is the shared
+  official SDK factory for that boundary; Assistant and bound-project helpers use
+  it instead of copying SDK requests or inheriting the Hub's runtime contract.
 - `feature-routes-runtime.js` registers the Host-owned history importer before
   the generic proxy, using the official client, project registry and session
   index. Its domain contract is in `../history-import/DOCUMENTATION.md`.
@@ -87,6 +121,15 @@ encoding, not removed V1 endpoints.
 - `packages/web/server/lib/opencode/settings-normalization-runtime.js`: path/settings normalization and sanitization helpers runtime used by settings/routes/config wiring.
 - `packages/web/server/lib/opencode/theme-runtime.js`: custom theme JSON validation and theme directory loading runtime for settings utility routes.
 - `packages/web/server/lib/opencode/proxy.js`: OpenCode API/SSE forwarding and readiness-gate route registration.
+  - After the existing UI/tunnel authentication middleware, the proxy checks
+    browser provenance against the existing `isRequestOriginAllowed` policy.
+    Only approved origins have Fetch Metadata removed from the upstream copy:
+    those headers describe browser → Yuri, not Yuri → OpenCode. Origin, the
+    original request headers, Yuri credential validation and managed upstream
+    authentication are unchanged. Session/message reads, SSE, GUI bundle reads
+    and the generic proxy share this rule. Missing/failed approval leaves metadata
+    intact, so unknown browser origins retain upstream cross-site rejection. No
+    service CORS configuration or origin allowlist is expanded.
 - `npm-registry.js`: plugin package lookup used by `GET /api/config/plugins/registry`. It asks the user's own `npm view` first (run in the project directory, so scope registries, auth tokens and mirrors from `.npmrc` apply as they do for `npm install`) and falls back to a direct request to the public registry only when the CLI is unavailable; a CLI 404 is final. Results are cached per name and directory. The latest release's top-level package.json `icon` is returned as `icon` only when it is an `https://` URL or `data:image/` URI of at most ~1.5 MB; nested icon fields are not read or used as fallbacks.
 - `plugin-icon.js` owns the shared icon sanitizer and optional local package metadata read for Web/Electron/mobile and VS Code. Registry `path-ok` includes the nearest package manifest's top-level `icon` for directories or built entry files. Search stops at the first manifest, root or 32 parents; malformed, unreadable or >2 MiB manifests omit artwork without changing path status. No server-side image fetch occurs. Settings → Plugins renders package artwork directly; GUI sidebar/titlebar entries use official `IconName` without package-image substitution.
 
@@ -531,7 +574,13 @@ When adding or changing Host HTTP APIs that mobile/desktop clients reach over Pr
     - `GET /api/client-auth/pairing/transports`: returns direct transport availability. `relayAvailable` is true for desktop and SSH-managed remote hosts (`YURI_RUNTIME=desktop|ssh-remote`); local `dev` / `web` / ordinary CLI servers report false and omit Relay URL fields so the create-device dialog never defaults to Anywhere or probes the relay.
    - `GET /connect`
    - `POST /api/system/probe-url`
-   - `app.use('/api', ...)` auth/tunnel guard
+    - `app.use('/api', ...)` auth/tunnel guard
+      - The scheduled-task and remote-connection session bridges admit only
+        loopback POST without Origin and with the shared OpenCode service Basic
+        credential. Browser/session/bearer/Relay auth cannot enter these paths.
+        Each bridge then verifies the admitted session's Host binding; the remote
+        connection bridge also requires the injected local Electron adapter.
+        See `../gui-customization/DOCUMENTATION.md` for operations and limits.
 - `registerSettingsUtilityRoutes(app, dependencies)`: registers small settings utility endpoints:
    - `GET /api/config/themes`
    - `POST /api/config/reload`

@@ -1,11 +1,13 @@
 import React from 'react';
 import { useEvent, useEventListener, useInterval, useIsomorphicLayoutEffect, useResizeObserver, useUnmount } from '@reactuses/core';
 import type { Part } from '@/lib/opencode/v2-types';
-import { defaultRangeExtractor, elementScroll, useVirtualizer as useTanstackVirtualizer, type ReactVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
+import { elementScroll, useVirtualizer as useTanstackVirtualizer, type ReactVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import { getSpeechTarget, subscribeSpeechTracking } from '@/lib/voice/speech-tracking';
 import { isAssistantSessionDivider } from './hostedSessionHistory';
 import { useI18n } from '@/lib/i18n';
 import { CompactionDisclosureContext, createCompactionDisclosureStore } from './message/compactionDisclosureState';
+import { TranscriptSearchContext } from './TranscriptSearchContext';
+import { findTranscriptTextRanges, searchPartKey } from './lib/transcriptSearch';
 
 import ChatMessage from './ChatMessage';
 import { computeAssistantTps } from './message/assistantTps';
@@ -31,7 +33,7 @@ import { useSessionParts } from '@/sync/sync-context';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { scheduleAfterPaintTask } from '@/lib/afterPaintTaskQueue';
 import { useRenderPhaseCallback } from '@/hooks/useRenderPhaseCallback';
-import { getInitialHistoryOverscan, getNextHistoryOverscan } from './lib/historyOverscan';
+import { getHistoryRenderRange, getInitialHistoryOverscan, getNextHistoryOverscan } from './lib/historyOverscan';
 import { DeferredToolHydrationProvider } from './message/parts/DeferredToolHydrationProvider';
 import {
     applyAuthoritativeTaskSessionIdToSubtaskParts,
@@ -908,13 +910,12 @@ const TurnBlock = React.memo(({
         pendingHeaderStateRef.current = { turnId: turn.turnId, shown: false };
     }
     const storedTurnUiState = turnUiStates.get(turn.turnId);
-    // Gate raw message-active through presentation so only the live last turn
-    // while the session is working defaults open; idle/historical actives settle.
-    // Header chrome (Working vs Processed) uses this demotion.
-    const activityPresentationForDefault = resolveTurnActivityPresentation({
+    // A turn observed live keeps its reasoning presentation across step-status
+    // gaps until its own terminal signal arrives. Cold idle/history still settles.
+    const activityPresentation = resolveTurnActivityPresentation({
         completionDisposition: turn.completionDisposition,
         isLastTurn,
-        sessionIsWorking,
+        sessionIsWorking: sessionIsWorking || preserveActiveTurnGap,
         durationMs: turn.durationMs,
     });
     // Expansion must NOT follow sessionIsWorking demotion. Between tool steps
@@ -927,7 +928,7 @@ const TurnBlock = React.memo(({
     const expansionDisposition = resolveActivityExpansionDisposition({
         isLastTurn,
         turnCompletionDisposition: turn.completionDisposition,
-        headerPresentationDisposition: activityPresentationForDefault.completionDisposition,
+        headerPresentationDisposition: activityPresentation.completionDisposition,
         hasAssistantMessages: turn.assistantMessages.length > 0,
     });
     const defaultExpandedForTurn = resolveTurnActivityExpandedByDefault({
@@ -1112,12 +1113,6 @@ const TurnBlock = React.memo(({
                     : undefined));
         const nextMessage = undefined;
 
-        const activityPresentation = resolveTurnActivityPresentation({
-            completionDisposition: turn.completionDisposition,
-            isLastTurn,
-            sessionIsWorking,
-            durationMs: turn.durationMs,
-        });
         const turnGroupingContext = isAssistantMessage
             ? {
                 turnId: turn.turnId,
@@ -1637,7 +1632,12 @@ const StaticHistoryList = React.memo(({ entries, historyAnchorToken, engine, con
         estimateSize: () => estimatedEntrySizeRef.current,
         overscan: historyOverscan,
         rangeExtractor: (range) => {
-            const indexes = defaultRangeExtractor(range);
+            const indexes = getHistoryRenderRange(
+                range,
+                tanstackVirtualizer.measurementsCache,
+                tanstackVirtualizer.scrollOffset,
+                tanstackVirtualizer.scrollRect?.height,
+            );
             return speakingIndex >= 0 && !indexes.includes(speakingIndex)
                 ? [...indexes, speakingIndex].sort((left, right) => left - right) : indexes;
         },
@@ -2218,6 +2218,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     const activityRenderMode = useUIStore((state) => state.activityRenderMode);
     const showTurnChangedFiles = useUIStore((state) => state.showTurnChangedFiles);
     const [turnUiStates, setTurnUiStates] = React.useState<Map<string, TurnUiState>>(() => new Map());
+    const searchTarget = React.useContext(TranscriptSearchContext);
     const [turnUiSessionKey, setTurnUiSessionKey] = React.useState(domainSessionKey);
     if (turnUiSessionKey !== domainSessionKey) {
         setTurnUiSessionKey(domainSessionKey);
@@ -2527,6 +2528,17 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         });
         return indexMap;
     }, [allEntries]);
+    const getSearchMessageIndex = useEvent((messageId: string) => messageIndexMap.get(messageId));
+
+    const searchTurnUiStates = React.useMemo(() => {
+        if (!searchTarget) return turnUiStates;
+        const index = messageIndexMap.get(searchTarget.messageId);
+        const entry = index === undefined ? undefined : allEntries[index];
+        if (entry?.kind !== 'turn') return turnUiStates;
+        const next = new Map(turnUiStates);
+        next.set(entry.turn.turnId, { isExpanded: true });
+        return next;
+    }, [allEntries, messageIndexMap, searchTarget, turnUiStates]);
 
     const findMessageElement = useEvent((messageId: string): HTMLElement | null => {
         const container = resolveScrollContainer();
@@ -2571,6 +2583,72 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
         container.scrollTo({ top, behavior });
         return true;
     });
+
+    React.useEffect(() => {
+        if (!searchTarget) return;
+        const container = resolveScrollContainer();
+        if (!container) return;
+        const key = searchPartKey(searchTarget.messageId, searchTarget.partId);
+        const highlights = globalThis.CSS?.highlights;
+        let positioned = false;
+        let cancelled = false;
+        let frame = 0;
+        const update = () => {
+            frame = 0;
+            if (cancelled) return;
+            const roots = container.querySelectorAll<HTMLElement>('[data-transcript-search-part]');
+            const ranges: Range[] = [];
+            let activeRange: Range | undefined;
+            for (const root of roots) {
+                const matches = findTranscriptTextRanges(root, searchTarget.query);
+                ranges.push(...matches);
+                if (root.dataset.transcriptSearchPart === key) activeRange = matches[searchTarget.occurrence];
+            }
+            if (highlights && typeof Highlight !== 'undefined') {
+                highlights.set('yuri-transcript-find', new Highlight(...ranges));
+                const activeHighlight = new Highlight(...(activeRange ? [activeRange] : []));
+                activeHighlight.priority = 1;
+                highlights.set('yuri-transcript-find-active', activeHighlight);
+            }
+            if (positioned || !activeRange) return;
+            const rect = activeRange.getBoundingClientRect();
+            if (!rect.height) return;
+            // Keep the existing list as the only scroll owner. Stop index correction
+            // before refining from the virtual row to the mounted text range.
+            tanstackVirtualizerRef.current?.cancelScroll();
+            const viewport = container.getBoundingClientRect();
+            container.scrollTo({ top: container.scrollTop + rect.top - viewport.top - container.clientHeight / 2, behavior: 'auto' });
+            positioned = true;
+        };
+        const scheduleUpdate = () => {
+            if (!frame && !cancelled) frame = requestAnimationFrame(update);
+        };
+        const cancelPositioning = () => { positioned = true; };
+        cancelViewportAnchorHold();
+        const index = getSearchMessageIndex(searchTarget.messageId);
+        if (index !== undefined && !Array.from(container.querySelectorAll<HTMLElement>('[data-transcript-search-part]'))
+            .some((root) => root.dataset.transcriptSearchPart === key)) {
+            scrollHistoryIndexIntoView(index, 'auto');
+        }
+        // Observe only while find is active. This rebuilds ranges after virtual
+        // rows recycle or Markdown hydrates, without changing React-owned DOM.
+        const observer = new MutationObserver(scheduleUpdate);
+        observer.observe(container, { childList: true, characterData: true, subtree: true });
+        container.addEventListener('wheel', cancelPositioning, { passive: true });
+        container.addEventListener('touchstart', cancelPositioning, { passive: true });
+        container.addEventListener('pointerdown', cancelPositioning, { passive: true });
+        scheduleUpdate();
+        return () => {
+            cancelled = true;
+            observer.disconnect();
+            if (frame) cancelAnimationFrame(frame);
+            container.removeEventListener('wheel', cancelPositioning);
+            container.removeEventListener('touchstart', cancelPositioning);
+            container.removeEventListener('pointerdown', cancelPositioning);
+            highlights?.delete('yuri-transcript-find');
+            highlights?.delete('yuri-transcript-find-active');
+        };
+    }, [searchTarget, cancelViewportAnchorHold, resolveScrollContainer, scrollHistoryIndexIntoView, getSearchMessageIndex]);
 
     React.useEffect(() => {
         if (!ref) {
@@ -2839,7 +2917,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                                     scrollToBottom={stableScrollToBottom}
                                     stickyUserHeader={stickyUserHeader}
                                     activityRenderMode={activityRenderMode}
-                                    turnUiStates={turnUiStates}
+                                    turnUiStates={searchTurnUiStates}
                                     onToggleTurnGroup={toggleTurnGroup}
                                     chatRenderMode={chatRenderMode}
                                     shouldAnimateUserMessage={shouldAnimateUserMessage}
@@ -2864,7 +2942,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                             stickyUserHeader={stickyUserHeader}
                             sessionIsWorking={sessionIsWorking}
                             activityRenderMode={activityRenderMode}
-                            turnUiStates={turnUiStates}
+                            turnUiStates={searchTurnUiStates}
                             onToggleTurnGroup={toggleTurnGroup}
                             chatRenderMode={chatRenderMode}
                             showTurnChangedFiles={showTurnChangedFiles}

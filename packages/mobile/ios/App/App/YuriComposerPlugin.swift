@@ -345,6 +345,13 @@ class YuriComposerPlugin: CAPPlugin, CAPBridgedPlugin, YuriComposerViewDelegate 
             }
             keyboardObservers.append(token)
         }
+        // Background is an actual lifecycle boundary; keyboard presentation
+        // notifications alone cannot distinguish it from input-view reloads.
+        keyboardObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.composerView?.blurInput()
+        })
     }
 
     private func applyKeyboard(_ notification: Notification) {

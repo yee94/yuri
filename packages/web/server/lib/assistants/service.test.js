@@ -4277,6 +4277,9 @@ describe('assistants service', () => {
     const createChatCompletion = vi.fn(async ({ body }) => {
       round++;
       const system = body.messages.find((message) => message.role === 'system').content;
+      expect(system).toContain('- opencode: For OpenCode itself:');
+      expect(system).toContain('read_opencode_skill({"id":"opencode"})');
+      expect(system).toContain('- yuri-customization:');
       expect(system).not.toContain(skillContent);
       expect(system).not.toContain('opencode api without --server');
       expect(system).not.toContain('Unrelated skill content');
@@ -5397,17 +5400,12 @@ describe('assistants service', () => {
       await new Promise((resolve) => setImmediate(resolve));
       await new Promise((resolve) => setImmediate(resolve));
       expect(turns).toHaveLength(1);
-      expect(turns[0]).toMatchObject({ assistant: { id: recipient.id }, readOnly: true });
+      expect(turns[0]).toMatchObject({ assistant: { id: recipient.id }, readOnly: false });
       expect(turns[0].userText).toContain('小小白');
       expect(turns[0].userText).toContain('老大你好');
       expect(service.contactMessages(recipient.id).messages.map((message) => message.role)).toEqual(['assistant', 'peer', 'assistant']);
       expect(service.contactMessages(recipient.id).messages.at(-1).text).toBe('收到了，你好！');
       expect(onContactTurnComplete).toHaveBeenCalledWith(expect.objectContaining({ assistantID: recipient.id, status: 'complete' }));
-      const message = turns[0].tools.find((tool) => tool.name === 'message_assistant');
-      if (message) {
-        const blocked = await message.execute('loop', { toAssistantID: sender.id, text: 'ping back' });
-        expect(blocked.details.error).toBe('validation_error');
-      }
       expect(service.contactMessages(sender.id).messages).toHaveLength(1);
     } finally { service.close(); }
   });
@@ -5497,13 +5495,15 @@ describe('assistants service', () => {
     } finally { release(); service.close(); }
   });
 
-  it('runs peer replies through the real harness with no mutation or relay tools', async () => {
+  it('runs peer requests through the real harness with normal tools and explicit contact identity', async () => {
     const createChatCompletion = vi.fn(async (input) => {
       const names = (input.body.tools || []).map((tool) => tool.function.name);
-      expect(names).not.toContain('message_assistant');
-      expect(names).not.toContain('assign_session');
-      expect(names).not.toContain('load_tools');
-      expect(names).not.toContain('bash');
+      expect(names).toEqual(expect.arrayContaining(['message_assistant', 'assign_session', 'load_tools', 'bash', 'write', 'edit']));
+      const context = input.body.messages.map((message) => message.content).join('\n');
+      expect(context).toContain('"name":"大白"');
+      expect(context).toContain('"turnMode":"actionable"');
+      expect(context).toContain('normal tools and permissions');
+      expect(context).not.toContain('one read-only reply');
       expect(input.body.messages.some((message) => typeof message.content === 'string' && message.content.includes('老大你好'))).toBe(true);
       return { completion: { choices: [{ message: { content: '小小白你好，收到啦。' } }] } };
     });
@@ -5516,6 +5516,87 @@ describe('assistants service', () => {
       expect(createChatCompletion).toHaveBeenCalledTimes(1);
       expect(service.contactMessages(recipient.id).messages.at(-1).text).toBe('小小白你好，收到啦。');
       expect(service.contactMessages(sender.id).messages).toHaveLength(1);
+    } finally { service.close(); }
+  });
+
+  it('creates a contact, delegates scheduling, and persists the task and card only for the recipient through the real Agent', async () => {
+    const directory = root();
+    const rounds = new Map();
+    let saved;
+    let recipientID;
+    const createChatCompletion = vi.fn(async ({ body }) => {
+      const context = body.messages.map((message) => message.content).join('\n');
+      const identity = JSON.parse(context.match(/Current contact: ([^\n]+)/)[1]);
+      const round = (rounds.get(identity.name) || 0) + 1;
+      rounds.set(identity.name, round);
+      const call = (name, args) => toolBatch([[name, args]]);
+      if (identity.name === 'A') {
+        if (round === 1) {
+          expect(context).toContain('Resolve who should own and carry out');
+          const loader = body.tools.find((tool) => tool.function.name === 'load_tools');
+          expect(JSON.stringify(loader)).toContain('owned by this contact');
+          return call('load_tools', { domain: 'yuri.assistants' });
+        }
+        if (round === 2) return call('create_assistant', { name: '管理员' });
+        if (round === 3) {
+          const result = JSON.parse(JSON.parse(body.messages.find((message) => message.name === 'create_assistant').content).content);
+          recipientID = result.reference.assistantID;
+          const description = body.tools.find((tool) => tool.function.name === 'message_assistant').function.description;
+          expect(description).toContain('normal actionable turn');
+          expect(description).toContain('not task completion');
+          return call('message_assistant', { toAssistantID: recipientID, text: '请每天 18:00 Asia/Shanghai 在这个项目维护记忆，不改代码；有变化时向用户汇报。' });
+        }
+        return { text: '已创建管理员，并把定时维护要求发给他了。' };
+      }
+      expect(identity).toMatchObject({ assistantID: recipientID, name: '管理员', turnMode: 'actionable' });
+      expect(context).toContain('normal tools and permissions');
+      if (round === 1) return call('load_tools', { domain: 'yuri.tasks' });
+      if (round === 2) {
+        const description = body.tools.find((tool) => tool.function.name === 'schedule_task').function.description;
+        expect(description).toContain('owned by THIS calling contact');
+        expect(description).toContain('result returns to this contact');
+        return call('schedule_task', { name: '维护记忆', prompt: '维护记忆，不改代码；有变化时向用户汇报。', projectPath: directory, time: '18:00', timezone: 'Asia/Shanghai' });
+      }
+      if (round === 3) return call('reference_resource', { cardType: 'schedule', projectID: 'project', taskID: 'task_delegated' });
+      return { text: '每天 18:00 的维护任务已创建。' };
+    });
+    const service = setup(directory, {}, {
+      runContactTurn: (turn) => realRunContactTurn({ ...turn, skillHomeDir: directory }),
+      createChatCompletion,
+      listProjects: async () => [{ id: 'project', path: directory }],
+      upsertScheduledTask: async (_projectID, task) => { saved = { ...task, id: 'task_delegated' }; return { task: saved }; },
+      listScheduledTasks: async () => saved ? [saved] : [],
+    });
+    try {
+      const sender = service.createAssistant(assistantInput);
+      expect((await settleSend(service, sender.id, { messageID: 'create_and_delegate', text: '创建一个管理员，让他每天 18:00 维护记忆，不改代码，有变化再汇报。' })).settled.status).toBe('complete');
+      const incoming = service.contactMessages(recipientID).messages.find((message) => message.role === 'peer');
+      expect(await service.whenContactTurnSettled(incoming.messageID)).toMatchObject({ status: 'complete' });
+      expect((await service.listAssistantScheduledTasks(sender.id)).tasks).toEqual([]);
+      expect((await service.listAssistantScheduledTasks(recipientID)).tasks).toEqual([expect.objectContaining({ assistantID: recipientID, taskID: 'task_delegated' })]);
+      expect(saved.execution).toMatchObject({ prompt: '维护记忆，不改代码；有变化时向用户汇报。', providerID: 'p', modelID: 'm' });
+      expect(service.contactMessages(recipientID).messages.some((message) => message.role === 'user')).toBe(false);
+      expect(service.contactMessages(recipientID).messages.flatMap((message) => message.cards)).toEqual([expect.objectContaining({ cardType: 'schedule', taskID: 'task_delegated' })]);
+      expect(rounds).toEqual(new Map([['A', 4], ['管理员', 4]]));
+    } finally { service.close(); }
+  });
+
+  it('allows an explicit follow-up message from a delegated turn without automatically relaying its reply', async () => {
+    const service = setup(root(), {}, { runContactTurn: async ({ assistant, tools }) => {
+      if (assistant.name === 'Recipient') {
+        const result = await tools.find((tool) => tool.name === 'message_assistant').execute('followup', { to: 'Sender', text: '需要补充哪个项目？' });
+        expect(result.isError).not.toBe(true);
+      }
+      return { bubbles: ['收到。'] };
+    } });
+    try {
+      const sender = service.createAssistant({ ...assistantInput, name: 'Sender' });
+      const recipient = service.createAssistant({ ...assistantInput, name: 'Recipient' });
+      const sent = service.deliverPeerMessage(sender.id, { toAssistantID: recipient.id, text: '有疑问请联系我。' });
+      expect(await service.whenContactTurnSettled(sent.messageID)).toMatchObject({ status: 'complete' });
+      const followup = service.contactMessages(sender.id).messages.find((message) => message.role === 'peer');
+      expect(await service.whenContactTurnSettled(followup.messageID)).toMatchObject({ status: 'complete' });
+      expect(service.contactMessages(recipient.id).messages.filter((message) => message.role === 'peer')).toHaveLength(1);
     } finally { service.close(); }
   });
 
@@ -5594,7 +5675,7 @@ describe('assistants service', () => {
     } finally { release(); service.close(); }
   });
 
-  it('sends a read-only peer message from message_assistant without promptAsync', async () => {
+  it('sends an actionable peer message from message_assistant without automatically prompting a worker', async () => {
     const prompts = [];
     const directory = root();
     const service = setup(directory, { promptAsync: async (input) => { prompts.push(input); return { response: { status: 204 } }; } }, {

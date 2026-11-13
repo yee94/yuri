@@ -22,7 +22,7 @@ const fixture = vi.hoisted(() => {
 vi.mock('@/apps/mobileAppContext', () => ({ useMobileAppActions: () => ({ openFile: fixture.openFile }) }));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/workspace' }));
 vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ git: fixture.git }) }));
-vi.mock('@/stores/useGitStore', () => ({
+vi.mock('@/lib/api/useProjectGitStore', () => ({
   useGitStore: (select: (state: typeof fixture.store) => unknown) => select(fixture.store),
   useGitStatus: () => fixture.status, useIsGitRepo: () => true, useGitLoadingStatus: () => false,
 }));

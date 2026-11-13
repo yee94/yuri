@@ -677,6 +677,7 @@ describe('createRelayTunnelClient', () => {
     await client.fetch('/health');
     rejectWire(4010);
     await vi.waitFor(() => expect(client.getStatus().state).toBe('error'));
+    expect(client.getStatus().failureCode).toBe('relay_authentication_rejected');
     await expect(client.fetch('/health')).rejects.toThrow('authentication failed');
     expect(connectionCount()).toBe(1);
   });

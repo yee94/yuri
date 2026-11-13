@@ -23,6 +23,44 @@ const write = async (file, content = '{}') => {
 afterEach(async () => { await Promise.all(dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true }))); });
 
 describe('Magpie discovery and native transfer', () => {
+  it.each([true, false])('upserts a headless gateway, reusing healthy processes: %s', async (alreadyHealthy) => {
+    const { home, options } = await machine();
+    await write(path.join(home, '.local/bin/magpie'), 'fixture');
+    let healthy = alreadyHealthy;
+    const run = vi.fn(async (binary, args) => {
+      if (args[0] === '--version') return 'magpie 0.1.0';
+      if (args[0] === 'serve') return 'magpie serve — gateway';
+      if (args[0] === 'healthcheck') { if (!healthy) throw new Error('offline'); return ''; }
+      expect(binary).toBe('tmux');
+      if (args[0] === 'has-session') throw new Error('missing');
+      expect(args.slice(0, 4)).toEqual(['new-session', '-d', '-s', 'yuri-magpie']);
+      expect(args.at(-1)).toContain('magpie\' serve');
+      expect(args).toContain(`XDG_CONFIG_HOME=${options.env.XDG_CONFIG_HOME}`);
+      healthy = true;
+      return '';
+    });
+    const sync = createMagpieSync({ ...options, run });
+    expect(await sync.ensureGateway()).toEqual({ ready: true });
+    expect(await sync.ensureGateway()).toEqual({ ready: true });
+    expect(run.mock.calls.filter(([binary]) => binary === 'tmux')).toHaveLength(alreadyHealthy ? 0 : 2);
+  });
+
+  it('never replaces an existing tmux gateway and refuses unsupported CLI server capability', async () => {
+    const { home, options } = await machine();
+    await write(path.join(home, '.local/bin/magpie'), 'fixture');
+    let checks = 0;
+    const run = vi.fn(async (_binary, args) => {
+      if (args[0] === '--version') return 'magpie 0.1.0';
+      if (args[0] === 'serve') return 'magpie serve';
+      if (args[0] === 'healthcheck' && checks++ === 0) throw new Error('starting');
+      return '';
+    });
+    expect(await createMagpieSync({ ...options, run }).ensureGateway()).toEqual({ ready: true });
+    expect(run.mock.calls.some(([, args]) => args[0] === 'new-session')).toBe(false);
+    const old = vi.fn(async (_binary, args) => args[0] === '--version' ? 'magpie 0.0.1' : 'old CLI');
+    await expect(createMagpieSync({ ...options, run: old }).ensureGateway()).rejects.toThrow('does not support');
+  });
+
   it('recovers accounts JSON when plugin diagnostics precede the array on merged streams', () => {
     expect(parseMagpieAccountsJson('2026/10/28 10:45:30 plugin [error]: Grok is not signed in\n[{"agent":"cursor","user":"a@example.invalid"}]'))
       .toEqual([{ agent: 'cursor', user: 'a@example.invalid' }]);

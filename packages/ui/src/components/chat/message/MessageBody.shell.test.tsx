@@ -23,7 +23,10 @@ vi.hoisted(() => {
   })));
 });
 vi.mock('../FileAttachment', () => ({ MessageFilesDisplay: () => null }));
-vi.mock('../MarkdownRenderer', () => ({ MarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p> }));
+vi.mock('../MarkdownRenderer', () => ({
+  MarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p>,
+  SimpleMarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p>,
+}));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/workspace' }));
 vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: mocks.copy }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ locale: 'en', t: (key: string) => key }) }));
@@ -48,6 +51,74 @@ describe('user shell results', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+  });
+  test.each([
+    ['live', false], ['sorted', false], ['live', true], ['sorted', true],
+  ] as const)('textless TPS uses disabled-copy footer immediately and retains its footprint (%s, mobile=%s)', async (chatRenderMode, isMobile) => {
+    const previousUI = useUIStore.getState();
+    useUIStore.setState({ chatRenderMode, showAssistantTps: true });
+    const copy = vi.fn();
+    const renderFooter = (completed: boolean, hasTextContent = false, disposition: 'active' | 'abnormal' = 'abnormal') => root.render(<MessageBody
+      messageId="tool-only" parts={hasTextContent ? [{ id: 'answer', type: 'text', text: 'Final answer.' } as Part] : []}
+      isUser={false} isMessageCompleted={completed} messageFinish={hasTextContent ? 'stop' : 'tool-calls'}
+      isMobile={isMobile} copiedCode={null} onCopyCode={() => {}} onCopyMessage={copy}
+      expandedTools={new Set()} onToggleTool={() => {}} onShowPopup={() => {}}
+      streamPhase="completed" allowAnimation={false} hasTextContent={hasTextContent}
+      turnGroupingContext={{ turnId: 'turn', isFirstAssistantInTurn: true, isLastAssistantInTurn: true,
+        isLatestTurn: false, hasTools: true, hasReasoning: false, isWorking: false, isTurnSettled: disposition !== 'active',
+        completionDisposition: disposition, assistantTps: 28.3, durationMs: 1300 }}
+    />);
+    try {
+      await act(async () => renderFooter(false, false, 'active'));
+      expect(container.querySelector('[data-message-footer]')).toBeNull();
+      await act(async () => renderFooter(false));
+      const footer = container.querySelector<HTMLElement>('[data-message-footer]')!;
+      const copyButton = footer.querySelector<HTMLButtonElement>('button[aria-label="chat.messageBody.actions.copyMessageAria"]');
+      expect(copyButton).not.toBeNull();
+      expect(copyButton!.disabled).toBe(true);
+      expect(footer.textContent).toContain('28.3 tok/s');
+      const footprint = footer.className;
+      await act(async () => copyButton!.click());
+      expect(copy).not.toHaveBeenCalled();
+      for (const hasTextContent of [false, true, false]) {
+        await act(async () => renderFooter(true, hasTextContent));
+        expect(container.querySelectorAll('[data-message-footer]')).toHaveLength(1);
+        expect(container.querySelector('[data-message-footer]')).toBe(footer);
+        expect(footer.className).toBe(footprint);
+        expect(footer.querySelector('button[aria-label="chat.messageBody.actions.copyMessageAria"]')).toBe(copyButton);
+        expect(copyButton!.disabled).toBe(!hasTextContent);
+      }
+    } finally {
+      await act(async () => useUIStore.setState(previousUI));
+    }
+  });
+  test.each(['live', 'sorted'] as const)('footer copy follows the final body, not process text or completion metadata (%s)', async (chatRenderMode) => {
+    const previousUI = useUIStore.getState();
+    useUIStore.setState({ chatRenderMode, showAssistantTps: true });
+    const progress = { id: 'progress', type: 'text', text: 'Let me run a command.' } as Part;
+    const tool = { id: 'command', type: 'tool', tool: 'shell', callID: 'command',
+      state: { status: 'completed', input: { command: 'pwd' }, output: '/workspace' } } as Part;
+    const answer = { id: 'answer', type: 'text', text: 'Final answer.' } as Part;
+    const renderFooter = (finalBody: boolean) => root.render(<MessageBody
+      messageId="copy-final-body" parts={finalBody ? [answer] : chatRenderMode === 'sorted' ? [] : [progress]}
+      sourceParts={finalBody ? [answer] : [progress, tool]}
+      isUser={false} isMessageCompleted={!finalBody} messageFinish={finalBody ? 'stop' : 'tool-calls'}
+      isMobile={false} copiedCode={null} onCopyCode={() => {}} onCopyMessage={() => {}}
+      expandedTools={new Set()} onToggleTool={() => {}} onShowPopup={() => {}}
+      streamPhase="completed" allowAnimation={false} hasTextContent={finalBody || chatRenderMode === 'live'}
+      turnGroupingContext={{ turnId: 'turn', isFirstAssistantInTurn: true, isLastAssistantInTurn: true,
+        isLatestTurn: false, hasTools: !finalBody, hasReasoning: false, isWorking: false, isTurnSettled: true,
+        completionDisposition: finalBody ? 'normal' : 'abnormal', assistantTps: 28.3 }}
+    />);
+    const copyButton = () => container.querySelector<HTMLButtonElement>('[data-message-footer] button[aria-label="chat.messageBody.actions.copyMessageAria"]')!;
+    try {
+      await act(async () => renderFooter(false));
+      expect(copyButton().disabled).toBe(true);
+      await act(async () => renderFooter(true));
+      expect(copyButton().disabled).toBe(false);
+    } finally {
+      await act(async () => useUIStore.setState(previousUI));
+    }
   });
   test.each([false, true])('an unrelated latest turn never inherits another turn\'s background count (mobile=%s)', async (isMobile) => {
     const children = new ChildStoreManager();
@@ -170,6 +241,27 @@ describe('user shell results', () => {
       streamPhase="completed" allowAnimation={false} shouldShowHeader={false}
     />));
   };
+
+  test.each([false, true])('renders running subagent reports as nonterminal cards, not raw tags or cancelled reports (mobile=%s)', async (isMobile) => {
+    for (const state of ['running', 'completed', 'error', 'cancelled']) {
+      const normalized = normalizeSessionProjectionMessage('parent', {
+        id: 'report', type: 'synthetic',
+        metadata: { source: 'subagent', childID: 'child', state: 'completed' },
+        text: `<subagent sessionID="child" state="${state}">Partial answer</subagent>`,
+      })!;
+      await act(async () => root.render(<MessageBody
+        messageId="report" parts={normalized.parts} isUser isMessageCompleted isMobile={isMobile}
+        copiedCode={null} onCopyCode={() => {}} expandedTools={new Set()} onToggleTool={() => {}} onShowPopup={() => {}}
+        streamPhase="completed" allowAnimation={false} shouldShowHeader={false}
+      />));
+      expect(container.textContent).toContain(state === 'running' ? 'chat.usedGroup.running' : `chat.messageBody.subagent.${state}`);
+      expect(container.textContent).not.toContain('<subagent');
+      if (state === 'running') {
+        expect(container.textContent).not.toContain('chat.messageBody.subagent.completed');
+        expect(container.textContent).not.toContain('chat.messageBody.subagent.cancelled');
+      }
+    }
+  });
 
   test('renders raw output immediately and copies its exact whitespace with feedback', async () => {
     const output = '  /workspace\n<script>literal text</script>\n\n';

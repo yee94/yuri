@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   transport: 'host-a', directory: '/project', sessionID: 'session-a' as string | null,
   sessions: {} as Record<string, { id: string; directory: string }>,
   files: {},
+  mobile: false, network: vi.fn(),
   nativeBridge: undefined as NativeGuiBridge | undefined,
   windowBridge: undefined as NativeGuiBridge | undefined,
   focusFile: undefined as undefined | ((path: string, directory: string) => Promise<void>),
@@ -24,6 +25,8 @@ vi.mock('@/lib/runtime-switch', () => ({
     return () => window.removeEventListener('yuri:runtime-endpoint-changed', callback);
   },
 }));
+vi.mock('@/lib/platform', () => ({ isCapacitorApp: () => state.mobile }));
+vi.mock('@/lib/preview/mobile-html-network', () => ({ acquireMobileHtmlNetwork: (...args: unknown[]) => state.network(...args) }));
 vi.mock('@/lib/desktop', () => ({ getDesktopGuiPluginBridge: () => state.nativeBridge, getDesktopGuiPluginWindowBridge: () => state.windowBridge ?? state.nativeBridge }));
 vi.mock('@/lib/instanceScopedStorage', () => ({ instanceScopedStorageKey: (key: string, runtime: string) => `${runtime}:${key}` }));
 vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ files: state.files }) }));
@@ -44,7 +47,7 @@ vi.mock('@/components/gui-plugins/GuiPluginSurface', () => ({ GuiPluginSurface: 
 vi.mock('./host', () => { state.hostImports(); return {
   GuiPluginHost: class {
     snapshot = { plugins: [], commands: [], titlebarItems: [], panels: [], pages: [], settings: [], menuItems: [], activePanel: null };
-    install = vi.fn(); uninstall = vi.fn(); dispose = vi.fn(); setSession = vi.fn(); setAppearance = vi.fn(); setPage = vi.fn();
+    install = vi.fn(); uninstall = vi.fn(); dispose = vi.fn(); setSession = vi.fn(); setAppearance = vi.fn(); setPage = vi.fn(); setMobilePageNetworkReady = vi.fn();
     appearanceCatalog = { setOrder: vi.fn() };
     workStatus = { setOrder: vi.fn() };
     subscribe = () => () => {};
@@ -89,6 +92,7 @@ beforeEach(() => {
   vi.stubGlobal('cancelIdleCallback', vi.fn((id: number) => idleTasks.delete(id)));
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   state.transport = 'host-a'; state.hosts.length = 0; state.signals.length = 0; state.hostFailure = false;
+  state.mobile = false; state.network.mockReset();
   state.nativeBridge = undefined;
   state.windowBridge = undefined;
   state.surfaceFailure = false;
@@ -141,6 +145,16 @@ it('uses application readiness only as an initial gate and retains the host duri
   await act(async () => draw()); await settle();
   expect(state.hosts).toHaveLength(1);
   expect(state.gui).toHaveBeenCalledOnce();
+});
+
+it('loads mobile plugins on the original network path without taking the Relay egress lease', async () => {
+  state.mobile = true;
+  await load();
+  expect(state.hosts).toHaveLength(1);
+  expect(state.hosts[0].install).toHaveBeenCalledOnce();
+  for (let index = 0; index < 50; index++) await act(async () => draw());
+  expect(state.network).not.toHaveBeenCalled();
+  expect(context.error).toBe(null);
 });
 
 it('passes authoritative inventory order to appearance and widgets only on catalog changes', async () => {

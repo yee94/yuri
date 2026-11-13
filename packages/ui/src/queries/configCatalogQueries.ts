@@ -7,6 +7,9 @@ import { parseProviderCatalog } from '@/lib/configCatalogParser';
 import type { ProviderCatalog } from '@/types/configCatalog';
 import { parseModelIdentifier } from '@/lib/modelIdentifier';
 import { withConfigQueryDeadline } from './configQueryDeadline';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { projectAgent } from '@/lib/opencode/agent-identity';
 
 // 空 catalog 绝不能永久 fresh：成功或失败后的空列表都必须在下一次
 // ensure/fetchQuery 时重新请求，避免 UI 被空 SWR 快照永久困住。
@@ -35,8 +38,8 @@ const locationOf = (directory: string | null) => (
 
 // Host catalog is the preferred sanitized snapshot. When that route is absent,
 // assemble the same schema from v2 config.get / provider.list / model.list.
-const loadProviderCatalogFromV2 = async (directory: string | null, signal: AbortSignal) => {
-  const client = opencodeClient.getSdkClient();
+const loadProviderCatalogFromV2 = async (directory: string | null, signal: AbortSignal, entry?: HostRuntimeEntry) => {
+  const client = entry ? entry.sdk() : opencodeClient.getSdkClient();
   const location = locationOf(directory);
   const requestOptions = { signal };
   const [providersResult, modelsResult, configEntries] = await Promise.all([
@@ -111,12 +114,15 @@ const loadProviderCatalogFromV2 = async (directory: string | null, signal: Abort
 export const providerCatalogQueryOptions = (
   directory: string | null,
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeConfigCatalogDirectory(directory);
+  const normalizedDirectory = entry ? entry.location.directory : normalizeConfigCatalogDirectory(directory);
+  const scope = captureProjectScope(entry);
+  const queryKey = scope.key(queryKeys.configCatalog.providers(normalizedDirectory, transport));
   return {
-    queryKey: queryKeys.configCatalog.providers(normalizedDirectory, transport),
+    queryKey,
     queryFn: ({ signal }: { signal: AbortSignal }) => withConfigQueryDeadline(signal, async (signal) => {
-      const response = await runtimeFetch('/api/config/catalog/providers', {
+      const response = await (entry ? scope.fetch : runtimeFetch)('/api/config/catalog/providers', {
         method: 'GET',
         headers: {
           Accept: 'application/json',
@@ -131,9 +137,10 @@ export const providerCatalogQueryOptions = (
         if (response.status !== 404 && response.status !== 501) {
           throw new Error(`Provider catalog request failed (${response.status})`);
         }
-        catalog = parseProviderCatalog(await loadProviderCatalogFromV2(normalizedDirectory, signal));
+        catalog = parseProviderCatalog(await loadProviderCatalogFromV2(normalizedDirectory, signal, entry));
       }
-      const previous = queryClient.getQueryData<ProviderCatalog>(queryKeys.configCatalog.providers(normalizedDirectory, transport));
+      scope.assertCurrent(signal);
+      const previous = queryClient.getQueryData<ProviderCatalog>(queryKey);
       if (catalog.partial && previous && !previous.partial) {
         throw new Error('Partial provider catalog refresh retained the complete snapshot');
       }
@@ -150,11 +157,19 @@ export const providerCatalogQueryOptions = (
 export const rawAgentsQueryOptions = (
   directory: string | null,
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeConfigCatalogDirectory(directory);
+  const normalizedDirectory = entry ? entry.location.directory : normalizeConfigCatalogDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: queryKeys.agents.raw(normalizedDirectory, transport),
-    queryFn: ({ signal }: { signal: AbortSignal }) => withConfigQueryDeadline(signal, (signal) => opencodeClient.listAgents(normalizedDirectory, signal)),
+    queryKey: scope.key(queryKeys.agents.raw(normalizedDirectory, transport)),
+    queryFn: ({ signal }: { signal: AbortSignal }) => withConfigQueryDeadline(signal, async (signal) => {
+      if (!entry) return opencodeClient.listAgents(normalizedDirectory, signal);
+      const result = await entry.sdk().agent.list({ location: { directory: entry.location.directory } }, { signal });
+      scope.assertCurrent(signal);
+      if (!Array.isArray(result.data)) throw new Error('Agent catalog returned no data');
+      return result.data.map(projectAgent);
+    }),
     staleTime: catalogStaleTime((data) => Array.isArray(data) && data.length > 0),
     gcTime: Infinity,
     retry: 2,

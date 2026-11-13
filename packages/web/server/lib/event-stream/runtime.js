@@ -27,6 +27,7 @@ export function createGlobalUiEventBroadcaster({
 }) {
   const subscribers = new Set();
   const broadcast = (payload, options = {}) => {
+    if (/^yuri:host-/.test(payload?.type || '') && typeof options.targetFilter !== 'function') return;
     for (const emit of subscribers) {
       try { emit(payload, options); } catch { /* Other streams remain independent. */ }
     }
@@ -38,6 +39,7 @@ export function createGlobalUiEventBroadcaster({
 
     if (hasSseClients) {
       for (const res of sseClients) {
+        if (options.targetFilter && !options.targetFilter(res)) continue;
         try {
           writeSseEvent(res, payload);
         } catch {
@@ -47,6 +49,7 @@ export function createGlobalUiEventBroadcaster({
 
     if (hasWsClients) {
       for (const socket of Array.from(wsClients)) {
+        if (options.targetFilter && !options.targetFilter(socket)) continue;
         const sent = sendMessageStreamWsEvent(socket, payload, {
           directory: typeof options.directory === 'string' && options.directory.length > 0 ? options.directory : 'global',
           eventId: typeof options.eventId === 'string' && options.eventId.length > 0 ? options.eventId : undefined,

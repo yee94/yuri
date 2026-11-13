@@ -13,6 +13,7 @@ import { JsonSummaryView } from './message/parts/JsonSummaryView';
 import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
 import { QuestionCardFrame } from './QuestionCardFrame';
+import { useRemoteChat } from '@/sync/remote-chat-context';
 
 const PERMISSION_BASH_CUSTOM_STYLE: React.CSSProperties = {
   margin: 0,
@@ -99,6 +100,7 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
   onResponse
 }) => {
   const { t } = useI18n();
+  const remote = useRemoteChat();
   const isMobile = useUIStore((state) => state.isMobile);
   const [isResponding, setIsResponding] = React.useState(false);
   const [hasResponded, setHasResponded] = React.useState(false);
@@ -115,7 +117,8 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
     setIsResponding(true);
 
     try {
-      await respondToPermission(permission.sessionID, permission.id, response);
+      if (remote) await remote.respondPermission(permission.sessionID, permission.id, response);
+      else await respondToPermission(permission.sessionID, permission.id, response);
       setHasResponded(true);
       onResponse?.(response);
     } catch (error) {

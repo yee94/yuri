@@ -1,4 +1,6 @@
 import { registerFsRoutes } from '../fs/routes.js';
+import { registerRemoteConnectionsSkill } from '../gui-customization/remote-connections.js';
+import { registerProjectsSkill } from '../gui-customization/projects.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
 import { registerSmallModelRoutes } from '../small-model/routes.js';
 import { registerSessionMetadataRoutes } from '../session-metadata/routes.js';
@@ -8,6 +10,10 @@ import { makeOpenCodeV2Client } from './v2-client.js';
 import { releaseDeletedWorktreeLocation } from './location-release.js';
 import { registerMagicPromptRoutes } from '../magic-prompts/routes.js';
 import { registerSessionFoldersRoutes } from '../session-folders/routes.js';
+import { createSessionUnreadStore } from '../notifications/session-unread-store.js';
+import { createSessionUnreadRuntime } from '../notifications/session-unread-runtime.js';
+import { readSessionRecordViaClient } from '../session-metadata/opencode-session-record.js';
+import { projectSessionWithHostMetadata } from '../session-metadata/session-projection.js';
 import { registerPermissionAutoAcceptRoutes } from '../permission-auto-accept/runtime.js';
 import { registerQuestionAutoDelegateRoutes } from '../question-auto-delegate/routes.js';
 import { registerConfigEntityRoutes } from './config-entity-routes.js';
@@ -60,7 +66,8 @@ import { scanClawdHubPage } from '../skills-catalog/clawdhub/scan.js';
 import { installSkillsFromClawdHub } from '../skills-catalog/clawdhub/install.js';
 
 /** Fan-out an Yuri product SSE tip to every /api/yuri/events client. */
-export const createYuriEventBroadcaster = ({ getYuriEventClients, writeSseEvent }) => (event) => {
+export const createYuriEventBroadcaster = ({ getYuriEventClients, writeSseEvent, onEvent }) => (event) => {
+  onEvent?.(event);
   const clients = getYuriEventClients();
   for (const client of clients) {
     try {
@@ -90,6 +97,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   let assistantRoutesRuntime = null;
   let historyImportRuntime = null;
+  let sessionUnreadRuntime = null;
 
   const registerRoutes = async (app, routeDependencies) => {
     const {
@@ -125,6 +133,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenCodeAuthHeaders,
       getIsExternalOpenCode = () => false,
       getIsSharedOpenCodeService = () => false,
+      remoteConnectionsAdapter = null,
       forceResolvedOpenCodeBinary = null,
       upgradeOpenCodeCli = null,
       restartOpenCode = null,
@@ -176,6 +185,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     }
 
     registerOpenCodeRoutes(app, {
+      getRemoteProjectState: routeDependencies.getRemoteProjectState,
       crypto,
       clientReloadDelayMs,
       getOpenCodeResolutionSnapshot,
@@ -250,6 +260,11 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getIsSharedOpenCodeService, waitForOpenCodeReady, getRuntimeContract,
       readSettingsFromDiskMigrated, sanitizeProjects, validateDirectoryPath,
       scheduledTaskRouter,
+      remoteConnectionsAdapter,
+    });
+    registerRemoteConnectionsSkill(app, {
+      express, adapter: remoteConnectionsAdapter, getIsSharedOpenCodeService, getOpenCodeAuthHeaders,
+      createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
     });
     registerCustomizationSessionSkill(app, {
       express, yuriDataDir, getIsSharedOpenCodeService, getIsExternalOpenCode, waitForOpenCodeReady,
@@ -291,6 +306,12 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     };
     await refreshAssistantAllowedRoots();
     const projectRegistry = createProjectRegistry({ persistSettings, validateDirectoryPath });
+    registerProjectsSkill(app, {
+      remoteHostGateway: routeDependencies.remoteHostGateway,
+      express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders,
+      createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
+      registerProject: (input) => projectRegistry.register(input), readSettingsFromDiskStrict, sanitizeProjects,
+    });
     historyImportRuntime = registerHistoryImportRoutes(app, {
       express, uiAuthController, dataDir: yuriDataDir,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
@@ -320,6 +341,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       onSystemSessionPersisted,
     });
     assistantRoutesRuntime = registerAssistantRoutes(app, {
+      remoteHostGateway: routeDependencies.remoteHostGateway,
       yuriDataDir,
       dbPath: path.join(yuriDataDir, 'assistants.sqlite'),
       buildOpenCodeUrl,
@@ -481,7 +503,26 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     const broadcastYuriEvent = createYuriEventBroadcaster({
       getYuriEventClients,
       writeSseEvent,
+      onEvent: (event) => {
+        if (/^yuri:session-(unread|order|folders)-changed$/.test(event?.type || '')) broadcastGlobalUiEvent?.(event);
+      },
     });
+    sessionUnreadRuntime = createSessionUnreadRuntime({
+      store: createSessionUnreadStore({
+        dbPath: path.join(yuriDataDir, 'session-unread.sqlite'),
+        onChanged: revision => broadcastYuriEvent({
+          type: 'yuri:session-unread-changed', properties: { revision, occurredAt: Date.now() },
+        }),
+      }),
+      hub: globalMessageStreamHub,
+      loadSession: async (sessionID) => {
+        const client = makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders() });
+        const session = await readSessionRecordViaClient(client, { sessionID, requestOptions: { signal: AbortSignal.timeout(10000) } });
+        if (!session) return null;
+        return sessionMetadataStore ? projectSessionWithHostMetadata(session, await sessionMetadataStore.get(sessionID)) : session;
+      },
+    });
+    sessionUnreadRuntime.registerRoutes(app);
     app.on('yuri:speech-settings-changed', () => {
       broadcastYuriEvent({ type: 'yuri:speech-settings-changed', properties: { occurredAt: Date.now() } });
     });
@@ -549,6 +590,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   return {
     registerRoutes,
-    close: async () => { await historyImportRuntime?.close(); await assistantRoutesRuntime?.close(); },
+    close: async () => { await sessionUnreadRuntime?.close(); await historyImportRuntime?.close(); await assistantRoutesRuntime?.close(); },
   };
 };

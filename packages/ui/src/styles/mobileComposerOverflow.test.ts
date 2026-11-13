@@ -12,6 +12,7 @@ const autoFollowSource = readFileSync(join(here, '../hooks/useChatAutoFollow.ts'
 const swapHookSource = readFileSync(join(here, '../components/chat/useMobileComposerSwap.ts'), 'utf-8');
 const queuedChipsSource = readFileSync(join(here, '../components/chat/QueuedMessageChips.tsx'), 'utf-8');
 const mobileAppSource = readFileSync(join(here, '../apps/MobileApp.tsx'), 'utf-8');
+const nativeComposerPluginSource = readFileSync(join(here, '../../../mobile/ios/App/App/YuriComposerPlugin.swift'), 'utf-8');
 const injected = new Set<HTMLElement>();
 
 afterEach(() => {
@@ -257,7 +258,13 @@ describe('mobile composer overflow and swap contract', () => {
         );
         expect(mobileAppSource).toContain("root.classList.contains('yuri-native-ios-composer')");
         expect(mobileAppSource).toContain('unwindKeyboardShell');
-        expect(mobileAppSource).toContain('getNativeIosComposerPlugin().blur()');
+        expect(mobileAppSource).not.toContain('getNativeIosComposerPlugin().blur()');
+        expect(mobileAppSource).toMatch(
+            /if \(!isActive && platform === 'ios'\)\s*\{[^}]*isComposerKeyboardTarget\(active\)\) active\.blur\(\)/,
+        );
+        expect(nativeComposerPluginSource).toMatch(
+            /forName: UIApplication\.didEnterBackgroundNotification[^}]*composerView\?\.blurInput\(\)/,
+        );
         expect(mobileAppSource).toMatch(
             /yuri-native-ios-composer[\s\S]*unwindKeyboardShell\(\)/,
         );

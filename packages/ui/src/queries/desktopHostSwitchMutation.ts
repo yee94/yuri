@@ -8,7 +8,7 @@ import {
   type SwitchDesktopHostResult,
 } from '@/lib/desktopHostSwitch';
 import type { DesktopHost } from '@/lib/desktopHosts';
-import { redactSensitiveUrl } from '@/lib/desktopHosts';
+import { desktopOpenLocalHostSettings, isPairedDesktopHost, redactSensitiveUrl } from '@/lib/desktopHosts';
 import { formatMessage, useI18nStore, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { queryClient } from '@/lib/queryRuntime';
 import { switchRuntimeEndpoint } from '@/lib/runtime-switch';
@@ -101,6 +101,16 @@ const getSwitchObserver = (): SwitchObserver => {
       }
       if (error.result.reason === 'unsupported') return;
       if (error.result.status.status === 'auth') {
+        if (isPairedDesktopHost(error.host)) {
+          toast.error(t('mobile.connect.pairing.expired'), {
+            description: t('desktopHostSwitcher.pairing.reconnectHint'),
+            action: {
+              label: t('settings.remoteInstances.openLocalManager'),
+              onClick: () => { void desktopOpenLocalHostSettings().catch(() => toast.error(t('sessionAuth.error.networkTitle'))); },
+            },
+          });
+          return;
+        }
         toast.error(t('desktopHostSwitcher.status.authRequired'));
         return;
       }

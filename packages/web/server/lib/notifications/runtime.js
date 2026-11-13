@@ -4,7 +4,6 @@ import { makeOpenCodeV2Client } from '../opencode/v2-client.js';
 import { getNativeSessionGoal } from '../opencode/native-goal.js';
 import { Goal } from '@opencode/schema/goal';
 import { Schema } from 'effect';
-import { createNotificationAdmission } from './admission-event.js';
 
 const trimmedText = (value) => (typeof value === 'string' && value.trim() ? value.trim() : '');
 
@@ -219,7 +218,8 @@ export const createNotificationTriggerRuntime = (deps) => {
   );
 
   const getCachedSessionMeta = (sessionId, directory) => {
-    const cacheKey = getSessionMetaCacheKey(sessionId, directory);
+    const requestedKey = getSessionMetaCacheKey(sessionId, directory);
+    const cacheKey = sessionMetaCache.has(requestedKey) ? requestedKey : getSessionMetaCacheKey(sessionId, undefined);
     const entry = sessionMetaCache.get(cacheKey);
     if (!entry) return undefined;
     if (Date.now() - entry.at > SESSION_META_CACHE_TTL_MS) {
@@ -233,6 +233,8 @@ export const createNotificationTriggerRuntime = (deps) => {
     const previous = getCachedSessionMeta(sessionId, directory);
     sessionMetaCache.set(getSessionMetaCacheKey(sessionId, directory), {
       parentID: meta.parentID !== undefined ? meta.parentID : (previous?.parentID ?? null),
+      workerParentSessionID: meta.workerParentSessionID !== undefined
+        ? meta.workerParentSessionID : (previous?.workerParentSessionID ?? null),
       smallModelPurpose: meta.smallModelPurpose !== undefined
         ? meta.smallModelPurpose
         : (previous?.smallModelPurpose ?? null),
@@ -245,7 +247,6 @@ export const createNotificationTriggerRuntime = (deps) => {
         ? meta.scheduledTaskID
         : (previous?.scheduledTaskID ?? null),
       title: meta.title !== undefined ? meta.title : (previous?.title ?? null),
-      identity: meta.identity !== undefined ? meta.identity : (previous?.identity ?? null),
       complete: meta.complete === true || previous?.complete === true,
       at: Date.now(),
     });
@@ -256,6 +257,7 @@ export const createNotificationTriggerRuntime = (deps) => {
       ? yuri.assigned.from
       : null;
     return {
+      workerParentSessionID: normalizeParentID(yuri?.worker?.parentSessionID),
       smallModelPurpose: normalizeSmallModelPurpose(yuri?.smallModel?.purpose),
       // Throwaway LLM gateway sessions (`metadata.yuri.llm.purpose`) share
       // the same sidebar-hidden contract as small-model system sessions.
@@ -273,6 +275,19 @@ export const createNotificationTriggerRuntime = (deps) => {
 
   const maybeCacheSessionMetaFromPayload = (payload) => {
     if (!payload || typeof payload !== 'object') return;
+    if (payload.type === 'session.metadata.updated') {
+      const data = payload.data ?? payload.properties;
+      if (typeof data?.sessionID === 'string' && data.metadata && typeof data.metadata === 'object') {
+        const meta = metaFromYuri(data.metadata.yuri);
+        for (const key of sessionMetaCache.keys()) {
+          if (key.endsWith(`\0${data.sessionID}`)) {
+            setCachedSessionMeta(data.sessionID, key.slice(0, -data.sessionID.length - 1), meta);
+          }
+        }
+        setCachedSessionMeta(data.sessionID, undefined, meta);
+      }
+      return;
+    }
     if (payload.type !== 'session.created' && payload.type !== 'session.updated') return;
     const info = payload.properties?.info;
     if (!info || typeof info !== 'object') return;
@@ -283,22 +298,15 @@ export const createNotificationTriggerRuntime = (deps) => {
       parentID: normalizeParentID(info.parentID),
       title: typeof info.title === 'string' ? info.title : null,
       complete: true,
-      identity: authoritativeSessionIdentity(info, sessionId, directory),
       ...metaFromYuri(info.metadata?.yuri),
     });
   };
 
-  const authoritativeSessionIdentity = (session, sessionID, directory) => {
-    const actualDirectory = trimmedText(session?.directory) || trimmedText(session?.location?.directory);
-    if (session?.id !== sessionID || !actualDirectory || directory && actualDirectory !== directory
-      || session.parentID !== undefined && session.parentID !== null && !nonEmptySystemID(session.parentID)) return null;
-    return { sessionID, directory: actualDirectory, parentID: normalizeParentID(session.parentID) };
-  };
-  const fetchSessionMeta = async (sessionId, directory, requireIdentity = false) => {
+  const fetchSessionMeta = async (sessionId, directory) => {
     if (!sessionId) return undefined;
 
     const cached = getCachedSessionMeta(sessionId, directory);
-    if (cached?.complete && (!requireIdentity || cached.identity)) return cached;
+    if (cached?.complete || isHiddenFromNavSession(cached)) return cached;
 
     try {
       const base = buildOpenCodeUrl(`/session/${encodeURIComponent(sessionId)}`, '');
@@ -323,7 +331,6 @@ export const createNotificationTriggerRuntime = (deps) => {
         parentID: normalizeParentID(session.parentID),
         title: trimmedText(session.title) || null,
         complete: true,
-        identity: authoritativeSessionIdentity(session, sessionId, directory),
         ...metaFromYuri(session.metadata?.yuri),
       };
       setCachedSessionMeta(sessionId, directory, meta);
@@ -357,6 +364,7 @@ export const createNotificationTriggerRuntime = (deps) => {
   const isHiddenFromNavSession = (meta) => {
     if (!meta) return false;
     if (typeof meta.parentID === 'string' && meta.parentID.length > 0) return true;
+    if (meta.workerParentSessionID) return true;
     if (typeof meta.smallModelPurpose === 'string' && meta.smallModelPurpose.length > 0) return true;
     if (typeof meta.llmPurpose === 'string' && meta.llmPurpose.length > 0) return true;
     if (typeof meta.assistantID === 'string' && meta.assistantID.length > 0 && meta.assignedFrom !== 'contact') {
@@ -450,87 +458,6 @@ export const createNotificationTriggerRuntime = (deps) => {
       if (directory) return directory;
     }
     return undefined;
-  };
-
-  const admitted = new Set();
-  const pendingAdmissions = new Map();
-  const pendingPublications = new Map();
-  const admissionVersions = new Map();
-  const captureAdmissionCurrent = (sessionID) => {
-    if (!admissionVersions.has(sessionID)) {
-      admissionVersions.set(sessionID, {});
-      if (admissionVersions.size > 4096) admissionVersions.delete(admissionVersions.keys().next().value);
-    }
-    const token = admissionVersions.get(sessionID);
-    return () => !admissionClosed && admissionVersions.get(sessionID) === token;
-  };
-  let admissionClosed = false;
-  const publishAdmission = (admission) => {
-    if (admissionClosed || !admission || admitted.has(admission.eventID)) return !admissionClosed && !!admission;
-    if (admission.source.type !== 'session' && typeof deps.publishNotificationAdmission === 'function') {
-      pendingPublications.set(admission.eventID, admission);
-      if (pendingPublications.size > 256) pendingPublications.delete(pendingPublications.keys().next().value);
-    }
-    try {
-      if (deps.publishNotificationAdmission?.(admission) !== true) return false;
-      admitted.add(admission.eventID);
-      pendingPublications.delete(admission.eventID);
-      if (admitted.size > 256) admitted.delete(admitted.values().next().value);
-      return true;
-    } catch { return false; }
-  };
-  const admitSession = async (kind, payload, boundaryID, isCurrent = () => true, expectedToken) => {
-    if (typeof deps.publishNotificationAdmission !== 'function') return true;
-    if (admissionClosed || !nonEmptySystemID(boundaryID)) return false;
-    const sessionID = extractSessionIdFromPayload(payload), directory = extractDirectoryFromPayload(payload);
-    if (!sessionID) return false;
-    if (!admissionVersions.has(sessionID)) {
-      admissionVersions.set(sessionID, {});
-      if (admissionVersions.size > 4096) admissionVersions.delete(admissionVersions.keys().next().value);
-    }
-    const token = expectedToken ?? admissionVersions.get(sessionID);
-    const valid = () => !admissionClosed && isCurrent() && admissionVersions.get(sessionID) === token;
-    if (!valid()) return false;
-    const field = { completion: 'notifyOnCompletion', subtask: 'notifyOnSubtasks', error: 'notifyOnError', question: 'notifyOnQuestion', permission: 'notifyOnPermission', goal: 'notifyOnGoals' }[kind];
-    const pendingKey = JSON.stringify([kind, sessionID, boundaryID]);
-    const identityPayload = { properties: { sessionID, ...(directory ? { directory } : {}) } };
-    pendingAdmissions.set(pendingKey, { kind, payload: identityPayload, boundaryID, isCurrent, token });
-    if (pendingAdmissions.size > 256) pendingAdmissions.delete(pendingAdmissions.keys().next().value);
-    let settings;
-    try { settings = await readSettingsFromDisk(); } catch { return false; }
-    if (!valid()) { pendingAdmissions.delete(pendingKey); return false; }
-    if (settings[field] === false || kind === 'subtask' && settings.notifyOnSubtasks !== true) { pendingAdmissions.delete(pendingKey); return true; }
-    const meta = await fetchSessionMeta(sessionID, directory, true);
-    if (!valid()) { pendingAdmissions.delete(pendingKey); return false; }
-    if (!meta?.identity) return false;
-    if (isHiddenFromNavSession(kind === 'subtask' ? { ...meta, parentID: null } : meta)) { pendingAdmissions.delete(pendingKey); return true; }
-    let confirmedSettings;
-    try { confirmedSettings = await readSettingsFromDisk(); } catch { return false; }
-    if (!valid()) return false;
-    if (confirmedSettings[field] === false || kind === 'subtask' && confirmedSettings.notifyOnSubtasks !== true) { pendingAdmissions.delete(pendingKey); return true; }
-    const admission = createNotificationAdmission(kind, { kind: 'session', id: sessionID }, { type: 'session', ...meta.identity, boundaryID });
-    if (admission && publishAdmission(admission)) { pendingAdmissions.delete(pendingKey); return true; }
-    return false;
-  };
-  let admissionRetry;
-  const retryNotificationAdmissions = () => {
-    if (admissionRetry) return admissionRetry;
-    admissionRetry = (async () => {
-      for (const item of [...pendingAdmissions.values()]) {
-        try { await admitSession(item.kind, item.payload, item.boundaryID, item.isCurrent, item.token); }
-        catch { /* A failed entity must not block unrelated pending decisions. */ }
-      }
-      for (const admission of [...pendingPublications.values()]) {
-        try {
-          const settings = await readSettingsFromDisk();
-          const field = admission.source.type === 'schedule' ? 'notifyOnScheduledTasks' : 'notifyOnAssistants';
-          if (admissionClosed) return;
-          if (settings[field] === false) pendingPublications.delete(admission.eventID);
-          else publishAdmission(admission);
-        } catch { /* Retain this decision for an explicit retry or reconnect. */ }
-      }
-    })().finally(() => { admissionRetry = undefined; });
-    return admissionRetry;
   };
 
   const resolvePushSessionName = async (variables, sessionId, directory) => {
@@ -727,7 +654,6 @@ export const createNotificationTriggerRuntime = (deps) => {
     }
 
     if ((payload.type === 'question.asked' || payload.type === 'form.created') && sessionId) {
-      const admissionCurrent = captureAdmissionCurrent(sessionId);
       if (await shouldSkipSystemSessionNotification(sessionId, notificationDirectory)) {
         return;
       }
@@ -745,7 +671,6 @@ export const createNotificationTriggerRuntime = (deps) => {
         }
 
         const prompt = readNotificationEventFields(payload);
-        await admitSession('question', payload, prompt.requestId || payload.id, () => isCurrent() && admissionCurrent());
         const header = prompt.header;
         const questionText = prompt.questionText;
 
@@ -824,7 +749,6 @@ export const createNotificationTriggerRuntime = (deps) => {
     }
 
     if (payload.type === 'permission.asked' && sessionId) {
-      const admissionCurrent = captureAdmissionCurrent(sessionId);
       if (await shouldSkipSystemSessionNotification(sessionId, notificationDirectory)) {
         return;
       }
@@ -864,7 +788,6 @@ export const createNotificationTriggerRuntime = (deps) => {
         if (settings.notifyOnPermission === false) {
           return;
         }
-        await admitSession('permission', payload, requestId || payload.id, () => isCurrent() && admissionCurrent());
 
         const sessionTitle = payload.properties?.sessionTitle ?? payload.data?.sessionTitle;
         const permissionText = typeof permission === 'string' && permission.length > 0 ? permission : '';
@@ -931,11 +854,7 @@ export const createNotificationTriggerRuntime = (deps) => {
     }
   };
 
-  const legacyFamilyDelivered = new Map();
-  const explicitSuccess = new Map();
   const familyCompletion = createFamilyCompletionGate({
-    rootsOnly: false,
-    deduplicate: false,
     loadActiveSessionIds: deps.loadActiveSessionIds ?? (async () => {
       const response = await fetch(buildOpenCodeUrl('/session/active', ''), {
         headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
@@ -959,101 +878,49 @@ export const createNotificationTriggerRuntime = (deps) => {
     onReady: async (payload, isCurrent) => {
       const sessionId = extractSessionIdFromPayload(payload);
       const directory = extractDirectoryFromPayload(payload);
-      const meta = await fetchSessionMeta(sessionId, directory);
-      if (meta?.parentID) {
-        const settings = await readSettingsFromDisk();
-        const proof = explicitSuccess.get(sessionId);
-        if (settings.notifyOnSubtasks === true && proof && isCurrent()) {
-          if (await admitSession('subtask', proof, proof.id, isCurrent) === false) return false;
-          explicitSuccess.delete(sessionId);
-        }
-        return true;
-      }
       if (await shouldSkipSystemSessionNotification(sessionId, directory)) return;
       if (!isCurrent()) return false;
-      if (!legacyFamilyDelivered.has(sessionId)) {
-        const delivered = await deliverTrigger(payload, isCurrent);
-        if (delivered === false) return false;
-        if (!isCurrent()) return false;
-        legacyFamilyDelivered.set(sessionId, 'pending-end');
+      const delivered = await deliverTrigger(payload, isCurrent);
+      if (delivered === false) return false;
+      if (!isCurrent()) return delivered === true;
+      try {
+        await sendLiveActivityEnd?.({ sessionId, status: 'complete' });
+      } catch (error) {
+        console.warn('[Live Activity] end failed:', error?.message ?? error);
       }
-      if (legacyFamilyDelivered.get(sessionId) === 'pending-end') {
-        try { await sendLiveActivityEnd?.({ sessionId, status: 'complete' }); }
-        catch (error) { console.warn('[Live Activity] end failed:', error?.message ?? error); }
-        if (!isCurrent()) return false;
-        legacyFamilyDelivered.set(sessionId, 'complete');
-      }
-      const proof = explicitSuccess.get(sessionId);
-      if (proof) {
-        // Only explicit runner success can produce the native admission. Legacy idle is never its proof.
-        try {
-          const client = makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), authHeaders: getOpenCodeAuthHeaders() });
-          const goal = await getNativeSessionGoal(client, sessionId, directory, AbortSignal.timeout(2000));
-          if (!isCurrent()) return false;
-          if (!goal || goal.status !== 'active') {
-            if (await admitSession('completion', proof, proof.id, isCurrent) === false) return false;
-          }
-          explicitSuccess.delete(sessionId);
-        } catch { return false; }
-      }
-      if (!isCurrent()) return false;
       return true;
     },
   });
 
   const nativeFailures = new Map();
   const maybeSendPushForTrigger = async (payload) => {
-    if (payload.type === 'server.connected') { await retryNotificationAdmissions(); return; }
-    if (['session.execution.started', 'session.deleted', 'session.execution.interrupted', 'form.replied', 'form.cancelled', 'question.replied', 'question.rejected', 'permission.replied'].includes(payload.type)) {
-      const sessionID = extractSessionIdFromPayload(payload);
-      if (sessionID) {
-        admissionVersions.set(sessionID, {});
-        if (admissionVersions.size > 4096) admissionVersions.delete(admissionVersions.keys().next().value);
-      }
-      for (const [key, item] of pendingAdmissions) if (extractSessionIdFromPayload(item.payload) === sessionID) pendingAdmissions.delete(key);
-    }
     maybeCacheSessionMetaFromPayload(payload);
     if (payload.type === 'rpc.opencode.goal.changed') {
       const parsed = Schema.decodeUnknownExit(Goal.Definition.events.changed.schema)(payload.properties ?? payload.data);
       if (parsed._tag === 'Failure' || parsed.value.goal?.status !== 'complete') return;
       const { sessionID, goal } = parsed.value;
-      const admissionCurrent = captureAdmissionCurrent(sessionID);
       const directory = extractDirectoryFromPayload(payload);
       if (await shouldSkipSystemSessionNotification(sessionID, directory)) return;
       await sendGoalSettlePush({
         sessionId: sessionID, directory, status: 'complete', title: 'Goal complete',
         body: [goal.objective, goal.reason].filter(Boolean).join(' — ').slice(0, 240),
-        boundaryID: goal.id,
-        isCurrent: admissionCurrent,
       });
       return;
     }
     const event = completionEvent(payload);
     if (event) {
-      if (event.kind === 'running' || event.kind === 'cancel') {
-        explicitSuccess.delete(event.sessionId);
-        if (event.kind === 'running') legacyFamilyDelivered.delete(event.sessionId);
-        else legacyFamilyDelivered.set(event.sessionId, 'complete');
-      }
-      if (typeof deps.publishNotificationAdmission === 'function' && payload.type === 'session.execution.succeeded' && typeof payload.id === 'string') {
-        explicitSuccess.set(event.sessionId, { type: payload.type, id: payload.id, properties: { sessionID: event.sessionId, directory: extractDirectoryFromPayload(payload) } });
-        if (explicitSuccess.size > 256) explicitSuccess.delete(explicitSuccess.keys().next().value);
-      }
       if (event.kind === 'running' || payload.type === 'session.deleted') nativeFailures.delete(event.sessionId);
       await familyCompletion.observe(event, payload);
       if (event.kind === 'complete') return;
       const failed = payload.type === 'session.execution.failed' || payload.type === 'session.error'
         || (payload.type === 'message.updated' && payload.properties?.info?.finish === 'error');
       if (failed && !nativeFailures.has(event.sessionId)) {
-        const admissionCurrent = captureAdmissionCurrent(event.sessionId);
         const marker = {};
         nativeFailures.set(event.sessionId, marker);
         if (nativeFailures.size > 1024) nativeFailures.delete(nativeFailures.keys().next().value);
         try {
           const settings = await readSettingsFromDisk();
           const directory = extractDirectoryFromPayload(payload);
-          if (settings.notifyOnError !== false) await admitSession('error', payload, payload.id ?? payload.data?.assistantMessageID ?? payload.properties?.info?.id,
-            () => admissionCurrent() && nativeFailures.get(event.sessionId) === marker);
           if (settings.notifyOnCompletion !== false && !await shouldSkipSystemSessionNotification(event.sessionId, directory)) {
             const variables = await buildTemplateVariables(payload, event.sessionId);
             const body = await resolvePushSessionName(variables, event.sessionId, directory);
@@ -1074,10 +941,9 @@ export const createNotificationTriggerRuntime = (deps) => {
   // Goal settle push: same fanout as the trigger paths (web-push with the
   // full text; APNs with the generic per-type title and the session name as
   // body, so the relay never sees content).
-  const sendGoalSettlePush = async ({ sessionId, directory, status, title, body, boundaryID, isCurrent = captureAdmissionCurrent(sessionId) }) => {
+  const sendGoalSettlePush = async ({ sessionId, directory, status, title, body }) => {
     const settings = await readSettingsFromDisk();
     if (settings.notifyOnGoals === false) return;
-    if (status === 'complete') await admitSession('goal', { properties: { sessionID: sessionId, directory } }, boundaryID, isCurrent);
     if (settings.nativeNotificationsEnabled && (settings.notificationMode === 'always' || !getIsWindowFocused?.())) {
       const notification = { title, body, tag: `goal-${sessionId}`, kind: 'goal', sessionId, directory };
       const desktopNotificationDelivered = emitDesktopNotification(notification);
@@ -1129,8 +995,6 @@ export const createNotificationTriggerRuntime = (deps) => {
     sessionId,
     reason,
     errorMessage,
-    runID,
-    resultOwner,
   } = {}) => {
     if (typeof projectID !== 'string' || !projectID) return;
     if (typeof taskID !== 'string' || !taskID) return;
@@ -1138,8 +1002,6 @@ export const createNotificationTriggerRuntime = (deps) => {
     if (status !== 'success' && status !== 'error') return;
     const settings = await readSettingsFromDisk();
     if (settings.notifyOnScheduledTasks === false) return;
-    if (reason === 'scheduled' && resultOwner === 'unowned') publishAdmission(createNotificationAdmission('schedule',
-      { kind: 'schedule', id: taskID }, { type: 'schedule', projectID, taskID, runID, trigger: 'scheduled', resultOwner: 'unowned', status }));
 
     const name = typeof taskName === 'string' && taskName.trim() ? taskName.trim() : 'Schedule';
     const isError = status === 'error';
@@ -1185,12 +1047,10 @@ export const createNotificationTriggerRuntime = (deps) => {
     return stripped || name.trim();
   };
 
-  const sendContactTurnNotification = async ({ assistantID, name, body, status, turnID } = {}) => {
+  const sendContactTurnNotification = async ({ assistantID, name, body, status } = {}) => {
     if (typeof assistantID !== 'string' || !assistantID.trim()) return;
     const settings = await readSettingsFromDisk();
     if (settings.notifyOnAssistants === false) return;
-    publishAdmission(createNotificationAdmission('assistant', { kind: 'assistant', id: assistantID },
-      { type: 'assistant', assistantID, turnID, status, publication: 'published' }));
 
     const title = contactNotificationTitle(name);
     const rawBody = typeof body === 'string' ? body : '';
@@ -1235,11 +1095,6 @@ export const createNotificationTriggerRuntime = (deps) => {
   return {
     maybeSendPushForTrigger,
     dispose: () => {
-      admissionClosed = true;
-      legacyFamilyDelivered.clear(); explicitSuccess.clear();
-      admitted.clear(); pendingAdmissions.clear();
-      pendingPublications.clear();
-      admissionVersions.clear();
       familyCompletion.dispose();
       nativeFailures.clear();
       for (const timer of pushQuestionDebounceTimers.values()) clearTimeout(timer);
@@ -1253,7 +1108,6 @@ export const createNotificationTriggerRuntime = (deps) => {
     clearPendingPushBadge,
     sendGoalSettlePush,
     sendContactTurnNotification,
-    retryNotificationAdmissions,
     sendScheduledTaskRunNotification,
     resolveLiveActivitySessionCandidate,
   };

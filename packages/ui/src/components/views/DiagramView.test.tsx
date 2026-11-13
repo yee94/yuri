@@ -218,8 +218,8 @@ vi.mock('@/components/diagram', () => ({
 }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
 vi.mock('sonner', () => ({ toast: { error: (message: string) => harness.recordToastError(message) } }));
-vi.mock('@/hooks/useRuntimeAPIs', () => ({
-  useRuntimeAPIs: () => ({ files: { readFile: harness.readFile, writeFile: harness.writeFile } }),
+vi.mock('@/lib/api/useProjectRuntimeAPIs', () => ({
+  useProjectRuntimeAPIs: () => ({ files: { readFile: harness.readFile, writeFile: harness.writeFile } }),
 }));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => harness.effectiveDirectory }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));

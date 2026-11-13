@@ -82,7 +82,7 @@ export const createSessionDirectoryRuntime = ({
   // v2 directory filters are lexical SQL equality. Read session pages without
   // booting a Location, then retain only the same physical directory.
   // This also finds old aliases absent from Yuri's bounded index.
-  const fetchSessionList = async (input, init) => {
+  const fetchSessionList = async (input, init, readPage = fetchFn) => {
     const url = new URL(input);
     if (!['/api/session', '/session'].includes(url.pathname) || (init?.method && init.method !== 'GET')) return fetchFn(input, init);
     const requested = url.searchParams.get('directory');
@@ -92,7 +92,7 @@ export const createSessionDirectoryRuntime = ({
     }
     url.searchParams.delete('directory');
     init?.signal?.throwIfAborted();
-    const response = await fetchFn(url, init);
+    const response = await readPage(url, init);
     if (!response.ok) return response;
     const payload = await response.json();
     init?.signal?.throwIfAborted();
@@ -108,5 +108,31 @@ export const createSessionDirectoryRuntime = ({
     headers.set('content-type', 'application/json');
     return new Response(JSON.stringify(body), { status: response.status, headers });
   };
-  return { isLocal, resolveDirectory, isDirectoryMissing, projectSession, projectEvent, fetchSessionList };
+  const createFetchBatch = () => {
+    const pages = new Map();
+    const runtime = getRuntimeUrl?.() ?? '';
+    let bytes = 0;
+    const readPage = async (url, init) => {
+      init?.signal?.throwIfAborted();
+      if ((getRuntimeUrl?.() ?? '') !== runtime) { pages.clear(); bytes = 0; return fetchFn(url, init); }
+      const key = JSON.stringify([String(url), [...new Headers(init?.headers)].sort()]);
+      const cached = pages.get(key);
+      if (cached) return new Response(cached.body, { status: cached.status, headers: cached.headers });
+      const response = await fetchFn(url, init);
+      if (!response.ok) return response;
+      const body = await response.text();
+      init?.signal?.throwIfAborted();
+      const size = Buffer.byteLength(body);
+      const headers = new Headers(response.headers);
+      for (const name of ['content-length', 'content-encoding', 'transfer-encoding', 'etag']) headers.delete(name);
+      // A batch retains at most five complete raw pages / 4 MiB, never filtered
+      // directory results. Over-budget pages are read normally, not truncated.
+      if (pages.size < 5 && bytes + size <= 4 * 1024 * 1024) {
+        pages.set(key, { body, status: response.status, headers }); bytes += size;
+      }
+      return new Response(body, { status: response.status, headers });
+    };
+    return (input, init) => fetchSessionList(input, init, readPage);
+  };
+  return { isLocal, resolveDirectory, isDirectoryMissing, projectSession, projectEvent, fetchSessionList, createFetchBatch };
 };

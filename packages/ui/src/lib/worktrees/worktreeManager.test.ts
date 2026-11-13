@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'vitest';
+import { mock } from 'bun:test';
 import type { SessionWorktreeAttachment } from '@/stores/types/sessionTypes';
 import type { WorktreeMetadata } from '@/types/worktree';
 import * as runtimeSwitch from '@/lib/runtime-switch';
@@ -15,6 +16,7 @@ const listResolvers: Array<(value: WorktreeListEntry[]) => void> = [];
 const listRejectors: Array<(reason?: unknown) => void> = [];
 let runtimeIdentity = 'runtime-0';
 let runtimeSequence = 0;
+let resolvedProjectRoot: string | null = null;
 const createdWorktree = {
   name: 'feature',
   branch: 'feature',
@@ -56,7 +58,7 @@ mock.module('@/lib/worktrees/worktreeBootstrap', () => ({
 
 mock.module('@/lib/worktrees/worktreeStatus', () => ({
   invalidateResolvedProjectRootCache: mock(),
-  resolveProjectRoot: (directory: string) => Promise.resolve(directory),
+  resolveProjectRoot: (directory: string) => Promise.resolve(resolvedProjectRoot ?? directory),
 }));
 
 mock.module('@/lib/runtime-switch', () => ({
@@ -82,6 +84,7 @@ mock.module('@/sync/session-worktree-store', () => ({
 
 mock.module('@/lib/gitApi', () => ({
   deleteRemoteBranch: mock(),
+  resolveGitPrimaryRoot: (directory: string) => Promise.resolve(resolvedProjectRoot ?? directory),
   git: {
     worktree: {
       list: (directory: string) => {
@@ -115,6 +118,7 @@ describe('worktreeManager list invalidation', () => {
     listResolvers.length = 0;
     listRejectors.length = 0;
     runtimeIdentity = `runtime-${++runtimeSequence}`;
+    resolvedProjectRoot = null;
     sessionState.availableWorktreesByProject = new Map();
     sessionState.availableWorktrees = [];
     sessionState.worktreeMetadata = new Map();
@@ -146,6 +150,51 @@ describe('worktreeManager list invalidation', () => {
     expect(result.map((entry) => entry.path)).toEqual(['/repo-feature']);
   });
 
+  test('scopes a nested project to its relative directory in each worktree without adopting root sessions', async () => {
+    resolvedProjectRoot = '/repo';
+    const listing = listProjectWorktrees({ id: 'src', path: '/repo/src' });
+    await waitForListCallCount(1);
+    listResolvers[0]([{ path: '/repo', branch: 'main' }, { path: '/feature', branch: 'feature' }]);
+    const result = await listing;
+    expect(result).toMatchObject([{ path: '/feature/src', worktreeRoot: '/feature', projectDirectory: '/repo/src', relativePath: 'src' }]);
+    expect(listCalls).toEqual(['/repo']);
+    expect(await listProjectWorktrees({ id: 'src', path: '/repo/src' })).toBe(result);
+    expect(listCalls).toHaveLength(1);
+  });
+
+  test('uses the current checkout rather than the primary repository to scope a nested linked project', async () => {
+    resolvedProjectRoot = '/repo';
+    const listing = listProjectWorktrees({ id: 'feature-src', path: '/feature/src' });
+    await waitForListCallCount(1);
+    listResolvers[0]([{ path: '/repo', branch: 'main' }, { path: '/feature', branch: 'feature' }]);
+    expect(await listing).toMatchObject([{ path: '/repo/src', worktreeRoot: '/repo', projectDirectory: '/feature/src', relativePath: 'src' }]);
+  });
+
+  test('creates a nested project worktree session target without changing its Git checkout root', async () => {
+    resolvedProjectRoot = '/repo';
+    const creating = createWorktree({ id: 'src', path: '/repo/src' }, { preferredName: 'feature', mode: 'new', branchName: 'feature' });
+    await waitForListCallCount(1);
+    listResolvers[0]([{ path: '/repo', branch: 'main' }]);
+    const result = await creating;
+    expect(result).toMatchObject({ path: '/repo-feature/src', worktreeRoot: '/repo-feature', projectDirectory: '/repo/src', relativePath: 'src' });
+    await removeProjectWorktree({ id: 'src', path: '/repo/src' }, result);
+    expect(removeWorktreeCalls[0][1].directory).toBe('/repo-feature');
+  });
+
+  test('deleting one shared checkout removes its scoped entries from every project and preserves unrelated catalogs', async () => {
+    const root = { path: '/feature', worktreeRoot: '/feature', projectDirectory: '/repo', branch: 'feature', label: 'feature' };
+    const nested = { ...root, path: '/feature/src', projectDirectory: '/repo/src', relativePath: 'src' };
+    const other = [{ ...root, path: '/other', worktreeRoot: '/other' }];
+    sessionState.availableWorktreesByProject = new Map([['/repo', [root]], ['/repo/src', [nested]], ['/other-repo', other]]);
+    sessionState.availableWorktrees = [root, nested, ...other];
+    await removeProjectWorktree({ id: 'src', path: '/repo/src' }, nested);
+    expect(removeWorktreeCalls[0][1].directory).toBe('/feature');
+    expect(sessionState.availableWorktreesByProject.get('/repo')).toEqual([]);
+    expect(sessionState.availableWorktreesByProject.get('/repo/src')).toEqual([]);
+    expect(sessionState.availableWorktreesByProject.get('/other-repo')).toBe(other);
+    expect(sessionState.availableWorktrees).toEqual(other);
+  });
+
   test('marks fast-created worktrees pending until bootstrap settles', async () => {
     const metadata = await createWorktree({ id: 'project-1', path: '/repo' }, {
       preferredName: 'feature',
@@ -170,6 +219,38 @@ describe('worktreeManager list invalidation', () => {
     expect(result.removedDirectories).toEqual(['/repo/feature']);
     expect(sessionState.availableWorktreesByProject.get('/repo')).toEqual([]);
     expect(sessionState.availableWorktreesByProject.get('/other')).toBe(other);
+  });
+
+  test('shares one raw listing across a refresh batch, including sequential siblings with empty catalogs', async () => {
+    resolvedProjectRoot = '/repo';
+    const refreshBatch = {};
+    const root = forceRefreshProjectWorktreeCatalog({ id: 'root', path: '/repo' }, { refreshBatch });
+    await waitForListCallCount(1);
+    listResolvers[0]([{ path: '/repo', branch: 'main' }, { path: '/feature', branch: 'feature' }]);
+    expect((await root).repositoryDirectory).toBe('/repo');
+    const src = await forceRefreshProjectWorktreeCatalog({ id: 'src', path: '/repo/src' }, { refreshBatch });
+    const lib = await forceRefreshProjectWorktreeCatalog({ id: 'lib', path: '/repo/lib' }, { refreshBatch });
+    expect(src.worktrees[0]?.path).toBe('/feature/src');
+    expect(lib.worktrees[0]?.path).toBe('/feature/lib');
+    expect(listCalls).toEqual(['/repo']);
+    const next = forceRefreshProjectWorktreeCatalog({ id: 'src', path: '/repo/src' });
+    await waitForListCallCount(2);
+    listResolvers[1]([]);
+    expect(await next).toMatchObject({ worktrees: [], repositoryDirectory: '/repo' });
+  });
+
+  test('a failed refresh preserves catalogs, metadata and attachments', async () => {
+    const entries = [{ path: '/feature', branch: 'feature', projectDirectory: '/repo', label: 'feature' }];
+    sessionState.availableWorktreesByProject.set('/repo', entries);
+    sessionState.worktreeMetadata.set('session', entries[0]);
+    const refreshing = forceRefreshProjectWorktreeCatalog({ id: 'root', path: '/repo' });
+    await waitForListCallCount(1);
+    const rejected = expect(refreshing).rejects.toThrow('unavailable');
+    listRejectors[0](new Error('unavailable'));
+    await rejected;
+    expect(sessionState.availableWorktreesByProject.get('/repo')).toBe(entries);
+    expect(sessionState.worktreeMetadata.get('session')).toBe(entries[0]);
+    expect(clearedAttachmentSessions).toEqual([]);
   });
 
   test('path-upserts an already discovered worktree as one pending entry', async () => {

@@ -1,5 +1,6 @@
 import React from 'react'
 import { useEvent } from '@reactuses/core'
+import { toast } from 'sonner'
 import { Icon } from '@/components/icon/Icon'
 import { useI18n } from '@/lib/i18n'
 import {
@@ -16,6 +17,7 @@ import { isIPadApp } from '@/lib/platform'
 import { useGlobalSessionStatus } from '@/sync/sync-context'
 import { openSessionWithFeedback } from '@/sync/openSessionWithFeedback'
 import { useGitBranchesQuery } from '@/queries/gitBranchQueries'
+import type { Session } from '@/lib/opencode/v2-types'
 import { ContactCardModelLine } from './ContactCardModelLine'
 import { AssistantCardNavigation } from './AssistantCardNavigation'
 import { CONTACT_SESSION_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CARD_TITLE_CLASS, activateContactCardOnKeyDown } from './contactCardChrome'
@@ -23,6 +25,7 @@ import { CONTACT_SESSION_CARD_COVER_CLASS, CONTACT_CARD_HEADER_CLASS, CONTACT_CA
 type AssistantSessionCardProps = {
   card: AssistantContactSessionCardPart
 }
+const RemoteSessionCard = React.lazy(() => import('./RemoteAssistantSessionCard'))
 
 const displayStatus = (liveType: string | undefined, persisted: string | null | undefined) => {
   if (persisted === 'cancelled') return persisted
@@ -34,6 +37,7 @@ const displayStatus = (liveType: string | undefined, persisted: string | null | 
 }
 
 const statusKey = (status: string | null | undefined) => {
+  if (status === 'unknown') return 'remoteProjects.unknown' as const
   if (status === 'cancelled') return 'assistants.contact.card.session.status.cancelled' as const
   if (status === 'busy') return 'assistants.contact.card.session.status.busy' as const
   if (status === 'retry') return 'assistants.contact.card.session.status.retry' as const
@@ -61,32 +65,50 @@ const directoryName = (directory: string) => {
  * Assistant-emitted session receipt: live status, title, project and branch,
  * with optional model/changes in a height-stable footer. The card opens the session.
  */
-export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card }) => {
-  const { t } = useI18n()
-  const mobileActions = useMobileAppActions()
-  const isPhoneShell = Boolean(mobileActions && !isIPadApp())
+const LocalSessionCard: React.FC<AssistantSessionCardProps> = ({ card }) => {
   const liveSession = useGlobalSessionsStore((state) => (
     state.activeSessions.find((item) => item.id === card.sessionID)
     ?? state.archivedSessions.find((item) => item.id === card.sessionID)
     ?? null
   ))
   const liveStatus = useGlobalSessionStatus(card.sessionID)
+  const directory = liveSession?.directory?.trim() || card.directory
+  const branches = useGitBranchesQuery(directory)
+  return <SessionCardView card={card} liveSession={liveSession ?? undefined} liveType={liveStatus?.type} branch={branches.data?.current?.trim() || null} />
+}
+
+export const AssistantSessionCard: React.FC<AssistantSessionCardProps> = ({ card }) => card.target
+  ? <React.Suspense fallback={<SessionCardView card={card} branch={null} />}><RemoteSessionCard card={card} /></React.Suspense> : <LocalSessionCard card={card} />
+
+export function SessionCardView({ card, liveSession, liveType, branch }: AssistantSessionCardProps & { liveSession?: Session; liveType?: string; branch: string | null }) {
+  const { t } = useI18n()
+  const mobileActions = useMobileAppActions()
+  const isPhoneShell = Boolean(mobileActions && !isIPadApp())
   const liveTitle = typeof liveSession?.title === 'string' && liveSession.title.trim()
     ? liveSession.title.trim()
     : null
   const title = liveTitle || card.title || t('assistants.contact.card.session.untitled')
-  const status = displayStatus(liveStatus?.type, card.status)
+  const status = card.target
+    ? liveType === 'idle' ? 'complete'
+      : liveType === 'busy' || liveType === 'retry' ? liveType
+        : ['complete', 'error', 'cancelled'].includes(card.status ?? '') ? card.status : 'unknown'
+    : displayStatus(liveType, card.status)
   const statusLabelKey = statusKey(status)
   const directory = (typeof liveSession?.directory === 'string' && liveSession.directory.trim())
     ? liveSession.directory.trim()
     : card.directory
   const project = directoryName(directory)
-  const branches = useGitBranchesQuery(directory)
-  const branch = branches.data?.current?.trim() || null
   const model = readSessionModelLabel(liveSession)
   const changes = status === 'complete' || status === 'idle' ? readSessionChangeSummary(liveSession) : null
   const navigateCard = React.useContext(AssistantCardNavigation)
   const openSession = useEvent(() => {
+    if (card.target) {
+      if (navigateCard) {
+        return navigateCard({ sessionId: card.sessionID, directory: card.directory, target: card.target })
+      }
+      void import('./remoteSessionReference').then(({ openAssistantRemoteSession }) => openAssistantRemoteSession(card, isPhoneShell)).catch(() => toast.error(t('remoteProjects.host-unavailable')))
+      return
+    }
     const live = findSessionById(card.sessionID)
     const nextDirectory = live?.directory || card.directory
     if (navigateCard) return navigateCard({ sessionId: card.sessionID, directory: nextDirectory })

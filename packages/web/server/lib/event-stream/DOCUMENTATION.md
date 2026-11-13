@@ -72,6 +72,11 @@ Native v2 `session.reasoning.*` events are filtered at the same outbound boundar
 - Health checks are reserved for initial upstream connect failures and explicit upstream-unavailable responses, not for ordinary stall recovery on an already-established stream.
 - Global synthetic events such as `yuri:session-status`, `yuri:session-activity`, `yuri:notification`, and `yuri:heartbeat` are preserved on the WS path, but heartbeat frames are emitted only while an upstream SSE stream is actively attached.
 - Global UI broadcasts are fan-out capable across both SSE and WS clients.
+- Remote Host envelopes (`yuri:host-*`) fail closed unless the broadcaster receives
+  a live `targetFilter`. SSE/WS sends and synthetic-event proxy subscribers apply
+  that same filter before serialization. Gateway pairing revocation/expiry clears
+  the resource grant; merely opening an unpaired local global stream never grants
+  access to remote content.
 - The broadcaster's `subscribe` seam also feeds `/api/event` and `/api/global/event` through the authenticated proxy. Host title/metadata/notification events retain their directory envelope, use the same outbound filter and serialized writer, and can only be interleaved between complete upstream SSE blocks. Pending writes are capped at 2 MiB; overflow disconnects the slow stream. Close/error removes the subscription. Relay uses this same path.
 - Queue event confirmation accepts native `session.inbox.enqueued` user items and `session.inbox.delivered` with exact inbox/session/runtime identity; periodic query reconciliation remains the fallback.
 - Each global upstream connection captures a sanitized runtime fence containing the normalized runtime key plus connection generation and derived token. Queue confirmation uses that generation only to validate the connection runtime identity and read current authority by runtime key. Active and paused authorities confirm exact directory, session, and message matches through the queue service; shadow authority skips confirmation while session-index ingestion continues.

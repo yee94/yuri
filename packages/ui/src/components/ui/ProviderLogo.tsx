@@ -22,26 +22,46 @@ export const ProviderLogo: React.FC<ProviderLogoProps> = ({
     onError: externalOnError
 }) => {
     const { src, onError: handleInternalError, hasLogo } = useProviderLogo(providerId);
+    const [failed, setFailed] = React.useState(false);
 
-    const handleError = React.useCallback(() => {
-        handleInternalError();
-        externalOnError?.();
-    }, [handleInternalError, externalOnError]);
+    React.useEffect(() => {
+        setFailed(false);
+    }, [src]);
 
-    if (!hasLogo || !src) {
+    React.useEffect(() => {
+        if (!src || typeof Image === 'undefined') return;
+        let cancelled = false;
+        const image = new Image();
+        image.onerror = () => {
+            if (cancelled) return;
+            setFailed(true);
+            handleInternalError();
+            externalOnError?.();
+        };
+        image.src = src;
+        return () => {
+            cancelled = true;
+        };
+    }, [src, handleInternalError, externalOnError]);
+
+    if (!hasLogo || !src || failed) {
         return <ProviderLogoFallback className={className} />;
     }
 
+    // Paint as a currentColor mask instead of brightness-0/invert.
+    // iOS WKWebView can drop CSS filters on children of animated/
+    // backdrop-filtered overlays (usage metadata sheet), leaving black marks
+    // invisible on dark surfaces.
     return (
-        <img
-            src={src}
-            alt={alt || `${providerId} logo`}
-            className={cn('brightness-0 dark:invert object-contain', className)}
-            loading="eager"
-            decoding="async"
-            fetchPriority="high"
+        <span
+            role="img"
+            aria-label={alt || `${providerId} logo`}
+            className={cn('inline-block shrink-0 bg-foreground', className)}
+            style={{
+                mask: `url("${src}") center / contain no-repeat`,
+                WebkitMask: `url("${src}") center / contain no-repeat`,
+            }}
             draggable={false}
-            onError={handleError}
         />
     );
 };

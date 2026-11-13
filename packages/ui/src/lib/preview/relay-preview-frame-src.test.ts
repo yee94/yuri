@@ -5,6 +5,16 @@ describe('resolveRelayPreviewFrameSrc', () => {
   const authenticated = '/api/preview/proxy/abc123/index.html?yuri_preview_token=p&yuri_url_token=u#top';
   const absoluteAuthenticated = 'https://host.example/api/preview/proxy/abc123/?yuri_preview_token=p&yuri_url_token=u';
 
+  it('preserves the selected project Host through gateway remapping without allowing arbitrary Host APIs', () => {
+    const scoped = '/api/hosts/remote-a/api/preview/proxy/abc123/index.html?yuri_preview_token=p#top';
+    expect(resolveRelayPreviewFrameSrc({ relayActive: true, gatewayOrigin: 'http://127.0.0.1:54321', authenticatedAssetUrl: scoped }))
+      .toBe(`http://127.0.0.1:54321${scoped}`);
+    expect(isNormalizedPreviewProxyPath(scoped)).toBe(true);
+    expect(isNormalizedPreviewProxyPath('/api/hosts/remote-a/api/session')).toBe(false);
+    expect(isNormalizedPreviewProxyPath('/api/hosts/%2fother/api/preview/proxy/abc/')).toBe(false);
+    expect(isNormalizedPreviewProxyPath('/api/hosts/a/api/preview/proxy/%2e%2e/%2e%2e/session')).toBe(false);
+  });
+
   it('returns authenticated asset unchanged when relay is inactive', () => {
     expect(resolveRelayPreviewFrameSrc({
       relayActive: false,

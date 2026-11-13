@@ -5,14 +5,19 @@ import {
   buildNewSessionPath,
   buildSettingsPath,
   buildPluginPagePath,
-  parseAppPath,
   type DiffScope,
   type ScheduleView,
 } from '@/router/pathContract';
 import { SCHEDULE_TAB_ID } from '@/router/primarySurface';
+import { routeStateFromPath } from './parseRoute';
 
 export interface AppRouteState {
   sessionId: string | null;
+  hostId?: string | null;
+  hubId?: string | null;
+  instanceId?: string | null;
+  directory?: string | null;
+  projectId?: string | null;
   /** Welcome / new-session draft surface → `/session/new` */
   isNewSession?: boolean;
   tab: MainTab;
@@ -70,12 +75,24 @@ export function serializeAppPath(state: AppRouteState): string {
     });
   }
 
+  const withHost = (path: string): string => {
+    if (!state.hostId) return path;
+    if (!state.hubId || !state.directory) throw new Error('Remote route requires Hub and raw directory');
+    const url = new URL(path, 'https://router.invalid');
+    url.searchParams.set('hostId', state.hostId);
+    url.searchParams.set('hubId', state.hubId);
+    if (state.instanceId) url.searchParams.set('instanceId', state.instanceId);
+    url.searchParams.set('directory', state.directory);
+    if (state.projectId) url.searchParams.set('projectId', state.projectId);
+    return `${url.pathname}${url.search}`;
+  };
+
   // Draft / welcome — must win over a lingering path session id
   if (state.isNewSession || (!state.sessionId && state.tab === 'chat')) {
     // Only force /session/new when explicitly in draft mode; bare chat without
     // session may be transitional — still prefer draft path when flagged.
     if (state.isNewSession) {
-      return buildNewSessionPath();
+      return withHost(buildNewSessionPath());
     }
   }
 
@@ -86,16 +103,16 @@ export function serializeAppPath(state: AppRouteState): string {
         ? state.diffFile
         : null;
 
-    return buildAppLocation({
+    return withHost(buildAppLocation({
       sessionId: state.sessionId.trim(),
       tab: state.tab,
       file,
       scope: state.tab === 'diff' ? (state.diffScope ?? null) : null,
-    });
+    }));
   }
 
   if (state.isNewSession) {
-    return buildNewSessionPath();
+    return withHost(buildNewSessionPath());
   }
 
   return '/';
@@ -109,7 +126,7 @@ function routeMatchesURL(state: AppRouteState): boolean {
   try {
     const current = `${window.location.pathname}${window.location.search}`;
     const next = serializeAppPath(state);
-    return JSON.stringify(parseAppPath(current)) === JSON.stringify(parseAppPath(next));
+    return JSON.stringify(routeStateFromPath(current)) === JSON.stringify(routeStateFromPath(next));
   } catch {
     return true;
   }

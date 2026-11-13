@@ -19,7 +19,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useInputStore } from '@/sync/input-store';
 import { useUIStore } from '@/stores/useUIStore';
-import { getGitCommitSummaries } from '@/lib/gitApi';
+import { useProjectGitActions } from '@/lib/api/useProjectGitActions';
 import { renderMagicPrompt } from '@/lib/magicPrompts';
 import {
   abortIntegrate,
@@ -60,6 +60,7 @@ export const IntegrateCommitsSection: React.FC<{
   onRefresh,
 }) => {
   const { t } = useI18n();
+  const { getGitCommitSummaries } = useProjectGitActions();
   const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
   const setActiveMainTab = useUIStore((s) => s.setActiveMainTab);
   const [branchDropdownOpen, setBranchDropdownOpen] = React.useState(false);

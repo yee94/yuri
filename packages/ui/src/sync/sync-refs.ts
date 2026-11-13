@@ -6,6 +6,7 @@
  */
 
 import type { Config, OpenCodeClient } from '@/lib/opencode/v2-types'
+import type { HostLocation } from '@/lib/remote-projects/location'
 
 import type { ChildStoreManager } from "./child-store"
 import type { SessionMaterializationStatus } from "./materialization"
@@ -188,8 +189,14 @@ export function resolveMaterializedSessionDirectory(
 }
 
 /** Read messages for a session via TranscriptRepository when bound. */
-export function getSyncMessages(sessionId: string, directory?: string): import('@/lib/opencode/v2-types').Message[] {
+export function getSyncMessages(sessionId: string, directory?: string | HostLocation): import('@/lib/opencode/v2-types').Message[] {
   if (!sessionId) return []
+  if (directory && typeof directory !== 'string') {
+    const repository = getTranscriptRepository(directory)
+    if (!repository) return []
+    const data = repository.getTranscript(transcriptScope(directory, sessionId))
+    return data.messageOrder.map((id) => data.messagesByID[id]).filter((message): message is import('@/lib/opencode/v2-types').Message => Boolean(message))
+  }
   try {
     const bound = getTranscriptRepository()
     const dir = directory ?? _directory
@@ -218,9 +225,15 @@ export function getSyncMessages(sessionId: string, directory?: string): import('
 /** Read renderability of a session from TranscriptRepository when bound. */
 export function getSyncSessionMaterializationStatus(
   sessionId: string,
-  directory?: string,
+  directory?: string | HostLocation,
 ): SessionMaterializationStatus {
   if (!sessionId) return { hasMessages: false, renderable: false, missingPartMessageIDs: [] }
+  if (directory && typeof directory !== 'string') {
+    const repository = getTranscriptRepository(directory)
+    if (!repository) return { hasMessages: false, renderable: false, missingPartMessageIDs: [] }
+    const scope = transcriptScope(directory, sessionId)
+    return materializationStatusFromTranscriptData(repository.getTranscript(scope), { resolved: repository.hasSession?.(scope) === true ? true : undefined })
+  }
   try {
     const dir = directory ?? _directory
     const bound = getTranscriptRepository()
@@ -251,8 +264,13 @@ export function getSyncSessionMaterializationStatus(
 }
 
 /** Read parts for a message via TranscriptRepository when bound. */
-export function getSyncParts(messageId: string, directory?: string): import('@/lib/opencode/v2-types').Part[] {
+export function getSyncParts(messageId: string, directory?: string | HostLocation, sessionID?: string): import('@/lib/opencode/v2-types').Part[] {
   if (!messageId) return []
+  if (directory && typeof directory !== 'string') {
+    const repository = getTranscriptRepository(directory)
+    if (!repository || !sessionID) return []
+    return [...repository.getParts(transcriptScope(directory, sessionID), messageId)]
+  }
   try {
     const bound = getTranscriptRepository()
     const dir = directory ?? _directory

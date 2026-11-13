@@ -1,3 +1,5 @@
+import { normalizeLocationStateKey, parseLocationKey } from '@/lib/remote-projects/location';
+
 export type ContextPanelSessionTarget = {
     sessionId: string;
     directory: string;
@@ -16,6 +18,7 @@ export type ContextPanelNavigationResult =
 export type ContextPanelChatRenderMode = 'react-surface' | 'legacy-iframe';
 
 export const normalizeContextPanelDirectory = (directory: string): string => {
+    if (parseLocationKey(directory, 'local').hostId) return normalizeLocationStateKey(directory);
     const raw = directory.trim().replace(/\\/g, '/');
     if (!raw) return '';
     const unc = raw.startsWith('//');

@@ -143,6 +143,16 @@ tab-strip variants and mobile file navigation remain unchanged.
 
 # Mobile row swipe actions
 
+Row action menus share `MobileActionSheet` from
+`mobile/projects/MobileRowActionsSheet.tsx`. It accepts resolved action descriptors
+(`id`, icon, localized label, callback, disabled/destructive/separated state) and
+owns the `MobileResizableSheet` material, haptic rows and grouping. The local
+`MobileRowActionsSheet` builds descriptors from its existing target/callback model;
+remote project adapters supply Host-scoped commands. Do not recreate the sheet
+rows or bypass their disabled state in feature-local markup. Project menus retain
+one divider before destructive Close; session/folder groups use the normal row
+dividers. Command execution, availability and error state belong to the caller.
+
 `useMobileSwipeActions.ts` and `MobileSwipeActionRail.tsx` own the homepage session and Assistant contact trailing
 two-action rail and gesture controller. Touch/pen intent locks after 10px; vertical
 intent yields to scrolling, horizontal movement clamps to the measured rail width,
@@ -155,10 +165,22 @@ Session reorder disables swipe through the existing drag context.
 # Desktop picker dialogs
 
 Desktop compact search/list surfaces use `DialogContent presentation="picker"`.
-This opt-in owns the global-search glass recipe, transparent scrim, top-offset
+This opt-in owns the global-search glass recipe, shared theme-token scrim, top-offset
 position, radius and viewport bound. Ordinary `DialogContent` remains unchanged
 for confirmations, editors, Settings forms, permission flows and content viewers.
 Do not apply picker geometry globally or remove warnings needed to decide safely.
+
+`picker-dialog.css` owns `yuri-picker-backdrop`: 55% of `--surface-overlay`,
+fading over 180ms (disabled under reduced motion). All picker dialogs, including
+desktop global search, use this same scrim rather than local transparent overrides.
+Ordinary dialogs and mobile sheet/page backdrops retain their existing recipes.
+
+The add-project directory picker additionally uses a 180ms fade and 320ms scale
+transition from 6% size. Pointer requests carry the trigger's viewport center
+through `sessionEvents` and `SessionDialogs`; the
+picker maps it to its shared centered/10vh geometry as the transform origin.
+Keyboard/programmatic requests clear the origin and fade in place. Reduced motion
+disables both transitions. Mobile sheets and other picker popup animations are unchanged.
 
 Picker dialogs omit the corner close button by default. Escape, backdrop dismissal
 and any existing Cancel action remain the exit paths, subject to the owner's
@@ -210,6 +232,17 @@ Web consumer; native support labels do not filter Web help or replace its UI.
 
 # Anchored popup surfaces
 
+`TooltipContent` accepts the underlying Positioner's optional `anchor` for
+controlled, triggerless hints. Catalog rows keep their DOM stable and mount a
+tooltip only after the active row's delay, anchoring to that existing element;
+inactive rows must not instantiate floating roots or trigger-position observers.
+Ordinary trigger-based tooltips retain their existing behavior.
+
+`TooltipContent.positionerClassName` scopes the outer positioning layer separately
+from popup content styling. Its default remains `z-50`; the directory picker's
+error hints use `z-[70]` so they remain above the mobile sheet's `z-[60]` layer.
+Changing the content's z-index alone cannot escape that outer stacking context.
+
 Menus (including submenus and context menus), desktop Select, Changed files,
 status overlays and device connections use
 `yuri-mobile-overlay-surface yuri-popup-surface`. The base owns blur/saturation;
@@ -217,7 +250,10 @@ the modifier owns the shared translucent fill, foreground, fine edge and short
 shadow through `--yuri-popup-fill`, `--yuri-popup-edge` and `--yuri-popup-shadow`
 in `styles/mobile.css`. The fill uses 50% of the theme elevated surface for
 readability, independently of picker-dialog translucency; popup shadows are
-deliberately shorter and lighter. Theme
+deliberately shorter and lighter. When `data-yuri-vibrancy` marks an Electron
+macOS window, every popup surface uses the solid theme elevated fill so sidebar
+text cannot bleed through. The material gate does not additionally depend on
+device-class initialization; blur, rim and shadow remain unchanged. Theme
 surface colors remain authoritative. Avoid default inline opaque backgrounds
 or copied shadow utilities on popup roots. Explicit caller styles still win.
 
@@ -239,6 +275,13 @@ The memoized CommandPalette observes session rows/status only while open or whil
 its exit animation retains results. After `onOpenChangeComplete(false)`, its
 selectors return stable inactive values. Reopening reads the current catalog.
 The page presentation keeps its existing search and focus behavior.
+Native IME header mirroring excludes headers containing input, textarea, select,
+or editable content. The mirror is a button/link tap-replay surface, not an input
+owner, and cloning the search header also drops its ancestor-scoped geometry.
+Search keeps its live header, focus and shared glass styling throughout keyboard
+transitions; returning to a non-editable conversation header restores mirroring.
+`mobile/nativeImeHeader.test.ts` covers exclusion, stale mirror acknowledgments,
+search/back transitions, unrelated DOM updates and ordinary button tap replay.
 `CommandPalette.mobile.test.tsx` covers 50 closed-catalog updates with zero commits
 and the existing mobile search/navigation behavior.
 
@@ -258,9 +301,38 @@ matching content message for its snippet and navigation target. The five-row
 preview and “show more” count operate on these unique sessions. Content search
 limits are applied by the Host after session deduplication; expansion reveals the
 already fetched results rather than requesting another server page.
+The default **All** filter renders individual results in one flat relevance order,
+including GUI plugin commands. `lib/search/commandPaletteRank.ts` reuses the mention
+title tiers (exact, prefix, substring, fuzzy); descriptions, paths and content
+snippets provide lower-priority scores. Already-recalled authoritative hits are
+never discarded by this presentation pass. Equal scores preserve source order,
+including the session source's recency order. Empty queries keep recent chats first.
+Pinned filter buttons below the input select All, Chat, Files, Projects, Commands
+or Settings; Commands includes plugin commands. They preserve the query, existing
+search scope and Query observers, so filtering starts no new requests.
+Desktop filters use the shared extra-small button size, with the first label
+aligned to the input and result text inset; mobile retains its touch-sized buttons.
+Unmodified Left/Right arrows cycle these filters with wraparound and retain input
+focus; IME composition and modified arrows keep their normal editing behavior.
+Desktop shows the two arrow keycaps immediately after the filters using
+the same `Kbd variant="hint"` as conversation rows, followed by a localized
+“Switch” label. The first nine selectable rows in the current
+filtered, mixed display order use Command+1–9 on macOS and Ctrl+1–9 elsewhere.
+Every result type and category expansion row participates; changing filters or
+expanding results recomputes numbering. Numeric shortcuts and click/Enter share
+the same selection actions. Pending searches, IME and repeated keydowns cannot
+activate a numeric result. Mobile omits these hints and numeric bindings.
+Each source retains its five-row search preview and a category-labelled expansion row. Counts
+refer to loaded, deduplicated results, not an estimated total. Local categories
+remain usable while remote searches are pending; loading/errors only appear in
+applicable filters. Selection is controlled by result identity so late file hits
+cannot steal an active keyboard selection; changing query or category resets it.
 Each row displays a localized date and time beside its title: the matching
 message's creation time for content hits, otherwise the session's update time
 (falling back to creation time). Missing or invalid timestamps stay hidden.
+The project column reuses `ProjectIconImage` for custom uploads and automatically
+discovered site icons beside the project name, including nested-project and
+worktree ownership. Missing, loading or failed images retain the name-only fallback.
 
 Global-search layout is scoped by `data-global-search` in `command-palette.css`,
 including contributed plugin commands; shared Command primitives are unchanged.
@@ -285,7 +357,16 @@ results and show a compact muted status, not a red directory-list alert.
 Arrow-key navigation loops across the first and last selectable result via cmdk's
 `loop` contract, including mobile hardware keyboards.
 
-Conversation search remains global; commands consume registered contributions,
+Conversation search spans all currently added projects, not only the active one.
+Before ranking, preview counts and navigation, merged title/content results must
+resolve to a current project through `resolveProjectForSessionDirectory`, including
+registered worktrees. Unadded/closed projects and unresolved directories are
+excluded; recent-session previews apply ownership before their local row limit.
+Project closure also filters frozen keyboard-navigation snapshots immediately,
+and session activation rechecks current project/worktree state to reject stale rows.
+Readding a project can reuse retained search data; filtering does not delete Host
+index entries or sessions. This shared policy applies to desktop/web, VS Code and
+hosted/native mobile. Commands consume registered contributions,
 and project matches filter the existing project list only (no project discovery
 or directory scanning). File search requires a selected conversation with a known
 `currentSessionDirectory` belonging to a saved project. It makes exactly one
@@ -336,7 +417,7 @@ Decoded transcript images use `width: fit-content` on the frame and an in-flow, 
 
 Content frame geometry must also constrain the child image: the unlayered rules in `image-loading.css` override the lazy Markdown theme's intrinsic sizing, contain the image in the 160px frame, and clip overflow. Do not add a separate attachment image height such as `h-32`; resource placeholders and decoded images share the frame height. `imageGeometry.chrome.test.ts` loads the real theme after the shared stylesheet and checks both image bounds and the next message's position across loading, loaded and error phases.
 
-Standalone Assistant Markdown image bubbles mark `data-assistant-contact-media` and have no painted outer backing. Inside that scope, decoded images use natural aspect-ratio bounds capped at the reserved frame height, with the same 1.35rem radius as ordinary Assistant bubbles. The frame remains height-stable and centers the image; transparent spare space must not expose a second bubble silhouette. Both Markstream and legacy presentation wrappers share these rules and the Chromium geometry regression.
+Standalone Assistant Markdown image bubbles mark `data-assistant-contact-media` and have no painted outer backing. Inside that scope, decoded images use natural aspect-ratio bounds capped at the reserved frame height. Assistant attachment images and both Markdown presentation wrappers use `--contact-bubble-radius` on the frame and actual image, matching message/card circular corners without tails, including loading and error phases. The frame remains height-stable and centers the image; transparent spare space must not expose a second bubble silhouette. Other conversation surfaces retain their existing radii. Both Markstream and legacy presentation wrappers share these rules and the Chromium geometry regression.
 
 `LoadingImage` owns content-image presentation on desktop and mobile, including direct and Relay connections: reserve a dotted shimmer canvas while a runtime URL is pending and while the browser loads the bytes; reveal the image only on `load` or a successful cached decode (`complete && naturalWidth > 0`). Resource failures and browser `error` stop the animation and show the translated failure state without painting the browser's broken-image glyph. A source/srcSet change resets the image boundary; detached image events cannot reveal the next source.
 
@@ -350,11 +431,11 @@ The mobile connection welcome also reuses the `yuri-image-loading` visual class 
 
 Coverage: `LoadingImage.test.tsx`, `markstreamImages.test.tsx`, `MobileFilesSurface.imagePreview.test.tsx`, and the existing attachment/preview contracts. Avatar/provider icons retain their existing icon-specific fallbacks.
 
-`ProviderLogo` and `ModelLogo` normalize brand images with `brightness-0` before
-applying dark-mode inversion. This keeps SVG marks monochrome and visible even
-when their source `currentColor` resolves to a light color; inversion alone would
-turn those marks black on a dark surface. Missing provider marks retain the
-theme-colored stack fallback.
+`ProviderLogo` and `ModelLogo` paint bundled brand SVGs as a `currentColor`/`bg-foreground`
+mask (`YuriWordmark` pattern) instead of `brightness-0` + `dark:invert`. CSS filters on
+`<img>` can be dropped by iOS WKWebView inside animated / backdrop-filtered overlays
+(mobile usage metadata sheet), leaving black marks invisible on dark surfaces. Missing
+provider marks retain the theme-colored stack fallback.
 
 Mobile file-detail images fill the available content width at their natural aspect ratio, including their loading frame; tall images scroll within the sheet. Fullscreen media previews portal to the body above mobile sheets (`z-index: 80`) and join `MobileWindowStack` while open on mobile, suspending the underlying sheet's modal input ownership until the preview closes. `imageGeometry.chrome.test.ts` checks width and fullscreen hit testing; `ToolOutputDialog.preview.test.tsx` checks modal ownership and restoration.
 
@@ -472,6 +553,7 @@ Dismiss-gesture ownership never arms on form fields (`input` / `textarea` / `sel
 Searchable picker sheets must not treat a click as activation unless the same control also received the matching `pointerdown`. Focusing a pinned search field raises the IME, which lifts the keyboard-inset overlay; the leftover click can land on the scrim or a model row and close the sheet or pick a model. `matchingPress.ts` owns that contract: overlay scrims use `markOverlayScrimPress` / `shouldCommitOverlayScrimDismiss`, and picker rows consume `markMatchingPress` before their `onClick`. Search fields in these sheets use `type="text"` plus `inputMode="search"` so WebKit does not inject a native search-clear control. Let the browser own tap-to-focus: never focus the search field in `pointerup`. Touch compatibility `mousedown` follows `pointerup`; opening the IME early moves the surface before that mouse event is hit-tested, so its default action can immediately blur the input. A click guard cannot prevent that earlier focus loss. This applies to the shared model picker in chat, Settings, and scheduled tasks.
 
 Feature-owned sheets may pass `bodyClassName` to `MobileResizableSheet` for local body layout treatment. When present, the shared header remains borderless and owns its close action and accessibility contract; features must not restore an empty picker header or picker-title divider locally. The shared sheet always owns its motion and resize handle.
+`showCloseButton` defaults to true; mobile plugin windows and the top-level Plugins catalog opt out while retaining their title, resize handle, scrim dismissal and Android Back behavior. Plugin content windows opt into `compactHeader`, using a 16px resize-handle strip and a 24px small-text title row; the outer catalog and other sheets keep their existing header dimensions.
 
 `MobileResizableSheet` also supports `fitContent` for compact action surfaces. In that mode the collapsed sheet follows its content height up to the shared `72dvh` maximum instead of being forced to that height. The header uses a tighter row (`min-h-9` / `pb-1`) and the body stays content-sized so short menus do not read as top-heavy. Dragging still expands toward `98dvh`, at which point the body grows with `flex-1`; downward dismissal uses the measured content-sized collapsed height as its threshold baseline.
 
@@ -500,6 +582,10 @@ Global search previews at most five rows per non-empty result group while a quer
 
 Desktop search has a responsive 56rem maximum width for excerpts. Native/hosted mobile uses the independent search push page; responsive web uses an opaque full-viewport search surface with the same back header, safe-area padding and keyboard viewport sizing. Neither mobile presentation uses the compact floating search card.
 
+The mobile search header sizes its back column from the actual button and leaves
+an explicit 8px gap before the field. The field uses the same density-scaled
+2.5rem height as `Button mobileIcon`, retaining the 36px touch minimum.
+
 `DialogContent` owns both the popup surface and its backdrop. Feature-specific dialog treatments pass popup styling through `className` and backdrop styling through `overlayClassName`; this keeps blur and dimming local to the owning dialog without changing every modal surface.
 
 Both the popup and backdrop are Electron `app-region-no-drag` regions. Portal rendering and z-index alone do not exclude the underlying window drag region; dialogs opened over draggable startup/upgrade screens must retain pointer interaction across the entire popup and backdrop.
@@ -516,7 +602,12 @@ Chat-hosted pickers additionally exercise the production composer pointer captur
 bunx vitest run --project @yuriai/ui packages/ui/src/components/ui/MobileWindowMotion.focus.test.tsx packages/ui/src/components/ui/MobileWindowMotion.android-focus.test.tsx
 ```
 
-These tests establish DOM focus behavior for supplied event sequences in happy-dom. Physical Android keyboard presentation and native event arrival order require device validation; full Settings data loading and deployed-bundle parity remain separate runtime checks.
+The Android native-viewport experiment also verifies zero secondary CSS inset or
+composer transform for changing IME heights. Native start-hide never blurs;
+cancelled Back settling open retains focus. These tests establish DOM focus
+behavior for supplied event sequences in happy-dom. Physical Android keyboard
+presentation and native event arrival order require device validation; full
+Settings data loading and deployed-bundle parity remain separate runtime checks.
 
 ## Grouped Cards
 

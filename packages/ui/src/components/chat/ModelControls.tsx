@@ -9,10 +9,10 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
@@ -55,6 +55,7 @@ import {
 import { useOpenCodeReadiness } from '@/hooks/useOpenCodeReadiness';
 import { eventMatchesShortcut, getEffectiveShortcutCombo, normalizeCombo } from '@/lib/shortcuts';
 import { markStartupTrace } from '@/lib/startupTrace';
+import { getSessionSwitchIntent, subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { focusComposerTextarea, resolveComposerTextarea } from './composerFocus';
 import { resolveChatInputCatalogReadiness, resolveChatInputSelectionVariantOptions, resolveModelVariantKeys } from './chatInputSurface';
 
@@ -275,6 +276,7 @@ const formatDate = (value?: string) => {
 export type ModelControlsSelection = ControlledModelSelection & { variant?: string };
 
 export type ModelControlsSelectionAdapter = {
+    requestCatalog?: (open: boolean) => void;
     selection: ModelControlsSelection;
     onChange: (selection: ModelControlsSelection) => Promise<void>;
     disabled?: boolean;
@@ -311,8 +313,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         modelsReady: !isProviderConfigLoading,
         agentsReady: !isAgentConfigLoading,
     });
-    const isModelControlReady = isReady && catalogReadiness.modelsReady && !selectionAdapter?.disabled;
-    const isAgentControlReady = isReady && catalogReadiness.agentsReady && !selectionAdapter?.disabled;
+    const isModelControlReady = (Boolean(selectionAdapter?.requestCatalog) || isReady && catalogReadiness.modelsReady) && !selectionAdapter?.disabled;
+    const isAgentControlReady = (Boolean(selectionAdapter?.requestCatalog) || isReady && catalogReadiness.agentsReady) && !selectionAdapter?.disabled;
     const areModelControlsReady = isModelControlReady && isAgentControlReady;
     const storedProviders = useConfigStore((state) => state.providers);
     const providers = selectionCatalog?.providers ?? storedProviders;
@@ -436,10 +438,15 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const [localMobilePanel, setLocalMobilePanel] = React.useState<MobileControlsPanel>(null);
     const usingExternalMobilePanel = mobilePanel !== undefined && typeof onMobilePanelChange === 'function';
     const activeMobilePanel = usingExternalMobilePanel ? mobilePanel : localMobilePanel;
+    const requestSelectionCatalog = selectionAdapter?.requestCatalog;
+    React.useEffect(() => {
+        requestSelectionCatalog?.(Boolean(activeMobilePanel) || isModelSelectorOpen || isAgentSelectorOpen);
+    }, [activeMobilePanel, isModelSelectorOpen, isAgentSelectorOpen, requestSelectionCatalog]);
     const setActiveMobilePanel = usingExternalMobilePanel ? onMobilePanelChange : setLocalMobilePanel;
     const openLocalMobilePanel = useEvent((panel: MobileControlsPanel) => {
         setActiveMobilePanel(panel);
-        void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelControls:mobilePanel' });
+        if (selectionAdapter?.requestCatalog) selectionAdapter.requestCatalog(Boolean(panel));
+        else void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelControls:mobilePanel' });
     });
     const handleAgentMenuOpenChange = useEvent((
         open: boolean,
@@ -450,7 +457,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             return;
         }
         setAgentSelectorOpen(open);
-        if (open) {
+        selectionAdapter?.requestCatalog?.(open);
+        if (open && !selectionAdapter?.requestCatalog) {
             void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelControls:desktopAgentMenu' });
         }
     });
@@ -488,7 +496,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             setDesktopModelQuery('');
         }
         setAgentMenuOpen(nextOpen);
-        if (nextOpen) {
+        selectionAdapter?.requestCatalog?.(nextOpen);
+        if (nextOpen && !selectionAdapter?.requestCatalog) {
             void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelControls:desktopModelMenu' });
         }
     });
@@ -556,11 +565,12 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         prevModelSelectorOpenRef.current = isModelSelectorOpen;
 
         if (!isModelSelectorOpen) {
+            setDesktopVariantTarget(null);
             setDesktopModelQuery('');
             keyboardOwnsModelSelectionRef.current = false;
             lastModelPointerPositionRef.current = null;
-            setPendingThinkingVariants(new Map());
-            setAdjustedThinkingModels(new Set());
+            setPendingThinkingVariants((current) => current.size ? new Map() : current);
+            setAdjustedThinkingModels((current) => current.size ? new Set() : current);
 
             if (wasOpen && !isCompact) {
                 setModelTooltipOpen(false);
@@ -576,6 +586,22 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             setAgentSearchQuery('');
         }
     }, [isAgentSelectorOpen]);
+
+    const hasLocalOverlay = Boolean(activeMobilePanel || mobileTooltipOpen || modelTooltipOpen);
+    React.useLayoutEffect(() => {
+        if (!hasLocalOverlay) return;
+        const dismiss = () => {
+            setActiveMobilePanel(null);
+            setMobileTooltipOpen(null);
+            setModelTooltipOpen(false);
+        };
+        const unsubscribe = subscribeSessionSwitchIntent(dismiss);
+        // Activity hides preserve state but tear down Effects.
+        return () => {
+            unsubscribe();
+            dismiss();
+        };
+    }, [hasLocalOverlay, setActiveMobilePanel]);
 
     const selectableDesktopAgents = React.useMemo(() => {
         return agents.filter((agent) => isPrimaryMode(agent.mode));
@@ -1523,8 +1549,9 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         if (longPressTimerRef.current) {
             clearTimeout(longPressTimerRef.current);
         }
+        const intent = getSessionSwitchIntent();
         longPressTimerRef.current = setTimeout(() => {
-            setMobileTooltipOpen(type);
+            if (getSessionSwitchIntent() === intent) setMobileTooltipOpen(type);
         }, LONG_PRESS_MS);
     }, []);
 
@@ -2124,7 +2151,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                 <button
                     type="button"
                     className={cn(
-                        'group/thinking flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 typography-micro font-medium transition-colors',
+                        'model-picker-thinking group/thinking flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 typography-micro font-medium transition-colors',
                         hasActiveVariant
                             ? 'text-foreground/80'
                             : 'text-muted-foreground',
@@ -2317,7 +2344,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                         </TooltipTrigger>
                         <DropdownMenuContent
                             className={cn(
-                                'w-[min(380px,calc(100vw-2rem))] p-0 flex flex-col',
+                                'yuri-composer-picker yuri-composer-model-picker w-[min(400px,calc(100vw-2rem))] p-0 flex flex-col',
                                 isModelSelectorInstant && INSTANT_DROPDOWN_CLASS,
                             )}
                             align="end"
@@ -2327,18 +2354,6 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                         >
                             {desktopVariantTarget ? renderDesktopVariantPicker() : (
                                 <>
-                                    <div className="p-1 border-b border-border/40">
-                                        <button
-                                            type="button"
-                                            onClick={openAddProviderSettings}
-                                            className="typography-meta group flex w-full items-center gap-1 rounded-md px-2 py-1.5 cursor-pointer hover:bg-interactive-hover/50"
-                                        >
-                                            <span className="flex size-4 items-center justify-center text-muted-foreground">
-                                                <Icon name="add" className="size-4 -mr-0.5" />
-                                            </span>
-                                            <span className="font-medium text-foreground">{t('chat.modelControls.addNewProvider')}</span>
-                                        </button>
-                                    </div>
                                     <ModelPickerList
                                         providers={providers as ModelPickerProvider[]}
                                         favoriteModels={favoriteModelsList}
@@ -2348,6 +2363,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                         onSearchQueryChange={setDesktopModelQuery}
                                         onSelect={handleSharedModelSelect}
                                         labels={modelPickerLabels}
+                                        stickyHeaders={false}
+                                        virtualize
                                         selectedModel={currentProviderId && currentModelId ? { providerID: currentProviderId, modelID: currentModelId } : null}
                                         hiddenModels={hiddenModels}
                                         onActiveKeyDown={handleModelPickerKeyDown}
@@ -2380,10 +2397,32 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                                 : false;
 
                                             return (
-                                                <div className="flex items-center gap-x-2 whitespace-nowrap overflow-hidden">
-                                                    <span>{t('chat.modelControls.keyboardHintNavigate')}</span>
-                                                    <span>{t('chat.modelControls.keyboardHintSwitchAgent', { shortcut: 'Tab' })}</span>
-                                                    {activeHasThinkingVariants ? <span>{t('chat.modelControls.keyboardHintThinking')}</span> : null}
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                                        <span className="inline-flex items-center gap-1.5">
+                                                            <Kbd variant="hint"><Icon name="arrow-up" className="size-2.5" /><Icon name="arrow-down" className="size-2.5" /></Kbd>
+                                                            {t('directoryExplorerDialog.footer.navigate')}
+                                                        </span>
+                                                        <span className="inline-flex items-center gap-1.5">
+                                                            <Kbd variant="hint">Tab</Kbd>
+                                                            {t('chat.modelControls.keyboardHintSwitchAgentLabel')}
+                                                        </span>
+                                                        {activeHasThinkingVariants ? (
+                                                            <span className="inline-flex items-center gap-1.5">
+                                                                <Kbd variant="hint"><Icon name="arrow-left" className="size-2.5" /><Icon name="arrow-right" className="size-2.5" /></Kbd>
+                                                                {t('chat.modelControls.thinking')}
+                                                            </span>
+                                                        ) : null}
+                                                    </div>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="xs"
+                                                        aria-label={t('chat.modelControls.addNewProvider')}
+                                                        title={t('chat.modelControls.addNewProvider')}
+                                                        onClick={openAddProviderSettings}
+                                                    >
+                                                        <Icon name="add" className="size-3.5" />
+                                                    </Button>
                                                 </div>
                                             );
                                         }}
@@ -2633,13 +2672,13 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 align="end"
                                 alignOffset={-40}
                                 className={cn(
-                                    'w-[min(280px,calc(100vw-2rem))] p-0 flex flex-col',
+                                    'yuri-composer-picker yuri-composer-agent-picker w-[min(320px,calc(100vw-2rem))] p-0 flex flex-col',
                                     isAgentSelectorInstant && INSTANT_DROPDOWN_CLASS,
                                 )}
                                 onKeyDownCapture={handleAgentCycleShortcut}
                                 finalFocus={resolveComposerFinalFocus}
                             >
-                                <div className="p-1.5 pb-1">
+                                <div className="model-picker-search-area p-1.5 pb-1">
                                     <div className="relative">
                                         <Icon name="search" className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
                                         <Input
@@ -2656,55 +2695,52 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                                 }
                                                 e.stopPropagation();
                                             }}
-                                            className="pl-8 h-8 typography-meta"
+                                            className="model-picker-search pl-8 h-8 typography-meta"
                                         />
                                     </div>
                                 </div>
                                 <ScrollableOverlay outerClassName="max-h-[min(400px,calc(100dvh-12rem))] flex-1">
-                                    <div className="p-1">
-                                        {!agentSearchQuery.trim() && defaultAgentName && (
-                                            <>
-                                                <DropdownMenuItem
-                                                    className="typography-meta"
-                                                    onSelect={() => handleAgentChange(defaultAgentName)}
-                                                >
-                                                    <div className="flex items-center gap-1.5">
-                                                        <Icon name="arrow-go-back" className="size-3.5 text-muted-foreground" />
-                                                        <span className="font-medium">{t('chat.modelControls.resetToDefault')}</span>
-                                                    </div>
-                                                </DropdownMenuItem>
-                                                <DropdownMenuSeparator />
-                                            </>
-                                        )}
+                                    <div className="composer-agent-list">
                                         {sortedAndFilteredAgents.length === 0 ? (
                                             <div className="px-2 py-4 text-center typography-meta text-muted-foreground">
-                                                No agents found
+                                                {t('chat.agentMentionAutocomplete.empty')}
                                             </div>
                                         ) : (
                                             sortedAndFilteredAgents.map((agent) => (
                                                 <DropdownMenuItem
                                                     key={agent.name}
-                                                    className="typography-meta"
+                                                    className="composer-agent-row typography-meta"
                                                     onSelect={() => handleAgentChange(agent.name)}
                                                 >
-                                                    <div className="flex w-full min-w-0 flex-col gap-0.5">
-                                                        <div className="flex items-center gap-1.5">
-                                                            <AgentAvatar name={agent.name} size={14} />
-                                                            <span className="font-medium">{capitalizeAgentName(getAgentCatalogLabel(agent))}</span>
+                                                    <div className="flex w-full min-w-0 items-start gap-2.5">
+                                                        <span className="mt-0.5 shrink-0"><AgentAvatar name={agent.name} size={20} /></span>
+                                                        <div className="min-w-0 flex-1">
+                                                            <span className="composer-agent-name block truncate font-medium">{capitalizeAgentName(getAgentCatalogLabel(agent))}</span>
+                                                            {agent.description && (
+                                                                <span className="composer-agent-description mt-1 block text-muted-foreground break-words" title={agent.description}>
+                                                                    {agent.description}
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                        {agent.description && (
-                                                            <span className="typography-micro text-muted-foreground min-w-0 max-w-full ml-5 break-words">
-                                                                {agent.description}
-                                                            </span>
-                                                        )}
+                                                        <span className="mt-0.5 size-4 shrink-0">
+                                                            {agent.name === uiAgentName ? <Icon name="check" className="size-4 text-primary" /> : null}
+                                                        </span>
                                                     </div>
                                                 </DropdownMenuItem>
                                             ))
                                         )}
                                     </div>
                                 </ScrollableOverlay>
-                                <div className="flex items-center gap-1.5 border-t border-border/40 px-2 py-1.5 typography-micro text-muted-foreground">
-                                    <Kbd className="h-4 min-w-4 rounded-[3px] px-1 text-[10px] font-medium tracking-tight shadow-none">Tab</Kbd>
+                                {!agentSearchQuery.trim() && defaultAgentName && (
+                                    <div className="composer-picker-actions">
+                                        <DropdownMenuItem onSelect={() => handleAgentChange(defaultAgentName)}>
+                                            <Icon name="arrow-go-back" className="size-3.5" />
+                                            <span>{t('chat.modelControls.resetToDefault')}</span>
+                                        </DropdownMenuItem>
+                                    </div>
+                                )}
+                                <div className="composer-picker-footer flex items-center gap-1.5 text-muted-foreground">
+                                    <Kbd variant="hint">Tab</Kbd>
                                     <span>{t('chat.modelControls.keyboardHintSwitchAgentLabel')}</span>
                                 </div>
                             </DropdownMenuContent>

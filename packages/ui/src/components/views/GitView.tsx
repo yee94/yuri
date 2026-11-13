@@ -5,7 +5,7 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { useFireworksCelebration } from '@/contexts/FireworksContext';
 import type { CommitFileEntry, GitStatus } from '@/lib/api/types';
 import { useShallow } from 'zustand/react/shallow';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useProjectDirectory as useEffectiveDirectory } from '@/lib/api/useProjectRuntimeAPIs';
 import { useGitmojiList } from '@/hooks/useGitmojiList';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import {
@@ -16,7 +16,7 @@ import {
   useIsGitRepo,
   useGitLoadingStatus,
   useGitLoadingLog,
-} from '@/stores/useGitStore';
+} from '@/lib/api/useProjectGitStore';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { toast } from '@/components/ui';
@@ -37,9 +37,9 @@ import {
 } from '@/components/ui/command';
 import { Icon } from "@/components/icon/Icon";
 
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs as useRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { useUIStore } from '@/stores/useUIStore';
-import { useDetectedWorktreeMetadata } from '@/hooks/useDetectedWorktreeRoot';
+import { useProjectWorktreeMetadata as useDetectedWorktreeMetadata } from '@/lib/api/useProjectWorktreeMetadata';
 import { useSessionWorktreeStore } from '@/sync/session-worktree-store';
 import { getSessionWorktreeRepairActions, getMutationBlockingReasons } from '@/sync/session-worktree-contract';
 
@@ -66,7 +66,9 @@ import { createGitIndexMutationQueue, type GitIndexMutationDirection, type GitIn
 import type { GitRemote } from '@/lib/gitApi';
 import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { cn } from '@/lib/utils';
-import { generateCommitMessage as generateSessionCommitMessage, getGitWorktreeBootstrapStatus } from '@/lib/gitApi';
+import { useProjectGitActions } from '@/lib/api/useProjectGitActions';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { locationSessionKey } from '@/lib/remote-projects/location';
 import {
   getWorktreeBootstrapState,
   subscribeWorktreeBootstrapState,
@@ -204,12 +206,16 @@ type GitViewProps = {
 
 export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
   const { t } = useI18n();
-  const { git } = useRuntimeAPIs();
+  const { git, projectScope } = useRuntimeAPIs();
+  const { generateCommitMessage: generateSessionCommitMessage, getGitWorktreeBootstrapStatus } = useProjectGitActions();
   const currentDirectory = useEffectiveDirectory();
   const [worktreeBootstrapStatus, setWorktreeBootstrapStatus] = React.useState<'pending' | 'ready' | 'failed' | null>(null);
   const [isWaitingForGitRefreshAfterBootstrap, setIsWaitingForGitRefreshAfterBootstrap] = React.useState(false);
-  const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
-  const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
+  const localSessionId = useSessionUIStore((s) => s.currentSessionId);
+  const remoteSessionId = useSessionNavigationStore((s) => s.remoteSession?.sessionId ?? null);
+  const currentSessionId = projectScope ? remoteSessionId : localSessionId;
+  const localSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
+  const newSessionDraft = projectScope ? null : localSessionDraft;
   const setDraftBootstrapPendingDirectory = useSessionUIStore((s) => s.setDraftBootstrapPendingDirectory);
   const worktreeMap = useSessionUIStore((s) => s.worktreeMetadata);
   const availableWorktrees = useSessionUIStore((s) => s.availableWorktrees);
@@ -235,6 +241,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     return undefined;
   }, [availableWorktrees, normalizedCurrentDirectory, worktreeMap]);
   const storeWorktreeMetadata = React.useMemo(() => {
+    if (projectScope) return undefined;
     if (currentSessionId) {
       return worktreeMap.get(currentSessionId) ?? inferredWorktreeMetadata;
     }
@@ -244,14 +251,14 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     }
 
     return undefined;
-  }, [currentSessionId, inferredWorktreeMetadata, newSessionDraft?.open, worktreeMap]);
+  }, [currentSessionId, inferredWorktreeMetadata, newSessionDraft?.open, worktreeMap, projectScope]);
 
   const isGitRepo = useIsGitRepo(currentDirectory ?? null);
   const status = useGitStatus(currentDirectory ?? null);
 
   // Authoritative session↔worktree attachment for repair action display
   const worktreeAttachment = useSessionWorktreeStore((s) =>
-    currentSessionId ? s.getAttachment(currentSessionId) : undefined
+    currentSessionId && !projectScope ? s.getAttachment(currentSessionId) : undefined
   );
   const repairActions = worktreeAttachment ? getSessionWorktreeRepairActions(worktreeAttachment) : [];
 
@@ -411,6 +418,12 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     }
 
     let cancelled = false;
+    if (projectScope) {
+      void getGitWorktreeBootstrapStatus(currentDirectory).then((next) => {
+        if (!cancelled) setWorktreeBootstrapStatus(next.status);
+      }).catch(() => { if (!cancelled) setWorktreeBootstrapStatus(null); });
+      return () => { cancelled = true; };
+    }
     const local = getWorktreeBootstrapState(currentDirectory);
     if (local) {
       setWorktreeBootstrapStatus(local.status);
@@ -442,7 +455,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
       cancelled = true;
       unsubscribe();
     };
-  }, [isActive, currentDirectory]);
+  }, [isActive, currentDirectory, projectScope, getGitWorktreeBootstrapStatus]);
 
   React.useEffect(() => {
     const previous = previousBootstrapStatusRef.current;
@@ -478,8 +491,8 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
 
   const initialSnapshot = React.useMemo(() => {
     if (!currentDirectory) return null;
-    return gitViewSnapshots.get(currentDirectory) ?? null;
-  }, [currentDirectory]);
+    return gitViewSnapshots.get(projectScope?.key ?? currentDirectory) ?? null;
+  }, [currentDirectory, projectScope]);
 
   const settingsGitmojiEnabled = useConfigStore((state) => state.settingsGitmojiEnabled);
   const [rootBranchHint, setRootBranchHint] = React.useState<string | null>(null);
@@ -493,7 +506,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     }
 
     let cancelled = false;
-    void getRootBranch(projectRoot)
+    void (projectScope ? git.getGitStatus(projectRoot).then((status) => status.current ?? '') : getRootBranch(projectRoot))
       .then((branch) => {
         if (cancelled) return;
         const normalized = branch.trim();
@@ -508,7 +521,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     return () => {
       cancelled = true;
     };
-  }, [authoritativeProjectRoot, worktreeMetadata?.projectDirectory]);
+  }, [authoritativeProjectRoot, worktreeMetadata?.projectDirectory, projectScope, git]);
 
   const [commitMessage, setCommitMessage] = React.useState(
     initialSnapshot?.commitMessage ?? ''
@@ -570,8 +583,8 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
   // Conflict state persistence key
   const conflictStorageKey = React.useMemo(() => {
     if (!currentSessionId) return null;
-    return `yuri.conflict:${currentSessionId}`;
-  }, [currentSessionId]);
+    return `yuri.conflict:${projectScope ? locationSessionKey(projectScope.location, currentSessionId) : currentSessionId}`;
+  }, [currentSessionId, projectScope]);
 
   // Save conflict state to localStorage
   const persistConflictState = React.useCallback((
@@ -721,12 +734,12 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
 
   React.useEffect(() => {
     if (!currentDirectory) return;
-    rememberSnapshot(currentDirectory, {
+    rememberSnapshot(projectScope?.key ?? currentDirectory, {
       directory: currentDirectory,
       commitMessage,
       generatedHighlights,
     });
-  }, [commitMessage, currentDirectory, generatedHighlights]);
+  }, [commitMessage, currentDirectory, generatedHighlights, projectScope?.key]);
 
   React.useEffect(() => {
     if (!isActive) return;
@@ -1098,7 +1111,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     } finally {
       setIsGeneratingMessage(false);
     }
-  }, [currentDirectory, stagedChangeEntries, settingsGitmojiEnabled, gitmojiEmojis, scrollActionPanelToBottom, t]);
+  }, [currentDirectory, stagedChangeEntries, settingsGitmojiEnabled, gitmojiEmojis, scrollActionPanelToBottom, t, generateSessionCommitMessage]);
 
   const formatBlockingReason = (reason: ReturnType<typeof getMutationBlockingReasons>[number]): string => {
     if (reason.reason === 'attention') {
@@ -1543,14 +1556,14 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
 
   const handleViewChangeDiff = React.useCallback((path: string, staged: boolean) => {
     if (currentDirectory && !isMobile) {
-      openContextFileDiff(currentDirectory, path, staged);
+      openContextFileDiff(projectScope?.key ?? currentDirectory, path, staged);
       return;
     }
     navigateToDiff(path, staged);
     if (isMobile) {
       setRightSidebarOpen(false);
     }
-  }, [currentDirectory, isMobile, navigateToDiff, openContextFileDiff, setRightSidebarOpen]);
+  }, [currentDirectory, isMobile, navigateToDiff, openContextFileDiff, setRightSidebarOpen, projectScope?.key]);
 
   const openStashes = React.useCallback(() => setIsStashesDialogOpen(true), []);
 

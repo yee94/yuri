@@ -8,6 +8,36 @@ manual history loading and send admission reconciliation remain available.
 
 ## Native composer cleanup
 
+### Foreground native ownership
+
+Native eligibility requires an active, foreground primary **presentation**, not a
+local-resource `kind`. Remote main chat has that presentation while preserving its
+explicit secondary resource/backend contract; panel and background chat never do.
+The local retained page receives its foreground activity from `ChatContainer`.
+Web, Electron, VS Code, hosted mobile, Android and unsupported iOS continue on the
+existing web editor path; native preference/plugin/platform checks still apply.
+
+`NativeIosComposerBridge` is keyed by the complete DraftKey (including remote
+Hub/Host identity). Its layout claim installs one current instance token in
+`native-ios-composer-session`; no render-phase handler mutation is allowed.
+Native listener registrations belong to that claim, and superseded listeners or
+pending installations cannot deliver, present, update, focus or release the new
+owner. Prop publication and leave-conceal closures check the same token; delayed
+Web submission checks it again before dispatch. Release clears handlers, hides
+and clears the native document class immediately; only the current token may do
+so. The glass view itself is reused, not rebuilt on Host/draft handoff.
+
+The mounted production composer test covers local → remote A → same-ID/directory
+Host B → local, concurrent panel/background views, raw store text and attachment
+isolation, stale events, external preset/CAS and 50 unrelated parent updates plus
+50 native text events without listener rebind or text/thumbnail/model-icon echo.
+Bridge/session tests cover inactive and superseded mounted owners, late listener
+installation, delayed send and cleanup CAS. These are React/bridge operation and
+correctness tests, not actual UIKit/IME/Relay or input-to-paint acceptance. Native
+payloads have no Host/draft token; platform validation must independently verify
+the native-to-Capacitor event ordering at a real handoff, rather than treating a
+synthetic stale-listener replay as proof of every native queue ordering.
+
 `native-ios-composer-session.shutdown()` always clears DOM presentation state,
 but only calls native `dismiss()` after a warm/retain lifecycle. Repeated shutdown
 is idempotent. Mobile web startup can disable native UI without invoking the
@@ -80,10 +110,45 @@ correction. `ChatInput.hooks.test.tsx` counts 50 edits at these call sites;
 
 ## Document and delivery ownership
 
-Display-only removal of model-side session retrieval instructions lives in the
-pure `session-mention-display.ts`. `delivery.ts` re-exports its existing public
-name for callers. Transcript normalization (including NSH) imports the pure module
-directly, never the sync/repository-dependent delivery compiler.
+### Web selection across owner unmounts
+
+`use-composer-selection.ts` retains textarea start/end/direction at the departing
+ChatInput's layout cleanup and restores them only after the same draft record's
+controlled text is committed. This covers local → remote → local, where the local
+production composer is actually unmounted, not merely hidden. Selection is
+process-local continuity, not durable draft metadata: weak store/record keys keep
+Hub and remote stores isolated and release replaced/deleted records naturally.
+An external CAS (even replacing identical text) invalidates the old selection;
+cleanup must still match the live record, DOM text and latest mounted owner.
+An older concurrent owner's cleanup cannot overwrite a newer owner's snapshot.
+
+Session-switch transcript selection cleanup must not clear the document Selection
+while `textarea[data-chat-input="true"]` is focused. Chromium's `removeAllRanges()`
+then exposes the textarea range as 0–0 until blur, even though its text and draft
+record are unchanged. A restored local composer can mount before a later switch
+intent and second remount; capturing that temporary 0–0 loses continuity. The
+transcript menu still dismisses on every intent and clears non-composer selection.
+The selection owner must not compensate by replaying an older user range or
+weakening its current-record/latest-owner fences.
+
+Restore never focuses, schedules a retry, or writes a draft revision. Explicit
+input/focus/selection cancels any pending text-materialization restore, so later
+user intent wins. Native-owned iOS document sinks are excluded; ordinary input
+fields do not mount this owner. Existing session-entry and action focus policies
+remain separate and unchanged. Per-edit work is a constant-size current-record
+lookup, with no subscriptions, catalog scans or persistence writes added.
+
+`RemoteChatContainer.composer.test.tsx` replays the sanitized real candidate-final
+selection fixture through mounted production ChatInput/RemoteChatContainer and
+their actual draft stores. `use-composer-selection.test.tsx` mounts the production
+controller against `createInputStore` to cover owner switches, backward selection,
+external CAS, stale cleanup, focus preservation, and 50 unrelated-draft/typing
+updates. The production composer test also covers restore → session-switch intent
+→ second remount, a newer user range, and focused/unfocused/no-intent controls.
+Its explicit Chromium Selection double is backed by an isolated browser API
+control; happy-dom itself does not implement that interaction. These are
+correctness/operation-count guards, not Electron,
+iOS, IME or browser timing acceptance.
 
 `components/dictation/useHoldToTalkInput` shares only hold-to-talk state between Chat and Assistant inputs: the global dictation setting, runtime/capture availability, current hint and stable `onHintChange` callback. Callers supply surface availability and mount `HoldToTalkComposer` only while enabled, releasing capture when the global setting turns off. Disabled surfaces receive a null hint. Each input independently chooses its placeholder and localized copy; Assistant idle/disabled copy retains its contextual Assistant name. Gesture/audio behavior stays in the shared component; drafts and sends stay with each input owner.
 
@@ -136,6 +201,9 @@ within, without a shadow. Focus never further intensifies hover.
 Color transitions take 150ms and respect reduced motion.
 Mobile web expanded composers inherit this shared material without CSS overrides;
 compact composers use the same light/dark fill, border and shadow recipe.
+Session web composer Send controls always use the inverted filled-circle arrow,
+including empty or blocked drafts and floating follow-up controls. Disabled Send
+keeps the same geometry at 50% opacity; admission and Stop behavior are unchanged.
 The attached queue card shares the composer's palette and border on desktop and
 mobile without stacking another elevation shadow. Its dark fill uses 4% foreground
 instead of the input's 8% to separate the rear queue from the front input.
@@ -195,6 +263,21 @@ Prompt attachment delivery is owned by `lib/opencode/client.ts`: non-images beco
 `skill-attachments.ts` converts canonical `[skill:id]` tokens in non-synthetic send text into deduplicated native V2 prompt attachments. Both existing-session sends (steer/queue) and combined first-message sends use it. Canonical text remains intact for history and draft restoration. Catalog `name` is the path-derived skill ID, not frontmatter display text; leading legacy `/id` invocations are resolved against the installed catalog before canonicalization.
 
 `document.ts` owns normalized document ranges, validation, canonical materialization, and send-plan preparation. `extensions.ts` owns each reference strategy's payload validation, decoration shape, semantics, opaque-payload budget, canonical codec, and resource identity. `inline-attachment-sync.ts` owns inline attachment citation range find/strip helpers (images, documents, and VS Code files/selections) and Draft text+mention rebase when an attachment is removed; `input-store.removeDraftAttachment` clears those citations in the same revision so ChatInput does not hand-sync textarea text after remove. `reference-history.ts` owns bounded undo/redo snapshots for complete Composer reference documents. `use-composer-controller.ts` owns DraftKey-scoped local editing, store commits, history preview, submission capture/recovery, and post-commit resource deltas. Chat surfaces use the same controller and provide an explicit stable `DraftKey`; primary session and new-draft keys retain their existing durable encoding, while `surface` owners isolate secondary surfaces.
+
+Session reference payloads optionally retain `directory` and the complete
+`target: { hubId, hostId, instanceId }`. A present malformed target (including null,
+partial or empty identities) rejects the reference; a target requires a directory.
+Legacy unscoped tokens retain their exact `@session:id` bytes. Scoped canonical
+text is `@session:{"sessionID":"id","directory":"raw cwd","target":{"hubId":"hub","hostId":"host","instanceId":"instance"}}`
+(target omitted for directory-only local references). JSON escaping preserves raw
+paths, including spaces, quotes and Unicode. Materialization and durable sidecar
+validation retain that scope, and remote labels never borrow the Hub title for a
+same-ID session. Direct-send semantics also retain both fields. Local transcript
+delivery/hydration explicitly rejects remote semantics; remote chat validates the
+target against its captured entry before any backend reads/writes. Assistant
+contact drafts/send text use the scoped canonical form directly. The real
+Assistant picker → durable sidecar → canonical → contact-message HTTP regression
+lives in `components/assistants/AssistantSessionComposer.test.tsx`.
 
 External, recovery, serialization, and materialization boundaries use full Composer validation. Browser-local edits use trusted normalization after the Draft parser or insertion validator has established typed payloads; it validates structural range and budget invariants without another opaque Paste Unicode scan. Native dictation and IME replacement ranges stay under browser ownership when reconciliation preserves their text and selection, except on Capacitor iOS primary chat: `YuriComposer` presents a native `UITextView` overlay, ChatInput keeps the web textarea as a hidden document sink, and complete text (not marked-text ranges) crosses the bridge. Active IME composition suppresses imperative value, selection, and atomic-selection correction until `compositionend`, preventing iOS marked text from becoming a native blue selection. Reconciliation emits `requiresTextCorrection` from reference-range expansion, and imperative textarea correction runs only when this structural signal or caret mapping requires it. Unicode metrics use a shared bounded 400k UTF-16 LRU cache.
 

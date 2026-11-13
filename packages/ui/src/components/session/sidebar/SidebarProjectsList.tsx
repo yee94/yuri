@@ -28,6 +28,12 @@ import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { normalizePath } from './utils';
+import { scrollFocusedSessionRowIntoView } from './scrollFocusedSessionRow';
+import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
+import type { RemoteProject } from '@/lib/remote-projects/types';
+import { RemoteProjectSection } from './RemoteProjectSection';
+import type { SessionNavigationTarget } from '@/sync/session-navigation';
+import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
 
 const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 8 } };
 const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
@@ -46,6 +52,8 @@ const SidebarTooltipProvider = ({ children }: { children: React.ReactNode }) => 
 type ProjectSection = {
   project: {
     id: string;
+    hostId?: string;
+    remoteState?: RemoteProject['remoteState'];
     label?: string;
     normalizedPath: string;
     icon?: string;
@@ -57,6 +65,13 @@ type ProjectSection = {
 };
 
 type Props = {
+  remoteProjects?: RemoteProject[];
+  remoteSearch?: string;
+  remoteError?: string;
+  projectOrderIds?: string[];
+  onRemoteActivityItems?: (projectId: string, items: import('./SidebarPinnedSessions').PinnedItem[]) => void;
+  onRemoteNavigationTargets?: (projectId: string, targets: SessionNavigationTarget[]) => void;
+  hostRegistry?: HostRuntimeRegistry;
   topContent?: React.ReactNode;
   hasLeadingSection: boolean;
   headerAccessory?: React.ReactNode;
@@ -65,6 +80,7 @@ type Props = {
   sectionsForRender: ProjectSection[];
   projectSections: ProjectSection[];
   activeProjectId: string | null;
+  projectRevealTarget?: { projectId: string; revision: number } | null;
   showOnlyMainWorkspace: boolean;
   hasSessionSearchQuery: boolean;
   emptyState: React.ReactNode;
@@ -105,6 +121,19 @@ type Props = {
 
 export function SidebarProjectsList(props: Props): React.ReactNode {
   const { t } = useI18n();
+  const remoteById = new Map((props.remoteProjects ?? []).map((project) => [project.id, project]));
+  const remoteSections: ProjectSection[] = (props.remoteProjects ?? []).map((project) => ({ project: { id: project.id, hostId: project.hostId, normalizedPath: project.path }, groups: [] }));
+  const allSections = [...props.sectionsForRender, ...remoteSections];
+  if (props.projectOrderIds?.length) {
+    const ranks = new Map(props.projectOrderIds.map((id, index) => [id, index]));
+    allSections.sort((a, b) => (ranks.get(a.project.id) ?? Infinity) - (ranks.get(b.project.id) ?? Infinity));
+  }
+  const remoteSection = (id: string) => {
+    const project = remoteById.get(id);
+    if (!project) return null;
+    return props.hostRegistry ? <RemoteProjectSection key={id} project={project} registry={props.hostRegistry} search={props.remoteSearch} mobile={props.mobileVariant} reorderEnabled={props.projectReorderEnabled} onNavigationTargets={props.onRemoteNavigationTargets} onActivityItems={props.onRemoteActivityItems} />
+      : <div key={id} className="px-2 py-1 text-xs text-muted-foreground"><span>{project.label || project.path} · {project.hostId}</span><p role={props.remoteError ? 'alert' : 'status'}>{props.remoteError || t(supportsRemoteProjects() ? 'remoteProjects.state.connecting' : 'remoteProjects.unsupported')}</p></div>;
+  };
   const projectSensors = useSensors(
     useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
     useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
@@ -121,6 +150,23 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
   // can resolve the scrolling ancestor synchronously (no getComputedStyle
   // walk) and skip the cost of a style recalc on every render.
   const scrollContainerRef = React.useRef<HTMLElement | null>(null);
+  const revealedProjectRef = React.useRef<Props['projectRevealTarget']>(null);
+  React.useLayoutEffect(() => {
+    const target = props.projectRevealTarget;
+    if (!target) {
+      revealedProjectRef.current = null;
+      return;
+    }
+    if (props.mobileVariant || props.showOnlyMainWorkspace || props.hasSessionSearchQuery) return;
+    const revealed = revealedProjectRef.current;
+    if (revealed?.projectId === target.projectId && revealed.revision === target.revision) return;
+    const header = scrollContainerRef.current?.querySelector<HTMLElement>(
+      `[data-sidebar-project-header="${CSS.escape(target.projectId)}"]`,
+    );
+    if (!header) return;
+    revealedProjectRef.current = target;
+    scrollFocusedSessionRowIntoView(header);
+  }, [props.projectRevealTarget, props.mobileVariant, props.showOnlyMainWorkspace, props.hasSessionSearchQuery, props.sectionsForRender]);
 
   // Memoize the result of getOrderedGroups. The callback is stable
   // (deps: [groupOrderByProject]) and `section.groups` is a stable
@@ -166,7 +212,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
     );
   }
 
-  if (props.projectSections.length === 0) {
+  if (props.projectSections.length === 0 && remoteSections.length === 0) {
     return (
       <SidebarTooltipProvider>
         <ScrollableOverlay useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1', props.mobileVariant ? '' : '')}>{props.topContent}{projectsHeader}{props.emptyState}</ScrollableOverlay>
@@ -174,7 +220,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
     );
   }
 
-  if (props.sectionsForRender.length === 0) {
+  if (allSections.length === 0) {
     return (
       <SidebarTooltipProvider>
         <ScrollableOverlay useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1', props.mobileVariant ? '' : '')}>{props.searchEmptyState}</ScrollableOverlay>
@@ -194,10 +240,11 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
       {props.showOnlyMainWorkspace ? (
         <div className="space-y-[0.6rem] py-1">
           {(() => {
-            const activeSection = props.sectionsForRender.find((section) => section.project.id === props.activeProjectId) ?? props.sectionsForRender[0];
+            const activeSection = allSections.find((section) => section.project.id === props.activeProjectId) ?? allSections[0];
             if (!activeSection) {
               return props.hasSessionSearchQuery ? props.searchEmptyState : props.emptyState;
             }
+            if (remoteById.has(activeSection.project.id)) return remoteSection(activeSection.project.id);
             const primaryGroup =
               activeSection.groups.find((candidate) => candidate.isMain && candidate.sessions.length > 0)
               ?? activeSection.groups.find((candidate) => candidate.sessions.length > 0)
@@ -241,10 +288,11 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
               props.reorderProjects(String(active.id), String(over.id));
             }}
           >
-            <SortableContext items={props.sectionsForRender.map((section) => section.project.id)} strategy={verticalListSortingStrategy}>
-              {props.sectionsForRender.map((section) => {
+            <SortableContext items={allSections.map((section) => section.project.id)} strategy={verticalListSortingStrategy}>
+              {allSections.map((section) => {
                 const project = section.project;
                 const projectKey = project.id;
+                if (remoteById.has(projectKey)) return remoteSection(projectKey);
                 return (
                   <SidebarProjectSection
                     key={projectKey}
@@ -274,6 +322,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
                     renderGroupSessions={props.renderGroupSessions}
                     scrollContainerRef={scrollContainerRef}
                     homeDirectory={props.homeDirectory}
+                    hostRegistry={props.hostRegistry}
                   />
                 );
               })}
@@ -288,7 +337,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
 }
 
 type ProjectSectionProps = Pick<Props,
-  'homeDirectory' | 'hideDirectoryControls' | 'mobileVariant' | 'alwaysShowActions' |
+  'homeDirectory' | 'hostRegistry' | 'hideDirectoryControls' | 'mobileVariant' | 'alwaysShowActions' |
   'toggleProject' | 'setActiveProjectIdOnly' | 'setActiveMainTab' | 'setSessionSwitcherOpen' |
   'openNewSessionDraft' | 'openNewWorktreeDialog' | 'syncProjectSessions' | 'openProjectEditDialog' | 'removeProject' |
   'openSidebarMenuKey' | 'setOpenSidebarMenuKey' | 'projectReorderEnabled' |
@@ -365,6 +414,7 @@ const SidebarProjectSection = React.memo(function SidebarProjectSection(props: P
   return (
     <SortableProjectItem
       id={projectKey} disabled={props.projectSortOrder !== 'manual'}
+      hostId={project.hostId} remoteState={project.remoteState} hostRegistry={props.hostRegistry}
       projectLabel={formatDirectoryName(project.normalizedPath) || project.normalizedPath}
       projectDescription={formatPathForDisplay(project.normalizedPath, props.homeDirectory)}
       projectIcon={project.icon} projectColor={project.color} projectIconImage={project.iconImage}

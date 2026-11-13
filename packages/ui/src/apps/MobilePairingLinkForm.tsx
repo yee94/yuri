@@ -124,11 +124,3 @@ export const MobilePairingLinkForm: React.FC<MobilePairingLinkFormProps> = ({
     </form>
   );
 };
-
-export const MobileConnectionMethodDivider: React.FC<{ label: string }> = ({ label }) => (
-  <div className="flex items-center gap-3 py-3" aria-hidden="true">
-    <span className="h-px flex-1 bg-border/70" />
-    <span className="typography-micro text-muted-foreground">{label}</span>
-    <span className="h-px flex-1 bg-border/70" />
-  </div>
-);

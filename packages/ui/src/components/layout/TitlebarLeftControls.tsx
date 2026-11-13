@@ -8,10 +8,12 @@ import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControl
 import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 import { invokeDesktop, isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
 import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
-import { useDesktopWindowFullscreen } from '@/hooks/useDesktopWindowFullscreen';
 import { useSidebarBrandStore } from '@/stores/useSidebarBrandStore';
 import { SidebarBrandMark } from './SidebarBrandMark';
 import { GlobalSearchButton } from './GlobalSearchButton';
+import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
+import { locationKey } from '@/lib/remote-projects/location';
 
 const ICON_BUTTON_CLASS =
   'app-region-no-drag inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-interactive-hover hover:text-foreground transition-colors';
@@ -37,6 +39,12 @@ const ICON_BUTTON_CLASS =
  */
 export const TitlebarLeftControls: React.FC = () => {
   const { t } = useI18n();
+  const project = useProjectsStore((state) => state.projects.find((item) => item.id === state.activeProjectId));
+  const remoteSelection = useSessionNavigationStore((state) => state.remoteSession);
+  const remote = project?.hostId && remoteSelection?.projectId === project.id && remoteSelection.location.hostId === project.hostId
+    && (!project.hubId || remoteSelection.location.hubId === project.hubId) ? remoteSelection : null;
+  const locationIdentity = remote ? locationKey(remote.location) : project?.hostId && project.hubId
+    ? locationKey({ hubId: project.hubId, hostId: project.hostId, directory: project.path }) : project?.path;
   const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
   const sidebarWidth = useUIStore((state) => state.sidebarWidth);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
@@ -47,11 +55,9 @@ export const TitlebarLeftControls: React.FC = () => {
   const toggleShortcut = formatShortcutForDisplay(getEffectiveShortcutCombo('toggle_sidebar', shortcutOverrides));
   const { usesFramelessChrome, side: windowControlsSide } = useDesktopWindowControlsLayout();
   const isDesktopShellRuntime = React.useMemo(() => isDesktopShell(), []);
-  const isDesktopWindowFullscreen = useDesktopWindowFullscreen();
-  // Windowed Electron moves search into the sidebar when a brand/logo is shown there.
-  const showGlobalSearchInTitlebar = !isDesktopShellRuntime || isDesktopWindowFullscreen || !isSidebarOpen || !hasSidebarBrand;
-  const usesWebSidebarHeader = !isVSCodeRuntime()
-    && (isDesktopShellRuntime ? isDesktopWindowFullscreen : isWebRuntime());
+  // Electron keeps search in the sidebar brand row in both windowed and fullscreen modes.
+  const showGlobalSearchInTitlebar = !isDesktopShellRuntime || !isSidebarOpen || !hasSidebarBrand;
+  const usesWebSidebarHeader = !isVSCodeRuntime() && !isDesktopShellRuntime && isWebRuntime();
 
   const handleOpenWindowsAppMenu = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -95,6 +101,7 @@ export const TitlebarLeftControls: React.FC = () => {
     // and remain drag regions everywhere else, so window dragging still works
     // in the empty parts of the strip.
     <div
+      data-titlebar-location={locationIdentity || undefined}
       className="app-region-no-drag absolute left-0 top-0 z-30 flex select-none items-center pr-2"
       style={{
         height: 'var(--yuri-header-height, 3rem)',

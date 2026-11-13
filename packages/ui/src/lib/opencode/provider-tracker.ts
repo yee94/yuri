@@ -27,6 +27,7 @@ type ProviderState = {
 }
 
 const providers = new Map<string, ProviderState>()
+const providerKey = (providerID: string, scope?: string): string => scope ? JSON.stringify([scope, providerID]) : providerID
 
 function evictStaleProviders(): void {
   const now = Date.now()
@@ -60,17 +61,17 @@ function getOrCreateProvider(providerID: string): ProviderState {
   return state
 }
 
-export function recordProviderSuccess(providerID: string): void {
+export function recordProviderSuccess(providerID: string, scope?: string): void {
   if (!providerID) return
-  const state = providers.get(providerID)
+  const state = providers.get(providerKey(providerID, scope))
   if (!state) return
   state.consecutiveErrors = 0
   state.lastErrorAt = 0
 }
 
-export function recordProviderError(providerID: string, status?: number): void {
+export function recordProviderError(providerID: string, status?: number, scope?: string): void {
   if (!providerID) return
-  const state = getOrCreateProvider(providerID)
+  const state = getOrCreateProvider(providerKey(providerID, scope))
   state.consecutiveErrors += 1
   state.lastErrorAt = Date.now()
 
@@ -108,15 +109,15 @@ function isCircuitOpen(providerID: string): boolean {
   return true
 }
 
-export function shouldRetry(providerID: string, status: number, attempt: number): boolean {
+export function shouldRetry(providerID: string, status: number, attempt: number, scope?: string): boolean {
   if (!RETRYABLE_STATUS_CODES.has(status)) return false
   if (attempt >= DEFAULT_RETRY_MAX_ATTEMPTS - 1) return false
-  if (isCircuitOpen(providerID)) return false
+  if (isCircuitOpen(providerKey(providerID, scope))) return false
   return true
 }
 
-export function assertProviderCircuitClosed(providerID: string): void {
-  if (!providerID || !isCircuitOpen(providerID)) return
+export function assertProviderCircuitClosed(providerID: string, scope?: string): void {
+  if (!providerID || !isCircuitOpen(providerKey(providerID, scope))) return
   throw new Error(`Provider ${providerID} is temporarily unavailable after repeated errors. Please retry shortly.`)
 }
 

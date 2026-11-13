@@ -57,6 +57,7 @@ const fail = (code) => { throw new MessageQueueError(code); };
 const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 const normalizeDirectory = (value) => {
   if (typeof value !== 'string' || !value.trim()) return null;
+  if (value.startsWith('yuri-remote-location:')) return null;
   const normalized = value.trim().replace(/\\/g, '/').replace(/\/+$/, '') || '/';
   return normalized.length <= MAX_PATH ? normalized : null;
 };
@@ -321,7 +322,7 @@ export const createMessageQueueService = ({ dbPath, getRuntimeConfig = () => nul
   const validateAdmission = (input) => {
     const item = input?.item;
     if (!plainObject(input) || Object.keys(input).some((key) => !ADMISSION_KEYS.has(key)) || !plainObject(input.scope) || Object.keys(input.scope).some((key) => !SCOPE_KEYS.has(key)) || !plainObject(item) || Object.keys(item).some((key) => !ITEM_KEYS.has(key))) fail('validation_error');
-    if (!normalizeDirectory(input.scope.directory) || !nonEmptyString(input.scope.sessionID) || !nonEmptyString(item.queueItemID) || !nonEmptyString(item.operationID) || !nonEmptyString(item.messageID) || typeof item.content !== 'string' || item.content.length > MAX_CONTENT || !Number.isInteger(item.createdAt) || item.createdAt < 0) fail('validation_error');
+    if (!normalizeDirectory(input.scope.directory) || !nonEmptyString(input.scope.sessionID) || input.scope.sessionID.startsWith('yuri-remote-session:') || !nonEmptyString(item.queueItemID) || !nonEmptyString(item.operationID) || !nonEmptyString(item.messageID) || typeof item.content !== 'string' || item.content.length > MAX_CONTENT || !Number.isInteger(item.createdAt) || item.createdAt < 0) fail('validation_error');
     const attachments = validateAttachments(item); const composerAttachmentIdentities = validateComposer(item.composerDocument, item.content); validateComposerMentions(item.composerMentions, item.composerDocument); validateSendConfig(item.sendConfig); validateDeliveryParts(item.deliveryParts, false, { migrationImport: item.migrationImport === true }); validateAssistantAttachmentParts(item.deliveryParts, attachments, { migrationImport: item.migrationImport === true }); validateSyntheticParts(item.syntheticParts, attachments, item.deliveryParts); captureDeliveryTarget(item.deliveryTarget, input.scope, item);
     if (item.dueAt !== undefined && (!Number.isSafeInteger(item.dueAt) || item.dueAt < 0)) fail('validation_error');
     if (item.migrationState !== undefined) {

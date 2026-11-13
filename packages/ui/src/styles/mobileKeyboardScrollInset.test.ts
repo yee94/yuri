@@ -16,9 +16,9 @@ describe('native keyboard chat-scroll inset contract', () => {
     expect(mobileCss).toContain('Question / other non-composer fields keep --yuri-kb-layout at 0');
   });
 
-  test('Android chat-scroll still consumes --yuri-kb-scroll-inset during field focus', () => {
+  test('Android chat-scroll uses the already-resized native viewport without a second inset', () => {
     expect(mobileCss).toMatch(
-      /:root\.yuri-capacitor-app\.yuri-platform-android\s+\.yuri-mobile-app-shell\s+\.chat-scroll\s*\{[^}]*padding-bottom:\s*var\(--yuri-kb-scroll-inset/s,
+      /:root\.yuri-capacitor-app\.yuri-platform-android\s+\.yuri-mobile-app-shell\s+\.chat-scroll\s*\{[^}]*bottom:\s*0;\s*padding-bottom:\s*0;/s,
     );
   });
 

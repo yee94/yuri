@@ -92,7 +92,9 @@ describe('bindDoubleTap', () => {
     const { hits, item, tap } = setup()
     tap(item('a'), 0)
     tap(item('a'), 150)
-    item('a').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    const dblclick = new MouseEvent('dblclick', { bubbles: true, cancelable: true })
+    Object.defineProperty(dblclick, 'timeStamp', { value: 200 })
+    item('a').dispatchEvent(dblclick)
     expect(hits).toEqual(['a'])
   })
 

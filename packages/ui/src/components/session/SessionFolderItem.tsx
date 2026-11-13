@@ -56,6 +56,9 @@ interface SessionFolderItemProps<TSessionNode> {
   hideActions?: boolean;
   /** Whether folder belongs to archived section */
   archivedBucket?: boolean;
+  headerActions?: React.ReactNode;
+  actionsDisabled?: boolean;
+  allowNestedSubfolders?: boolean;
   /**
    * Hover-card context for sessions inside this folder (folder name + branch).
    * Shown in the floating detail card — not inline on the row.
@@ -89,6 +92,9 @@ const SessionFolderItemBase = <TSessionNode,>({
   depth = 0,
   hideActions = false,
   archivedBucket = false,
+  headerActions,
+  actionsDisabled = false,
+  allowNestedSubfolders = false,
   sessionSecondaryMeta = null,
 }: SessionFolderItemProps<TSessionNode>) => {
   const { t } = useI18n();
@@ -154,7 +160,7 @@ const SessionFolderItemBase = <TSessionNode,>({
   const folderPadLeft = getSidebarRowPaddingLeft(depth);
 
   return (
-    <Collapsible open={!isCollapsed} className={cn('yuri-folder')}>
+    <Collapsible open={!isCollapsed} className={cn('yuri-folder')} data-session-folder={folder.id}>
       {/* Folder header – also acts as a drop zone when droppableRef is provided */}
       <div
         ref={droppableRef}
@@ -264,6 +270,7 @@ const SessionFolderItemBase = <TSessionNode,>({
         </div>
 
         {/* Action buttons */}
+        {headerActions}
         {!renaming && (!hideActions || archivedBucket) ? (
           <div className="flex items-center gap-0.5 px-0.5">
             <div
@@ -276,6 +283,7 @@ const SessionFolderItemBase = <TSessionNode,>({
               {!archivedBucket && onNewSession ? (
                 <button
                   type="button"
+                  disabled={actionsDisabled}
                   onClick={(event) => {
                     event.stopPropagation();
                     onNewSession();
@@ -287,10 +295,11 @@ const SessionFolderItemBase = <TSessionNode,>({
                   <Icon name="add" className="h-3.5 w-3.5" />
                 </button>
               ) : null}
-              {/* Only allow sub-folders at depth 0 (one level deep max) */}
-              {!archivedBucket && onNewSubFolder && depth === 0 ? (
+              {/* Existing owners allow sub-folders at depth 0; recursive owners opt in explicitly. */}
+              {!archivedBucket && onNewSubFolder && (depth === 0 || allowNestedSubfolders) ? (
                 <button
                   type="button"
+                  disabled={actionsDisabled}
                   onClick={(event) => {
                     event.stopPropagation();
                     onNewSubFolder();
@@ -305,6 +314,7 @@ const SessionFolderItemBase = <TSessionNode,>({
               {!archivedBucket ? (
                 <button
                   type="button"
+                  disabled={actionsDisabled}
                   onClick={(event) => {
                     event.stopPropagation();
                     handleStartRename();
@@ -317,6 +327,7 @@ const SessionFolderItemBase = <TSessionNode,>({
               ) : null}
               <button
                 type="button"
+                disabled={actionsDisabled}
                 onClick={(event) => {
                   event.stopPropagation();
                   onDelete();

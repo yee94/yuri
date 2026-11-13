@@ -1,15 +1,331 @@
 # Chat components
 
-## Local command rules and metadata
+## BTW user messages
 
-`lib/composer-local-commands-core.ts` owns the runtime-free classifier sets, parsing,
-resource/text policies and the canonical autocomplete metadata. The Web
-`localCommandClassifier.ts` wrapper preserves its public exports and resolves the
-dynamic VS Code reload default. `CommandAutocomplete` uses the same metadata in
-both normal and fallback paths; availability, order and translation keys are
-unchanged. Native consumers import the pure module, never the browser wrapper.
+`BtwPanel` renders questions through the same `UserMessageBubble` and `UserTextPart` as primary session messages, including `--chat-user-message-bg`, radius, Markdown, references and long-message disclosure. `formatSessionBtwUserTurn` supplies the canonical quote prefix for both display and prompt replay, so BTW questions beginning with `/` retain their quotes without gaining primary-command semantics. Remote BTW wraps this shared renderer in its existing `HostRuntimeProvider`, keeping Skill lookups and file actions on the owning Host.
+
+## Remote Project primary chat
+
+Remote session autocomplete selects from the **same Host summaries Query** as the
+sidebar and Assistant picker. It does not create a directory/composer cache or call
+the summary query function behind QueryClient. Reopening or using another directory
+on the same Host shares cached data and the in-flight request; existing Host/event
+invalidation remains authoritative. Send-time reads use `fetchQuery` to respect
+invalidation and check the captured entry before and after cache access. Title-only
+hydration reads that same snapshot without fetching. Files retain their 30-second,
+Host/directory/query-scoped cache and in-flight deduplication; model/Agent/Skill and
+command cache policies are unchanged.
+
+`ChatContainer` consumes `useSessionNavigationStore.remoteSession` before mounting
+the local retained-view controller. Explicit mobile pages carry `explicitSession.location`;
+a remote raw session ID alone is not a local session selection. `RemoteChatContainer`
+resolves that Location's registry entry and mounts `HostRuntimeProvider` plus a shared
+`RemoteChatContext`. Primary chat passes the existing `ChatViewport` (message list,
+prompt rail, request cards and scrolling), and uses the existing `ChatInput`, timeline
+controller, search and timeline dialog. Context-panel callers may supply their own
+navigation callback without changing the main selection.
+
+`ChatContainer` explicitly supplies `composerPresentation="primary"` to its remote
+branch. Direct `RemoteChatContainer` consumers default to `panel`; active panel
+and inactive/read-only/background views cannot claim native input. This role is
+separate from `ChatInputSurface.kind`: remote remains `secondary` for its explicit
+Host backend, catalog, draft store, attachment resources and raw directory. Changing
+the presentation must never redirect it to the Hub's primary singleton resources.
+Local `ChatContainer` also passes its foreground `active` signal to `ChatInput`,
+so a retained inactive local page cannot reclaim the process overlay.
+
+The native bridge is keyed by the complete DraftKey, not raw session/directory.
+It claims the process session only in layout commit, with an instance token.
+Native listeners, async props, delayed Web send and leave-conceal callbacks are
+fenced by that token. Departing-owner cleanup cannot hide or dismiss a successor.
+Foreground release clears handlers and hides immediately; the installed glass
+view keeps its existing delayed teardown/remount continuity. See the composer
+module's foreground ownership contract for test and platform boundaries.
+
+One registry entry owns one remote state/repository; concurrent primary/panel views
+share it and reference-count content demand. Host reconnection replaces the fenced
+entry; late operations cannot commit into its successor. Remote draft keys contain
+Hub/Host/directory identity, while all upstream session IDs and directories remain raw.
+New-session admission moves the local draft to the created remote session before
+navigation; a failed first prompt remains recoverable on that session.
+
+Remote editor dispatch exits before primary local commands, question recovery and
+Hub queue staging. Ordinary sends and native queue/steer use the remote state;
+command, shell, attachment upload, permission/form replies, fork, revert/redo and
+permission policy use the same entry. Inbox edit restores the complete payload by
+DraftKey CAS before cancelling the remote item. Remote bodies never use Hub queue
+or transcript-cache endpoints. The remote image Hook supplies its entry to the
+shared file-resource owner; local image behavior is unchanged. Legacy Markdown
+images and Markdown/Markstream file links also carry the entry. File probes cache
+by entry query scope, while file/diff/preview UI actions use its Location key;
+physical paths remain raw. Remote file gestures never open local OS/editor APIs
+or mint desktop-local outside-file grants.
+
+Remote submission captures inline comments and synthetic context with their
+attachments, consumes only captured resources after success, and retains them on
+failure. Remote identity is an icon beside the new-draft Project label, with only
+the machine name on hover; existing sessions do not add a Project row above the
+composer. Local and remote conversations share `ComposerFoot`, `StatusRow` and
+the queue card layout, including the mobile overlap and desktop edge fade.
+Remote status inputs come from the bound Host snapshot, never Hub activity.
+On desktop, `RemoteComposerConnectionStatus` observes only the bound Host in a
+memoized leaf above the input column. Its absolute status slot does not change
+composer/transcript geometry, enumerate catalogs or subscribe to draft text.
+Live SSH preparation phases supersede generic connecting; terminal connection
+states remove the spinner and connected clears the hint. Sending remains gated
+by the existing Host readiness check, and draft editing is preserved.
+Ordinary remote sends add an optimistic user row through the shared transcript
+repository. Its optimistic parts survive stale history reads until authority
+replaces them; failed admission removes only that row. Explicit queue delivery
+does not insert a transcript row. Inbox entries already represented in the
+transcript do not also render above the composer.
+The shared status row receives explicit text: sending during direct admission
+and while its inbox entry awaits consumption, then working/retry/permission
+from Host authority. Pending admission overrides a pre-send idle snapshot;
+failure clears the pending-send flag instead of leaving a silent model header.
+Desktop new drafts share `DraftComposerFoot` with the local draft view and omit
+the empty transcript viewport, so the welcome heading and composer stay centered.
+New-draft delivery uses a null session ID, not the editor's placeholder.
+Read-only checks guard mutation handlers as well as the visible controls.
+Remote draft, observation and catalog failures never insert transcript banners.
+Visible owners publish transient errors through the registry/Host-scoped
+`operation-errors` channel; Header and project machine labels display the shared
+`RemoteHostErrorIndicator` immediately to the right of the name. Hover or activation
+opens details and retry in an anchored popup. Recovery and owner departure remove
+only that owner's error, without clearing another view's failure. Draft retries
+rehydrate metadata/attachments rather than treating a transcript refresh as recovery.
+Remote context-overview failures use the same channel and retain their last snapshot.
+Model catalogs load on explicit picker demand, not on typing or opening a
+session. Existing remote sessions also observe the Host/Location-scoped Agent
+catalog for permission-control visibility, without opening a picker or enumerating
+models. Drafts still load Agents on explicit picker/send demand. Global allow/deny
+rules hide the auto-accept shield; ask and unknown rules keep it available. These
+reads never use the Hub's Agent permissions, and typing does not refetch catalogs.
+A cold send without a captured choice ensures the provider catalog at
+that action and resolves its validated `default` mapping, never the first model.
+Real picker choices override defaults and transfer to the created session before
+navigation so a failed first model switch retries the same choice and session.
+Direct sends apply selection before prompt; native queued inputs still inherit
+selection at consumption. The native inbox reuses shared queue rows and preserves
+attachment previews; requeue requires an actual callback and no conflicting flight.
+`useRemoteSessionViewed` reads Host unread revisions before acknowledgement;
+manual reminders added while viewing survive until explicit reopen/refocus.
+Notifications with Host identity resolve through the current Hub catalog and
+never fall back to local bare-ID lookup.
+
+Focused tests exercise the mounted remote pane's repository/editor backend boundary
+and remote state authority; they do not establish live Electron/iOS/Relay acceptance
+or the production-build input/scroll timing budgets.
+The composer wire regression additionally mounts the real editor with generated
+SDK/scoped service and HTTP-only response replay (catalog default, picker, create,
+model-switch failure/retry and prompt ordering). Replay is not live-device proof.
+
+Remote `@` autocomplete mounts a separate Host data leaf: Agent and Skill catalogs,
+file/directory SDK searches and recent-file tabs use the captured entry/query scope;
+Session candidates use that Host's bounded summaries, never Hub stores. Closing the
+picker unmounts these consumers. A Host/scope change remounts the picker, fences late
+reads and rejects stale selections. Refresh errors retain the previous search
+snapshot with explicit error feedback; they are not successful empty catalogs.
+`remoteComposerQueries` owns the session/file Query options and cancellation.
+
+Remote send captures model/Agent selection and draft resources before catalog waits,
+ensures cold scoped catalogs on the send action, and passes an explicit session
+catalog into `chatComposerDelivery`; even an empty remote catalog cannot consult
+Hub session titles. Session selection verifies metadata on that Host without local
+transcript prefetch. Delivery resolves each referenced Session's own directory and
+title from the same Host before building the retrieval card. Native command-chip
+icon slots use the shared slash parser, retaining command arguments and synthetic
+context. Scoped command/Skill imperative snapshot and refresh helpers accept the
+same entry and reject revoked entries rather than reading bare-directory caches.
+
+`RemoteChatContainer.composer.test.tsx` covers the real 300-row `@` catalogs,
+same-ID/cwd Host handoff, reference sends and closed/open/closed operation counts
+(50 input events per closed phase). `remoteComposerQueries.test.ts` additionally
+covers empty remote catalogs, snapshot partitioning and post-retarget completion
+rejection. These remain deterministic tests, not browser timing acceptance.
+
+`message/TextSelectionMenu` dismisses on session-switch intent, but does not call
+document Selection `removeAllRanges()` when a chat textarea is focused. Chromium
+otherwise temporarily reports that textarea's range as 0–0, which can be captured
+by a second composer remount after returning from remote. Transcript selection
+cleanup remains unchanged outside a focused composer. See the composer module's
+web-selection continuity contract and `RemoteChatContainer.composer.test.tsx`.
+
+## Android native IME viewport experiment
+
+The A experiment APK translates the native WebView while a local header snapshot
+stays fixed. Viewport resizing happens only at handoff. Shared UI receives
+`nativeResize: true` keyboard bookends, not per-frame geometry.
+`yuri:keyboard-native-layout` captures the current viewport before resizing;
+`useChatAutoFollow` owns the one-shot compensation for released history so removing
+native translation does not undo the movement already shown. It never acquires
+follow; following remains at the live edge. A intentionally moves history too.
+The iOS/legacy non-native-resize path retains its geometry freeze. No second
+scroll writer, CSS composer lift or cached keyboard-height estimate is added.
+The auto-follow regression covers both modes and both following/reading states;
+actual IME-to-WebView synchronization and frame pacing require device evidence.
+
+Explicit Markdown directory links in a local desktop session open in the system
+file manager, including with Cmd/Ctrl click. Directory detection runs only against
+the active local desktop; remote paths never target the local machine. This uses
+the installer-owned `desktop_is_directory_path` command.
+
+## Project icon alignment
+
+Compact project labels in the composer, multi-run and scheduled-task project
+pickers use a static `relative top-px` on the icon container, matching the sidebar
+project icon. Image and fallback share that position on the initial render;
+text, disclosure arrows and loading spinners retain their existing alignment.
+This geometry belongs to the built-in components, not asynchronously loaded
+GUI-plugin CSS.
+
+## Desktop composer pickers
+
+`ModelControls`' anchored model and Agent menus share the scoped
+`yuri-composer-picker` layout in `styles/mobile.css`. Search is pinned at the top;
+add-provider/reset actions and shared hint keycaps stay outside the scrolling
+catalog. Add-provider is a labeled icon-only button at the footer's lower right,
+alongside keyboard hints, not a separate action row. Favorites/recent rows separate the model name from provider/context
+metadata; provider-group rows omit the repeated provider and keep context beside
+the name. Aligned trailing slots reserve thinking, selection and favorites. Compact
+group headings and shared hairlines separate sections; desktop headers scroll with their group rather than
+painting another sticky material. Agent names use the same label scale, with
+two-line descriptions (full text in the title) and a current-selection check.
+Only the outer shared popup owns glass, edge and shadow. Mobile sheets and other
+`ModelPickerList` consumers retain their existing geometry and behavior.
+Model context/cost formatting reuses `lib/intlFormatters`' bounded locale-aware
+formatter slots rather than constructing formatters for every row on each search.
+Row tooltips mount only after the active row's 450ms delay, anchored to the existing
+row without wrapping/remounting it. Catalog opening must not initialize a floating
+root/trigger for every model. Keyboard and pointer highlight retain the same
+metadata/copy action; leaving the active row or closing the picker cancels its hint.
+The desktop composer opts into `ModelPickerList.virtualize`: TanStack Virtual
+selects visible model rows plus overscan; offscreen rows reserve their exact
+compact desktop height (40px mixed-source, 32px provider-group at 16px root).
+Headers and sortable section containers remain mounted, preserving whole-section
+drag geometry. The full filtered catalog still owns search, ordering and keyboard
+selection. Keyboard scrolling uses the reserved row element even before hydration;
+dragged favorites remain mounted. Row indices are derived from that catalog, never
+a mutable counter inside deferred sortable render callbacks. Mobile and other
+picker consumers do not opt into the compact desktop geometry.
+
+## Mobile session read/unread actions
+
+The mobile Projects home, Sessions sheet (including the iPad sidebar), and status
+bar session menus share `mobile/sessionMenuModel.ts`. Read/unread sits directly
+below Pin/Unpin, using the same Mail/MailOpen icons and labels as desktop. Root
+sessions expose the action; child sessions omit it. `useSessionReadMenuAction`
+subscribes only to the targeted session's unread count and delegates mutations to
+the existing notification/Host sync boundary. Open menus reflect remote updates;
+failed writes retain authoritative state and show the existing error toast. Menu
+actions close the sheet without opening the conversation or clearing its reminder.
+
+## Find in loaded conversation
+
+`TranscriptSearch` handles Cmd/Ctrl+F on the active chat surface, Enter /
+Shift+Enter to cycle occurrences, and Escape to close and restore prior focus.
+It searches available user/assistant text, including folded intermediate replies,
+not tool output, reasoning, attachments, unloaded pages or unmaterialized slim
+content. Common Markdown formatting and link destinations are excluded from the
+text index. Custom rendered cards/math/reference chips may differ from the plain
+Markdown projection; these are not a full rendered-document search contract.
+
+Find state and query-result caches belong to the mounted session view. Closed
+find does not scan messages. An active query weakly caches results by immutable
+part-array identity so streaming updates do not rescan settled history. Display
+text is weakly cached by immutable Part identity; neither cache retains source
+messages or survives their collection. Query changes discard the result cache.
+
+`MessageList` temporarily overrides only the target turn's expansion without
+changing the user's stored disclosure choices. User text also bypasses its clamp
+while targeted. The existing list scroll owner first reveals the virtual row,
+then cancels index correction before aligning the mounted text range. It never
+calls history loading or timeline reveal APIs. `ChatViewport` suppresses
+scroll-event history paging while a find target is active; explicit user upward
+intent / load-earlier controls remain independent. Mutation observation exists
+only during an active hit and rebuilds CSS Custom Highlights after Markdown
+hydration or row recycling; it never wraps or replaces React-owned DOM. Only the
+initial hit positions the viewport, and user pointer/scroll input cancels that
+pending positioning. Closing, session changes and unmount clean up observers,
+animation frames and highlights. Older renderers without CSS Custom Highlights
+retain navigation but do not paint text highlights. This is shared renderer
+behavior, not an Electron-only native find/IPC implementation.
+
+The compact two-row popup has one material owner, a borderless integrated input,
+quiet navigation at the lower left and a tabular result count at the lower right.
+There are no search-mode switches or explanatory chrome. Ordinary hits use the
+system `Mark` / `MarkText` colors (bright yellow with readable text in Chromium);
+the current hit uses the theme accent with an underline and higher highlight
+priority. Custom styles may override `--chat-findMatch`,
+`--chat-findMatchForeground`, `--chat-findActiveMatch`, and
+`--chat-findActiveMatchForeground` without changing layout.
+
+## Streaming text fade
+
+`MarkstreamTextNode` selects `MotionStreamText` for live assistant/reasoning text
+when `disableStreamAnimation` is false, retaining that leaf through completion.
+Motion mini animates only newly appended, inline four-grapheme groups for 160ms
+with at most 80ms stagger. Existing text stays opaque. Each leaf bounds its active
+tail to 24 groups; finished groups compact into ordinary text nodes. Completion,
+replacement, reduced-motion and unmount stop outstanding animations. No per-frame
+React updates or scroll writes are added. Static history retains the library text
+renderer; whole-message/block entrance, library fade, typewriter batching and
+`smoothStreaming` remain disabled. Completion displays authoritative text immediately.
+
+Code line-number gutters inherit the connected code's font family, font size and
+line height before insertion. Waiting for the deferred wrap measurement let the
+13px default gutter temporarily stretch a 12px code body at stream completion;
+the later geometry sync still aligns wrapped lines but no longer corrects a
+different initial font size.
+
+## Turn-completion spacing
+
+The settled `AssistantMessageFooter` replaces the transcript's live status row
+without shrinking the list's total height for a single-line footer. Its top margin
+is 10px on desktop and 6px on mobile; the bottom margin is 12px on desktop and 8px
+on mobile. Distributing the extra space above and below the controls
+balances their distance from the body while accounting for the status wrapper's padding and
+collapsed margins as well as the message body's existing bottom spacing.
+Textless/interrupted replies use that same footer and its existing disabled-copy
+action as soon as TPS is publishable, even before `time.completed` arrives. There
+is no separate TPS-only row or alternate spacing: later completion metadata and
+copy availability update the mounted footer in place. Footer copy availability
+uses the original parts' trailing body (`getSortedBodyPartIndex`), not process
+narration or the arrival of `time.completed`. Active continuations still
+publish neither footer nor TPS. This is normal-flow spacing, not a delayed
+status removal, retained empty placeholder or extra scroll compensation. Verify
+the whole pin-reveal root and reading position at completion, not just Markdown
+height. Wrapped metadata/Changes controls can still legitimately add another row.
+
+The non-embedded transcript `StatusRow` uses 14px bottom padding to match that
+footer footprint. The tool-row default bottom padding (6px desktop / 4px mobile)
+left the live pin-reveal root 8px / 10px shorter than its completed state.
+Bottom margins cannot fill this difference: they collapse outside the measured
+root. Keep the live status and footer top aligned, and reserve the difference
+with in-flow padding on the status owner, not a delayed removal or scroll write.
+Its bottom margin matches the outer status wrapper's 4px margin; an 8px child
+margin otherwise escapes the pin-reveal root and shrinks the scrollable height
+by 4px on removal even when the measured root height is unchanged.
+Embedded composer rows retain their existing spacing.
+For a turn observed live by `MessageBody`, the footer occupies its final space
+immediately and fades in with Motion over 200ms (`easeOut`, opacity only).
+The reveal reuses the existing message-scoped streaming lifecycle marker; it
+adds no separate lifecycle Effect, state update, timer or subscription.
+Cold settled history does not replay the entrance, metadata updates keep the same
+footer node, and reduced motion reveals synchronously. No height/scale/translation
+animation or retained live status is involved in this handoff.
 
 ## Composer status popovers
+
+Desktop primary-session composers (including VS Code) snapshot their in-flow
+form height in the entry layout phase. That reservation stays fixed for the
+mounted conversation: attachments, Changes, TODO, queue and text growth extend
+upward into the transcript's existing tail spacing without shrinking its viewport
+or adding another scroll compensation. Contents remain bottom-aligned and do
+not shrink. Switching session or returning from expanded input takes a fresh
+snapshot; new-session drafts, secondary composers and mobile keep their existing
+layout owners. `ChatInput.hooks.test.tsx` guards one measurement across 50 updates
+and reservation cleanup on session/mode changes.
 
 `StatusRow` owns Tasks and pending Changes expansion for the composer. On mobile,
 they open mutually exclusively, span the full composer column through
@@ -32,7 +348,104 @@ Git change lists and working-tree/session/turn diff previews remain independent.
 
 ## Scroll hot-path boundary
 
-`hooks/chatTurnNavigationCore.ts` owns the runtime-free chronological turn-offset rule used by Web turn navigation and NSH Timeline. The platform list remains the only geometry/scroll owner; the shared helper chooses a turn, never applies passive offset compensation.
+The reserved mobile history-loading slot retains its height when idle, but its
+spinner pauses through the existing `role=status` / `aria-busy=false` scope in
+`index.css`. Invisible rotation still wakes WebKit on large transcripts. Only an
+authoritative load resumes it; the status slot never unmounts to save animation
+work or changes scroll geometry.
+
+The active-turn scroll spy reads cached turn offsets during scrolling. When
+`ResizeObserver` is available it refreshes geometry in the post-layout callback;
+streaming subtree mutations do not schedule an additional pre-layout scan. The
+mutation-driven fallback is used only without ResizeObserver. Registration and
+removal still invalidate the structural offset cache. The spy never writes scroll.
+
+History overscan keeps its existing surface-specific row-count ceiling, but
+`getHistoryRenderRange` also bounds extra rows to two observed viewports of
+distance on either side. Every core-visible row and its immediate neighbours
+remain mounted, even for a single very tall turn: core can retain that visible
+range while scrolling within it, so an adjacent row must be hydrated before the
+next boundary. Speech retains its independently pinned row. This reads only the
+virtualizer's measurement/viewport snapshots and at most the count-window
+candidates, never DOM geometry or the whole catalog. Missing measurements or an
+unmeasured viewport retain the count-window fallback. It does not migrate live
+tail turns or substitute estimated sizes for mounted content.
+
+When core clamps its range to the last history row while the viewport is in the
+separate live tail, that core row and its neighbour remain mounted. Pruning this
+last window introduced native remount/overflow-affordance height corrections and
+lost scroll steps in long transcripts; lower DOM/CPU alone does not justify that
+interaction regression.
+
+Markstream full-DOM mode keeps the library's node virtualization and deferral off.
+The version-pinned Bun patch also omits placeholder-height measurement in that
+mode; it does not disable height measurement for virtual/deferred consumers.
+`markstreamMeasurement.test.tsx` guards the installed dependency's real render path.
+
+`MarkstreamRendererImpl` paces streaming source updates at the existing platform
+Markdown cadence before entering its memoized renderer. Message/part identity
+keys the pacing lifetime; completion renders the authoritative text immediately.
+Streaming does not compute settled-height cache hashes. Disabled file references
+retain a content-independent context, and the code-block host context carries
+the stable part ID rather than the token-updated Part object. Enabled references
+still reset their content-scoped budget when content changes. Stable top-level
+AST reuse is enabled through the library parse option; differential tests cover
+Markdown boundaries, replacements and completion, not only append counts.
+
+Markstream's code adapter marks its source `sourceIsPaced`: the outer renderer
+already owns source cadence, so nested legacy code cards must not start a second
+reveal loop or mirror each source update into pacing state. The disabled inner
+pacing Hook receives a stable empty source; rendering uses the adapter's current
+authoritative fence text. This does not disable `live` parsing, incremental code
+highlighting or decoration. Standalone legacy Markdown keeps its existing pacing
+by default, and completion still renders the full source. The real adapter test
+covers 50 updates without a second rAF loop and preserves standalone animation.
+
+The nested legacy renderer also skips settled-height keys while its authoritative
+`isStreaming` flag is true, including when stream animation is disabled. Turning
+off animation does not make a growing reply a settled cache candidate. The real
+renderer regression covers 50 updates in each animation mode and records the
+height key again on completion.
+
+The pinned dependency also avoids resetting its smooth-stream controller when
+smoothing is off. The installed-library regression requires one commit per
+content update and verifies transitions between enabled/disabled smoothing.
+
+Native iOS primary transcripts promote each Markstream host to a separate
+compositing layer, so growing one reply does not make WebKit traverse every
+settled reply's touch regions. This uses the existing Capacitor/non-Android root
+scope, independent of native-composer preference or pointer capability. Content,
+normal-flow height, selection and scroll ownership are unchanged; no offscreen
+intrinsic-size substitution or extra scroll writer is introduced. Other runtimes
+and secondary surfaces retain their existing compositing. Nested popup content
+continues to use its existing portal owners.
+
+Only an authoritatively streaming host also promotes its nested code cards on
+native iOS. Completion removes that extra promotion; settled history never gains
+one layer per code card. This limits the layer-count cost while isolating the
+current reply's code subtree during growth. The host's streaming attribute comes
+from `isStreaming`, not DOM order, inferred activity or persisted message text.
+
+The first plain-code to highlighted-lines upgrade constructs a detached fragment
+and replaces the connected code body's children in one call. It must not empty
+the connected body and append lines individually; those intermediate sizes can
+clamp a native scroller before the replacement finishes. Subsequent prefix-diff
+updates retain unchanged leading line nodes. This invariant alone does not prove
+that every native bottom-follow loss has been resolved.
+
+Incremental code updates retain existing line wrappers and newline separators by
+index, including an unchanged trailing blank line. A changed earlier line must
+not remove and rebuild the suffix: even a temporarily missing trailing separator
+can make native WebKit clamp the transcript by one line and release bottom-follow.
+Only an authoritative decrease in line count removes trailing nodes. Both worker
+highlight output and the plain-text failure path use this same reconciliation.
+
+Preserving a streaming fence subtree does not freeze its language metadata. The
+incoming fence owns `data-md-lang`, `data-md-label`, and the code language class;
+these are synchronized without replacing line wrappers. A completed language
+name invalidates the applied-highlight marker even when source text is unchanged.
+Worker results must still match both current source and language before commit,
+so an earlier partial-language grammar cannot overwrite the authoritative one.
 
 Message hover chrome uses `lib/messageHover.ts` boundary handlers and the
 `data-message-hovered` scope marker. The handlers write only that DOM attribute;
@@ -514,6 +927,10 @@ Use `render()`, not `mount()`: `mermaidViewer.ts` remains the sole pan/zoom/resi
 
 Activation passes the actual clicked DOM element as ephemeral `ToolPopupContent.previewSource` (never persisted). `mediaPreviewTransition` hands a unique snapshot name from that source to the preview and back using the browser View Transitions API, with a 280ms transition and cleanup on interruption/unmount. Missing/offscreen sources, unsupported browsers and a changed gallery image fall back to a 150ms fade; reduced-motion skips animation. The preview never scans the transcript for a matching URL. Mobile system/gesture/history Back dismisses the preview before the underlying page; image pointer-dismissal guards never block explicit Back. Coverage: `ToolOutputDialog.preview.test.tsx`, `mediaPreviewTransition.test.ts`.
 
+Opening and closing must not restyle or re-render unrelated app regions. The preview portal is appended to `body`, so large hidden subtrees (the file-type icon sprite, ~6k nodes) are mounted before `#root` instead of last; as the portal's previous sibling they were restyled on every mount/unmount (~30ms desktop, worse on phones). The app-root `useRouter` keeps its route state when an overlay's history entry pops without a path change, so closing does not re-render `MobileApp`/`App`. `mediaPreviewTransition.css` is imported by `index.css`, not by the lazy preview chunk: injecting a stylesheet on the first open forced a whole-document style recalc (~90ms with a long transcript). Coverage: `lib/fileTypeIcons.test.ts`, `hooks/useRouter.test.ts`, `mediaPreviewTransition.test.ts`.
+
+Every UI entry (`main.tsx`, `renderMobileApp`, `renderElectronMiniChatApp`, `renderVSCodeApp`) calls `preloadMarkdownRenderer()` at startup. The renderer chunk carries `markstreamTheme.css` (~73KB including the library styles); loading it on the first Markdown row instead inserted that stylesheet after the transcript painted and restyled the whole conversation (~108ms with 15 messages in dev). Preloading keeps the code split but lands the stylesheet before messages render.
+
 Both preview kinds keep the canvas edge-to-edge and toolbar spacing fixed. Only the mobile close button respects the top and right safe-area insets, with its normal spacing added inside the safe area.
 
 ## Composer closed-picker work
@@ -582,9 +999,13 @@ controller boundary test verifies one request through the hold, current-user
 anchor recapture and post-adoption cleanup; `desktop-short` exercises real
 normal-flow → virtualized geometry.
 
+The left-side prompt navigation rail is enabled by default; saved enable/disable preferences remain authoritative. It appears for supported desktop chat surfaces with at least two turns, without automatically opening the hover/keyboard preview. Mobile and VS Code retain their existing exclusion. Remote chat also excludes mobile before passing the preference to the shared viewport; enabling the desktop preference must not mount a rail in a phone conversation.
+
+Shared `MessageReferenceChip` text and icon slots inherit the surrounding font size and line height. Image/attachment references do not have their own chip height or line-height reset; the same rule applies in transcript messages, queued previews and navigator previews. The painted icon remains 1em and does not define the text line box.
+
 The left-side rail highlights every prompt whose turn or message intersects the chat viewport, including a turn where only its assistant reply remains visible. `useVisiblePromptTurns` observes mounted transcript nodes with the chat scroller as its intersection root; virtual row additions, removals, and identity changes update registrations. Stable message ownership avoids reconnecting observers on text deltas, and unchanged visible sets retain their reference. Keyboard navigation's single active turn does not determine viewport highlighting.
 
-Hover/focus shows one shadow-free, theme-token conversation preview beside the corresponding tick: a single-line user question and up to four lines of assistant text. User reference chips are removed before truncation. Replies follow message order and explicit parent ownership when provided; tool and reasoning parts are excluded. The rail retains click/keyboard navigation and wheel scrubbing without rendering a prompt list. Coverage: `components/PromptNavigatorRail.test.tsx` and `hooks/useKeyboardShortcuts.escape.test.tsx`.
+Hover/focus shows one shadow-free, theme-token conversation preview beside the corresponding tick: a single-line user question and up to four lines of assistant text. The question reuses `UserTextPart` in preview mode, including shared reference chips and Markdown; the reply reuses `SimpleMarkdownRenderer`. Rich renderers mount only for the highlighted prompt, not every tick. Reference-stripped, truncated text remains the tick's accessible label, not the preview source. Preview mode omits transcript search markers, message expansion and interactive chip wrappers. Preview clicks, including Markdown links, select the turn rather than navigating away; file-reference probing is disabled. Replies follow message order and explicit parent ownership when provided; tool and reasoning parts are excluded. The rail retains click/keyboard navigation and wheel scrubbing without rendering a prompt list. Coverage: `components/PromptNavigatorRail.test.tsx` and `hooks/useKeyboardShortcuts.escape.test.tsx`.
 
 ## Markdown file-link navigation
 
@@ -863,7 +1284,7 @@ Assistant model headers show recorded non-default thinking intensity on desktop 
 
 The first-prompt establishing draft uses the same overlay Composer foot and swap scope as the final transcript. The idle draft keeps the in-flow Composer contract.
 
-`ChatPromptComposer` inline layout keeps a 48px single-line rail and always measures the textarea `scrollHeight`, including soft wrapping with no authored newline. Wrapped or explicit multiline content grows with 24px line-height and 12px vertical padding up to `max-h-32`; overflow then scrolls inside the textarea. A measured height above 48px bottom-aligns the fixed 48px attach/send rails, while compact inline consumers retain centered controls at the idle height.
+`ChatPromptComposer` inline layout defaults to a 48px single-line rail and always measures the textarea `scrollHeight`, including soft wrapping with no authored newline. Wrapped or explicit multiline content grows with 24px line-height and 12px vertical padding up to `max-h-32`; overflow then scrolls inside the textarea. A measured height above the computed compact height bottom-aligns the fixed attach/send rails. Assistant contact CSS supplies 40px desktop rails and retains 48px mobile rails. Active contacts opt into `ChatComposerSurface.animateResize`: a memoized observer leaf animates only the existing surface material's bottom-origin scale and input-shell translation through Motion, never layout height, glyph scale or action rails. Other consumers keep their existing material and mount no resize-animation observer. See `../assistants/DOCUMENTATION.md#telegram-style-contact-geometry-and-composer-motion` for scope, interruption and validation limits.
 
 Turn Changes rows that point outside the current project open a file preview instead of an empty turn-diff panel (`openTurnChangedFile.ts`). The ContextPanel shows a short notice only for that degraded open path.
 
@@ -1039,7 +1460,7 @@ Activity disclosure settings define the initial state of cold settled turns: `co
 
 Turn anchors are user rows except OpenCode 2 native synthetic notices (`nativeType: 'synthetic'`: background, `<subagent …>`, `<shell …>` completion). After the first turn exists, those notices stay grouped but open no turn, so assistant steps that resume after a background completion continue the current turn instead of splitting the reply or moving between blocks when the notice's `time.created` is stamped at completion. A leading native synthetic row still anchors a turn.
 
-Sorted multi-step turns keep every received assistant visible. A delayed streaming pointer cannot truncate the set to an older prefix. Activity row membership follows the same assistant set. The first adjacent assistant run uses `${turnId}:activity`; a later run after a checkpoint/notice adds its stable first-assistant id. Empty-parts frames cannot move an anchor. Header Working/Processed chrome may change when idle; that presentation cannot revoke retained expansion.
+Sorted multi-step turns keep every received assistant visible. A delayed streaming pointer cannot truncate the set to an older prefix. Activity row membership follows the same assistant set. The first adjacent assistant run uses `${turnId}:activity`; a later run after a checkpoint/notice adds its stable first-assistant id. Empty-parts frames cannot move an anchor. Cold idle/historical turns may use Processed chrome; that presentation cannot revoke retained expansion. Once the latest mounted turn has been observed live, its existing turn-lifecycle claim also preserves active Activity presentation across busy/idle step gaps until its own terminal disposition arrives. The disclosure stays locked open without an elapsed header, indent rail, or TPS footer. This is presentation continuity only: it does not change authoritative session activity, Stop availability, or cold-history behavior. Final completion and errors release the active presentation. `MessageList.contentRetention.test.tsx` covers desktop/mobile step gaps, final completion, interruption, and cold idle history.
 
 The fallback/default-disclosure calculations below apply when MessageList has no explicit user choice, including after automatic live expansion is released on confirmed normal completion. Error/partial turns keep their automatic expansion until final content arrives. Activity justification records are the original intermediate model text at their native positions, not synthesized summaries.
 
@@ -1120,3 +1541,16 @@ On mobile, history availability is owned by QueryCache / TranscriptRepository pa
 ### Mobile chat header collapse
 
 The phone chat header (`MobileDetailNavigation collapsible`, found through `.mobile-chat-screen > [data-yuri-collapsible-header]`) owns no state. `useMobileComposerSwap` mirrors the single composer swap state onto it on every publish (`mobileHeaderCollapse.ts`: same progress, phase and rest; compact = collapsed), so header and composer cannot disagree. Readers move top to bottom, so toward-bottom travel ignores the collapse until the viewport is within `COMPOSER_SWAP_RETURN_ZONE_PX` of the live edge; inside it the return is progressive and lands expanded exactly at the edge. A release that was reading downward outside the zone never commits an expand. Away-from-bottom travel is unchanged. Motion is paint-only (`--yuri-mobile-header-collapse`); the transform exists only off the expanded rest so menus inside the header keep their containing block.
+# Explicit Remote Project composer boundary
+
+When mounted under `HostRuntimeProvider` with a remote Location, `ChatInput` adds
+the host indicator and feeds unsupported/offline/connecting/degraded states into
+its existing `submissionBlocked` admission gate. The composer body remains
+mounted so connectivity changes do not erase input. The outer remote boundary
+owns the one-host subscription; local text edits do not read host status or
+enumerate catalogs. Local composers retain their existing presentation. Compact
+uses the provider's scoped service rather than the singleton client.
+
+This boundary is not a substitute for location-scoped drafts, delivery, queues,
+catalogs and transcripts. The integrating view must supply the correct provider
+and scoped state; an unscoped global-store fallback is not a remote implementation.

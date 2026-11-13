@@ -2,6 +2,7 @@ import { createAssistantAvatarPlayer, createAssistantAvatarTimeline, mountAssist
 import { subscribeAvatarFrames } from './frameClock';
 import { acquireAvatarPointer } from './pointerTracker';
 import { resolveAssistantAvatar, type AssistantAvatarRecipe, type AvatarMotion, type AvatarEyeColor } from './recipe';
+import { mountContactAvatarAnimation } from './contactAnimation';
 
 type WorkingTimeline = {
   users: number;
@@ -59,7 +60,8 @@ function acquireWorkingTimeline(win: Window, identity: string, seed: string, rec
 }
 
 /** One DOM owner. React and non-React callers only supply identity and live state. */
-export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey = seed ?? 'default', randomizeShape = false, eyeColor }: { id: string; seed?: string; animationKey?: string; randomizeShape?: boolean; eyeColor?: AvatarEyeColor }) {
+export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey, randomizeShape = false, eyeColor }: { id: string; seed?: string; animationKey?: string; randomizeShape?: boolean; eyeColor?: AvatarEyeColor }) {
+  if (animationKey && !randomizeShape) return mountContactAvatarAnimation(host, { id, seed, animationKey, eyeColor });
   const recipe = resolveAssistantAvatar(seed);
   const renderer = mountAssistantAvatarRenderer(host.ownerDocument, id, recipe, eyeColor);
   host.append(renderer.svg);
@@ -95,7 +97,7 @@ export function mountAvatarAnimation(host: HTMLElement, { id, seed, animationKey
     const live = createAssistantAvatarPlayer(recipe, seed ?? 'default', state.motion, compact(), { randomizeShape, eyeColor, resting: resting() || idleEntrance, ...(state.playOnce && !onceFinished ? { playOnce: true } : {}) });
     if (idleEntrance) live.setResting(false);
     player = live;
-    shared = sharing() ? acquireWorkingTimeline(win, animationKey, seed ?? 'default', recipe) : null;
+    shared = sharing() ? acquireWorkingTimeline(win, seed ?? 'default', seed ?? 'default', recipe) : null;
     const pointer = state.followPointer ? acquireAvatarPointer(win) : null;
     if (shared) renderer.paint(live.advance(0, shared.read()));
     const source = shared;

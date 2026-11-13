@@ -5,6 +5,16 @@ import { resolveComposerTextareaAutosize } from './composerTextareaAutosize';
 
 type ComposerSnap = 'auto' | 'min' | 'full';
 
+const isIosNativeImePage = (): boolean => {
+  const root = document.documentElement.classList;
+  return root.contains('yuri-native-ime') && !root.contains('yuri-platform-android');
+};
+
+// Target keyboard lift published once per transition by YuriNativeHeaderPlugin.
+const readNativeImeLift = (): number => (
+  parseFloat(document.documentElement.style.getPropertyValue('--yuri-native-ime-lift')) || 0
+);
+
 export function useMobileComposerSnap({ enabled, hasContent, draftID, inputRef }: {
   enabled: boolean;
   hasContent: boolean;
@@ -26,13 +36,21 @@ export function useMobileComposerSnap({ enabled, hasContent, draftID, inputRef }
       const paddingTotal = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
       const minimum = Math.max(parseFloat(style.minHeight) || 0, lineHeight + paddingTotal);
       const viewport = window.visualViewport;
-      let top = viewport?.offsetTop ?? 0;
+      // iOS native IME lifts the whole WebView instead of re-laying the page:
+      // its top `lift` px are off screen and the pinned header mirror covers
+      // the next header-height px. The keyboard then hides nothing below the
+      // composer, so the (keyboard-shrunk) visual viewport bound never applies.
+      const liftedPage = isIosNativeImePage();
+      const lift = liftedPage ? readNativeImeLift() : 0;
+      let top = liftedPage ? lift : viewport?.offsetTop ?? 0;
       // Find the navigation belonging to this conversation, not an underlying tab.
       for (let ancestor = surface.parentElement; ancestor; ancestor = ancestor.parentElement) {
         const header = ancestor.querySelector<HTMLElement>('.yuri-mobile-detail-navigation, [data-mobile-chat-header]');
-        if (header) { top = Math.max(top, header.getBoundingClientRect().bottom); break; }
+        if (header) { top = Math.max(top, header.getBoundingClientRect().bottom + lift); break; }
       }
-      const bottom = Math.min(surfaceRect.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight));
+      const bottom = liftedPage
+        ? surfaceRect.bottom
+        : Math.min(surfaceRect.bottom, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight));
       const chrome = surfaceRect.height - inputRect.height;
       const maximum = Math.max(minimum, bottom - top - chrome);
       const previousHeight = input.style.height;

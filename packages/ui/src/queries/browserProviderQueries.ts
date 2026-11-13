@@ -67,7 +67,10 @@ export const browserProviderCatalogQueryOptions = (transport = getRuntimeTranspo
   },
 });
 
-export const useBrowserProviderCatalogQuery = () => useQuery(browserProviderCatalogQueryOptions());
+export const useBrowserProviderCatalogQuery = (options?: { enabled?: boolean }) => useQuery({
+  ...browserProviderCatalogQueryOptions(),
+  enabled: options?.enabled ?? true,
+});
 
 export const readBrowserProviderCatalogSnapshot = (
   client: Pick<QueryClient, 'getQueryData'> = queryClient,

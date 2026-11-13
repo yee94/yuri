@@ -7,8 +7,14 @@ import { queryClient, queryKeys } from '@/lib/queryRuntime';
 import { getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
 import { normalizeGitBranchDirectory, readGitBranchStartupSnapshot, writeGitBranchStartupSnapshot, type GitBranchStartupStorage } from './gitBranchStartupCache';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { createProjectGitAPI } from '@/lib/gitApiProject';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 
 export type GitBranchQueryAPI = {
+  projectScope?: HostRuntimeEntry;
+  queryDirectory?(directory: string): string;
   getGitBranches(directory: string, options?: { signal?: AbortSignal }): Promise<GitBranch>;
   getRemotes?(directory: string, options?: { signal?: AbortSignal }): Promise<GitRemote[]>;
 };
@@ -50,21 +56,26 @@ export const gitBranchesQueryOptions = (
   git?: GitBranchQueryAPI,
   transport = getRuntimeTransportIdentity(),
   startupStorage: GitBranchStartupStorage = getDeferredSafeStorage(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeDirectory(directory);
-  const capturedGit = git;
+  entry ??= git?.projectScope;
+  const physicalDirectory = directory ? git?.queryDirectory?.(directory) ?? directory : entry?.location.directory;
+  const normalizedDirectory = entry ? physicalDirectory : normalizeDirectory(directory);
+  const capturedGit = entry ? createProjectGitAPI(entry) : git;
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: branchesKey(normalizedDirectory, transport),
+    queryKey: scope.key(branchesKey(normalizedDirectory, transport)),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<GitBranch> => {
       if (!normalizedDirectory) throw new Error('Git branches require a directory');
       const branches = await fetchBranches(normalizedDirectory, capturedGit, signal);
-      writeGitBranchStartupSnapshot(normalizedDirectory, transport, branches, startupStorage);
+      scope.assertCurrent(signal);
+      if (!entry) writeGitBranchStartupSnapshot(normalizedDirectory, transport, branches, startupStorage);
       return branches;
     },
     staleTime: GIT_BRANCH_STALE_TIME,
     refetchOnWindowFocus: true,
     gcTime: Infinity,
-    initialData: () => readGitBranchStartupSnapshot(normalizedDirectory, transport, startupStorage) ?? undefined,
+    initialData: () => entry ? undefined : readGitBranchStartupSnapshot(normalizedDirectory, transport, startupStorage) ?? undefined,
     initialDataUpdatedAt: 0,
   };
 };
@@ -73,11 +84,15 @@ export const gitRemotesQueryOptions = (
   directory: string | null | undefined,
   git?: GitBranchQueryAPI,
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeDirectory(directory);
-  const capturedGit = git;
+  entry ??= git?.projectScope;
+  const physicalDirectory = directory ? git?.queryDirectory?.(directory) ?? directory : entry?.location.directory;
+  const normalizedDirectory = entry ? physicalDirectory : normalizeDirectory(directory);
+  const capturedGit = entry ? createProjectGitAPI(entry) : git;
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: remotesKey(normalizedDirectory, transport),
+    queryKey: scope.key(remotesKey(normalizedDirectory, transport)),
     queryFn: ({ signal }: { signal: AbortSignal }): Promise<GitRemote[]> => {
       if (!normalizedDirectory) throw new Error('Git remotes require a directory');
       return fetchRemotes(normalizedDirectory, capturedGit, signal);
@@ -88,19 +103,21 @@ export const gitRemotesQueryOptions = (
 };
 
 export const useGitBranchesQuery = (directory: string | null | undefined, git?: GitBranchQueryAPI, enabled = true) => {
+  const host = useHostRuntime();
   const transport = React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getRuntimeTransportIdentity, getRuntimeTransportIdentity);
   const normalizedDirectory = normalizeDirectory(directory);
   return useQuery({
-    ...gitBranchesQueryOptions(normalizedDirectory, git, transport),
+    ...gitBranchesQueryOptions(normalizedDirectory, git, transport, undefined, host?.entry),
     enabled: enabled && Boolean(normalizedDirectory),
   });
 };
 
 export const useGitRemotesQuery = (directory: string | null | undefined, git?: GitBranchQueryAPI, enabled = true) => {
+  const host = useHostRuntime();
   const transport = React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getRuntimeTransportIdentity, getRuntimeTransportIdentity);
   const normalizedDirectory = normalizeDirectory(directory);
   return useQuery({
-    ...gitRemotesQueryOptions(normalizedDirectory, git, transport),
+    ...gitRemotesQueryOptions(normalizedDirectory, git, transport, host?.entry),
     enabled: enabled && Boolean(normalizedDirectory),
   });
 };

@@ -36,6 +36,8 @@ import { convertHeicToJpegViaNative } from "../native-image-transcode";
 import { expandImageAttachmentCitations } from "@/components/chat/attachmentCitations";
 import { wrapSystemReminder } from "../systemReminder";
 import { blobFromDataUrl, needsPromptAttachmentUpload, pathFromPromptAttachmentFileUrl, uploadPromptAttachmentBytes } from "../prompt-attachment-upload";
+import { hostApiPath, locationCachePartition, locationKey, type HostLocation } from '@/lib/remote-projects/location';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 
 /**
  * Tagged result of `OpencodeService.fetchPermission()`. The caller can
@@ -64,8 +66,8 @@ export type SessionActiveResult =
   | { state: "unsupported" }
   | { state: "unknown" };
 import { getRuntimeUrlResolver } from "@/lib/runtime-url";
-import { runtimeFetch } from "@/lib/runtime-fetch";
-import { getRuntimeGeneration, getRuntimeKey } from "@/lib/runtime-switch";
+import { runtimeFetch, type RuntimeFetchOptions } from "@/lib/runtime-fetch";
+import { getRuntimeGeneration, getRuntimeKey, getRuntimeTransportIdentity } from "@/lib/runtime-switch";
 import { getRegisteredRuntimeAPIs } from "@/contexts/runtimeAPIRegistry";
 import { markStartupTrace } from "@/lib/startupTrace";
 import { ascendingId } from "@/sync/message-id";
@@ -304,21 +306,40 @@ const withSessionMessageCompat = (client: RawOpenCodeClient): OpenCodeClient => 
   };
 };
 
-const createRuntimeOpencodeClient = (config: { baseUrl: string; headers?: HeadersInit }): OpenCodeClient => {
+const createRuntimeOpencodeClient = (config: { baseUrl: string; headers?: HeadersInit; hostId?: string; instanceId?: string; isCurrentHost?: () => boolean }): OpenCodeClient => {
+  const runtimeKey = config.hostId ? getRuntimeKey() : undefined;
+  const generation = config.hostId ? getRuntimeGeneration() : undefined;
   return withSessionMessageCompat(OpenCode.make({
     baseUrl: config.baseUrl,
     ...(config.headers ? { headers: config.headers } : {}),
     fetch: (input, init) => {
+      if (config.hostId && (runtimeKey !== getRuntimeKey() || generation !== getRuntimeGeneration() || config.isCurrentHost?.() === false)) {
+        return Promise.reject(new Error('Remote Host client belongs to an inactive Hub transport'));
+      }
       // SDK clients can outlive a Host/transport switch. Their absolute URLs
       // still name the old Host; only the SDK owns the route, not its origin.
       // Resolve at dispatch so these calls cannot bypass the active relay.
       const url = new URL(input instanceof Request ? input.url : input.toString());
-      const path = `${url.pathname}${url.search}`;
+      const path = hostApiPath(config.hostId, `${url.pathname}${url.search}`);
+      if (config.hostId && config.instanceId) {
+        const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+        headers.set('x-yuri-target-instance', config.instanceId);
+        init = { ...init, headers };
+      }
+      let pending: Promise<Response>;
       if (input instanceof Request) {
         const target = ensureAbsoluteBaseUrl(getRuntimeUrlResolver().api(path));
-        return runtimeFetch(new Request(target, input), init);
+        pending = runtimeFetch(new Request(target, input), init);
+      } else {
+        pending = runtimeFetch(path, init);
       }
-      return runtimeFetch(path, init);
+      if (!config.hostId) return pending;
+      return pending.then((response) => {
+        if (runtimeKey !== getRuntimeKey() || generation !== getRuntimeGeneration() || config.isCurrentHost?.() === false) {
+          throw new Error('Remote Host connection changed during SDK request');
+        }
+        return response;
+      });
     },
   }));
 };
@@ -511,12 +532,60 @@ class OpencodeService {
    * Same-session concurrent sends must not interleave switches (wrong model).
    */
   private sessionBoundaryQueues: Map<string, Promise<void>> = new Map();
+  private readonly hostScope?: Readonly<HostLocation>;
+  private readonly hostRuntimeKey?: string;
+  private readonly hostRuntimeGeneration?: number;
+  private readonly isCurrentHost?: () => boolean;
+  private readonly hostEntry?: HostRuntimeEntry;
 
-  constructor(baseUrl: string = DEFAULT_BASE_URL) {
+  constructor(baseUrl: string = DEFAULT_BASE_URL, location?: HostLocation, isCurrentHost?: () => boolean, hostEntry?: HostRuntimeEntry) {
     const runtimeBase = resolveRuntimeBaseUrl();
     const requestedBaseUrl = runtimeBase || baseUrl;
     this.baseUrl = ensureAbsoluteBaseUrl(requestedBaseUrl);
-    this.client = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl) });
+    this.hostScope = location?.hostId ? Object.freeze({ ...location }) : undefined;
+    this.hostRuntimeKey = this.hostScope ? getRuntimeKey() : undefined;
+    this.hostRuntimeGeneration = this.hostScope ? getRuntimeGeneration() : undefined;
+    this.isCurrentHost = isCurrentHost;
+    this.hostEntry = hostEntry;
+    this.currentDirectory = location?.directory;
+    this.client = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, instanceId: this.hostScope?.instanceId, isCurrentHost });
+    if (this.hostScope && !this.hostEntry) {
+      const scope = this.hostScope;
+      const key = locationKey(scope);
+      this.hostEntry = Object.freeze({
+        location: scope, key, cachePartition: locationCachePartition(scope), connectionGeneration: 0,
+        queryScope: Object.freeze([getRuntimeTransportIdentity(), scope.hubId, scope.hostId!, key, 0] as const),
+        sdk: () => { this.assertHostScopeCurrent(); return this.client; },
+        service: () => { this.assertHostScopeCurrent(); return this; },
+        fetch: (path: string, init?: RuntimeFetchOptions) => this.runtimeFetch(path, init),
+      });
+    }
+  }
+
+  getHostRuntimeEntry(): HostRuntimeEntry | undefined {
+    this.assertHostScopeCurrent();
+    return this.hostEntry;
+  }
+
+  private assertHostScopeCurrent(): void {
+    if (this.hostScope && (this.hostRuntimeKey !== getRuntimeKey() || this.hostRuntimeGeneration !== getRuntimeGeneration() || this.isCurrentHost?.() === false)) {
+      throw new Error('Remote Host service belongs to an inactive Hub transport');
+    }
+  }
+
+  /** Yuri-owned requests keep the same captured host as official SDK requests. */
+  private async runtimeFetch(input: string, init?: RuntimeFetchOptions): Promise<Response> {
+    this.assertHostScopeCurrent();
+    let path = input;
+    if (this.hostScope?.hostId && ABSOLUTE_URL_PATTERN.test(path)) {
+      const url = new URL(path);
+      path = `${url.pathname}${url.search}`;
+    }
+    const headers = new Headers(init?.headers);
+    if (this.hostScope?.instanceId) headers.set('x-yuri-target-instance', this.hostScope.instanceId);
+    const response = await runtimeFetch(hostApiPath(this.hostScope?.hostId, path), this.hostScope?.instanceId ? { ...init, headers } : init);
+    this.assertHostScopeCurrent();
+    return response;
   }
 
   getBaseUrl(): string {
@@ -524,13 +593,14 @@ class OpencodeService {
   }
 
   reconnectToRuntimeBaseUrl(): void {
+    this.assertHostScopeCurrent();
     const runtimeBase = resolveRuntimeBaseUrl();
     const nextBaseUrl = ensureAbsoluteBaseUrl(runtimeBase || DEFAULT_BASE_URL);
     if (nextBaseUrl === this.baseUrl) {
       return;
     }
     this.baseUrl = nextBaseUrl;
-    this.client = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl) });
+    this.client = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, instanceId: this.hostScope?.instanceId, isCurrentHost: this.isCurrentHost });
     this.scopedClients.clear();
     this.listDirectoryInFlight.clear();
     this.configProvidersInFlight.clear();
@@ -549,6 +619,21 @@ class OpencodeService {
   /** Get a scoped SDK client for a specific directory */
   getScopedSdkClient(directory: string): OpenCodeClient {
     return this.getScopedApiClient(directory);
+  }
+
+  /** Explicit remote scope: never infer the target machine from a filesystem path. */
+  getLocationSdkClient(location: HostLocation): OpenCodeClient {
+    if (!location.hostId) return this.getScopedSdkClient(location.directory);
+    const key = JSON.stringify([getRuntimeKey(), getRuntimeGeneration(), locationKey(location), location.instanceId ?? null]);
+    const existing = this.scopedClients.get(key);
+    if (existing) return existing;
+    const client = createRuntimeOpencodeClient({
+      baseUrl: resolveV2ClientBaseUrl(this.baseUrl),
+      hostId: location.hostId,
+      instanceId: location.instanceId,
+    });
+    this.scopedClients.set(key, client);
+    return client;
   }
 
   async checkLocationReleaseUse(directory: string, signal: AbortSignal): Promise<'free' | 'busy'> {
@@ -616,13 +701,14 @@ class OpencodeService {
    * Needed for worktree APIs where backend ignores per-call directory.
    */
   getScopedApiClient(directory: string): OpenCodeClient {
+    this.assertHostScopeCurrent();
     const normalized = this.normalizeCandidatePath(directory) ?? directory;
     const key = normalized || '';
     const existing = this.scopedClients.get(key);
     if (existing) {
       return existing;
     }
-    const scoped = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl) });
+    const scoped = createRuntimeOpencodeClient({ baseUrl: resolveV2ClientBaseUrl(this.baseUrl), hostId: this.hostScope?.hostId, instanceId: this.hostScope?.instanceId, isCurrentHost: this.isCurrentHost });
     this.scopedClients.set(key, scoped);
     return scoped;
   }
@@ -738,6 +824,7 @@ class OpencodeService {
    * body `{ model: { id, providerID, variant? } }` — field is `id`, not modelID.
    */
   private assertCapturedRuntime(generation: number, runtimeKey: string, label: string): void {
+    this.assertHostScopeCurrent();
     if (getRuntimeGeneration() !== generation || getRuntimeKey() !== runtimeKey) {
       const error = new Error(`${label}: runtime switched`)
       error.name = "RuntimeGenerationMismatchError"
@@ -1094,7 +1181,7 @@ class OpencodeService {
       if (wantsMetadata) {
         const body: Record<string, unknown> = { patch: patch.metadata };
         if (requestDirectory) body.directory = requestDirectory;
-        const response = await runtimeFetch(
+        const response = await this.runtimeFetch(
           `/api/yuri/sessions/${encodeURIComponent(id)}/metadata`,
           {
             method: 'PUT',
@@ -1138,7 +1225,7 @@ class OpencodeService {
         }
         const body: Record<string, unknown> = { archivedAt };
         if (requestDirectory) body.directory = requestDirectory;
-        const response = await runtimeFetch(
+        const response = await this.runtimeFetch(
           `/api/yuri/sessions/${encodeURIComponent(id)}/archive`,
           {
             method: 'PUT',
@@ -1186,6 +1273,7 @@ class OpencodeService {
 
   async getSessionMessages(id: string, limit?: number): Promise<ProjectedSessionMessage[]> {
     const page = await fetchSessionProjectionPage({
+      scope: this.hostEntry,
       sessionID: id,
       directory: this.currentDirectory ?? "",
       ...(typeof limit === "number" ? { limit } : {}),
@@ -1216,7 +1304,7 @@ class OpencodeService {
     if (requestDirectory) query.set('directory', requestDirectory);
     if (messageID) query.set('messageID', messageID);
     const queryString = query.toString();
-    const response = await runtimeFetch(
+    const response = await this.runtimeFetch(
       `/api/session/${encodeURIComponent(params.sessionID)}/diff${queryString ? `?${queryString}` : ''}`,
       { method: 'GET', headers: { Accept: 'application/json' }, signal: options?.signal },
     );
@@ -1385,6 +1473,7 @@ class OpencodeService {
       }
       this.assertCapturedRuntime(generation, runtimeKey, "prompt attachment upload");
       const uploaded = await uploadPromptAttachmentBytes({
+        scope: this.hostEntry,
         body,
         mime: normalized.mime,
         filename: normalized.filename,
@@ -1396,11 +1485,11 @@ class OpencodeService {
     }
     if (isImagePromptFile(normalized) && size === undefined && url.toLowerCase().startsWith('file://')) {
       const path = pathFromPromptAttachmentFileUrl(url);
-      const files = getRegisteredRuntimeAPIs()?.files;
+      const files = this.hostScope ? undefined : getRegisteredRuntimeAPIs()?.files;
       if (files?.statFile) {
         size = (await files.statFile(path)).size;
       } else {
-        const response = await runtimeFetch('/api/fs/stat', { query: { path } });
+        const response = await this.runtimeFetch('/api/fs/stat', { query: { path } });
         if (!response.ok) throw new Error('Failed to inspect prompt attachment');
         const stat = await response.json() as { size?: number };
         size = stat.size;
@@ -1479,7 +1568,7 @@ class OpencodeService {
     // can reconcile the echoed server message in-place.
     const messageId = params.messageId ?? ascendingId("msg");
     const requestDirectory = this.normalizeCandidatePath(params.directory ?? null) ?? this.currentDirectory;
-    const commit: PromptCommitScope = capturePromptCommitScope(requestDirectory ?? "");
+    const commit: PromptCommitScope = capturePromptCommitScope(requestDirectory ?? "", this.hostEntry);
 
     // Build parts using the shared builder (uploads check the same capture).
     const parts = await this.buildMessageParts({
@@ -1508,7 +1597,8 @@ class OpencodeService {
       });
     }
 
-    assertProviderCircuitClosed(params.providerID);
+    const providerScope = this.hostScope ? locationCachePartition(this.hostScope) : undefined;
+    assertProviderCircuitClosed(params.providerID, providerScope);
 
     const text = parts
       .flatMap((part) => (part.type === "text" && typeof part.text === "string" ? [part.text] : []))
@@ -1552,6 +1642,7 @@ class OpencodeService {
         // reconcile by fixed id (inbox pending or already projected), then at
         // most one prompt-only retry — never re-run model/agent switch.
         const promptInput = {
+          scope: this.hostEntry,
           sessionID: params.id,
           directory: commit.directory,
           messageID: messageId,
@@ -1584,7 +1675,7 @@ class OpencodeService {
 
         try {
           const admittedID = await admitOnce()
-          recordProviderSuccess(params.providerID)
+          recordProviderSuccess(params.providerID, providerScope)
           return admittedID
         } catch (error) {
           assertSameRuntime()
@@ -1604,14 +1695,14 @@ class OpencodeService {
           })
           assertSameRuntime()
           if (reconciled.status === "pending" || reconciled.status === "promoted") {
-            recordProviderSuccess(params.providerID)
+            recordProviderSuccess(params.providerID, providerScope)
             return messageId
           }
           // unknown: do not mint a new draft identity — same id/payload retry only.
           // One bounded prompt-only retry with the same id + payload.
           try {
             const admittedID = await admitOnce()
-            recordProviderSuccess(params.providerID)
+            recordProviderSuccess(params.providerID, providerScope)
             return admittedID
           } catch (retryError) {
             assertSameRuntime()
@@ -1629,7 +1720,7 @@ class OpencodeService {
             })
             assertSameRuntime()
             if (again.status === "pending" || again.status === "promoted") {
-              recordProviderSuccess(params.providerID)
+              recordProviderSuccess(params.providerID, providerScope)
               return messageId
             }
             throw retryError
@@ -1637,7 +1728,7 @@ class OpencodeService {
         }
       })
     } catch (error) {
-      recordProviderError(params.providerID, (error as Error & { status?: number }).status);
+      recordProviderError(params.providerID, (error as Error & { status?: number }).status, providerScope);
       throw error;
     }
   }
@@ -1686,6 +1777,7 @@ class OpencodeService {
 
   async abortSession(id: string): Promise<boolean> {
     await postSessionInterrupt({
+      scope: this.hostEntry,
       sessionID: id,
       directory: this.currentDirectory,
     });
@@ -1725,6 +1817,7 @@ class OpencodeService {
     const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
     void partId;
     const revert = await postSessionRevertStage({
+      scope: this.hostEntry,
       sessionID: sessionId,
       directory: requestDirectory,
       messageID: messageId,
@@ -1742,6 +1835,7 @@ class OpencodeService {
     void providerId;
     void modelId;
     await postSessionCompact({
+      scope: this.hostEntry,
       sessionID: sessionId,
       directory: requestDirectory ?? "",
     });
@@ -1751,6 +1845,7 @@ class OpencodeService {
   async unrevertSession(sessionId: string, directory?: string | null): Promise<Session> {
     const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
     await postSessionRevertClear({
+      scope: this.hostEntry,
       sessionID: sessionId,
       directory: requestDirectory,
     });
@@ -1865,7 +1960,7 @@ class OpencodeService {
     Record<string, { type: string }> | null
   > {
     try {
-      const response = await runtimeFetch('/api/session-activity', {
+      const response = await this.runtimeFetch('/api/session-activity', {
         method: 'GET',
         headers: {
           Accept: 'application/json',
@@ -1904,6 +1999,7 @@ class OpencodeService {
       throw v2CapabilityUnavailable('permission.reply (sessionID required)');
     }
     await postSessionPermissionReply({
+      scope: this.hostEntry,
       sessionID: options.sessionID,
       requestID: requestId,
       reply,
@@ -2463,7 +2559,7 @@ class OpencodeService {
         const healthUrl = '/api/opencode/health';
         markStartupTrace('opencodeClient.checkHealth:url', { baseUrl: this.baseUrl, healthUrl });
         const timeout = createTimeoutSignal(OPENCODE_HEALTH_TIMEOUT_MS);
-        const response = await runtimeFetch(healthUrl, { signal: timeout.signal }).finally(timeout.cleanup);
+        const response = await this.runtimeFetch(healthUrl, { signal: timeout.signal }).finally(timeout.cleanup);
         markStartupTrace('opencodeClient.checkHealth:response', { status: response.status });
         if (response.ok) {
           const healthData = await response.json();
@@ -2499,7 +2595,7 @@ class OpencodeService {
     dirPath: string,
     options?: { allowOutsideWorkspace?: boolean }
   ): Promise<{ success: boolean; path: string }> {
-    const desktopFiles = getDesktopFilesApi();
+    const desktopFiles = this.hostScope ? null : getDesktopFilesApi();
     if (desktopFiles?.createDirectory) {
       try {
         return await desktopFiles.createDirectory(dirPath);
@@ -2514,7 +2610,7 @@ class OpencodeService {
       ...(options?.allowOutsideWorkspace ? { allowOutsideWorkspace: true } : {}),
     };
 
-    const response = await runtimeFetch('/api/fs/mkdir', {
+    const response = await this.runtimeFetch('/api/fs/mkdir', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2532,7 +2628,7 @@ class OpencodeService {
   }
 
   async cloneRepository(input: { remoteUrl: string; destinationPath: string; gitIdentityId?: string | null }): Promise<{ success: boolean; path: string; output?: string }> {
-    const response = await runtimeFetch('/api/fs/clone', {
+    const response = await this.runtimeFetch('/api/fs/clone', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2564,7 +2660,7 @@ class OpencodeService {
     }
 
     const task = (async () => {
-    const desktopFiles = getDesktopFilesApi();
+    const desktopFiles = this.hostScope ? null : getDesktopFilesApi();
     if (desktopFiles) {
       try {
         const result = await desktopFiles.listDirectory(directoryPath || '', options);
@@ -2598,7 +2694,7 @@ class OpencodeService {
         params.set('respectGitignore', 'true');
       }
       const query = params.toString();
-      const response = await runtimeFetch(`/api/fs/list${query ? `?${query}` : ''}`);
+      const response = await this.runtimeFetch(`/api/fs/list${query ? `?${query}` : ''}`);
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         const message = typeof error.error === 'string' ? error.error : 'Failed to list directory';
@@ -2687,14 +2783,14 @@ class OpencodeService {
     // /api/fs/home, not from the local Electron global.
     const runtimeKey = getRuntimeKey();
     if (!runtimeKey || runtimeKey === 'local') {
-      const desktopHome = await getDesktopHomeDirectory();
+      const desktopHome = this.hostScope ? null : await getDesktopHomeDirectory();
       if (desktopHome) {
         return desktopHome;
       }
     }
 
     try {
-      const response = await runtimeFetch('/api/fs/home', {
+      const response = await this.runtimeFetch('/api/fs/home', {
         method: 'GET',
         headers: {
           Accept: 'application/json'
@@ -2731,7 +2827,7 @@ class OpencodeService {
     console.log('[OpencodeClient] POST', url, 'with path:', directoryPath);
 
     try {
-      const response = await runtimeFetch(url, {
+      const response = await this.runtimeFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -2768,5 +2864,25 @@ class OpencodeService {
 
 // Exported singleton instance
 export const opencodeClient = new OpencodeService();
+
+export type LocationOpencodeService = OpencodeService;
+const locationServices = new Map<string, OpencodeService>();
+
+/** One service/cache/serial-send boundary per Hub + host + Location, never global switching. */
+export const getLocationOpencodeClient = (location: HostLocation, fence?: { generation: number; isCurrent(): boolean }, scope?: HostRuntimeEntry): LocationOpencodeService => {
+  if (!location.hostId) return opencodeClient;
+  const key = JSON.stringify([getRuntimeKey(), getRuntimeGeneration(), locationKey(location), location.instanceId ?? null, fence?.generation ?? null, Boolean(scope)]);
+  const existing = locationServices.get(key);
+  if (existing) {
+    locationServices.delete(key);
+    locationServices.set(key, existing);
+    return existing;
+  }
+  const service = new OpencodeService(DEFAULT_BASE_URL, location, fence?.isCurrent, scope);
+  locationServices.set(key, service);
+  // Eviction drops only this lookup. Captured active services remain valid for their consumers.
+  if (locationServices.size > 32) locationServices.delete(locationServices.keys().next().value!);
+  return service;
+};
 
 // Exported types

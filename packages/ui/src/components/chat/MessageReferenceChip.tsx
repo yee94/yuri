@@ -59,7 +59,7 @@ export const MessageReferenceChip: React.FC<MessageReferenceChipProps> = ({
                 <span
                     // No overflow-hidden: it rewrites the inline-block baseline and
                     // lifts the icon above the label (same contract as ComposerTriggerIconMark).
-                    className="relative inline-block shrink-0 align-baseline leading-none"
+                    className="relative inline-block shrink-0 align-baseline"
                     aria-hidden="true"
                 >
                     <span className="text-transparent">{triggerRun}</span>

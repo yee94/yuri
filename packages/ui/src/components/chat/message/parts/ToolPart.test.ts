@@ -258,7 +258,7 @@ describe('apply_patch navigation', () => {
         expect(toolPartSource).toContain('const fileDiff = metadata.filediff;');
         expect(toolPartSource).toContain('getPatchText((fileDiff as { patch?: unknown }).patch)');
         expect(toolPartSource).toContain('if (isFileNavTool && !currentDirectory)');
-        expect(toolPartSource).toContain("openContextDiff(currentDirectory, relativePath, false, isWriteLikeNavTool(normalizedPartTool) ? 'working' : 'turn', targetLine, messageId, sessionSurface.sessionId);");
+        expect(toolPartSource).toContain("openContextDiff(hostScope?.key ?? currentDirectory, relativePath, false, isWriteLikeNavTool(normalizedPartTool) ? 'working' : 'turn', targetLine, messageId, sessionSurface.sessionId);");
         expect(toolPartSource).toContain('openContextToolDiff(');
         expect(toolPartSource).toContain('sessionSurface.sessionId,');
         expect(toolPartSource).toContain('diffSessionId: sessionSurface.sessionId');

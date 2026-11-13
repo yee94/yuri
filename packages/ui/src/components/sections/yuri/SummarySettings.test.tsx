@@ -78,6 +78,8 @@ afterEach(async () => {
 
 test('shows only the model picker and no page title', () => {
   expect(host.querySelector('[data-testid="provider-model"]')?.textContent).toBe('gpt-5.4-mini');
+  expect(host.querySelector('[data-settings-item="summary-ai.configuration"]')?.classList.contains('yuri-settings-split-row-stacked')).toBe(true);
+  expect(mocks.modelSelectorProps.at(-1)?.className).toBe('yuri-settings-inline-value');
   expect(host.querySelector('h2')).toBeNull();
   expect(host.textContent).not.toContain('Model source');
   expect(host.querySelector('input[type="password"]')).toBeNull();

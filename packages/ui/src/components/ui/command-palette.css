@@ -2,6 +2,27 @@
   max-height: min(42rem, 80dvh);
 }
 
+[data-global-search='true'] .yuri-global-search-filters {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.25rem;
+  overflow-x: auto;
+  padding: 0.25rem 1rem 0.375rem;
+}
+
+[data-global-search='true'] .yuri-global-search-filter {
+  color: var(--surface-muted-foreground);
+}
+
+[data-global-search='true'] .yuri-global-search-filter[aria-pressed='true'] {
+  color: var(--interactive-selection-foreground);
+  background: var(--interactive-selection);
+}
+
+.yuri-global-search-page .yuri-global-search-filters {
+  padding-inline: 1rem;
+}
+
 [data-global-search='true'] .yuri-global-search-results {
   padding: 0.75rem 0.5rem;
 }
@@ -117,7 +138,8 @@
 }
 
 .yuri-global-search-page .yuri-mobile-detail-navigation-content {
-  grid-template-columns: 2.75rem minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.5rem;
 }
 
 .yuri-global-search-page .yuri-mobile-detail-navigation-content > :nth-child(2) {
@@ -139,7 +161,8 @@
 
 .yuri-global-search-page [data-slot='command-input-field'],
 .yuri-global-search-page [data-slot='command-input'] {
-  height: 40px;
+  height: 2.5rem;
+  min-height: 36px;
   font-size: 16px;
 }
 
@@ -153,7 +176,7 @@
 }
 
 .yuri-global-search-page [cmdk-item].yuri-global-search-session {
-  grid-template-columns: minmax(0, 1fr) 3rem;
+  grid-template-columns: minmax(0, 1fr) 4.5rem;
   column-gap: 0.625rem;
 }
 

@@ -5,6 +5,19 @@ This module owns Yuri UI authentication for browser access, including password s
 
 Trusted-device access has one durable credential model: a remote client bearer token stored by `packages/web/server/lib/client-auth/remote-clients.js`. Password, passkey, and Pairing v2 are issuance methods for that credential, not separate credential systems. Issued client tokens are returned once, stored server-side only as hashes, and are later authenticated via `Authorization: Bearer yuri_client_...`.
 
+The native in-process desktop owner uses the server controller's
+`ensureDesktopLocalClientToken` before loading windows. It reuses an authenticated
+direct `desktop-local` bearer or issues a non-expiring, direct-only replacement
+through the same client store. This method is not exposed through HTTP or renderer
+IPC; anonymous/passwordless browser sessions gain no additional authorization.
+
+An expired UI session cookie does not invalidate a current client bearer. Both
+`requireAuth` and `/auth/session` accept that client independently, including
+SSH-issued and paired credentials. UI-session-only routes retain their separate
+gate. Clients must recheck `/auth/session` before interpreting a feature API's
+401/403 as a UI logout; Relay pairing admission failure and Relay socket routing
+authentication failure are distinct from UI password expiry.
+
 Relay admission additionally requires an active client record with `usesRelay: true`, `authMethod: 'pairing'`, and a pairing ID. `authorizeRelayRequest` enforces this before the tunnel forwards any HTTP/SSE request or WebSocket upgrade, including when the Host has no UI password. SSH/password/passkey credentials, owner cookies, and direct-only pairings do not grant Relay access. URL tokens resolve back to their issuing client and recheck current revocation/expiry and Relay permission. The only pre-credential route is `POST /api/client-auth/pairing/redeem`; its one-time secret validation also requires a Relay-enabled pairing when arriving through Relay. Direct authentication behavior is unchanged.
 
 Pairing v2 is implemented by `packages/web/server/lib/client-auth/pairing.js`. It stores short-lived one-time pairing sessions with hashed secrets, exposes create/cancel/redeem routes under `/api/client-auth/pairing/*`, and redeems a valid pairing secret into the same remote client token used by password/passkey trusted-device flows.
@@ -20,7 +33,33 @@ Remote desktop uses the exact `/api/remote-desktop/ws` scoped URL-token path, mi
 - `packages/web/server/lib/client-auth/pairing.js`: short-lived Pairing v2 sessions and one-time secret redemption into trusted-device client tokens.
 
 ## Public exports (ui-auth.js)
+
+Browser URL auth also permits GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS beneath an
+exact `/api/preview/proxy/<hex-id>/...` target. This lets framed websites submit
+forms and fetch through the Host without Yuri bearer headers. The preview runtime
+independently requires its short-lived target token and strips Yuri credentials
+before forwarding. Target registration and arbitrary Yuri write routes still
+reject URL tokens; filesystem URL access remains GET-only.
+
+File-preview resources have a narrowly parsed pathname envelope beneath the
+preview proxy: `/_file/<target-token>/<short-url-token>/<relative-resource>`.
+Only GET/HEAD may use its short URL token; file previews never authenticate a
+WebSocket this way. The same expiry store is used, and client-bound file tokens
+reload the current client record on every request, failing closed on revocation,
+expiry or an unavailable client catalog. Explicit bearer authentication takes
+precedence. A `-` path placeholder is not an authentication grant. The Remote Host
+Gateway validates the browser's Hub token, replaces it with that placeholder,
+and uses its own remote bearer for the upstream request; Hub URL credentials are
+not forwarded to the remote machine. Regular network-preview form/WS behavior
+is unchanged.
+
 - `isUrlAuthWebSocketPath(pathname)`: true when a WebSocket upgrade may authenticate with `yuri_url_token` (exact terminal/dictation/event/realtime-proxy paths, plus prefix `/api/preview/proxy/` for Preview HMR). Keep in sync with tunnel-host `isTunnelWsPathAllowed`.
+- Host-prefixed terminal/Preview sockets and raw/serve/icon/Preview assets use
+  the corresponding narrow URL-token allowlist. Host-prefixed Preview forms keep
+  the existing target-token gate. `issueClientUrlToken(req)` is a process-local
+  helper for the authenticated Gateway response pipe; it never sends a Hub token
+  upstream. Gateway authorization independently reloads the URL token's issuing
+  client, including current pairing scope, expiry and revocation.
 - `createUiAuth({ password, cookieName, sessionTtlMs, readSettingsFromDiskMigrated })`: creates UI auth controller with methods:
   - `authorizeRelayRequest(req)`
   - `enabled`

@@ -56,6 +56,36 @@ test('an explicitly missing base remains an error', () => {
   expect(run('--base', 'v9.9.9').status).not.toBe(0);
 });
 
+test('Android synchronized plugin methods satisfy the bridge contract without hiding missing methods', () => {
+  const { root, git, run } = fixture();
+  git('tag', 'v0.1.0');
+  writeFileSync(path.join(root, 'web.txt'), 'web-only change');
+  git('add', '.');
+  git('-c', 'commit.gpgsign=false', 'commit', '-m', 'Web changes');
+  const source = 'packages/mobile/Plugin.java';
+  writeFileSync(path.join(root, source), `
+    @PluginMethod public void capabilities(PluginCall call) {}
+    @PluginMethod public synchronized void prepare(PluginCall call) {}
+  `);
+  const contract = {
+    pluginName: 'YuriGuiNetwork', platforms: ['android'],
+    sources: { android: [source] },
+    methods: { android: ['capabilities', 'prepare'] },
+  };
+  writeFileSync(path.join(root, 'packages/mobile/contracts/index.mjs'),
+    `export const mobileBridgeContracts = ${JSON.stringify([contract])};`);
+  const result = run();
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ mode: 'ota', contractsValid: true, changedContracts: [] });
+
+  writeFileSync(path.join(root, source), '@PluginMethod public void capabilities(PluginCall call) {}');
+  const missing = run();
+  expect(missing.status, missing.stderr).toBe(0);
+  expect(JSON.parse(missing.stdout)).toMatchObject({
+    mode: 'native', contractsValid: false, changedContracts: ['YuriGuiNetwork.prepare:missing_android'],
+  });
+});
+
 test('old higher-major tags cannot raise the shell floor of the current release line', () => {
   const { root, git, run } = fixture();
   git('tag', 'v2.1.10');

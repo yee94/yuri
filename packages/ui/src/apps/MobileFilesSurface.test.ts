@@ -4,20 +4,22 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'MobileFilesSurface.tsx'), 'utf-8');
+const previewSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../components/preview/ProjectFilePreview.tsx'), 'utf-8');
 
 describe('MobileFilesSurface html preview', () => {
-  test('renders html files in a sandboxed fs/serve webview', () => {
+  test('renders html files in a sandboxed scoped resource-graph webview', () => {
     expect(source).toContain('const MobileHtmlPreview');
-    expect(source).toContain("sandbox=\"allow-scripts allow-same-origin allow-forms\"");
-    expect(source).toContain('/api/fs/serve');
+    expect(previewSource).toContain("sandbox=\"allow-scripts allow-same-origin allow-forms\"");
+    expect(source).toContain('<ProjectFilePreview path={path}');
     expect(source).toContain('isHtmlFile(path)');
     expect(source).toContain("!isHtmlFile(filePath) || htmlViewMode === 'source'");
   });
 
-  test('loads html through runtimeFetch on relay instead of iframe src', () => {
-    expect(source).toContain('isRelayModeActive()');
-    expect(source).toContain('readRuntimeFile({ path })');
-    expect(source).toContain('srcDoc={relay ? relaySrcDoc : undefined}');
+  test('preserves the file resource graph through the shared gateway instead of inlining unscoped Relay HTML', () => {
+    expect(previewSource).toContain('resolveProjectFilePreview(entry, path, directory, controller.signal, hostOrigin)');
+    expect(previewSource).toContain('acquireRuntimeUrlAuthToken()');
+    expect(source).toContain('entry={projectScope}');
+    expect(source).not.toContain('srcDoc=');
   });
 
   test('offers source toggle and a fullscreen overlay with back', () => {
@@ -29,7 +31,7 @@ describe('MobileFilesSurface html preview', () => {
     expect(source).toContain('createPortal(htmlViewer, document.body)');
     expect(source).toContain('name="fullscreen"');
     expect(source).toContain("'file-code'");
-    expect(source).toContain('attachIframeSheetOverscroll(iframe)');
+    expect(previewSource).toContain('attachIframeSheetOverscroll(frame.current)');
   });
 
   test('marks sheet/fullscreen html preview for edge-to-edge CSS without negative margin or root class', () => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { GuiPluginCommands } from '@/components/gui-plugins/GuiPluginCommands';
+import { useGuiPluginCommandEntries } from '@/components/gui-plugins/useGuiPluginCommandEntries';
 import { useEvent, useEventListener } from '@reactuses/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -33,6 +33,8 @@ import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/short
 import { canUseElectronDesktopIPC, invokeDesktop, isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
 import { SETTINGS_PAGE_METADATA, type SettingsRuntimeContext } from '@/lib/settings/metadata';
 import { scoreByFuzzyQuery } from '@/lib/search/fuzzySearch';
+import { rankCommandPaletteResults } from '@/lib/search/commandPaletteRank';
+import { Button } from '@/components/ui/button';
 import { isMacOS, truncatePathMiddle } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { sessionEvents } from '@/lib/sessionEvents';
@@ -44,6 +46,7 @@ import './command-palette.css';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
+import { ProjectIconImage } from '@/lib/projectMeta';
 import { sessionTitleSearchQueryOptions } from '@/queries/sessionTitleSearchQueries';
 import { sessionContentSearchQueryOptions, type SessionContentSearchHit } from '@/queries/sessionContentSearchQueries';
 import { focusChatMessage } from '@/components/chat/hooks/useChatTurnNavigation';
@@ -59,6 +62,9 @@ type CommandEntry = {
   searchText: string;
   onSelect: () => void;
 };
+
+type SearchCategory = 'all' | 'sessions' | 'files' | 'projects' | 'commands' | 'settings';
+type SearchGroup = Exclude<SearchCategory, 'all'> | 'plugins';
 
 type CommandPaletteResultProps = {
   title: React.ReactNode;
@@ -93,13 +99,6 @@ const CommandPaletteResult: React.FC<CommandPaletteResultProps> = ({ title, desc
 );
 
 const ITEM_CLASS = 'yuri-global-search-compact';
-
-const groupHeading = (title: string, count: number) => (
-  <span className="flex items-baseline gap-2">
-    <span>{title}</span>
-    <span className="yuri-global-search-group-count">{count}</span>
-  </span>
-);
 
 const SEARCH_MARK_CLASS = 'rounded-[3px] bg-[color-mix(in_srgb,var(--primary-base)_28%,transparent)] font-[inherit] text-foreground';
 
@@ -182,6 +181,8 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   }, [presentation, isCommandPaletteOpen]);
 
   const [query, setQuery] = React.useState('');
+  const [category, setCategory] = React.useState<SearchCategory>('all');
+  const [selectedResult, setSelectedResult] = React.useState('');
   const [expandedSearchGroups, setExpandedSearchGroups] = React.useState<{ query: string; groups: string[] }>({ query: '', groups: [] });
   const debouncedQuery = useDebouncedValue(query, 200);
   const trimmedQuery = debouncedQuery.trim();
@@ -192,12 +193,15 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   React.useEffect(() => {
     if (isCommandPaletteOpen) {
       setQuery('');
+      setCategory('all');
+      setSelectedResult('');
       setExpandedSearchGroups({ query: '', groups: [] });
       setRetainResults(true);
     }
   }, [isCommandPaletteOpen]);
 
   const close = useEvent(() => setCommandPaletteOpen(false));
+  const { commands: pluginCommands, run: runPluginCommand } = useGuiPluginCommandEntries(liveTrimmed, close);
   const run = useEvent(
     (fn: () => void | Promise<void>) => () => {
       close();
@@ -374,15 +378,17 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   // ---------------------------------------------------------------------------
   // Sessions
   // ---------------------------------------------------------------------------
+  const worktreeMetadata = useSessionUIStore((s) => s.worktreeMetadata);
+  const availableWorktreesByProject = useSessionUIStore((s) => s.availableWorktreesByProject);
+
   const sortedActiveSessions = React.useMemo(() => {
     const getUpdated = (s: Session) =>
       (typeof s.time?.updated === 'number' ? s.time.updated : 0) ||
       (typeof s.time?.created === 'number' ? s.time.created : 0);
-    return [...activeSessions].sort((a, b) => getUpdated(b) - getUpdated(a));
-  }, [activeSessions]);
-
-  const worktreeMetadata = useSessionUIStore((s) => s.worktreeMetadata);
-  const availableWorktreesByProject = useSessionUIStore((s) => s.availableWorktreesByProject);
+    return activeSessions.filter((session) => resolveProjectForSessionDirectory(
+      projects, availableWorktreesByProject, resolveGlobalSessionDirectory(session),
+    )).sort((a, b) => getUpdated(b) - getUpdated(a));
+  }, [activeSessions, projects, availableWorktreesByProject]);
 
   // ---------------------------------------------------------------------------
   // File search
@@ -428,7 +434,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
     ...titleSearchOptions,
     enabled: searchEnabled && (trimmedQuery.length > 0 || presentation === 'page'),
   });
-  const navigationKey = JSON.stringify([contentScope.transport, contentScope.generation, liveTrimmed, isCommandPaletteOpen]);
+  const navigationKey = JSON.stringify([contentScope.transport, contentScope.generation, liveTrimmed, category, isCommandPaletteOpen]);
   const [navigationSnapshot, setNavigationSnapshot] = React.useState<{ key: string; hits: SessionContentSearchHit[]; sessions: Session[] } | null>(null);
   const frozenResults = navigationSnapshot?.key === navigationKey ? navigationSnapshot : null;
   if (navigationSnapshot && !frozenResults) setNavigationSnapshot(null);
@@ -513,11 +519,6 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
 
   const expansionKey = JSON.stringify([contentScope.transport, contentScope.generation, liveTrimmed]);
   const expandedGroups = expandedSearchGroups.query === expansionKey ? expandedSearchGroups.groups : [];
-  const previewGroup = <T,>(group: string, items: T[]): T[] => (
-    hasQuery && !expandedGroups.includes(group) ? items.slice(0, 5) : items
-  );
-  const visibleCommands = previewGroup('commands', scoredCommands.map((x) => x.item));
-  const visibleSettings = previewGroup('settings', scoredSettings.map((x) => x.item));
   const conversationResults = React.useMemo(() => {
     const hitsBySession = new Map<string, SessionContentSearchHit>();
     for (const hit of contentHits) {
@@ -538,39 +539,68 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
         id: hit.sessionID, title: hit.title ?? '', directory: hit.directory, location: { directory: hit.directory },
       } as Session, hit });
     }
-    return rows;
-  }, [visibleTitleSessions, contentHits, activeSessions]);
-  const visibleConversations = previewGroup('sessions', conversationResults);
-  const visibleFiles = hasQuery ? previewGroup('files', scoredFiles.map((x) => x.item)) : [];
-  const visibleProjects = hasQuery ? previewGroup('projects', scoredProjects.map((x) => x.item)) : [];
-  const groupFooter = (group: string, total: number, visible: number) => total > visible ? (
+    return rows.filter(({ session }) => resolveProjectForSessionDirectory(
+      projects, availableWorktreesByProject, resolveGlobalSessionDirectory(session),
+    ));
+  }, [visibleTitleSessions, contentHits, activeSessions, projects, availableWorktreesByProject]);
+  const rankedResults = React.useMemo(() => rankCommandPaletteResults([
+    ...conversationResults.map((item) => ({
+      group: 'sessions' as const, item,
+      id: item.hit ? `message:${item.session.id}:${item.hit.messageID}` : `session:${item.session.id}`,
+      title: item.hit?.title || item.session.title || t('commandPalette.session.untitled'), detail: item.hit?.snippet,
+    })),
+    ...scoredCommands.map(({ item }) => ({ group: 'commands' as const, item, id: item.id, title: item.title, detail: item.searchText })),
+    ...pluginCommands.map((item) => ({ group: 'plugins' as const, item, id: `gui-plugin:${item.key}`, title: item.title, detail: item.description })),
+    ...scoredSettings.map(({ item }) => ({ group: 'settings' as const, item, id: item.id, title: item.title, detail: item.searchText })),
+    ...scoredFiles.map(({ item }) => ({ group: 'files' as const, item, id: `file:${item.path}`, title: item.name, detail: item.path })),
+    ...scoredProjects.map(({ item }) => ({ group: 'projects' as const, item, id: `project:${item.id}`, title: item.displayName, detail: item.path })),
+  ], liveTrimmed), [conversationResults, scoredCommands, pluginCommands, scoredSettings, scoredFiles, scoredProjects, liveTrimmed, t]);
+  const groupLabels: Record<SearchGroup, string> = {
+    sessions: t('layout.mainTab.chat'), files: t('layout.mainTab.files'), projects: t('sessions.sidebar.projectsTitle'),
+    commands: t('settings.page.commands.title'), settings: t('settings.view.home.title'), plugins: t('guiPlugins.commands'),
+  };
+  const categories: SearchCategory[] = ['all', 'sessions', 'files', 'projects', 'commands', 'settings'];
+  const selectCategory = useEvent((key: SearchCategory) => {
+    setCategory(key);
+    setSelectedResult('');
+    setNavigationSnapshot(null);
+    inputRef.current?.focus({ preventScroll: true });
+  });
+  const matchesCategory = (group: SearchGroup) => category === 'all' || group === category || (category === 'commands' && group === 'plugins');
+  const counts = new Map<SearchGroup, number>();
+  const visibleCounts = new Map<SearchGroup, number>();
+  const visibleResults = rankedResults.filter((result) => {
+    counts.set(result.group, (counts.get(result.group) ?? 0) + 1);
+    if (!matchesCategory(result.group)) return false;
+    const count = visibleCounts.get(result.group) ?? 0;
+    if ((hasQuery || result.group === 'plugins') && !expandedGroups.includes(result.group) && count >= 5) return false;
+    visibleCounts.set(result.group, count + 1);
+    return true;
+  });
+  const expandableGroups = [...counts.keys()].filter((group) => matchesCategory(group) && (counts.get(group) ?? 0) > (visibleCounts.get(group) ?? 0));
+  const expandGroup = useEvent((group: SearchGroup) => setExpandedSearchGroups({ query: expansionKey, groups: [...expandedGroups, group] }));
+  const groupFooter = (group: SearchGroup, index: number) => (
     <CommandItem
+      key={`more:${group}`}
       value={`more:${group}`}
-      onSelect={() => setExpandedSearchGroups({ query: expansionKey, groups: [...expandedGroups, group] })}
+      onSelect={selectableActions[visibleResults.length + index]}
+      aria-keyshortcuts={numberShortcutAria(visibleResults.length + index)}
       className={`${ITEM_CLASS} text-muted-foreground`}
     >
-      {t('commandPalette.group.showMore', { count: total - visible })}
+      <CommandPaletteResult title={t('commandPalette.group.showMore', { count: (counts.get(group) ?? 0) - (visibleCounts.get(group) ?? 0) })} description={groupLabels[group]} trailing={numberShortcutHint(visibleResults.length + index)} />
     </CommandItem>
-  ) : null;
-
-  const groupOrder = React.useMemo<('commands' | 'settings' | 'sessions' | 'files' | 'projects')[]>(() => {
-    if (!hasQuery) return ['sessions', 'commands'];
-    const best = (arr: { score: number }[]): number => (arr.length ? arr[0].score : Infinity);
-    const groups: { key: 'commands' | 'settings' | 'files' | 'projects'; score: number }[] = [
-      { key: 'commands', score: best(scoredCommands) },
-      { key: 'settings', score: best(scoredSettings) },
-      { key: 'files', score: best(scoredFiles) },
-      { key: 'projects', score: best(scoredProjects) },
-    ];
-    groups.sort((a, b) => a.score - b.score);
-    return ['sessions', ...groups.map((group) => group.key)];
-  }, [hasQuery, scoredCommands, scoredSettings, scoredFiles, scoredProjects]);
+  );
 
   const handleOpenSession = useEvent((session: Session, messageID?: string) => {
+    const directory = resolveGlobalSessionDirectory(session) || '';
+    if (!resolveProjectForSessionDirectory(
+      useProjectsStore.getState().projects,
+      useSessionUIStore.getState().availableWorktreesByProject,
+      directory,
+    )) return;
     close();
     setActiveMainTab('chat');
     setSessionSwitcherOpen(false);
-    const directory = resolveGlobalSessionDirectory(session) || '';
     if (mobileActions) {
       useMobileNavigationStore.getState().openSession({ sessionId: session.id, directory });
     } else {
@@ -614,6 +644,35 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
     else openNewSessionDraft(target);
   });
 
+  const selectResult = useEvent((result: (typeof visibleResults)[number]) => {
+    switch (result.group) {
+      case 'commands':
+      case 'settings':
+        result.item.onSelect();
+        break;
+      case 'plugins':
+        void runPluginCommand(result.item.key);
+        break;
+      case 'sessions':
+        if (result.item.hit) handleOpenContentHit(result.item.hit);
+        else handleOpenSession(result.item.session);
+        break;
+      case 'files':
+        void handleOpenFile(result.item.path);
+        break;
+      case 'projects':
+        handleOpenProject(result.item.id, result.item.path);
+        break;
+    }
+  });
+  const selectableActions = [
+    ...visibleResults.map((result) => () => selectResult(result)),
+    ...expandableGroups.map((group) => () => expandGroup(group)),
+  ];
+  const numberShortcutAria = (index: number) => !isMobile && index < 9 ? `${mac ? 'Meta' : 'Control'}+${index + 1}` : undefined;
+  const numberShortcutHint = (index: number) => !isMobile && index < 9
+    ? <Kbd variant="hint" className="justify-self-end">{mac ? '⌘' : 'Ctrl+'}{index + 1}</Kbd> : undefined;
+
   const shortcut = (actionId: string) =>
     formatShortcutForDisplay(getEffectiveShortcutCombo(actionId, shortcutOverrides));
 
@@ -626,26 +685,38 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
     return false;
   };
 
-  const handleNumberShortcut = useEvent((event: React.KeyboardEvent) => {
+  const handleSearchKeyDown = useEvent((event: React.KeyboardEvent) => {
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+      && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229
+      && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      const direction = event.key === 'ArrowRight' ? 1 : -1;
+      selectCategory(categories[(categories.indexOf(category) + direction + categories.length) % categories.length]);
+      return;
+    }
+    const isNumberShortcut = /^[1-9]$/.test(event.key) && (mac ? event.metaKey : event.ctrlKey);
+    if ((event.target as Element).closest('.yuri-global-search-filters') && !isNumberShortcut) {
+      if (event.key !== 'Escape') event.stopPropagation();
+      return;
+    }
     if (swallowUnsettled(event)) return;
     if (!frozenResults && !event.nativeEvent.isComposing && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
       setNavigationSnapshot({ key: navigationKey, hits: contentHits, sessions: visibleTitleSessions });
     }
-    if (isMobile || event.nativeEvent.isComposing || event.altKey || event.shiftKey) return;
+    if (isMobile || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.altKey || event.shiftKey) return;
     if (mac ? (!event.metaKey || event.ctrlKey) : (!event.ctrlKey || event.metaKey)) return;
     if (!/^[1-9]$/.test(event.key)) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat || !resultsSettled) return;
-    const result = visibleConversations[Number(event.key) - 1];
-    if (result?.hit) handleOpenContentHit(result.hit);
-    else if (result) handleOpenSession(result.session);
+    selectableActions[Number(event.key) - 1]?.();
   });
 
   const projectForSession = (session: Session) => {
     const directory = normalizePath(worktreeMetadata.get(session.id)?.projectDirectory || resolveGlobalSessionDirectory(session) || '');
     const project = resolveProjectForSessionDirectory(projects, availableWorktreesByProject, directory);
-    return project?.label || (project?.path || directory).split('/').pop() || '';
+    return { project, label: project?.label || (project?.path || directory).split('/').pop() || '' };
   };
 
   const fileSearchFailed = hasQuery && liveTrimmed === trimmedQuery && fileSearchQuery.isError;
@@ -658,7 +729,10 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
   );
   const [committedQuery, setCommittedQuery] = React.useState(trimmedQuery);
   if (!remoteResultsPending && committedQuery !== trimmedQuery) setCommittedQuery(trimmedQuery);
-  const resultsSettled = !hasQuery || (committedQuery === trimmedQuery && !remoteResultsPending);
+  const resultsSettled = !hasQuery || category === 'commands' || category === 'settings' || category === 'projects'
+    || (committedQuery === trimmedQuery && !remoteResultsPending);
+  const showSessionStatus = category === 'all' || category === 'sessions';
+  const showFileStatus = category === 'all' || category === 'files';
 
   const searchInput = (
     <CommandInput
@@ -673,6 +747,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
       value={query}
       onValueChange={(value) => {
         setNavigationSnapshot(null);
+        setSelectedResult('');
         setQuery(value);
         setExpandedSearchGroups({ query: '', groups: [] });
       }}
@@ -684,8 +759,11 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
         <Command
           loop
           shouldFilter={false}
+          value={visibleResults.some((result) => result.id === selectedResult) || expandableGroups.some((group) => `more:${group}` === selectedResult)
+            ? selectedResult : visibleResults[0]?.id ?? ''}
+          onValueChange={setSelectedResult}
           style={{ '--yuri-search-shortcut-width': mac ? '1.75rem' : '3rem' } as React.CSSProperties}
-          onKeyDownCapture={handleNumberShortcut}
+          onKeyDownCapture={handleSearchKeyDown}
           onPointerDownCapture={(event) => {
             const row = (event.target as Element).closest('[cmdk-item]');
             if (isMobile && row) markMatchingPress({ currentTarget: row });
@@ -710,159 +788,132 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
               onBack={onBack ?? close}
             />
           ) : searchInput}
+          <div role="group" aria-label={t('commandPalette.filter.label')} className="yuri-global-search-filters">
+            {categories.map((key) => {
+              const count = key === 'all' ? rankedResults.length : (counts.get(key) ?? 0) + (key === 'commands' ? counts.get('plugins') ?? 0 : 0);
+              return <Button key={key} variant="ghost" size={isMobile ? 'default' : 'xs'} aria-pressed={category === key}
+                data-search-category={key}
+                className="yuri-global-search-filter"
+                onClick={() => selectCategory(key)}>
+                {key === 'all' ? t('commandPalette.filter.all') : groupLabels[key]}
+                {resultsSettled && count > 0 ? <span className="yuri-global-search-group-count text-muted-foreground">{count}</span> : null}
+              </Button>;
+            })}
+            {!isMobile ? <span data-search-category-shortcuts className="ml-2 inline-flex shrink-0 items-center gap-1">
+              <Kbd variant="hint" aria-label="ArrowLeft">←</Kbd>
+              <Kbd variant="hint" aria-label="ArrowRight">→</Kbd>
+              <span className="ml-1 typography-micro text-muted-foreground/65">{t('commandPalette.filter.switch')}</span>
+            </span> : null}
+          </div>
           <CommandList aria-label={t('commandPalette.title')} className="yuri-global-search-results overscroll-contain">
-            {resultsSettled && !fileSearchPending && !fileSearchFailed && !titleSearchFailed && !contentSearchFailed && sessionsStatus !== 'loading' && sessionsStatus !== 'error' ? (
+            {resultsSettled && !(showFileStatus && (fileSearchPending || fileSearchFailed))
+              && !(showSessionStatus && (titleSearchFailed || contentSearchFailed || sessionsStatus === 'loading' || sessionsStatus === 'error')) ? (
               <CommandEmpty className="py-10 text-center typography-meta text-muted-foreground">
                 {t('commandPalette.empty.noResults')}
               </CommandEmpty>
             ) : null}
 
-            {isCommandPaletteOpen && resultsSettled ? <GuiPluginCommands query={liveTrimmed} onSelect={close} /> : null}
-            {resultsSettled ? groupOrder.map((groupKey) => {
-              if (groupKey === 'commands' && visibleCommands.length > 0) {
-                return (
-                  <CommandGroup key="commands" heading={groupHeading(t('settings.page.commands.title'), scoredCommands.length)}>
-                    {visibleCommands.map((cmd) => (
-                      <CommandItem
-                        key={cmd.id}
-                        value={cmd.id}
-                        onSelect={cmd.onSelect}
-                        className={ITEM_CLASS}
-                      >
-                        <CommandPaletteResult
-                          title={highlightSearchText(cmd.title, liveTrimmed)}
-                          trailing={!isMobile && cmd.shortcutId ? (
-                            <Kbd variant="hint">
-                              {shortcut(cmd.shortcutId)}
-                            </Kbd>
-                          ) : undefined}
-                        />
-                      </CommandItem>
-                    ))}
-                    {groupFooter('commands', scoredCommands.length, visibleCommands.length)}
-                  </CommandGroup>
-                );
-              }
-              if (groupKey === 'settings' && visibleSettings.length > 0) {
-                return (
-                  <CommandGroup key="settings" heading={groupHeading(t('settings.view.home.title'), scoredSettings.length)}>
-                    {visibleSettings.map((cmd) => (
-                      <CommandItem
-                        key={cmd.id}
-                        value={cmd.id}
-                        onSelect={cmd.onSelect}
-                        className={ITEM_CLASS}
-                      >
-                        <CommandPaletteResult title={highlightSearchText(cmd.title, liveTrimmed)} />
-                      </CommandItem>
-                    ))}
-                    {groupFooter('settings', scoredSettings.length, visibleSettings.length)}
-                  </CommandGroup>
-                );
-              }
-              if (groupKey === 'sessions' && visibleConversations.length > 0) {
-                return (
-                  <CommandGroup key="sessions" heading={groupHeading(t('layout.mainTab.chat'), conversationResults.length)}>
-                    {visibleConversations.map(({ session, hit }, index) => {
-                      const title = hit?.title || session.title || t('commandPalette.session.untitled');
-                      const project = projectForSession(session);
-                      const timestamp = hit?.createdAt ?? session.time?.updated ?? session.time?.created;
-                      const date = new Date(timestamp ?? NaN);
-                      const hasTime = Number.isFinite(date.getTime());
-                      return (
-                        <CommandItem
-                          key={hit ? `message:${session.id}:${hit.messageID}` : `session:${session.id}`}
-                          value={hit ? `message:${session.id}:${hit.messageID}` : `session:${session.id}`}
-                          onSelect={() => hit ? handleOpenContentHit(hit) : handleOpenSession(session)}
-                          className="yuri-global-search-session"
-                          aria-keyshortcuts={!isMobile && index < 9 ? `${mac ? 'Meta' : 'Control'}+${index + 1}` : undefined}
-                        >
-                          <div className="min-w-0">
-                            <div className="yuri-global-search-session-heading">
-                              <span className="yuri-global-search-session-title min-w-0 truncate text-foreground" title={title}>{highlightSearchText(title, liveTrimmed)}</span>
-                              {hasTime ? (
-                                <time dateTime={date.toISOString()} title={date.toLocaleString(locale)} className="yuri-global-search-session-time shrink-0 whitespace-nowrap text-muted-foreground">
-                                  {conversationTimeFormatter.format(date)}
-                                </time>
-                              ) : null}
-                            </div>
-                            {hit ? (
-                              <span className="yuri-global-search-session-excerpt text-muted-foreground">
-                                <span className="yuri-global-search-session-speaker">{t(hit.role === 'user' ? 'commandPalette.message.user' : 'commandPalette.message.assistant')}: </span>
-                                {highlightSearchText(hit.snippet.replace(/\s+/g, ' '), liveTrimmed)}
-                              </span>
-                            ) : null}
-                          </div>
-                          <span className="yuri-global-search-session-project min-w-0 truncate text-muted-foreground" title={project}>{project}</span>
-                          {!isMobile && index < 9 ? <Kbd variant="hint" className="yuri-global-search-session-shortcut justify-self-end">{mac ? '⌘' : 'Ctrl+'}{index + 1}</Kbd> : null}
-                        </CommandItem>
-                      );
-                    })}
-                    {groupFooter('sessions', conversationResults.length, visibleConversations.length)}
-                  </CommandGroup>
-                );
-              }
-              if (groupKey === 'files' && visibleFiles.length > 0) {
-                return (
-                  <CommandGroup key="files" heading={groupHeading(t('layout.mainTab.files'), scoredFiles.length)}>
-                    {visibleFiles.map((file) => {
-                      const display = truncatePathMiddle(file.path, {
-                        maxLength: 80,
-                      });
-                      return (
-                        <CommandItem
-                          key={`file:${file.path}`}
-                          value={`file:${file.path}`}
-                          onSelect={() => {
-                            void handleOpenFile(file.path);
-                          }}
-                          className={ITEM_CLASS}
-                        >
-                          <CommandPaletteResult
-                            title={highlightSearchText(file.name, liveTrimmed)}
-                            description={display !== file.name ? highlightSearchText(display, liveTrimmed) : undefined}
-                          />
-                        </CommandItem>
-                      );
-                    })}
-                    {groupFooter('files', scoredFiles.length, visibleFiles.length)}
-                  </CommandGroup>
-                );
-              }
-              if (groupKey === 'projects' && visibleProjects.length > 0) {
-                return (
-                  <CommandGroup key="projects" heading={groupHeading(t('sessions.sidebar.projectsTitle'), scoredProjects.length)}>
-                    {visibleProjects.map((project) => {
-                      const displayName = project.displayName;
-                      return (
-                        <CommandItem
-                          key={`project:${project.id}`}
-                          value={`project:${project.id}`}
-                          onSelect={() => handleOpenProject(project.id, project.path)}
-                          className={ITEM_CLASS}
-                        >
-                          <CommandPaletteResult
-                            title={highlightSearchText(displayName, liveTrimmed)}
-                            description={highlightSearchText(truncatePathMiddle(project.path, { maxLength: 80 }), liveTrimmed)}
-                          />
-                        </CommandItem>
-                      );
-                    })}
-                    {groupFooter('projects', scoredProjects.length, visibleProjects.length)}
-                  </CommandGroup>
-                );
-              }
-              return null;
-            }) : (
+            {resultsSettled ? <CommandGroup>
+              {visibleResults.map((result, index) => {
+                const shortcutHint = numberShortcutHint(index);
+                const shortcutAria = numberShortcutAria(index);
+                const onSelect = selectableActions[index];
+                if (result.group === 'commands' || result.group === 'settings') {
+                  const cmd = result.item;
+                  return (
+                    <CommandItem key={result.id} value={result.id} onSelect={onSelect} aria-keyshortcuts={shortcutAria} className={ITEM_CLASS}>
+                      <CommandPaletteResult
+                        title={highlightSearchText(cmd.title, liveTrimmed)}
+                        description={category === 'all' ? groupLabels[result.group] : undefined}
+                        trailing={shortcutHint ?? (!isMobile && cmd.shortcutId ? <Kbd variant="hint">{shortcut(cmd.shortcutId)}</Kbd> : undefined)}
+                      />
+                    </CommandItem>
+                  );
+                }
+                if (result.group === 'plugins') {
+                  return (
+                    <CommandItem key={result.id} value={result.id} className={ITEM_CLASS} onSelect={onSelect} aria-keyshortcuts={shortcutAria}>
+                      <CommandPaletteResult title={highlightSearchText(result.title, liveTrimmed)} description={result.item.description || groupLabels.plugins} trailing={shortcutHint} />
+                    </CommandItem>
+                  );
+                }
+                if (result.group === 'sessions') {
+                  const { session, hit } = result.item;
+                  const title = result.title;
+                  const { project, label: projectLabel } = projectForSession(session);
+                  const timestamp = hit?.createdAt ?? session.time?.updated ?? session.time?.created;
+                  const date = new Date(timestamp ?? NaN);
+                  const hasTime = Number.isFinite(date.getTime());
+                  return (
+                    <CommandItem
+                      key={result.id}
+                      value={result.id}
+                      onSelect={onSelect}
+                      className="yuri-global-search-session"
+                      aria-keyshortcuts={shortcutAria}
+                    >
+                      <div className="min-w-0">
+                        <div className="yuri-global-search-session-heading">
+                          <span className="yuri-global-search-session-title min-w-0 truncate text-foreground" title={title}>{highlightSearchText(title, liveTrimmed)}</span>
+                          {hasTime ? (
+                            <time dateTime={date.toISOString()} title={date.toLocaleString(locale)} className="yuri-global-search-session-time shrink-0 whitespace-nowrap text-muted-foreground">
+                              {conversationTimeFormatter.format(date)}
+                            </time>
+                          ) : null}
+                        </div>
+                        {hit ? (
+                          <span className="yuri-global-search-session-excerpt text-muted-foreground">
+                            <span className="yuri-global-search-session-speaker">{t(hit.role === 'user' ? 'commandPalette.message.user' : 'commandPalette.message.assistant')}: </span>
+                            {highlightSearchText(hit.snippet.replace(/\s+/g, ' '), liveTrimmed)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <span className="yuri-global-search-session-project flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground" title={projectLabel}>
+                        {project?.iconImage ? <ProjectIconImage project={project} className="size-3.5 shrink-0 object-contain" /> : null}
+                        <span className="min-w-0 truncate">{projectLabel}</span>
+                      </span>
+                      {shortcutHint}
+                    </CommandItem>
+                  );
+                }
+                if (result.group === 'files') {
+                  const file = result.item;
+                  const display = truncatePathMiddle(file.path, { maxLength: 80 });
+                  return (
+                    <CommandItem key={result.id} value={result.id} onSelect={onSelect} aria-keyshortcuts={shortcutAria} className={ITEM_CLASS}>
+                      <CommandPaletteResult
+                        title={highlightSearchText(file.name, liveTrimmed)}
+                        description={display !== file.name ? highlightSearchText(display, liveTrimmed) : undefined}
+                        trailing={shortcutHint}
+                      />
+                    </CommandItem>
+                  );
+                }
+                if (result.group === 'projects') {
+                  const project = result.item;
+                  return (
+                    <CommandItem key={result.id} value={result.id} onSelect={onSelect} aria-keyshortcuts={shortcutAria} className={ITEM_CLASS}>
+                      <CommandPaletteResult
+                        title={highlightSearchText(project.displayName, liveTrimmed)}
+                        description={highlightSearchText(truncatePathMiddle(project.path, { maxLength: 80 }), liveTrimmed)}
+                        trailing={shortcutHint}
+                      />
+                    </CommandItem>
+                  );
+                }
+                return null;
+              })}
+              {expandableGroups.map(groupFooter)}
+            </CommandGroup> : (
               <div role="status" className="px-3 py-10 text-center typography-meta text-muted-foreground">{t('common.loading')}</div>
             )}
 
-            {resultsSettled && sessionsStatus === 'loading' ? <div role="status" className="px-3 py-4 text-center typography-meta text-muted-foreground">{t('common.loading')}</div> : null}
-            {resultsSettled && sessionsStatus === 'error' ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.sessions')}</div> : null}
-            {resultsSettled && titleSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.sessions')}</div> : null}
-            {resultsSettled && contentSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.messages')}</div> : null}
-            {resultsSettled && fileSearchPending ? <div data-file-search-pending role="status" className="px-4 py-2 text-xs text-muted-foreground">{t('common.loading')}</div> : null}
-            {resultsSettled && fileSearchFailed ? <div data-file-search-notice role="status" className="px-4 py-2 text-xs text-muted-foreground">{t('commandPalette.error.files')}</div> : null}
+            {resultsSettled && showSessionStatus && sessionsStatus === 'loading' ? <div role="status" className="px-3 py-4 text-center typography-meta text-muted-foreground">{t('common.loading')}</div> : null}
+            {resultsSettled && showSessionStatus && sessionsStatus === 'error' ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.sessions')}</div> : null}
+            {resultsSettled && showSessionStatus && titleSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.sessions')}</div> : null}
+            {resultsSettled && showSessionStatus && contentSearchFailed ? <div role="alert" className="px-3 py-4 typography-meta text-[var(--status-error)]">{t('commandPalette.error.messages')}</div> : null}
+            {resultsSettled && showFileStatus && fileSearchPending ? <div data-file-search-pending role="status" className="px-4 py-2 text-xs text-muted-foreground">{t('common.loading')}</div> : null}
+            {resultsSettled && showFileStatus && fileSearchFailed ? <div data-file-search-notice role="status" className="px-4 py-2 text-xs text-muted-foreground">{t('commandPalette.error.files')}</div> : null}
           </CommandList>
         </Command>
   );
@@ -888,7 +939,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
           ? 'yuri-global-search-page yuri-global-search-mobile fixed inset-0 z-50 m-0 flex max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0'
           : 'yuri-global-search z-50 w-[min(56rem,calc(100vw-3rem))]'}
         containerClassName="block p-0"
-        overlayClassName="bg-transparent dark:bg-transparent"
+        overlayClassName={isMobile ? 'bg-transparent dark:bg-transparent' : undefined}
         showCloseButton={false}
       >
         <DialogHeader className="sr-only">

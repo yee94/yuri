@@ -8,6 +8,10 @@ means the next hydrate refetches.
 The cache is **opt-in**. `resolveTranscriptCacheDbPath` returns `null` unless
 `transcriptCacheDbPath` or `YURI_TRANSCRIPT_CACHE_DB_PATH` is set.
 Ordinary remote Web servers therefore do not persist conversation bodies.
+The Hub cache also rejects Remote Project scopes (explicit Host fields, serialized
+remote Location/session keys and stable Hub+Host transport partitions) before
+writing message or search rows. Remote content acceleration belongs only to the
+client IndexedDB; the Host-prefixed cache API is not a forwarding capability.
 Explicit and env values are normalized to an absolute path. Only `.sqlite`
 files are accepted; the managed `session-index.sqlite` and
 `message-queue.sqlite` basenames are rejected. Invalid values return `null`.

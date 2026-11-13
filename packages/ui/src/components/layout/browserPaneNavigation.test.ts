@@ -2,7 +2,6 @@ import { describe, expect, test } from 'vitest';
 import {
   normalizeBrowserUrl,
   resolveBrowserPaneNavigation,
-  shouldUseDesktopWebviewBrowser,
 } from './browserPaneNavigation';
 
 describe('normalizeBrowserUrl', () => {
@@ -31,14 +30,5 @@ describe('resolveBrowserPaneNavigation', () => {
       'http://localhost:5173/',
       'https://example.com/',
     )).toBe('http://localhost:5173/');
-  });
-});
-
-describe('shouldUseDesktopWebviewBrowser', () => {
-  test('uses native webview only on Electron when Relay is inactive', () => {
-    expect(shouldUseDesktopWebviewBrowser({ isElectron: true, relayActive: false })).toBe(true);
-    expect(shouldUseDesktopWebviewBrowser({ isElectron: true, relayActive: true })).toBe(false);
-    expect(shouldUseDesktopWebviewBrowser({ isElectron: false, relayActive: false })).toBe(false);
-    expect(shouldUseDesktopWebviewBrowser({ isElectron: false, relayActive: true })).toBe(false);
   });
 });

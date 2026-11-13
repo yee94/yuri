@@ -1,11 +1,15 @@
 ---
 name: yuri-customization
-description: Customize Yuri through GUI plugins for appearance, work-status widgets, global pages, custom file previews, export actions, panels, commands, and settings.
+description: Register local or remote Yuri projects, discover authorized remote machines and read/create/continue remote sessions, configure SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
 ---
 
 # Yuri customization
 
-Use a standard OpenCode GUI plugin to change the running Yuri UI without modifying Yuri's source or installation. This skill describes Yuri's supported subset of the experimental OpenCode GUI SDK 2.2.0, not every capability in the newest upstream Desktop.
+For adding an existing directory to Yuri's project list, follow [projects](references/projects.md) using this session's bound project API helper. Registration is separate from creating files, cloning or opening a conversation.
+
+For adding a remote project on an authorized machine or working with its sessions, use the same bound project helper and the [remote project workflow](references/projects.md#connected-remote-projects-and-sessions). This grants no SSH setup or new connection permission.
+
+For SSH setup, configuration sync or Relay pairing, first check this session's pointer for its exact bound local desktop helper command. Without that command, report unavailable and stop this branch: a script file or another capability's binding does not enable it. With the command, follow [remote connections](references/remote-connections.md). For UI changes, use the plugin workflow below. Its GUI contracts describe Yuri's supported subset of the experimental OpenCode GUI SDK 2.2.0, not every capability in the newest upstream Desktop.
 
 ## Workflow
 
@@ -16,7 +20,7 @@ Use a standard OpenCode GUI plugin to change the running Yuri UI without modifyi
    - Themes, CSS, logos, Dock icons: [appearance](references/appearance.md).
    - Global main-content tabs and titlebar entries: [global pages](references/global-pages.md).
    - Widgets under Changes in the conversation's status column: [work-status widgets](references/work-status.md).
-   - Entry/tab icons or icons inside plugin content: [icons](references/icons.md), including supported names, same-document SVG usage and artwork boundaries.
+   - Entry/tab icons or icons inside plugin content: [icons](references/icons.md), including direct SVG/data-URI icon strings, supported names, same-document SVG usage and artwork boundaries.
    - Custom file suffixes, parsers, inline/mobile previews and file icons: [file previews](references/file-previews.md).
    - Preview toolbar placement, PDF/PNG/HTML export and iframe snapshot boundaries: [preview actions and exports](references/preview-exports.md).
    - Panels, commands, settings, files, RPC, lifecycle, runtime support: [GUI API](references/gui-api.md).

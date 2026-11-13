@@ -4,6 +4,9 @@ Server-side watcher that regenerates a session's sidebar title from the
 conversation's **main subject** (overall feature / goal) with the small model
 (`lib/small-model`), then PATCHes `title` plus `metadata.yuri.titleRefresh`.
 
+Explicit delegated CLI workers (`metadata.yuri.worker.parentSessionID`) are
+system-owned for title refresh, just as they are for catalog/unread visibility.
+
 OpenCode starts its own initial title through `SessionTitle.generate`.
 This module auto-refreshes sparsely (first user
 admission of a new session, first newly-sent reply on a fork) and on explicit smart-title

@@ -45,6 +45,17 @@ afterEach(() => {
 });
 
 describe('handleMarkstreamPointerEvent', () => {
+  test.each([false, true])('opens a directory link without navigating (command=%s)', (metaKey) => {
+    const root = document.createElement('div');
+    const anchor = document.createElement('a');
+    anchor.setAttribute('href', 'packages/electron/dist-preview/mac-arm64/');
+    root.append(anchor);
+    const event = click(anchor, root, { metaKey });
+    const fileReference = { effectiveDirectory: '/repo' };
+    handleMarkstreamPointerEvent(event, { fileReference });
+    expect(event.defaultPrevented).toBe(true);
+    expect(openFileReferenceFromElement).toHaveBeenCalledWith(anchor, fileReference);
+  });
   test.each(['/repo/src/', '/repo/src', './src/', '../', 'src', 'packages/ui', '/', 'C:\\repo\\src\\'])('directory link never navigates or reloads the app: %s', (href) => {
     const root = document.createElement('div');
     const anchor = document.createElement('a');
@@ -83,6 +94,17 @@ describe('handleMarkstreamPointerEvent', () => {
 
     expect(openExternalUrl).toHaveBeenCalledWith('https://example.com/actions');
     expect(openInAppBrowser).not.toHaveBeenCalled();
+  });
+  test.each(['http://localhost:3000/', 'localhost:3000', 'http://127.0.0.1:3000/', 'http://[::1]:3000/'])('dispatches mobile local link %s through the native-aware URL opener', (href) => {
+    window.__YURI_SURFACE__ = 'mobile';
+    const root = document.createElement('div');
+    const anchor = document.createElement('a');
+    anchor.setAttribute('href', href); root.append(anchor);
+    const event = click(anchor, root);
+    handleMarkstreamPointerEvent(event, { effectiveDirectory: '/repo' });
+    expect(event.defaultPrevented).toBe(true);
+    expect(openExternalUrl).toHaveBeenCalledWith(href);
+    expect(openFileReferenceFromElement).not.toHaveBeenCalled();
   });
   test.each(['docs/report.md', '/repo/docs/report.md', './README.md#L10'])('never navigates the document for an unannotated file link: %s', (href) => {
     const root = document.createElement('div');

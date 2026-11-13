@@ -27,11 +27,13 @@ vi.mock('@/components/chat/MarkdownRenderer', () => {
   };
   return {
     MarkdownRenderer: (props: Parameters<typeof render>[0]) => render(props),
-    SimpleMarkdownRenderer: ({ content }: { content: string }) => render({ content }),
+    SimpleMarkdownRenderer: ({ content, messageId }: { content: string; messageId?: string }) => <div data-user-markdown data-message-id={messageId}>{content}</div>,
   };
 });
 vi.mock('@/components/ui', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: vi.fn(async () => ({ ok: true })) }));
+vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo' }));
+vi.mock('@/queries/installedSkillsQueries', () => ({ useInstalledSkillsQuery: () => ({ data: [] }) }));
 vi.mock('@/components/ui/ModelLogo', () => ({ ModelLogo: () => <span data-model-logo /> }));
 vi.mock('@/sync/selection-store', () => ({
   useSelectionStore: {
@@ -134,7 +136,8 @@ describe('Btw side conversation panel', () => {
       sessionId: scope.sessionId, directory: '/repo', openSourceSession }}><BtwPanel scope={scope} foot={foot} /></SessionSurfaceContext.Provider>));
     const footer = host.querySelector<HTMLElement>('[data-message-footer]')!;
     expect(footer.style.containerName).toBe('message-footer');
-    expect(footer.className).toContain(foot === 'page' ? 'mt-3' : 'mt-1.5');
+    expect(footer.className).toContain(foot === 'page' ? 'mt-1.5' : 'mt-2.5');
+    expect(footer.className).toContain(foot === 'page' ? 'mb-2' : 'mb-3');
     expect(footer.textContent).toContain('1.3s');
     expect(footer.querySelector('[data-message-time]')?.textContent).toBe(formatAbsoluteMessageTimestamp(completedAt));
     expect(footer.querySelector('use[href="#yuri-pulse"]')).toBeNull();
@@ -204,13 +207,14 @@ describe('Btw side conversation panel', () => {
     const output = ts.transpileModule(`return (${expression!.getText(source)});`, {
       compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 },
     }).outputText;
-    const renderTabs = new Function('React', 'BtwPanel', 'tabs', 'activeTab', 'previewVisible', 'directoryKey', 'btwSessionId', 't', output) as (
+    const renderTabs = new Function('React', 'BtwPanel', 'tabs', 'activeTab', 'previewVisible', 'directoryKey', 'btwSessionId', 'effectiveDirectory', 'remote', 'host', 't', output) as (
       react: typeof React, panel: typeof BtwPanel, tabs: { id: string; mode: string }[],
-      activeTab: { id: string }, visible: boolean, directory: string, sessionId: string, t: (key: string) => string,
+      activeTab: { id: string }, visible: boolean, directory: string, sessionId: string, effectiveDirectory: string,
+      remote: boolean, host: undefined, t: (key: string) => string,
     ) => React.ReactNode;
     const tabs = [{ id: 'btw-tab', mode: 'btw' }, { id: 'file-tab', mode: 'file' }];
     const render = async (tab: string, visible = true, sessionId = scope.sessionId, mountedTabs = tabs) => {
-      await act(async () => root.render(<>{renderTabs(React, BtwPanel, mountedTabs, { id: tab }, visible, '/repo', sessionId, (key) => key)}</>));
+      await act(async () => root.render(<>{renderTabs(React, BtwPanel, mountedTabs, { id: tab }, visible, '/repo', sessionId, '/repo', false, undefined, (key) => key)}</>));
     };
     useSessionBtwStore.setState({ entries: {
       [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: [], question: 'Why?', answer: 'Settled code', error: null, pending: false }] },
@@ -249,6 +253,21 @@ describe('Btw side conversation panel', () => {
       variant: 'assistant',
       enableFileReferences: false,
     }));
+  });
+
+  test('questions reuse the session user bubble, Markdown and quote rendering', async () => {
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: ['selected excerpt'], question: '/why **this**?', answer: '', error: null, pending: true }] },
+    } });
+    await act(async () => root.render(<BtwPanel scope={scope} />));
+    const bubble = host.querySelector<HTMLElement>('[data-user-message-bubble="true"]')!;
+    expect(bubble.style.backgroundColor).toBe('var(--chat-user-message-bg)');
+    expect(bubble.style.borderRadius).toBe('var(--radius-xl)');
+    expect(bubble.style.borderBottomRightRadius).toBe('var(--radius-sm)');
+    expect(bubble.parentElement?.className).toContain('max-w-[85%]');
+    expect(bubble.querySelector('[data-conversation-quote]')?.textContent).toBe('selected excerpt');
+    expect(bubble.querySelector('[data-user-markdown]')?.textContent).toBe('/why **this**?');
+    expect(bubble.querySelector('[data-transcript-search-part]')).toBeTruthy();
   });
 
   test('answer arrival does not drag a reader back to the bottom', async () => {

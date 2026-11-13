@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSidebarBrandStore } from '@/stores/useSidebarBrandStore';
 import { loadBrandDisplayFont } from '@/lib/fontLoader';
 import { SidebarBrandMark } from './SidebarBrandMark';
+import { useUIStore } from '@/stores/useUIStore';
 
 vi.mock('@/lib/fontLoader', () => ({ loadBrandDisplayFont: vi.fn(async () => {}) }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
@@ -27,6 +28,7 @@ beforeEach(() => {
     })),
   });
   useSidebarBrandStore.setState({ sidebarBrandName: 'Yuri' });
+  useUIStore.setState({ settingsPage: 'home', isSettingsDialogOpen: false, settingsFocusItemId: null });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -39,6 +41,19 @@ afterEach(() => {
 });
 
 describe('sidebar brand selection and persisted defaults', () => {
+  it('opens Appearance with a one-shot brand-name focus request', () => {
+    act(() => root.render(<SidebarBrandMark />));
+    const button = container.querySelector<HTMLButtonElement>('button');
+    expect(button).not.toBeNull();
+    expect(button?.classList.contains('app-region-no-drag')).toBe(true);
+    act(() => button!.click());
+    expect(useUIStore.getState()).toMatchObject({
+      settingsPage: 'appearance', isSettingsDialogOpen: true,
+      settingsFocusItemId: 'appearance.sidebar-brand',
+    });
+    act(() => useUIStore.getState().setSettingsDialogOpen(false));
+    expect(useUIStore.getState().settingsFocusItemId).toBeNull();
+  });
   it('uses the SVG for Yuri and switches live to custom typography or a hidden slot', () => {
     act(() => root.render(<SidebarBrandMark />));
     const mark = container.querySelector('[role="img"]');
@@ -48,7 +63,7 @@ describe('sidebar brand selection and persisted defaults', () => {
     expect(loadBrandDisplayFont).not.toHaveBeenCalled();
 
     act(() => useSidebarBrandStore.getState().setSidebarBrandName('My Studio'));
-    expect(container.querySelector('[aria-label]')?.getAttribute('aria-label')).toBe('My Studio');
+    expect(container.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('My Studio');
     expect(container.querySelectorAll('[style*="mask"]')).toHaveLength(0);
     expect(container.querySelector('[role="img"]')?.textContent).toBe('MyStudio');
     expect(loadBrandDisplayFont).toHaveBeenCalledTimes(1);

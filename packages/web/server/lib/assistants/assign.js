@@ -633,7 +633,8 @@ export async function assignSession(input = {}) {
   }
   const codingPrompt = requireProvidedString(input.prompt, { field: 'prompt', max: 200_000 });
 
-  const projectDirectory = resolveAssignDirectory({
+  const resolveDirectory = input.resolveDirectory || resolveAssignDirectory;
+  const projectDirectory = await resolveDirectory({
     projectPath: input.projectPath,
     directory: input.directory,
     branch: null,
@@ -649,7 +650,7 @@ export async function assignSession(input = {}) {
     const worktrees = typeof input.listWorktrees === 'function'
       ? await input.listWorktrees(projectDirectory)
       : (input.worktrees || []);
-    directory = resolveAssignDirectory({
+    directory = await resolveDirectory({
       projectPath: projectDirectory,
       directory: projectDirectory,
       branch: branchName,
@@ -660,10 +661,13 @@ export async function assignSession(input = {}) {
   }
 
   const assistant = input.assistant && typeof input.assistant === 'object' ? input.assistant : {};
+  const selectedModel = typeof input.resolveModel === 'function' ? await input.resolveModel(directory) : input.model;
   let resolvedModel;
-  if (input.model && typeof input.model === 'object' && !Array.isArray(input.model)) {
-    const objectProvider = trim(input.model.providerID, 256);
-    const objectModel = trim(input.model.modelID, 256);
+  if (input.useTargetDefaults === true) {
+    resolvedModel = { source: 'target-default', acceptsImages: null };
+  } else if (selectedModel && typeof selectedModel === 'object' && !Array.isArray(selectedModel)) {
+    const objectProvider = trim(selectedModel.providerID, 256);
+    const objectModel = trim(selectedModel.modelID, 256);
     if (!objectProvider || !objectModel) {
       throw new AssignError(
         ASSIGN_CODES.VALIDATION,
@@ -673,11 +677,11 @@ export async function assignSession(input = {}) {
     resolvedModel = {
       providerID: objectProvider,
       modelID: objectModel,
-      source: input.model.source || 'explicit',
-      acceptsImages: input.model.acceptsImages === true ? true : input.model.acceptsImages === false ? false : null,
+      source: selectedModel.source || 'explicit',
+      acceptsImages: selectedModel.acceptsImages === true ? true : selectedModel.acceptsImages === false ? false : null,
     };
   } else {
-    if (input.model !== undefined && input.model !== null && typeof input.model !== 'string') {
+    if (selectedModel !== undefined && selectedModel !== null && typeof selectedModel !== 'string') {
       throw new AssignError(
         ASSIGN_CODES.VALIDATION,
         'assign_session model must be a string or resolved {providerID,modelID} object.',
@@ -686,7 +690,7 @@ export async function assignSession(input = {}) {
     resolvedModel = resolveAssignWorkerModel({
       providerID: input.providerID,
       modelID: input.modelID,
-      model: input.model,
+      model: selectedModel,
       fallback: {
         providerID: assistant.providerID,
         modelID: assistant.modelID,
@@ -697,7 +701,7 @@ export async function assignSession(input = {}) {
   }
 
   const fileParts = sanitizeAssignFileParts(input.fileParts || input.parts || []);
-  assertAssignFileCapability({
+  if (!input.useTargetDefaults) assertAssignFileCapability({
     fileParts,
     acceptsImages: input.acceptsImages == null ? resolvedModel.acceptsImages : input.acceptsImages,
   });
@@ -705,12 +709,12 @@ export async function assignSession(input = {}) {
   const sessionID = trim(input.sessionID, 256);
   const title = trim(input.title, 256) || codingPrompt.slice(0, 80);
   const messageID = trim(input.messageID, 256) || `msg_assign_${crypto.randomUUID()}`;
-  const model = { providerID: resolvedModel.providerID, modelID: resolvedModel.modelID };
+  const model = input.useTargetDefaults ? null : { providerID: resolvedModel.providerID, modelID: resolvedModel.modelID };
   const parts = buildAssignParts({ prompt: codingPrompt, fileParts });
   const workerVariant = resolveAssignWorkerVariant({
     source: resolvedModel.source,
-    workerProviderID: model.providerID,
-    workerModelID: model.modelID,
+    workerProviderID: model?.providerID,
+    workerModelID: model?.modelID,
     assistant,
     variant: input.variant,
   });

@@ -47,6 +47,7 @@ export const createNotificationEmitterRuntime = (dependencies) => {
     desktopNotifyPrefix,
     getUiNotificationClients,
     getBroadcastGlobalUiEvent,
+    getInstanceId,
     // Optional: in-process desktop shells (Electron main) inject a callback so
     // notifications are delivered as a direct function call instead of a stdout
     // stringly-typed IPC.
@@ -108,6 +109,8 @@ export const createNotificationEmitterRuntime = (dependencies) => {
   };
 
   const emitDesktopNotification = (payload) => {
+    const instanceId = getInstanceId?.();
+    if (instanceId && payload && typeof payload === 'object') payload = { ...payload, instanceId };
     const desktopNotifyEnabled = getDesktopNotifyEnabled();
     if (!desktopNotifyEnabled) {
       return false;
@@ -139,6 +142,8 @@ export const createNotificationEmitterRuntime = (dependencies) => {
   };
 
   const broadcastUiNotification = (payload, options = {}) => {
+    const instanceId = getInstanceId?.();
+    if (instanceId && payload && typeof payload === 'object') payload = { ...payload, instanceId };
     const desktopNotifyEnabled = getDesktopNotifyEnabled();
     if (!payload || typeof payload !== 'object') {
       return;

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { Part, Session } from '@/lib/opencode/v2-types'
 
 import {
@@ -26,6 +26,18 @@ const taskPart = (input: {
 }) as Part
 
 describe("scoped blocking requests", () => {
+  test.each(['task', 'subagent', 'runtime.subagent:2'])("surfaces pending requests from a settled background %s before child catalog hydration", (tool) => {
+    const part: Part = {
+      id: 'dispatch', messageID: 'launch', type: 'tool', tool, sessionID: 'ses_parent', callID: 'call',
+      state: { status: 'completed', input: {}, metadata: { sessionID: 'ses_child', status: 'running' } },
+    }
+    const request = { id: 'pending_child_request' }
+    const edges = collectTaskDispatchEdgesFromParts([part])
+    expect(edges).toEqual([{ parentSessionId: 'ses_parent', sessionId: 'ses_child' }])
+    expect(collectScopedBlockingRequests([session('ses_parent')], { ses_child: [request] }, 'ses_parent', [], edges)).toEqual([request])
+    expect(collectScopedBlockingRequests([session('ses_other')], { ses_child: [request] }, 'ses_other', [], edges)).toEqual([])
+  })
+
   test("collects requests for the current session subtree", () => {
     const rootRequest = { id: "perm_root" }
     const childRequest = { id: "perm_child" }
@@ -69,7 +81,7 @@ describe("scoped blocking requests", () => {
     expect(areRequestArraysReferentiallyEqual([first], [{ id: "perm_1" }])).toBe(false)
   })
 
-  test("collects task dispatch edges only from running task parts", () => {
+  test("ignores settled tasks without a background marker and unrelated tools", () => {
     const edges = collectTaskDispatchEdgesFromParts([
       taskPart({ parentSessionId: "ses_parent", sessionId: "ses_child" }),
       taskPart({ parentSessionId: "ses_parent", sessionId: "ses_done", status: "completed" }),
@@ -78,6 +90,18 @@ describe("scoped blocking requests", () => {
     ])
 
     expect(edges).toEqual([{ parentSessionId: "ses_parent", sessionId: "ses_child" }])
+  })
+
+  test('keeps explicit fork dispatch ownership and rejects failed or malformed background records', () => {
+    const part: Part = {
+      id: 'dispatch', messageID: 'launch', sessionID: 'ses_catalog_parent', type: 'tool', tool: 'subagent', callID: 'call',
+      state: { input: {}, status: 'completed', metadata: { parentSessionId: 'ses_fork', sessionId: 'ses_child', sessionID: 'ses_other', status: 'running' } },
+    }
+    expect(collectTaskDispatchEdgesFromParts([part])).toEqual([{ parentSessionId: 'ses_fork', sessionId: 'ses_child' }])
+    for (const status of ['error', 'cancelled', 'failed']) {
+      expect(collectTaskDispatchEdgesFromParts([{ ...part, state: { ...part.state, status } }])).toEqual([])
+    }
+    expect(collectTaskDispatchEdgesFromParts([{ ...part, state: { ...part.state, metadata: { sessionID: part.sessionID, status: 'running' } } }])).toEqual([])
   })
 
   test("includes running-task child requests when catalog parentID points at a pre-fork lineage", () => {

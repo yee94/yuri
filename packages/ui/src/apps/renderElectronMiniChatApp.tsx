@@ -15,6 +15,7 @@ import { initializeAppearancePreferences, syncDesktopSettings } from '@/lib/pers
 import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
 import { startTypographyWatcher } from '@/lib/typographyWatcher';
 import { QueryRuntimeProvider } from '@/lib/QueryRuntimeProvider';
+import { preloadMarkdownRenderer } from '@/components/chat/markdownRendererLoader';
 import { ElectronMiniChatApp } from './ElectronMiniChatApp';
 
 const initializeSharedPreferences = () => {
@@ -37,6 +38,7 @@ const initializeSharedPreferences = () => {
 };
 
 export function renderElectronMiniChatApp(apis: RuntimeAPIs) {
+  preloadMarkdownRenderer();
   initializeSharedPreferences();
 
   const rootElement = document.getElementById('root');

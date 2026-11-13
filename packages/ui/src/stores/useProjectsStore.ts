@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import { devtools } from 'zustand/middleware';
 import { opencodeClient } from '@/lib/opencode/client';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
@@ -11,7 +12,13 @@ import { useDirectoryStore } from './useDirectoryStore';
 import { streamDebugEnabled } from '@/stores/utils/streamDebug';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
+import { getRuntimeApiBaseUrl, getRuntimeGeneration, getRuntimeKey, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { useSessionNavigationStore } from './useSessionNavigationStore';
+import { ensureRemoteHostCatalog, getHostRuntimeRegistry, remoteProjectMetadata, removeRemoteProject, supportsRemoteProjects } from '@/queries/remoteProjectQueries';
+import { projectOrderQueryOptions, saveHubProjectLayout } from '@/queries/projectOrderQueries';
+import { parseHubProjectLayout, type HubProjectLayout } from '@/queries/hubProjectLayout';
+import { queryClient } from '@/lib/queryRuntime';
+import { parseRemoteProject, type RemoteProject } from '@/lib/remote-projects/types';
 import {
   mayReadLegacyApiBaseUrlInstanceCache,
   readInstanceScopedItem,
@@ -31,22 +38,26 @@ interface VSCodeWorkspaceFolderConfig {
 }
 
 interface ProjectsStore {
-  projects: ProjectEntry[];
+  projects: Array<ProjectEntry & { hubId?: string }>;
   activeProjectId: string | null;
   manualProjectOrder: string[];
+  hubProjectLayout: HubProjectLayout | null;
 
   addProject: (path: string, options?: { label?: string; id?: string }) => ProjectEntry | null;
-  removeProject: (id: string) => void;
+  upsertRemoteProject: (project: RemoteProject, hubId: string) => void;
+  reconcileRemoteProjects: (projects: RemoteProject[], hubId: string) => void;
+  setProjectCollapsed: (id: string, collapsed: boolean) => void;
+  removeProject: (id: string) => void | Promise<void>;
   setActiveProject: (id: string) => void;
   setActiveProjectIdOnly: (id: string) => void;
-  renameProject: (id: string, label: string) => void;
+  renameProject: (id: string, label: string) => void | Promise<void>;
   updateProjectMeta: (id: string, meta: {
     label?: string;
     icon?: string | null;
     color?: string | null;
     iconBackground?: string | null;
     defaultModel?: string | null;
-  }) => void;
+  }) => void | Promise<void>;
   uploadProjectIcon: (id: string, file: File) => Promise<{ ok: boolean; error?: string }>;
   removeProjectIcon: (id: string) => Promise<{ ok: boolean; error?: string }>;
   discoverProjectIcon: (id: string, options?: { force?: boolean }) => Promise<{ ok: boolean; skipped?: boolean; reason?: string; error?: string }>;
@@ -203,6 +214,18 @@ const sanitizeProjects = (value: unknown): ProjectEntry[] => {
     if (!entry || typeof entry !== 'object') continue;
     const candidate = entry as Record<string, unknown>;
 
+    if (candidate.hostId) {
+      try {
+        const remote = parseRemoteProject(candidate);
+        const key = JSON.stringify([remote.hostId, remote.path]);
+        if (seenIds.has(remote.id) || seenPaths.has(key)) continue;
+        seenIds.add(remote.id);
+        seenPaths.add(key);
+        result.push({ ...remote, ...(typeof candidate.hubId === 'string' ? { hubId: candidate.hubId } : {}) });
+      } catch { /* Invalid remote references must never fall through to local path conversion. */ }
+      continue;
+    }
+
     const rawPath = typeof candidate.path === 'string' ? candidate.path.trim() : '';
     if (!rawPath) continue;
 
@@ -331,7 +354,8 @@ const persistProjects = (projects: ProjectEntry[], activeProjectId: string | nul
   if (manualOrder) {
     persistManualProjectOrder(manualOrder);
   }
-  void updateDesktopSettings({ projects, activeProjectId: activeProjectId ?? undefined });
+  const localProjects = projects.filter((project) => !project.hostId);
+  void updateDesktopSettings({ projects: localProjects, ...(activeProjectId && localProjects.some((project) => project.id === activeProjectId) ? { activeProjectId } : {}) });
 };
 
 const persistManualProjectOrder = (manualOrder: string[]) => {
@@ -342,7 +366,79 @@ const persistManualProjectOrder = (manualOrder: string[]) => {
   }
 };
 
+const projectIconRequest = async (id: string, suffix: string, options: Parameters<typeof runtimeFetch>[1]) => {
+  const project = useProjectsStore.getState().projects.find((entry) => entry.id === id);
+  if (!project?.hostId) return runtimeFetch(`/api/projects/${encodeURIComponent(id)}/icon${suffix}`, options);
+  const catalog = await ensureRemoteHostCatalog();
+  if (project.hubId && project.hubId !== catalog.hubId) throw new Error('Project belongs to an inactive Hub');
+  const registry = getHostRuntimeRegistry(catalog);
+  return registry.resolve({ hubId: catalog.hubId, hostId: project.hostId, directory: project.path })
+    .fetch(`/api/projects/${encodeURIComponent(project.remoteProjectId ?? '')}/icon${suffix}`, options);
+};
+
+const captureProjectRuntime = () => {
+  const generation = getRuntimeGeneration();
+  const runtime = getRuntimeKey();
+  return () => {
+    if (generation !== getRuntimeGeneration() || runtime !== getRuntimeKey()) throw new Error('Project operation belongs to an inactive Hub');
+  };
+};
+
+const applyProjectIconSettings = async (id: string, settings: DesktopSettings) => {
+  const project = useProjectsStore.getState().projects.find((entry) => entry.id === id);
+  if (!project?.hostId) { useProjectsStore.getState().synchronizeFromSettings(settings); return; }
+  const remote = settings.projects?.find((entry) => entry.id === project.remoteProjectId);
+  if (!remote) throw new Error('Remote icon response is missing the project');
+  const catalog = await ensureRemoteHostCatalog();
+  if (project.hubId && project.hubId !== catalog.hubId) throw new Error('Project belongs to an inactive Hub');
+  const updated = await remoteProjectMetadata(getHostRuntimeRegistry(catalog), parseRemoteProject(project), { iconImage: remote.iconImage ?? null });
+  useProjectsStore.getState().upsertRemoteProject(updated, catalog.hubId);
+};
+
 const initialProjects = readPersistedProjects();
+const projectLayoutProjection = (projects: ProjectEntry[], layout: HubProjectLayout): ProjectEntry[] => {
+  const remaining = new Map(projects.map((project) => [project.id, project]));
+  const ordered: ProjectEntry[] = [];
+  for (const id of layout.order) {
+    const project = remaining.get(id);
+    if (project) { ordered.push(project); remaining.delete(id); }
+  }
+  ordered.push(...remaining.values());
+  const result = ordered.map((project) => Object.hasOwn(layout.collapsed, project.id)
+    && project.sidebarCollapsed !== layout.collapsed[project.id] ? { ...project, sidebarCollapsed: layout.collapsed[project.id] } : project);
+  return result.length === projects.length && result.every((project, index) => project === projects[index]) ? projects : result;
+};
+
+let layoutMutation = 0;
+const persistHubLayout = (previous: ProjectEntry[], projects: ProjectEntry[], collapsed?: Record<string, boolean>): boolean => {
+  const store = useProjectsStore.getState();
+  const hubId = store.hubProjectLayout?.hubId ?? projects.find((project) => project.hostId && project.hubId)?.hubId;
+  if (!hubId || !supportsRemoteProjects()) return false;
+  const transport = getRuntimeTransportIdentity();
+  const generation = getRuntimeGeneration();
+  const mutation = ++layoutMutation;
+  const current = () => mutation === layoutMutation && transport === getRuntimeTransportIdentity() && generation === getRuntimeGeneration();
+  const fallback: HubProjectLayout = { hubId, order: previous.map((project) => project.id),
+    collapsed: Object.fromEntries(previous.map((project) => [project.id, project.sidebarCollapsed === true])) };
+  void saveHubProjectLayout({ hubId, order: collapsed ? [] : projects.map((project) => project.id), collapsed: collapsed ?? {} }, transport).then((snapshot) => {
+    if (current()) useProjectsStore.getState().synchronizeFromSettings(snapshot);
+  }).catch((error: unknown) => {
+    if (!current()) return;
+    const authority = queryClient.getQueryData<DesktopSettings>(projectOrderQueryOptions(transport).queryKey)?.hubProjectLayout;
+    const layout = authority?.hubId === hubId ? authority : store.hubProjectLayout ?? fallback;
+    const latest = useProjectsStore.getState();
+    const restored = projectLayoutProjection(latest.projects, layout);
+    const order = restored.map((project) => project.id);
+    useProjectsStore.setState({ projects: restored, manualProjectOrder: order });
+    cacheProjects(restored, latest.activeProjectId);
+    persistManualProjectOrder(order);
+    toast.error(error instanceof Error ? error.message : String(error));
+  });
+  cacheProjects(projects, store.activeProjectId);
+  persistManualProjectOrder(projects.map((project) => project.id));
+  return true;
+};
+
 export const reorderProjectEntriesById = (
   projects: ProjectEntry[],
   activeId: string,
@@ -540,6 +636,7 @@ export const useProjectsStore = create<ProjectsStore>()(
     projects: effectiveInitialProjects,
     activeProjectId: initialActiveProjectId,
     manualProjectOrder: readPersistedManualOrder(),
+    hubProjectLayout: null,
 
     validateProjectPath: (path: string): ProjectPathValidationResult => {
       if (typeof path !== 'string' || path.trim().length === 0) {
@@ -565,7 +662,7 @@ export const useProjectsStore = create<ProjectsStore>()(
       }
 
       const normalizedPath = validation.normalizedPath;
-      const existing = get().projects.find((project) => project.path === normalizedPath);
+      const existing = get().projects.find((project) => !project.hostId && project.path === normalizedPath);
       if (existing) {
         get().setActiveProject(existing.id);
         return existing;
@@ -596,12 +693,65 @@ export const useProjectsStore = create<ProjectsStore>()(
       return entry;
     },
 
+    upsertRemoteProject: (project, hubId) => {
+      const remote = { ...parseRemoteProject(project), hubId };
+      const current = get();
+      const previous = current.projects.find((entry) => entry.id === remote.id);
+      if (previous && JSON.stringify(previous) === JSON.stringify({ ...previous, ...remote })) return;
+      const projects = previous
+        ? current.projects.map((entry) => entry.id === remote.id ? { ...entry, ...remote } : entry)
+        : [...current.projects, remote];
+      const projected = current.hubProjectLayout?.hubId === hubId ? projectLayoutProjection(projects, current.hubProjectLayout) : projects;
+      set({ projects: projected });
+      cacheProjects(projected, current.activeProjectId);
+    },
+
+    setProjectCollapsed: (id, sidebarCollapsed) => {
+      const current = get();
+      const projects = current.projects.map((project) => project.id === id ? { ...project, sidebarCollapsed } : project);
+      set({ projects });
+      if (!persistHubLayout(current.projects, projects, { [id]: sidebarCollapsed })) persistProjects(projects, current.activeProjectId, current.manualProjectOrder);
+    },
+
+    reconcileRemoteProjects: (remoteProjects, hubId) => {
+      const current = get();
+      const incoming = new Map(remoteProjects.map((project) => [project.id, { ...project, hubId }]));
+      const projects = current.projects.flatMap((project) => {
+        if (!project.hostId) return [project];
+        const next = incoming.get(project.id);
+        incoming.delete(project.id);
+        if (!next) return [];
+        const updated = { ...project, ...next, sidebarCollapsed: project.sidebarCollapsed };
+        return [JSON.stringify(updated) === JSON.stringify(project) ? project : updated];
+      });
+      projects.push(...incoming.values());
+      const projected = current.hubProjectLayout?.hubId === hubId ? projectLayoutProjection(projects, current.hubProjectLayout) : projects;
+      if (JSON.stringify(projected) === JSON.stringify(current.projects)) return;
+      const activeProjectId = projected.some((project) => project.id === current.activeProjectId) ? current.activeProjectId : projected[0]?.id ?? null;
+      set({ projects: projected, activeProjectId, manualProjectOrder: projected.map((project) => project.id) });
+      cacheProjects(projected, activeProjectId);
+      const remoteSession = useSessionNavigationStore.getState().remoteSession;
+      if (remoteSession && !projects.some((project) => project.id === remoteSession.projectId)) useSessionNavigationStore.getState().clearRemoteSession();
+    },
+
     removeProject: (id: string) => {
       if (isVSCodeProjectsRuntime) {
         return;
       }
       const current = get();
       const project = current.projects.find((p) => p.id === id);
+      if (project?.hostId) {
+        return ensureRemoteHostCatalog().then(async (catalog) => {
+          if (project.hubId && project.hubId !== catalog.hubId) throw new Error('Project belongs to an inactive Hub');
+          await removeRemoteProject(getHostRuntimeRegistry(catalog), parseRemoteProject(project));
+          const latest = get();
+          const projects = latest.projects.filter((entry) => entry.id !== id);
+          const activeProjectId = latest.activeProjectId === id ? projects[0]?.id ?? null : latest.activeProjectId;
+          set({ projects, activeProjectId, manualProjectOrder: latest.manualProjectOrder.filter((entry) => entry !== id) });
+          cacheProjects(projects, activeProjectId);
+          if (useSessionNavigationStore.getState().remoteSession?.projectId === id) useSessionNavigationStore.getState().clearRemoteSession();
+        });
+      }
       const nextProjects = current.projects.filter((project) => project.id !== id);
       let nextActiveId = current.activeProjectId;
 
@@ -625,7 +775,7 @@ export const useProjectsStore = create<ProjectsStore>()(
 
       if (nextActiveId) {
         const nextActive = nextProjects.find((project) => project.id === nextActiveId);
-        if (nextActive) {
+        if (nextActive && !nextActive.hostId) {
           opencodeClient.setDirectory(nextActive.path);
           useDirectoryStore.getState().setDirectory(nextActive.path, { showOverlay: false });
         }
@@ -650,6 +800,11 @@ export const useProjectsStore = create<ProjectsStore>()(
       set({ activeProjectId: id });
       persistProjects(projects, id, get().manualProjectOrder);
 
+      if (target.hostId) {
+        if (target.hubId) useSessionNavigationStore.getState().openRemoteSession(target, { hubId: target.hubId, hostId: target.hostId, directory: target.path }, null);
+        return;
+      }
+      useSessionNavigationStore.getState().clearRemoteSession();
       opencodeClient.setDirectory(target.path);
       useDirectoryStore.getState().setDirectory(target.path, { showOverlay: false });
     },
@@ -669,9 +824,11 @@ export const useProjectsStore = create<ProjectsStore>()(
 
       set({ activeProjectId: id });
       persistProjects(projects, id, get().manualProjectOrder);
+      if (!target.hostId) useSessionNavigationStore.getState().clearRemoteSession();
     },
 
     renameProject: (id: string, label: string) => {
+      if (get().projects.find((project) => project.id === id)?.hostId) return get().updateProjectMeta(id, { label });
       if (isVSCodeProjectsRuntime) {
         return;
       }
@@ -699,6 +856,14 @@ export const useProjectsStore = create<ProjectsStore>()(
         return;
       }
       const { projects, activeProjectId } = get();
+      const remote = projects.find((project) => project.id === id && project.hostId);
+      if (remote) {
+        return ensureRemoteHostCatalog().then(async (catalog) => {
+          if (remote.hubId && remote.hubId !== catalog.hubId) throw new Error('Project belongs to an inactive Hub');
+          const updated = await remoteProjectMetadata(getHostRuntimeRegistry(catalog), parseRemoteProject(remote), meta);
+          get().upsertRemoteProject(updated, catalog.hubId);
+        });
+      }
       const nextProjects = projects.map((project) => {
         if (project.id !== id) return project;
         const updated = { ...project };
@@ -726,6 +891,7 @@ export const useProjectsStore = create<ProjectsStore>()(
     },
 
     uploadProjectIcon: async (id: string, file: File) => {
+      const assertCurrent = captureProjectRuntime();
       if (isVSCodeProjectsRuntime) {
         return { ok: false, error: 'Custom icons are not supported in this runtime' };
       }
@@ -743,9 +909,10 @@ export const useProjectsStore = create<ProjectsStore>()(
 
       try {
         const dataUrl = await readFileAsDataUrl(file);
+        assertCurrent();
         const normalizedDataUrl = dataUrl.replace(/^data:[^;]+;/i, `data:${mime};`);
 
-        const response = await runtimeFetch(`/api/projects/${encodeURIComponent(id)}/icon`, {
+        const response = await projectIconRequest(id, '', {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -760,8 +927,9 @@ export const useProjectsStore = create<ProjectsStore>()(
         }
 
         const payload = (await response.json().catch(() => null)) as { settings?: DesktopSettings } | null;
+        assertCurrent();
         if (payload?.settings) {
-          get().synchronizeFromSettings(payload.settings);
+          await applyProjectIconSettings(id, payload.settings);
         }
         return { ok: true };
       } catch (error) {
@@ -771,12 +939,13 @@ export const useProjectsStore = create<ProjectsStore>()(
     },
 
     removeProjectIcon: async (id: string) => {
+      const assertCurrent = captureProjectRuntime();
       if (isVSCodeProjectsRuntime) {
         return { ok: false, error: 'Custom icons are not supported in this runtime' };
       }
 
       try {
-        const response = await runtimeFetch(`/api/projects/${encodeURIComponent(id)}/icon`, {
+        const response = await projectIconRequest(id, '', {
           method: 'DELETE',
           headers: {
             Accept: 'application/json',
@@ -789,8 +958,9 @@ export const useProjectsStore = create<ProjectsStore>()(
         }
 
         const payload = (await response.json().catch(() => null)) as { settings?: DesktopSettings } | null;
+        assertCurrent();
         if (payload?.settings) {
-          get().synchronizeFromSettings(payload.settings);
+          await applyProjectIconSettings(id, payload.settings);
         }
         return { ok: true };
       } catch (error) {
@@ -800,12 +970,13 @@ export const useProjectsStore = create<ProjectsStore>()(
     },
 
     discoverProjectIcon: async (id: string, options?: { force?: boolean }) => {
+      const assertCurrent = captureProjectRuntime();
       if (isVSCodeProjectsRuntime) {
         return { ok: false, error: 'Custom icons are not supported in this runtime' };
       }
 
       try {
-        const response = await runtimeFetch(`/api/projects/${encodeURIComponent(id)}/icon/discover`, {
+        const response = await projectIconRequest(id, '/discover', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -820,13 +991,14 @@ export const useProjectsStore = create<ProjectsStore>()(
           reason?: string;
           settings?: DesktopSettings;
         } | null;
+        assertCurrent();
 
         if (!response.ok) {
           return { ok: false, error: payload?.error || 'Failed to discover project icon' };
         }
 
         if (payload?.settings) {
-          get().synchronizeFromSettings(payload.settings);
+          await applyProjectIconSettings(id, payload.settings);
         }
 
         return {
@@ -861,7 +1033,7 @@ export const useProjectsStore = create<ProjectsStore>()(
 
       const newOrder = nextProjects.map((p) => p.id);
       set({ projects: nextProjects, manualProjectOrder: newOrder });
-      persistProjects(nextProjects, activeProjectId, newOrder);
+      if (!persistHubLayout(projects, nextProjects)) persistProjects(nextProjects, activeProjectId, newOrder);
     },
 
     reorderProjectsById: (activeId: string, overId: string) => {
@@ -871,7 +1043,7 @@ export const useProjectsStore = create<ProjectsStore>()(
       if (nextProjects === projects) return;
       const newOrder = nextProjects.map((project) => project.id);
       set({ projects: nextProjects, manualProjectOrder: newOrder });
-      persistProjects(nextProjects, activeProjectId, newOrder);
+      if (!persistHubLayout(projects, nextProjects)) persistProjects(nextProjects, activeProjectId, newOrder);
     },
 
     moveProjectToTop: (id: string) => {
@@ -908,7 +1080,7 @@ export const useProjectsStore = create<ProjectsStore>()(
       }
 
       set({ projects: nextProjects, manualProjectOrder: nextManualOrder });
-      persistProjects(nextProjects, activeProjectId, nextManualOrder);
+      if (!persistHubLayout(projects, nextProjects)) persistProjects(nextProjects, activeProjectId, nextManualOrder);
     },
 
     resetForRuntimeSwitch: () => {
@@ -922,7 +1094,8 @@ export const useProjectsStore = create<ProjectsStore>()(
         : projects[0]?.id ?? null;
       const incomingIds = new Set(projects.map((project) => project.id));
       const manualProjectOrder = readPersistedManualOrder().filter((id) => incomingIds.has(id));
-      set({ projects, activeProjectId: nextActiveProjectId, manualProjectOrder });
+      layoutMutation += 1;
+      set({ projects, activeProjectId: nextActiveProjectId, manualProjectOrder, hubProjectLayout: null });
     },
 
     synchronizeFromSettings: (settings: DesktopSettings) => {
@@ -930,10 +1103,22 @@ export const useProjectsStore = create<ProjectsStore>()(
         return;
       }
       if (!Array.isArray(settings.projects)) return;
-      const incomingProjects = sanitizeProjects(settings.projects ?? []);
-      const incomingActive = typeof settings.activeProjectId === 'string' && settings.activeProjectId.trim()
+      const locals = sanitizeProjects(settings.projects ?? []).filter((project) => !project.hostId);
+      const pendingLocals = [...locals];
+      const currentProjects = get().projects;
+      const mergedProjects = currentProjects.some((project) => project.hostId)
+        ? [...currentProjects.flatMap((project) => project.hostId ? [project] : pendingLocals.length ? [pendingLocals.shift()!] : []), ...pendingLocals]
+        : locals;
+      const parsedLayout = settings.hubProjectLayout === undefined ? get().hubProjectLayout : parseHubProjectLayout(settings.hubProjectLayout);
+      const layout = parsedLayout && !currentProjects.some((project) => project.hostId && project.hubId && project.hubId !== parsedLayout.hubId)
+        ? parsedLayout : null;
+      const incomingProjects = layout ? projectLayoutProjection(mergedProjects, layout) : mergedProjects;
+      const settingsActive = typeof settings.activeProjectId === 'string' && settings.activeProjectId.trim()
         ? settings.activeProjectId.trim()
         : null;
+
+      const activeRemote = currentProjects.find((project) => project.id === get().activeProjectId && project.hostId);
+      const incomingActive = activeRemote?.id ?? settingsActive;
 
       const current = get();
 
@@ -942,18 +1127,19 @@ export const useProjectsStore = create<ProjectsStore>()(
       const serverOrder = incomingProjects.map((project) => project.id);
       const orderChanged = JSON.stringify(current.manualProjectOrder) !== JSON.stringify(serverOrder);
 
-      if (!projectsChanged && !activeChanged && !orderChanged) {
+      const layoutChanged = JSON.stringify(current.hubProjectLayout) !== JSON.stringify(layout);
+      if (!projectsChanged && !activeChanged && !orderChanged && !layoutChanged) {
         return;
       }
 
       // Local order is a startup cache; the host registry is shared authority.
-      set({ projects: projectsChanged ? incomingProjects : current.projects, activeProjectId: incomingActive, manualProjectOrder: serverOrder });
+      set({ projects: projectsChanged ? incomingProjects : current.projects, activeProjectId: incomingActive, manualProjectOrder: serverOrder, hubProjectLayout: layout });
       cacheProjects(incomingProjects, incomingActive);
       persistManualProjectOrder(serverOrder);
 
       if (incomingActive && activeChanged) {
         const activeProject = incomingProjects.find((project) => project.id === incomingActive);
-        if (activeProject) {
+        if (activeProject && !activeProject.hostId) {
           opencodeClient.setDirectory(activeProject.path);
           useDirectoryStore.getState().setDirectory(activeProject.path, { showOverlay: false });
         }

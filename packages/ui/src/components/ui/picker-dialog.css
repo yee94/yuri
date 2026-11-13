@@ -1,3 +1,14 @@
+.yuri-picker-backdrop {
+  background: color-mix(in srgb, var(--surface-overlay) 55%, transparent);
+  transition-duration: 180ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yuri-picker-backdrop {
+    transition-duration: 0ms;
+  }
+}
+
 .yuri-picker-dialog {
   --yuri-picker-header-end-inset: 1.5rem;
   max-height: min(42rem, 80dvh);

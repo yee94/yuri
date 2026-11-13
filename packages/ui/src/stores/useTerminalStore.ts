@@ -3,6 +3,7 @@ import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 
 import { closeTerminal } from '@/lib/terminalApi';
 import { getSafeSessionStorage } from '@/stores/utils/safeStorage';
+import { normalizeLocationStateKey, parseLocationKey } from '@/lib/remote-projects/location';
 
 export interface TerminalChunk {
   id: number;
@@ -55,7 +56,7 @@ interface TerminalStore {
   setActiveTab: (directory: string, tabId: string) => void;
   setTabLabel: (directory: string, tabId: string, label: string) => void;
   setTabIconKey: (directory: string, tabId: string, iconKey: string | null) => void;
-  closeTab: (directory: string, tabId: string) => Promise<void>;
+  closeTab: (directory: string, tabId: string, closeSession?: (sessionId: string) => Promise<void>) => Promise<void>;
 
   setTabSessionId: (directory: string, tabId: string, sessionId: string | null) => void;
   setTabLifecycle: (directory: string, tabId: string, lifecycle: TerminalTabLifecycle) => void;
@@ -99,6 +100,7 @@ const tabIdNumber = (tabId: string): number | null => {
 };
 
 function normalizeDirectory(dir: string): string {
+  if (dir.startsWith('yuri-remote-location:')) return normalizeLocationStateKey(dir);
   let normalized = dir.trim();
   while (normalized.length > 1 && normalized.endsWith('/')) {
     normalized = normalized.slice(0, -1);
@@ -293,7 +295,7 @@ export const useTerminalStore = create<TerminalStore>()(
           });
         },
 
-        closeTab: async (directory: string, tabId: string) => {
+        closeTab: async (directory: string, tabId: string, closeSession?: (sessionId: string) => Promise<void>) => {
           const key = normalizeDirectory(directory);
           const entry = get().sessions.get(key);
           const tab = entry?.tabs.find((t) => t.id === tabId);
@@ -301,8 +303,10 @@ export const useTerminalStore = create<TerminalStore>()(
 
           if (sessionId) {
             try {
-              await closeTerminal(sessionId);
-            } catch {
+              if (parseLocationKey(key, 'local').hostId && !closeSession) throw new Error('Remote terminal close requires its Host transport');
+              await (closeSession ?? closeTerminal)(sessionId);
+            } catch (error) {
+              if (parseLocationKey(key, 'local').hostId) throw error;
               // ignore
             }
           }
@@ -660,6 +664,10 @@ export const useTerminalStore = create<TerminalStore>()(
             if (typeof directory !== 'string' || !isRecord(rawState)) {
               continue;
             }
+            let identity = directory;
+            try {
+              if (directory.startsWith('yuri-remote-location:')) identity = normalizeLocationStateKey(directory);
+            } catch { continue; }
 
             const rawTabs = Array.isArray(rawState.tabs) ? (rawState.tabs as unknown[]) : [];
             const tabs: TerminalTab[] = [];
@@ -713,7 +721,7 @@ export const useTerminalStore = create<TerminalStore>()(
               typeof rawState.activeTabId === 'string' ? (rawState.activeTabId as string) : null;
             const activeExists = activeTabId ? tabs.some((t) => t.id === activeTabId) : false;
 
-            sessions.set(directory, {
+            sessions.set(identity, {
               tabs,
               activeTabId: activeExists ? activeTabId : tabs[0].id,
             });

@@ -1,6 +1,5 @@
 import '@/lib/brand-storage-bootstrap';
 import * as React from 'react';
-import { useEvent, useEventListener, useResizeObserver } from '@reactuses/core';
 import {
   Dialog,
   DialogContent,
@@ -27,7 +26,6 @@ import {
 } from '@/components/ui/command';
 import { cn } from '@/lib/utils';
 import { useProjectsStore } from '@/stores/useProjectsStore';
-import { useGitHubAuthQuery } from '@/queries/githubAuthQueries';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSelectionStore } from '@/sync/selection-store';
@@ -39,7 +37,6 @@ import { waitForWorktreeBootstrap } from '@/lib/worktrees/worktreeBootstrap';
 import { getWorktreeSetupCommands, getWorktreeSetupWaitEnabled } from '@/lib/yuriConfig';
 import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { generateBranchSlug } from '@/lib/git/branchNameGenerator';
-import { normalizeBranchName, slugifyWorktreeName } from '@/lib/worktrees/worktreeNames';
 import { renderMagicPrompt } from '@/lib/magicPrompts';
 import { parseModelIdentifier } from '@/lib/modelIdentifier';
 import { rankBranchesForQuery } from '@/lib/worktrees/branchSearch';
@@ -48,13 +45,19 @@ import {
   resolveWorktreeSourceBranchPreference,
   resolveWorktreeSourceBranchToPersist,
 } from '@/lib/worktrees/worktreeSourceBranchPreference';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import { useGitBranchesQuery } from '@/queries/gitBranchQueries';
+import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
+import { useGitBranches, useGitStore } from '@/lib/api/useProjectGitStore';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import { useQuery } from '@tanstack/react-query';
+import { queryClient } from '@/lib/queryRuntime';
+import { useWorktreeGitHub, sendRemoteWorktreeContext } from './worktreeDialogRemote';
+import { WorktreeProjectBoundary } from './WorktreeProjectBoundary';
+import { createRemoteWorktreeDraft } from '@/lib/remote-projects/worktree-draft';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { GitHubIntegrationDialog } from './GitHubIntegrationDialog';
 import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
-import { MobileWindowActiveContext } from '@/components/ui/mobile-window-active-context';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Icon } from "@/components/icon/Icon";
 import type {
@@ -69,37 +72,6 @@ import { useI18n } from '@/lib/i18n';
 import { resolveWorktreeDialogProject } from './newWorktreeDialogProject';
 
 type Mode = 'new-branch' | 'existing-branch';
-
-function MobileWorktreeFields({ open, children }: React.PropsWithChildren<{ open: boolean }>) {
-  const isTop = React.useContext(MobileWindowActiveContext);
-  const active = open && isTop;
-  const scrollerRef = React.useRef<HTMLElement | null>(null);
-  const frameRef = React.useRef<number | null>(null);
-  const reveal = useEvent(() => {
-    frameRef.current = null;
-    const scroller = scrollerRef.current;
-    const field = document.activeElement;
-    if (!active || !scroller || !(field instanceof HTMLInputElement) || !scroller.contains(field)) return;
-    const viewport = scroller.getBoundingClientRect(), box = field.getBoundingClientRect();
-    if (viewport.height <= 0 || box.height <= 0) return;
-    if (box.top < viewport.top + 8 || box.bottom > viewport.bottom - 8) {
-      field.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
-    }
-  });
-  const scheduleReveal = useEvent(() => {
-    if (active && frameRef.current === null) frameRef.current = window.requestAnimationFrame(reveal);
-  });
-  useResizeObserver(active ? scrollerRef : null, scheduleReveal);
-  useEventListener('resize', scheduleReveal, () => active ? window.visualViewport : null);
-  useEventListener('scroll', scheduleReveal, () => active ? window.visualViewport : null);
-  React.useLayoutEffect(() => () => {
-    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
-    frameRef.current = null;
-  }, [active]);
-  return <ScrollableOverlay ref={scrollerRef} onFocusCapture={scheduleReveal}
-    disableHorizontal preventOverscroll outerClassName="min-h-0 flex-1"
-    className="overscroll-contain px-4 pb-4 pt-2 [&_input]:scroll-my-2">{children}</ScrollableOverlay>;
-}
 
 interface ValidationState {
   isValidating: boolean;
@@ -124,6 +96,29 @@ interface ExistingBranchState {
   selectedBranch: string;
   worktreeName: string;
 }
+
+const normalizeBranchName = (value: string): string => {
+  return value
+    .trim()
+    .replace(/^refs\/heads\//, '')
+    .replace(/^heads\//, '')
+    .replace(/\s+/g, '-')
+    .replace(/^\/+|\/+$/g, '');
+};
+
+const slugifyWorktreeName = (value: string): string => {
+  return value
+    .trim()
+    .replace(/^refs\/heads\//, '')
+    .replace(/^heads\//, '')
+    .replace(/\s+/g, '-')
+    .replace(/^\/+|\/+$/g, '')
+    .split('/').join('-')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+};
 
 const sanitizeRemoteName = (value: string): string => {
   const normalized = String(value || '')
@@ -198,7 +193,7 @@ const resolvePrWorktreeConfig = (pr: GitHubPullRequestSummary, localBranches: st
 interface NewWorktreeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onWorktreeCreated?: (worktreePath: string, options?: { sessionId?: string }) => void;
+  onWorktreeCreated?: (worktreePath: string, options?: { sessionId?: string; remote?: boolean }) => void;
   projectId?: string | null;
 }
 
@@ -219,17 +214,24 @@ const buildPullRequestContextText = (payload: GitHubPullRequestContextResult) =>
   return `GitHub pull request context (JSON)\n${JSON.stringify(payload, null, 2)}`;
 };
 
-export function NewWorktreeDialog({
+export function NewWorktreeDialog(props: NewWorktreeDialogProps) {
+  const project = useProjectsStore((state) => resolveWorktreeDialogProject(state.projects, state.activeProjectId, props.projectId));
+  return <WorktreeProjectBoundary project={project} open={props.open} onClose={() => props.onOpenChange(false)}><NewWorktreeDialogContent key={project?.id} {...props} /></WorktreeProjectBoundary>;
+}
+
+function NewWorktreeDialogContent({
   open,
   onOpenChange,
   onWorktreeCreated,
   projectId,
 }: NewWorktreeDialogProps) {
   const { t } = useI18n();
-  const { github, git } = useRuntimeAPIs();
+  const { git } = useProjectRuntimeAPIs();
+  const host = useHostRuntime();
+  const entry = host?.entry.location.hostId ? host.entry : undefined;
+  const { github, auth: githubAuthQuery } = useWorktreeGitHub(entry, open);
   const isMobile = useUIStore((state) => state.isMobile);
   const mobileSheetId = React.useId();
-  const githubAuthQuery = useGitHubAuthQuery();
   const githubAuthStatus = githubAuthQuery.data ?? null;
   const githubAuthChecked = githubAuthQuery.isFetched;
   const activeProject = useProjectsStore((state) => {
@@ -239,7 +241,7 @@ export function NewWorktreeDialog({
   const projectDirectory = activeProject?.path ?? null;
   const projectRef: ProjectRef | null = React.useMemo(() => {
     if (projectDirectory && activeProject) {
-      return { id: activeProject.id, path: projectDirectory };
+      return { id: activeProject.id, path: projectDirectory, hostId: activeProject.hostId, hubId: activeProject.hubId };
     }
     return null;
   }, [activeProject, projectDirectory]);
@@ -263,11 +265,10 @@ export function NewWorktreeDialog({
     worktreeName: '',
   });
   
-  // Query owns cached data and refresh failure together; a failure is not an empty catalog.
-  const branchesQuery = useGitBranchesQuery(projectDirectory, git, open);
-  const branches = branchesQuery.data;
-  const isLoadingBranches = branchesQuery.isFetching;
-  const branchReadError = branchesQuery.error;
+  // Use cached branches from Git store (instant if already fetched)
+  const branches = useGitBranches(projectDirectory);
+  const isLoadingBranches = useGitStore((state) => projectDirectory ? state.directories.get(projectDirectory)?.isLoadingBranches ?? false : false);
+  const fetchBranches = useGitStore((state) => state.fetchBranches);
 
   // Compute local and remote branch lists (same pattern as GitView)
   const localBranches = React.useMemo(() => {
@@ -287,11 +288,13 @@ export function NewWorktreeDialog({
   
   // Get existing worktrees for the current project to avoid conflicts
   const availableWorktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
+  const remoteWorktrees = useQuery({ queryKey: [...(entry?.queryScope ?? ['local']), 'worktree-dialog', 'worktrees'],
+    enabled: Boolean(entry && open && projectDirectory), queryFn: () => git.listGitWorktrees(projectDirectory!), staleTime: 30_000, gcTime: Infinity }, queryClient);
   const existingWorktreeNames = React.useMemo(() => {
     if (!projectDirectory) return new Set<string>();
-    const worktrees = availableWorktreesByProject.get(projectDirectory) ?? [];
+    const worktrees = entry ? remoteWorktrees.data ?? [] : availableWorktreesByProject.get(projectDirectory) ?? [];
     return new Set(worktrees.map(wt => wt.name));
-  }, [availableWorktreesByProject, projectDirectory]);
+  }, [availableWorktreesByProject, projectDirectory, entry, remoteWorktrees.data]);
   
   // Generate a unique slug that doesn't conflict with existing worktrees
   const generateUniqueSlug = React.useCallback((maxAttempts = 10): string => {
@@ -378,19 +381,18 @@ export function NewWorktreeDialog({
   const hasSourceBranchMatches = sourceBranchRankedGroups.matching.length > 0;
   const canFetchBranches = Boolean(projectDirectory && git);
 
-  const handleFetchBranches = useEvent(() => {
-    if (!projectDirectory || !git || isLoadingBranches) return;
-    void branchesQuery.refetch({ cancelRefetch: false });
-  });
+  const handleFetchBranches = React.useCallback(() => {
+    if (!projectDirectory || !git) {
+      return;
+    }
+    void fetchBranches(projectDirectory, git);
+  }, [projectDirectory, git, fetchBranches]);
 
-  const renderBranchReadError = () => branchReadError ? (
-    <div role="alert" className="space-y-2 px-2 typography-small">
-      <p className="text-destructive">{branchReadError instanceof Error ? branchReadError.message : String(branchReadError)}</p>
-      <Button size="sm" disabled={!canFetchBranches || isLoadingBranches} onClick={handleFetchBranches}>
-        {t('layout.browserProvider.retry')}
-      </Button>
-    </div>
-  ) : null;
+  React.useEffect(() => {
+    if (!open || !projectDirectory || !git) return;
+    if (branches?.all) return;
+    void fetchBranches(projectDirectory, git);
+  }, [open, projectDirectory, git, branches?.all, fetchBranches]);
 
   React.useEffect(() => {
     if (!existingBranchDropdownOpen && !existingBranchPickerOpen) {
@@ -444,7 +446,7 @@ export function NewWorktreeDialog({
   
   // Creation state
   const [isCreating, setIsCreating] = React.useState(false);
-  const validationAbortController = React.useRef<AbortController | null>(null);
+  const [validationAbortController, setValidationAbortController] = React.useState<AbortController | null>(null);
 
   const resolveDefaultAgentName = React.useCallback((): string | undefined => {
     const configState = useConfigStore.getState();
@@ -615,7 +617,7 @@ export function NewWorktreeDialog({
 
     const loadDefaultSourceBranch = async () => {
       try {
-        const rootBranch = await getRootBranch(projectDirectory).catch(() => null);
+        const rootBranch = entry ? (await git.getGitStatus(projectDirectory)).current : await getRootBranch(projectDirectory).catch(() => null);
         if (cancelled) return;
 
         const savedSourceBranch = localStorage.getItem(LAST_WORKTREE_SOURCE_BRANCH_KEY);
@@ -649,7 +651,7 @@ export function NewWorktreeDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, branches?.all, projectDirectory, newBranchState.sourceBranch]);
+  }, [open, branches?.all, projectDirectory, newBranchState.sourceBranch, entry, git]);
 
   // Reset state on each open. Resetting on close would empty the form during
   // the close animation, causing visible flicker.
@@ -696,14 +698,16 @@ export function NewWorktreeDialog({
   }, [mode, newBranchState.branchName, newBranchState.isSyncingWorktreeName]);
 
   // Validation - only runs after fields are touched
-  const validateInputs = useEvent(async () => {
-    if (!open || !projectRef || !validation.touched || isCreating) return;
+  const validateInputs = React.useCallback(async () => {
+    if (!projectRef || !validation.touched || isCreating) return;
     
     // Cancel previous validation
-    validationAbortController.current?.abort();
+    if (validationAbortController) {
+      validationAbortController.abort();
+    }
     
     const abortController = new AbortController();
-    validationAbortController.current = abortController;
+    setValidationAbortController(abortController);
     
     setValidation(prev => ({ ...prev, isValidating: true }));
     
@@ -728,14 +732,15 @@ export function NewWorktreeDialog({
       if (normalizedBranch && normalizedWorktree) {
         const linkedPr = mode === 'new-branch' ? newBranchState.linkedPr : null;
         const prConfig = linkedPr ? resolvePrWorktreeConfig(linkedPr, localBranches, remoteBranches) : null;
-        const result = await validateWorktreeCreate(projectRef, {
+        const validationArgs = {
           mode: mode === 'existing-branch' || prConfig ? 'existing' : 'new',
           branchName: normalizedBranch,
           worktreeName: normalizedWorktree,
           existingBranch: prConfig?.existingBranch ?? (mode === 'existing-branch' ? normalizedBranch : undefined),
           ...(prConfig?.ensureRemoteName ? { ensureRemoteName: prConfig.ensureRemoteName } : {}),
           ...(prConfig?.ensureRemoteUrl ? { ensureRemoteUrl: prConfig.ensureRemoteUrl } : {}),
-        });
+        } as const;
+        const result = entry ? await git.validateGitWorktree!(projectDirectory!, validationArgs) : await validateWorktreeCreate(projectRef, validationArgs);
         
         if (abortController.signal.aborted) return;
         
@@ -769,7 +774,23 @@ export function NewWorktreeDialog({
         }));
       }
     }
-  });
+  }, [
+    entry,
+    git,
+    projectDirectory,
+    projectRef,
+    mode,
+    newBranchState.branchName,
+    newBranchState.linkedPr,
+    existingBranchState.selectedBranch,
+    currentState.worktreeName,
+    localBranches,
+    remoteBranches,
+    validation.touched,
+    validationAbortController,
+    isCreating,
+    t,
+  ]);
 
   // Extract branch name for dependency array
   const currentBranchName = mode === 'new-branch' ? newBranchState.branchName : existingBranchState.selectedBranch;
@@ -782,8 +803,8 @@ export function NewWorktreeDialog({
       void validateInputs();
     }, 300);
     
-    return () => { clearTimeout(timer); validationAbortController.current?.abort(); };
-  }, [currentState.worktreeName, currentBranchName, newBranchState.linkedPr, localBranches, remoteBranches, mode, open, projectRef, validation.touched, isCreating, t]);
+    return () => clearTimeout(timer);
+  }, [currentState.worktreeName, currentBranchName, open, projectRef, validateInputs, validation.touched, isCreating]);
 
   // Handle worktree creation
   const handleCreate = async () => {
@@ -810,8 +831,10 @@ export function NewWorktreeDialog({
       return;
     }
 
-    validationAbortController.current?.abort();
-    validationAbortController.current = null;
+    if (validationAbortController) {
+      validationAbortController.abort();
+      setValidationAbortController(null);
+    }
 
     setValidation((prev) => ({
       ...prev,
@@ -828,6 +851,36 @@ export function NewWorktreeDialog({
       const linkedPrState = mode === 'new-branch' ? newBranchState.linkedPr : null;
       const includePrDiff = mode === 'new-branch' ? newBranchState.includePrDiff : false;
       const shouldCreateSession = Boolean(linkedIssue || linkedPrState);
+
+      if (entry && host && activeProject?.hostId) {
+        const capturedProject = activeProject;
+        useProjectsStore.getState().setActiveProjectIdOnly(capturedProject.id);
+        const prConfig = linkedPr ? resolvePrWorktreeConfig(linkedPr, localBranches, remoteBranches) : null;
+        const title = linkedIssue ? `#${linkedIssue.number} ${linkedIssue.title}`.trim() : linkedPr ? `#${linkedPr.number} ${linkedPr.title}`.trim() : undefined;
+        const result = await createRemoteWorktreeDraft(capturedProject, {
+          mode: prConfig || mode === 'existing-branch' ? 'existing' : 'new',
+          worktreeName: normalizedWorktree,
+          branchName: mode === 'new-branch' ? normalizedBranch : undefined,
+          existingBranch: prConfig?.existingBranch ?? (mode === 'existing-branch' ? normalizedBranch : undefined),
+          ...(mode === 'new-branch' && !prConfig && newBranchState.sourceBranch ? { startRef: newBranchState.sourceBranch } : {}),
+          ...(prConfig ? { setUpstream: prConfig.setUpstream, upstreamRemote: prConfig.upstreamRemote, upstreamBranch: prConfig.upstreamBranch,
+            ...(prConfig.ensureRemoteName ? { ensureRemoteName: prConfig.ensureRemoteName } : {}), ...(prConfig.ensureRemoteUrl ? { ensureRemoteUrl: prConfig.ensureRemoteUrl } : {}) } : {}),
+        }, { title, createSession: shouldCreateSession, kind: linkedPr ? 'pr' : 'standard', createdFromBranch: prConfig?.sourceLabel ?? newBranchState.sourceBranch,
+          isSelected: () => useProjectsStore.getState().activeProjectId === capturedProject.id });
+        entry.sdk();
+        const selected = useSessionNavigationStore.getState().remoteSession;
+        if (selected?.projectId === capturedProject.id && selected.location.hubId === entry.location.hubId && selected.location.hostId === entry.location.hostId && selected.location.directory === result.path && selected.sessionId === (result.id ?? null)) {
+          onWorktreeCreated?.(result.path, { ...(result.id ? { sessionId: result.id } : {}), remote: true });
+        }
+        onOpenChange(false);
+        toast.success(t('session.newWorktree.toast.worktreeCreated'));
+        if (result.id && shouldCreateSession) {
+          void sendRemoteWorktreeContext(host.registry, entry, result.path, result.id, { issue: linkedIssue, pr: linkedPr, includeDiff: includePrDiff }, t('session.newWorktree.error.sendGitHubContextFailed')).catch((error: unknown) => {
+            toast.error(t('session.newWorktree.error.sendGitHubContextFailed'), { description: error instanceof Error ? error.message : String(error) });
+          });
+        }
+        return;
+      }
 
       const [setupCommands, resolvedRootTrackingRemote] = await Promise.all([
         getWorktreeSetupCommands(projectRef),
@@ -879,7 +932,7 @@ export function NewWorktreeDialog({
 
       if (shouldCreateSession) {
         if (await getWorktreeSetupWaitEnabled(projectRef)) {
-          await waitForWorktreeBootstrap(metadata.path);
+          await waitForWorktreeBootstrap(metadata.worktreeRoot ?? metadata.path);
         }
 
         const sessionTitle = linkedIssue
@@ -1020,9 +1073,15 @@ export function NewWorktreeDialog({
     }));
   };
 
+  const scopeLoadError = entry && (remoteWorktrees.error || githubAuthQuery.error) ? <div role="alert" className="typography-micro text-destructive">
+    {(remoteWorktrees.error || githubAuthQuery.error)?.message}
+    <Button size="xs" variant="ghost" onClick={() => { void remoteWorktrees.refetch(); void githubAuthQuery.refetch(); }}>{t('remoteProjects.retry')}</Button>
+  </div> : null;
+
   // Footer content
   const footerContent = (
     <div className={cn('flex gap-2', isMobile ? 'flex-col w-full' : 'flex-row items-center')}>
+      {scopeLoadError}
       {/* Validation error */}
       <div className={cn('flex items-center gap-1.5 text-destructive', isMobile ? 'w-full justify-center order-first' : 'mr-auto')}> 
         {validation.touched && (validation.branchError || validation.worktreeError) && (
@@ -1072,7 +1131,13 @@ export function NewWorktreeDialog({
           resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
         >
           <div className="flex min-h-0 flex-1 flex-col">
-            <MobileWorktreeFields open={open}>
+            <ScrollableOverlay
+              useScrollShadow
+              disableHorizontal
+              preventOverscroll
+              outerClassName="min-h-0 flex-1"
+              className="overscroll-contain px-4 pb-4 pt-2"
+            >
               {/* Mode Selection - using SortableTabsStrip */}
               <div className="w-full mb-4">
                 <SortableTabsStrip
@@ -1089,7 +1154,6 @@ export function NewWorktreeDialog({
               </div>
 
               <div className="space-y-6">
-                {renderBranchReadError()}
             {/* Branch Name / Existing Branch Selection */}
             {mode === 'existing-branch' ? (
               <div className="space-y-1.5">
@@ -1133,12 +1197,11 @@ export function NewWorktreeDialog({
                       placeholder={t('session.newWorktree.searchBranches')}
                       className="h-8"
                     />
-                    {renderBranchReadError()}
                     {isLoadingBranches ? (
                       <div className="px-2 py-8 text-center typography-small text-muted-foreground">
                         {t('session.newWorktree.loadingBranches')}
                       </div>
-                    ) : !branchReadError && localBranches.length === 0 && remoteBranches.length === 0 ? (
+                    ) : localBranches.length === 0 && remoteBranches.length === 0 ? (
                       <div className="px-2 py-8 text-center typography-small text-muted-foreground">
                         {t('session.newWorktree.noBranchesFound')}
                       </div>
@@ -1398,12 +1461,11 @@ export function NewWorktreeDialog({
                       placeholder={t('session.newWorktree.searchBranches')}
                       className="h-8"
                     />
-                    {renderBranchReadError()}
                     {isLoadingBranches ? (
                       <div className="px-2 py-8 text-center typography-small text-muted-foreground">
                         {t('session.newWorktree.loadingBranches')}
                       </div>
-                    ) : !branchReadError && localBranches.length === 0 && remoteBranches.length === 0 ? (
+                    ) : localBranches.length === 0 && remoteBranches.length === 0 ? (
                       <div className="px-2 py-8 text-center typography-small text-muted-foreground">
                         {t('session.newWorktree.noBranchesFound')}
                       </div>
@@ -1558,7 +1620,7 @@ export function NewWorktreeDialog({
               </div>
             )}
               </div>
-            </MobileWorktreeFields>
+            </ScrollableOverlay>
             <div className="shrink-0 border-t border-border/50 px-4 pb-3 pt-2">
               {footerContent}
             </div>
@@ -1592,7 +1654,6 @@ export function NewWorktreeDialog({
             </DialogHeader>
 
             <div className="flex-1 overflow-y-auto mt-2 space-y-6">
-              {renderBranchReadError()}
               {/* Branch Name / Existing Branch Selection */}
               {mode === 'existing-branch' ? (
                 <div className="space-y-1.5">
@@ -1618,12 +1679,11 @@ export function NewWorktreeDialog({
                           onKeyDown={stopDropdownTypeahead}
                         />
                         <CommandList disableHorizontal>
-                          {renderBranchReadError()}
                           {isLoadingBranches ? (
                             <div className="px-2 py-4 text-center typography-small text-muted-foreground">
                               {t('session.newWorktree.loadingBranches')}
                             </div>
-                          ) : !branchReadError && localBranches.length === 0 && remoteBranches.length === 0 ? (
+                          ) : localBranches.length === 0 && remoteBranches.length === 0 ? (
                             <CommandEmpty>{t('session.newWorktree.noBranchesFound')}</CommandEmpty>
                           ) : (
                             <>
@@ -1860,12 +1920,11 @@ export function NewWorktreeDialog({
                           onKeyDown={stopDropdownTypeahead}
                         />
                         <CommandList disableHorizontal>
-                          {renderBranchReadError()}
                           {isLoadingBranches ? (
                             <div className="px-2 py-4 text-center typography-small text-muted-foreground">
                               {t('session.newWorktree.loadingBranches')}
                             </div>
-                          ) : !branchReadError && localBranches.length === 0 && remoteBranches.length === 0 ? (
+                          ) : localBranches.length === 0 && remoteBranches.length === 0 ? (
                             <CommandEmpty>{t('session.newWorktree.noBranchesFound')}</CommandEmpty>
                           ) : (
                             <>
@@ -2006,6 +2065,7 @@ export function NewWorktreeDialog({
 
             {/* Footer */}
             <DialogFooter className="mt-1 flex items-center justify-between">
+              {scopeLoadError}
               {/* Validation error - inline with buttons */}
               <div className="flex items-center gap-1.5 text-destructive">
                 {validation.touched && (validation.branchError || validation.worktreeError) && (
@@ -2043,6 +2103,7 @@ export function NewWorktreeDialog({
       )}
 
       <GitHubIntegrationDialog
+        projectId={activeProject?.id}
         open={githubDialogOpen}
         onOpenChange={setGithubDialogOpen}
         onSelect={handleGitHubSelect}

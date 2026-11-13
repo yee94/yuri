@@ -11,12 +11,12 @@ import { Icon } from "@/components/icon/Icon";
 import { cn } from '@/lib/utils';
 import type { GitLogEntry, CommitFileEntry } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
-import { getCommitFileDiff, type CommitFileDiffResponse } from '@/lib/gitApi';
+import type { CommitFileDiffResponse } from '@/lib/gitApi';
+import { useProjectGitActions } from '@/lib/api/useProjectGitActions';
 import { PierreDiffViewer } from '@/components/views/PierreDiffViewer';
 import { getLanguageFromExtension } from '@/lib/toolHelpers';
 import type { LanedCommit } from './gitGraph';
 import { GitGraphSegment } from './GitGraphSegment';
-import * as git from '@/lib/gitApi';
 import { toast } from '@/components/ui/toast';
 import { formatDateTimeForPreference } from '@/lib/timeFormat';
 import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
@@ -147,6 +147,8 @@ export const HistoryCommitRow = React.memo(({
   onActionSuccess,
 }: HistoryCommitRowProps) => {
   const { t } = useI18n();
+  const git = useProjectGitActions();
+  const { getCommitFileDiff } = git;
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const isGraphMode = mode === 'graph';
   type PendingAction =

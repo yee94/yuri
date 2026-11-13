@@ -10,7 +10,8 @@ import {
 export const MobileSheetSnapHandle: React.FC<{
   controller: MobileSheetSnapController;
   ariaLabel: string;
-}> = ({ controller, ariaLabel }) => (
+  compact?: boolean;
+}> = ({ controller, ariaLabel, compact = false }) => (
   <HeightSnapHandle
     data-mobile-sheet-snap-handle
     role="separator"
@@ -20,7 +21,7 @@ export const MobileSheetSnapHandle: React.FC<{
     aria-valuemin={MOBILE_SHEET_COLLAPSED_SNAP * 100}
     aria-valuemax={MOBILE_SHEET_EXPANDED_SNAP * 100}
     aria-valuenow={Math.round(controller.snapPoint * 100)}
-    className="flex min-h-8 cursor-ns-resize touch-none justify-center pt-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
+    className={`flex cursor-ns-resize touch-none justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)] ${compact ? 'min-h-4 pt-1' : 'min-h-8 pt-2.5'}`}
     onPointerDown={controller.handlePointerDown}
     onPointerMove={controller.handlePointerMove}
     onPointerUp={controller.handlePointerUp}

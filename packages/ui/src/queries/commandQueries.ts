@@ -4,6 +4,9 @@ import { queryClient, queryKeys } from '@/lib/queryRuntime';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 
 export type CommandScope = 'user' | 'project';
 
@@ -35,12 +38,14 @@ const commandQueryKey = (directory: string | null, transport = getRuntimeTranspo
 export const commandQueryOptions = (
   directory: string | null = resolveConfigQueryDirectory(),
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeDirectory(directory);
+  const normalizedDirectory = entry ? entry.location.directory : normalizeDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: commandQueryKey(normalizedDirectory, transport),
+    queryKey: scope.key(commandQueryKey(normalizedDirectory, transport)),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<Command[]> => {
-      const response = await runtimeFetch('/api/config/commands/metadata', {
+      const response = await (entry ? scope.fetch : runtimeFetch)('/api/config/commands/metadata', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -55,6 +60,8 @@ export const commandQueryOptions = (
         throw new Error('Failed to fetch command metadata');
       }
       const data = await response.json() as { commands?: Command[] };
+      scope.assertCurrent(signal);
+      if (entry && !Array.isArray(data.commands)) throw new Error('Invalid command catalog');
       return Array.isArray(data.commands) ? data.commands : [];
     },
     retry: 2,
@@ -62,11 +69,12 @@ export const commandQueryOptions = (
 };
 
 export const useCommandsQuery = (options: { enabled?: boolean; directory?: string | null } = {}) => {
+  const host = useHostRuntime();
   const activeProjectPath = useProjectsStore((state) => state.getActiveProject?.()?.path ?? null);
   const directory = normalizeDirectory(options.directory) ?? normalizeDirectory(activeProjectPath) ?? normalizeDirectory(opencodeClient.getDirectory());
   const enabled = options.enabled !== false && Boolean(directory);
   return useQuery({
-    ...commandQueryOptions(directory),
+    ...commandQueryOptions(directory, undefined, host?.entry),
     enabled,
   });
 };
@@ -74,17 +82,23 @@ export const useCommandsQuery = (options: { enabled?: boolean; directory?: strin
 export const readCommandsSnapshot = (
   directory: string | null = resolveConfigQueryDirectory(),
   transport = getRuntimeTransportIdentity(),
-): Command[] => queryClient.getQueryData<Command[]>(commandQueryKey(normalizeDirectory(directory), transport)) ?? [];
+  entry?: HostRuntimeEntry,
+): Command[] => {
+  captureProjectScope(entry).assertCurrent();
+  return queryClient.getQueryData<Command[]>(commandQueryOptions(directory, transport, entry).queryKey) ?? [];
+};
 
 export const refreshCommandsQuery = async (
   client: Pick<QueryClient, 'fetchQuery' | 'getQueryData'>,
   directory: string | null,
   transport: string,
+  entry?: HostRuntimeEntry,
 ): Promise<Command[]> => {
+  if (entry) captureProjectScope(entry).assertCurrent();
   const normalizedDirectory = normalizeDirectory(directory);
   if (getRuntimeTransportIdentity() !== transport) {
-    return client.getQueryData<Command[]>(commandQueryKey(normalizedDirectory, transport)) ?? [];
+    return client.getQueryData<Command[]>(commandQueryOptions(normalizedDirectory, transport, entry).queryKey) ?? [];
   }
-  const options = commandQueryOptions(normalizedDirectory, transport);
+  const options = commandQueryOptions(normalizedDirectory, transport, entry);
   return client.fetchQuery({ ...options, staleTime: 0 });
 };

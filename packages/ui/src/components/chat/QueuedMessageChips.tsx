@@ -36,6 +36,10 @@ import { MessageReferenceChip } from './MessageReferenceChip';
 import { canEditQueuedMessage, canRemoveQueuedMessage, canSendQueuedMessage, canSendServerQueuedMessage, buildQueuedMessagePreviewParts, isLegacyQueueItemDispatchPending, isServerQueueItemActiveAttempt, isServerQueueItemDispatchPending, legacyQueueEditRestoreSource, mergeQueuedMessageScopes, projectServerQueueChipItems, queueModeAllowsMutations, queuedMessagePreviewLine, reorderServerQueueItems, resolveQueuedMessagePreviewText, selectCommittedSendShadows, selectPendingServerQueueOperations, SERVER_QUEUE_SEND_PENDING_TIMEOUT_MS, serverQueueEditInput, serverQueueItemMutationInput, type ServerQueueCommittedSendShadow, type ServerQueueOperationIdentity, type ServerQueueOperationKind } from './queuedMessageChipsState';
 import { isQueueItemSendPendingByAbortOptimistic, subscribeQueueAbortOptimistic, getQueueAbortOptimisticRevision } from '@/sync/queue-abort-optimistic';
 import { enqueueServerQueueScopeMutation, type ServerQueueScopeMutationFlights } from './queueAdmission';
+import { toChip, type SessionInboxOverlayItem } from '@/sync/session-inbox-overlay';
+import { MessageFilesDisplay } from './FileAttachment';
+import type { FilePart } from '@/lib/opencode/v2-types';
+import type { ToolPopupContent } from './message/types';
 
 type BoundQueueScope = Extract<QueueScope, { state: 'bound' }> & {
     deliveryTarget: QueueDeliveryTarget;
@@ -119,7 +123,9 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
         : !clientMutationBlocked && !sendPending && (server
             ? canSendServerQueuedMessage(message as MessageQueueServerDisplayItem, hasDispatchLock, { allowManualDispatchRetry: sendPendingTimedOut })
             : canSendQueuedMessage(message as QueuedMessage, hasDispatchLock));
-    const canQueueInbox = inboxChip && !frozen && message.delivery === 'steer' && !waitingForCompaction;
+    const canQueueInbox = inboxChip && typeof onQueue === 'function' && !frozen && !editPending
+        && !inboxSend.isPending && !steering && !abortSendPending && !rawSendPending
+        && message.delivery === 'steer' && !waitingForCompaction;
     const recovery = legacyMessage?.failure?.recovery;
     const visibleContent = resolveQueuedMessagePreviewText(message);
     const visibleAttachments = pendingAdmission || inboxChip ? undefined : recovery?.attachments ?? ('attachments' in message ? message.attachments : undefined);
@@ -290,30 +296,14 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                                 {t('chat.queuedMessage.send')}
                             </span>
                         </button>
-                        {canQueueInbox ? (
-                            <button
-                                type="button"
-                                onClick={() => onQueue?.(message)}
-                                disabled={!canQueueInbox}
-                                aria-label={t('chat.queuedMessage.title')}
-                                className={cn(
-                                    'inline-flex items-center bg-transparent text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50',
-                                    isMobile ? 'h-7 gap-1.5 px-0 text-[11px]' : 'h-6 gap-1 px-0.5',
-                                )}
-                            >
-                                <Icon
-                                    name="time"
-                                    weight="medium"
-                                    className={cn(isMobile ? 'size-3' : 'size-3.5')}
-                                    aria-hidden="true"
-                                />
-                                <span className={isMobile ? 'font-medium leading-none' : 'font-normal text-[length:calc(var(--text-ui-label)-1px)]'}>
-                                    {t('chat.queuedMessage.title')}
-                                </span>
-                            </button>
-                        ) : null}
                     </>
                 )}
+                {canQueueInbox ? <button type="button" onClick={() => onQueue?.(message)} aria-label={t('chat.queuedMessage.title')}
+                    className={cn('inline-flex items-center bg-transparent text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50',
+                        isMobile ? 'h-7 gap-1.5 px-0 text-[11px]' : 'h-6 gap-1 px-0.5')}>
+                    <Icon name="time" weight="medium" className={cn(isMobile ? 'size-3' : 'size-3.5')} aria-hidden="true" />
+                    <span className={isMobile ? 'font-medium leading-none' : 'font-normal text-[length:calc(var(--text-ui-label)-1px)]'}>{t('chat.queuedMessage.title')}</span>
+                </button> : null}
                 {!isMobile && !pendingAdmission ? removeAction : null}
             </div>
         </div>
@@ -361,6 +351,69 @@ const EMPTY_LEGACY_DISPLAY: Array<QueuedMessage | QueuePendingAdmissionItem> = [
 const EMPTY_PENDING_CLIENT: readonly SessionComposerPendingItem[] = [];
 const EMPTY_PENDING_OPERATION_KINDS: ReadonlySet<ServerQueueOperationKind> = new Set();
 const EMPTY_STEERING_MESSAGE_IDS: ReadonlySet<string> = new Set();
+
+function QueueCard({ isMobile, children }: { isMobile: boolean; children: React.ReactNode }) {
+    return <div className={cn('yuri-composer-queue relative z-0 -mb-5 w-full', isMobile ? 'px-2' : 'px-4')}>
+        <div data-yuri-queue-card="" className={cn(
+            // Match composer palette; dark queue sits behind the brighter input. PC radius = chat input 1.5rem.
+            'overflow-hidden border border-[color-mix(in_srgb,var(--interactive-border)_50%,transparent)] bg-[var(--surface-background)] text-foreground dark:border-transparent dark:bg-[color-mix(in_srgb,var(--surface-background),var(--surface-foreground)_4%)]',
+            isMobile ? 'rounded-[1.25rem]' : 'rounded-3xl',
+        )}>
+            <div data-yuri-queue-card-body="" className={cn('flex flex-col',
+                // Match composer footer left inset.
+                isMobile ? 'px-1.5 py-1' : 'gap-0.5 px-3 py-1',
+            )}>{children}</div>
+            <div data-yuri-queue-composer-overlap="" aria-hidden="true" className={isMobile ? 'h-4' : 'h-5'} />
+        </div>
+    </div>;
+}
+
+/** Native Host inbox uses the mature queue row without mounting any Hub queue owner. */
+export const NativeSessionInboxChips = memo(({ items, readOnly = false, onAction, onShowPopup }: {
+    items: readonly SessionInboxOverlayItem[];
+    readOnly?: boolean;
+    onAction: (action: 'edit' | 'steer' | 'queue' | 'cancel', id: string) => Promise<unknown>;
+    onShowPopup?: (content: ToolPopupContent) => void;
+}) => {
+    const isMobile = useUIStore((state) => state.isMobile);
+    if (!items.length) return null;
+    return <QueueCard isMobile={isMobile}>
+                <DndContext><SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+                    {items.map((item) => <NativeInboxRow key={item.id} item={item} readOnly={readOnly} isMobile={isMobile} onAction={onAction} onShowPopup={onShowPopup} />)}
+                </SortableContext></DndContext>
+    </QueueCard>;
+});
+
+function NativeInboxRow({ item, readOnly, isMobile, onAction, onShowPopup }: {
+    item: SessionInboxOverlayItem; readOnly: boolean; isMobile: boolean;
+    onAction: (action: 'edit' | 'steer' | 'queue' | 'cancel', id: string) => Promise<unknown>;
+    onShowPopup?: (content: ToolPopupContent) => void;
+}) {
+    const { t } = useI18n();
+    const operation = useMutation({ mutationFn: (action: 'edit' | 'steer' | 'queue' | 'cancel') => onAction(action, item.id),
+        onError: (error) => toast.error(t('chat.chatInput.toast.messageSendFailed'), { description: error instanceof Error ? error.message : String(error) }) });
+    const files = React.useMemo<FilePart[]>(() => !Array.isArray(item.payload.files) ? [] : item.payload.files.flatMap((file, index) => {
+        if (!file || typeof file !== 'object') return [];
+        const value = file as Record<string, unknown>;
+        const mime = typeof value.mime === 'string' ? value.mime : 'application/octet-stream';
+        const source = value.source && typeof value.source === 'object' ? value.source as Record<string, unknown> : undefined;
+        const url = typeof value.data === 'string' ? `data:${mime};base64,${value.data}` : typeof value.uri === 'string' ? value.uri : typeof source?.uri === 'string' ? source.uri : undefined;
+        return url ? [{ id: `${item.id}:file:${index}`, type: 'file' as const, sessionID: item.sessionID, messageID: item.id, mime, url,
+            ...(typeof value.name === 'string' ? { filename: value.name } : {}) }] : [];
+    }), [item]);
+    const references = React.useMemo(() => [
+        ...(Array.isArray(item.payload.agents) ? item.payload.agents.flatMap((agent) => agent && typeof agent.name === 'string' ? [`@${agent.name}`] : []) : []),
+        ...(Array.isArray(item.payload.skills) ? item.payload.skills.flatMap((skill) => skill && typeof skill.id === 'string' ? [`[skill:${skill.id}]`] : []) : []),
+    ], [item]);
+    return <div data-native-inbox-id={item.id}>
+        <QueuedMessageChip message={toChip(item)} server={false} frozen={readOnly || operation.isPending} hasDispatchLock={false}
+            pendingOperationKinds={EMPTY_PENDING_OPERATION_KINDS} sendPendingTimedOut={false} abortSendPending={false} steering={false}
+            isMobile={isMobile} inboxEditable={!readOnly} onEdit={async () => { await operation.mutateAsync('edit'); }} onSend={async () => { await operation.mutateAsync('steer'); }}
+            onQueue={() => operation.mutate('queue')} onRemove={() => operation.mutate('cancel')} />
+        {references.length ? <div className="px-6 typography-meta text-muted-foreground">{references.join(' ')}</div> : null}
+        {files.length ? <div className="px-6 pb-1"><MessageFilesDisplay files={files} messageID={item.id} sessionID={item.sessionID} compact onShowPopup={onShowPopup} /></div> : null}
+    </div>;
+}
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const selectQueuedMessagesForScope = (
@@ -882,28 +935,7 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
     }
 
     return (
-        <div className={cn(
-            'yuri-composer-queue relative z-0 -mb-5 w-full',
-            isMobile ? 'px-2' : 'px-4',
-        )}>
-            <div
-                data-yuri-queue-card=""
-                className={cn(
-                    // Match composer palette; dark queue sits behind the brighter input. PC radius = chat input 1.5rem.
-                    'overflow-hidden border border-[color-mix(in_srgb,var(--interactive-border)_50%,transparent)] bg-[var(--surface-background)] text-foreground dark:border-transparent dark:bg-[color-mix(in_srgb,var(--surface-background),var(--surface-foreground)_4%)]',
-                    isMobile ? 'rounded-[1.25rem]' : 'rounded-3xl',
-                )}
-            >
-                <div
-                    data-yuri-queue-card-body=""
-                    className={cn(
-                        'flex flex-col',
-                        isMobile
-                            // Match composer footer left inset.
-                            ? 'px-1.5 py-1'
-                            : 'gap-0.5 px-3 py-1',
-                    )}
-                >
+        <QueueCard isMobile={isMobile}>
                     {hasQueueSurface ? (
                         <DndContext
                             sensors={sensors}
@@ -932,7 +964,7 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
                                         inboxEditable={Boolean(queueScope && draftTarget)}
                                         onEdit={handleEdit}
                                         onSend={handleSend}
-                                        onQueue={handleQueueInbox}
+                                        onQueue={onQueueClientPending ? handleQueueInbox : undefined}
                                         onRemove={handleRemove}
                                         compactionBarrier={compactionBarrier}
                                     />
@@ -952,14 +984,7 @@ export const QueuedMessageChips = memo(({ onEditMessage, onSendMessage, onEditCo
                             {trailing}
                         </>
                     ) : null}
-                </div>
-                <div
-                    data-yuri-queue-composer-overlap=""
-                    aria-hidden="true"
-                    className={isMobile ? 'h-4' : 'h-5'}
-                />
-            </div>
-        </div>
+        </QueueCard>
     );
 });
 

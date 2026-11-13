@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 
 const {
   runtimeFetchMock,
@@ -7,6 +8,8 @@ const {
   openContextFileAtLineMock,
   editorOpenFileMock,
   toastWarningMock,
+  isDesktopDirectoryPathMock,
+  isDesktopLocalMock,
 } = vi.hoisted(() => ({
   runtimeFetchMock: vi.fn(),
   openDesktopPathMock: vi.fn(async () => false),
@@ -14,6 +17,8 @@ const {
   openContextFileAtLineMock: vi.fn(),
   editorOpenFileMock: vi.fn(async () => undefined),
   toastWarningMock: vi.fn(),
+  isDesktopDirectoryPathMock: vi.fn(async () => false),
+  isDesktopLocalMock: vi.fn(() => false),
 }));
 
 vi.mock('@/lib/runtime-fetch', () => ({
@@ -31,8 +36,9 @@ vi.mock('@/lib/i18n', () => ({
 
 vi.mock('@/lib/desktop', () => ({
   isDesktopBinaryPath: vi.fn(async () => false),
-  isDesktopLocalOriginActive: () => false,
-  isDesktopShell: () => false,
+  isDesktopLocalOriginActive: isDesktopLocalMock,
+  isDesktopShell: isDesktopLocalMock,
+  isDesktopDirectoryPath: isDesktopDirectoryPathMock,
   isVSCodeRuntime: () => false,
   openDesktopPath: openDesktopPathMock,
 }));
@@ -67,6 +73,8 @@ describe('fileReferenceActions', () => {
     openContextFileMock.mockReset();
     openContextFileAtLineMock.mockReset();
     editorOpenFileMock.mockReset();
+    isDesktopLocalMock.mockReturnValue(false);
+    isDesktopDirectoryPathMock.mockReset().mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -85,6 +93,47 @@ describe('fileReferenceActions', () => {
       path: 'src/app.ts',
       resolvedPath: '/Users/dev/project/src/app.ts',
     });
+  });
+
+  test('same-path Host probes isolate caches and remote opens never invoke local desktop/editor APIs', async () => {
+    isDesktopLocalMock.mockReturnValue(true);
+    const firstFetch = vi.fn(async () => Response.json({ exists: true, isFile: true, isBinary: false }));
+    const secondFetch = vi.fn(async () => Response.json({ exists: true, isFile: true, isBinary: true }));
+    const host = (id: string, fetch: typeof firstFetch) => ({
+      key: `location:${id}`, queryScope: ['hub', id, '/repo'], fetch, sdk: vi.fn(),
+    }) as unknown as HostRuntimeEntry;
+    const a = host('a', firstFetch);
+    const b = host('b', secondFetch);
+    expect(await probeFileReference('/repo/src/app.ts', '/repo', a)).toEqual({ exists: true, isBinary: false });
+    expect(await probeFileReference('/repo/src/app.ts', '/repo', b)).toEqual({ exists: true, isBinary: true });
+    expect(firstFetch).toHaveBeenCalledOnce();
+    expect(secondFetch).toHaveBeenCalledOnce();
+    expect(runtimeFetchMock).not.toHaveBeenCalled();
+    await openFileReference('src/app.ts', false, { effectiveDirectory: '/repo', scope: a, referenceKind: 'href', preferRuntimeEditor: true,
+      editor: { openFile: editorOpenFileMock, openDiff: vi.fn(async () => undefined) } });
+    expect(openContextFileMock).toHaveBeenCalledWith('location:a', '/repo/src/app.ts', { closeFileTree: true });
+    expect(editorOpenFileMock).not.toHaveBeenCalled();
+    expect(openDesktopPathMock).not.toHaveBeenCalled();
+    expect(isDesktopDirectoryPathMock).not.toHaveBeenCalled();
+  });
+
+  test.each(['packages/electron/dist-preview/mac-arm64/', 'packages/electron/dist-preview/mac-arm64'])('opens local directory link %s in the system file manager', async (href) => {
+    isDesktopLocalMock.mockReturnValue(true);
+    isDesktopDirectoryPathMock.mockResolvedValue(true);
+    openDesktopPathMock.mockResolvedValue(true);
+    const anchor = document.createElement('a');
+    anchor.setAttribute('href', href);
+    await openFileReferenceFromElement(anchor, { effectiveDirectory: '/repo' });
+    expect(openDesktopPathMock).toHaveBeenCalledWith('/repo/packages/electron/dist-preview/mac-arm64');
+    expect(openContextFileMock).not.toHaveBeenCalled();
+  });
+
+  test('does not inspect or open a remote directory on the local desktop', async () => {
+    const anchor = document.createElement('a');
+    anchor.setAttribute('href', 'packages/ui/');
+    await openFileReferenceFromElement(anchor, { effectiveDirectory: '/remote' });
+    expect(isDesktopDirectoryPathMock).not.toHaveBeenCalled();
+    expect(openDesktopPathMock).not.toHaveBeenCalled();
   });
 
   test.each([false, true])('opens encoded Markdown file links (annotated: %s)', async (annotated) => {

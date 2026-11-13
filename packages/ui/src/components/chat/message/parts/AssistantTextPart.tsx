@@ -8,6 +8,7 @@ import { resolveAssistantDisplayText, shouldRenderAssistantText } from './assist
 import { streamPerfCount, streamPerfObserve } from '@/stores/utils/streamDebug';
 import { GeneratedJsonResultCard } from './GeneratedJsonResultCard';
 import { parseGeneratedJsonResult } from './generatedJsonResult';
+import { searchPartKey } from '../../lib/transcriptSearch';
 import {
     emitStreamingHapticEvent,
     evaluateVisiblePartHaptic,
@@ -120,6 +121,7 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
             <div
                 className={`group/assistant-text relative break-words ${chatRenderMode === 'live' ? 'my-1' : ''}`}
                 key={part.id || `${messageId}-text`}
+                data-transcript-search-part={searchPartKey(messageId, part.id)}
             >
                 <GeneratedJsonResultCard result={generatedResult} />
             </div>
@@ -130,6 +132,7 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
         <div
             className={`group/assistant-text relative break-words ${chatRenderMode === 'live' ? 'my-1' : ''}`}
             key={part.id || `${messageId}-text`}
+            data-transcript-search-part={searchPartKey(messageId, part.id)}
             data-speech-content={part.type === 'text' ? 'true' : undefined}
         >
             <MarkdownRenderer

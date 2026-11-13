@@ -54,6 +54,7 @@ export const registerSessionFoldersRoutes = (app, dependencies) => {
       await fsPromises.writeFile(tmp, serialized, 'utf8');
       await fsPromises.rename(tmp, filePath);
       saved = true;
+      dependencies.broadcastYuriEvent?.({ type: 'yuri:session-folders-changed', properties: { occurredAt: Date.now() } });
       return res.json({ success: true });
     } catch (error) {
       if (tmp && !saved) {

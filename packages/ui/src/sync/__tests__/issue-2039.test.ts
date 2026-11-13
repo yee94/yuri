@@ -68,7 +68,8 @@ const {
 const getMockCalls = (fn: unknown): unknown[][] => ((fn as { mock?: { calls: unknown[][] } }).mock?.calls ?? [])
 
 vi.mock("zustand", () => ({
-  create: () => (initializer: (set: (patch: unknown | ((state: unknown) => unknown)) => void, get: () => unknown) => Record<string, unknown>) => {
+  create: (directInitializer?: (set: (patch: unknown | ((state: unknown) => unknown)) => void, get: () => unknown) => Record<string, unknown>) => {
+    const createStore = (initializer: (set: (patch: unknown | ((state: unknown) => unknown)) => void, get: () => unknown) => Record<string, unknown>) => {
     let state: Record<string, unknown>
     const get = () => state
     const set = (patch: unknown | ((current: Record<string, unknown>) => unknown)) => {
@@ -93,6 +94,8 @@ vi.mock("zustand", () => ({
     state = (initializer as (...args: unknown[]) => Record<string, unknown>)(set, get, store)
 
     return store
+    }
+    return directInitializer ? createStore(directInitializer) : createStore
   },
 }))
 

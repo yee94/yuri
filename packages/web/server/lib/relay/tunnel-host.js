@@ -28,11 +28,14 @@ const isAllowedHttpPath = (pathname) =>
   || pathname === '/auth'
   || pathname.startsWith('/auth/');
 
+const PREVIEW_TARGETS_PATH = /^\/api\/preview\/targets(?:\/[^/]+)?\/?$/;
+
 const ALLOWED_WS_PATHS = new Set([
   '/api/global/event/ws',
   '/api/event/ws',
   '/api/terminal/ws',
   '/api/remote-desktop/ws',
+  '/api/gui-network/ws',
   '/api/dictation/ws',
 ]);
 
@@ -48,6 +51,7 @@ const PREVIEW_PROXY_WS_PATH_PREFIX = '/api/preview/proxy/';
  */
 export const isTunnelWsPathAllowed = (path) => {
   if (typeof path !== 'string' || !path) return false;
+  if (/^\/api\/hosts\/[^/]+\/api\/(?:(?:terminal|gui-network)\/ws(?:\?|$)|preview\/proxy\/)/.test(path)) return true;
   // Path only (no query) — tunnel open payload already splits query.
   if (ALLOWED_WS_PATHS.has(path)) return true;
   try {
@@ -189,7 +193,7 @@ export const createTunnelHost = ({
   // HTTP
   // -------------------------------------------------------------------------
 
-  const buildRequestHeaders = (rawHeaders) => {
+  const buildRequestHeaders = (rawHeaders, path = '') => {
     const headers = {};
     for (const [name, value] of Object.entries(rawHeaders)) {
       if (typeof name !== 'string' || typeof value !== 'string') continue;
@@ -199,6 +203,13 @@ export const createTunnelHost = ({
       headers[lower] = value;
     }
     headers['x-yuri-relay-connection'] = connectionId;
+    // Tunneled renderer fetches cannot set Origin (forbidden header), but the
+    // preview target routes require an allowed Origin. Present the loopback
+    // origin we dial, as the WS path does; scoped to these routes only so other
+    // same-origin checks keep treating tunneled requests as origin-less.
+    if (!headers.origin && PREVIEW_TARGETS_PATH.test(path)) {
+      headers.origin = `http://127.0.0.1:${getLocalPort()}`;
+    }
     return headers;
   };
 
@@ -243,7 +254,7 @@ export const createTunnelHost = ({
     try {
       response = await fetch(url, {
         method,
-        headers: buildRequestHeaders(request.headers),
+        headers: buildRequestHeaders(request.headers, request.path),
         body: requestBody,
         duplex: hasBody ? 'half' : undefined,
         signal: stream.abort.signal,
@@ -403,7 +414,8 @@ export const createTunnelHost = ({
         for (const frame of encodeFragmentedMessage(frameType, streamId, bytes)) {
           await waitForBackpressure(null);
           if (streams.get(streamId) !== stream || closed) return;
-          await send(frame, open.path === '/api/remote-desktop/ws');
+          await send(frame, open.path === '/api/remote-desktop/ws' || open.path === '/api/gui-network/ws'
+            || /^\/api\/hosts\/[^/]+\/api\/gui-network\/ws$/.test(open.path));
         }
       });
     });
@@ -479,7 +491,7 @@ export const createTunnelHost = ({
           url: `${request.path}${request.query ? `?${request.query}` : ''}`,
           headers: websocket
             ? { upgrade: 'websocket', 'x-yuri-relay-connection': connectionId }
-            : buildRequestHeaders(request.headers),
+            : buildRequestHeaders(request.headers, request.path),
         }) === true;
       } catch {
         authorized = false;

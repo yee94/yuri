@@ -1,5 +1,10 @@
 # Global conversation content search
 
+Remote Project searches execute on their target Host via the Gateway's read-only
+content-search capability. Local search rejects explicit remote Host/Location
+scopes without touching this index. Remote event fanout bypasses local ingestion;
+the Hub never indexes remote conversation bodies.
+
 `POST /api/yuri/content-search/resume` authenticates Host UI/client access without
 URL/preview tokens, rejects cross-origin cookie requests, and returns 202 with the
 current index status. It invokes the existing `sync({ resume: true })` in the

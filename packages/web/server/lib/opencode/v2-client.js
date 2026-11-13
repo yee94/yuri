@@ -20,19 +20,24 @@ import { wrapFetchWithRuntimeContractGate } from './server-opencode-fetch.js';
 
 /**
  * Create the single server-side client for official OpenCode v2 APIs.
- * Fetch is always wrapped with runtime-contract write admission so Host
- * background clients (queue / scheduled / assistants) cannot bypass the proxy gate.
+ * Local fetch is wrapped with runtime-contract write admission so Host background
+ * clients share the proxy gate. Remote task clients explicitly delegate admission
+ * to their authenticated target Yuri proxy through a supplied scoped transport.
  *
  * @param {{
  *   baseUrl: string,
  *   authHeaders?: Record<string, string>,
  *   fetchImpl?: typeof fetch,
  *   getRuntimeContract?: () => (object | null | undefined),
+ *   executionAdmission?: 'target-yuri-proxy',
  * }} input
  * @returns {OpenCodeV2Client}
  */
-export function makeOpenCodeV2Client({ baseUrl, authHeaders, fetchImpl, getRuntimeContract }) {
-  const gatedFetch = wrapFetchWithRuntimeContractGate(fetchImpl || fetch, {
+export function makeOpenCodeV2Client({ baseUrl, authHeaders, fetchImpl, getRuntimeContract, executionAdmission }) {
+  // A lease-backed remote forwarding client terminates at another Yuri proxy.
+  // That proxy, not this process's OpenCode lifecycle, owns live write admission.
+  if (executionAdmission === 'target-yuri-proxy' && typeof fetchImpl !== 'function') throw new Error('Target proxy admission requires an explicit scoped transport');
+  const gatedFetch = executionAdmission === 'target-yuri-proxy' ? fetchImpl : wrapFetchWithRuntimeContractGate(fetchImpl || fetch, {
     ...(typeof getRuntimeContract === 'function' ? { getRuntimeContract } : {}),
   });
   const client = OpenCode.make({

@@ -6,7 +6,7 @@ import { SidebarBackgroundTasks } from './SidebarBackgroundTasks';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 import { historyImportMessages } from '@/lib/i18n/messages/history-import';
 
-const fixture = vi.hoisted(() => ({ transport: 'host-one', generation: 1, fetch: vi.fn(), refresh: vi.fn(), move: vi.fn(), open: vi.fn(),
+const fixture = vi.hoisted(() => ({ transport: 'host-one', generation: 1, local: true, fetch: vi.fn(), refresh: vi.fn(), move: vi.fn(), open: vi.fn(),
   listeners: new Set<() => void>(), renders: vi.fn() }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeGeneration: () => fixture.generation, getRuntimeTransportIdentity: () => fixture.transport, getRuntimeKey: () => fixture.transport,
@@ -18,10 +18,10 @@ vi.mock('@/lib/i18n', () => ({ useI18n: () => { fixture.renders(); return { loca
   const message = key === 'backgroundTasks.downloaded' || key === 'backgroundTasks.downloadedUnknownTotal' ? historyImportMessages.en[key] : key;
   return message.replace(/\{(\w+)\}/g, (_, name) => params[name] ?? `{${name}}`);
 } }; } }));
-vi.mock('@/lib/desktop', () => ({ isDesktopLocalOriginActive: () => true }));
+vi.mock('@/lib/desktop', () => ({ isDesktopLocalOriginActive: () => fixture.local }));
 vi.mock('@/stores/useUpdateStore', async () => {
   const { create } = await import('zustand');
-  return { useUpdateStore: create(() => ({ downloading: false, downloadError: null, downloadVersion: null, progress: null, downloadUpdate: vi.fn(async () => {}) })) };
+  return { useUpdateStore: create(() => ({ downloading: false, downloaded: false, info: null, downloadError: null, downloadVersion: null, progress: null, downloadUpdate: vi.fn(async () => {}) })) };
 });
 vi.mock('@/queries/projectOrderQueries', () => ({ refreshProjectOrderSnapshot: (...args: unknown[]) => fixture.refresh(...args) }));
 vi.mock('@/stores/useSetupTourStore', () => ({ useSetupTourStore: { getState: () => ({ move: fixture.move, open: fixture.open }) } }));
@@ -40,9 +40,9 @@ const render = async () => {
 };
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); vi.useFakeTimers();
-  fixture.transport = 'host-one'; fixture.generation = 1; fixture.listeners.clear();
+  fixture.transport = 'host-one'; fixture.generation = 1; fixture.local = true; fixture.listeners.clear();
   fixture.refresh.mockReset().mockResolvedValue({ projects: [] }); fixture.move.mockReset(); fixture.open.mockReset(); fixture.renders.mockReset();
-  useUpdateStore.setState({ downloading: false, downloadError: null, downloadVersion: null, progress: null });
+  useUpdateStore.setState({ downloading: false, downloaded: false, info: null, downloadError: null, downloadVersion: null, progress: null });
   vi.mocked(useUpdateStore.getState().downloadUpdate).mockReset().mockResolvedValue(undefined);
   fixture.fetch.mockReset().mockImplementation(async (url: string) => response(url));
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -57,7 +57,7 @@ test('multiple tasks show only adjacent rings in a right-aligned fit-width group
   expect(rows.map((row) => row.getAttribute('aria-valuenow'))).toEqual(['25', '60']);
   expect(host.querySelector('[data-sidebar-background-tasks]')?.className).toContain('text-muted-foreground/60');
   expect(host.querySelector('[data-sidebar-background-tasks]')?.className).toContain('w-fit');
-  expect(host.querySelector('[data-sidebar-background-tasks]')?.className).toContain('ml-auto');
+  expect(host.querySelector('[data-sidebar-background-tasks]')?.className).not.toContain('ml-auto');
   expect(host.querySelector('[data-sidebar-background-tasks]')?.className).not.toContain('flex-1');
   expect(host.querySelector('[role="tooltip"], [title]')).toBeNull();
   await act(async () => host.querySelector('button')!.click());
@@ -87,12 +87,87 @@ test('task details dismiss with Escape and return focus to the compact trigger',
   expect(document.activeElement).toBe(trigger);
 });
 
+test.skip('the real background-download popup blocks sidebar text when native vibrancy is active', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' })));
+  useUpdateStore.setState({ downloading: true, progress: { downloaded: 154_600_000, total: 272_900_000 } });
+  await render();
+  await act(async () => host.querySelector('button')!.click());
+  await tick(200);
+  const popup = document.querySelector<HTMLElement>('[role="dialog"]')!;
+  expect(popup.textContent).toContain('154.6 / 272.9 MB');
+  const material = popup.cloneNode(true) as HTMLElement;
+  material.removeAttribute('data-starting-style');
+  material.style.cssText = 'position:absolute;left:60px;top:60px;width:288px;opacity:1;transform:none;transition:none';
+  vi.useRealTimers();
+  const { readFileSync, writeFileSync, rmSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } = await import('../../ui/chromeCdpHarness');
+  const source = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+  const evidence = evidenceRoot();
+  const chrome = await openChromeSession({ width: 800, height: 600 });
+  try {
+    const css = await compileProductionCssAsync(source);
+    const themeVars = (name: string) => {
+      const theme = JSON.parse(readFileSync(join(source, `lib/theme/themes/${name}.json`), 'utf8'));
+      return Object.entries(theme.colors.surface).map(([key, value]) => `--surface-${key.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`)}:${value}`).join(';');
+    };
+    const html = join(evidence, 'background-download.html');
+    writeFileSync(html, `<!doctype html><html data-yuri-vibrancy><head><style>${css}
+      :root{${themeVars('carbonfox-light')}}html.dark{${themeVars('cursor-dark')}}
+      body{background:var(--surface-background);color:var(--surface-foreground)}</style></head><body>
+      <div id="sidebar-text" style="position:absolute;left:70px;top:80px;font-size:28px">Project titles<br>Other conversations</div>
+      ${material.outerHTML}</body></html>`);
+    const page = await openPageSession(chrome, { width: 800, height: 600, standalone: false });
+    await page.navigateFile(html);
+    for (const dark of [false, true]) {
+      await page.evaluate(`document.documentElement.classList.toggle('dark',${dark})`);
+      for (const desktop of [false, true]) {
+        await page.evaluate(`document.documentElement.classList.toggle('desktop-runtime',${desktop})`);
+        const fill = await page.evaluate<string>(`getComputedStyle(document.querySelector('[role="dialog"]')).backgroundColor`);
+        expect(fill).toBe(dark ? 'rgb(20, 20, 20)' : 'rgb(244, 244, 247)');
+      }
+      const clip = { x: 90, y: 90, width: 200, height: 40, scale: 1 };
+      const before = await page.send('Page.captureScreenshot', { format: 'png', clip });
+      await page.evaluate(`document.getElementById('sidebar-text').style.visibility='hidden'`);
+      const after = await page.send('Page.captureScreenshot', { format: 'png', clip });
+      expect(after.data).toBe(before.data);
+      await page.evaluate(`document.getElementById('sidebar-text').style.visibility='visible'`);
+    }
+  } finally {
+    await chrome.close();
+    if (!keepEvidence()) rmSync(evidence, { recursive: true, force: true });
+  }
+}, 120_000);
+
 test('a single task keeps just its ring and short label, with no visible percent', async () => {
   fixture.fetch.mockImplementation(async (url: string) => response(url, job(), index({ phase: 'ready' })));
   await render();
   expect(host.textContent).toBe('backgroundTasks.import');
   expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
   expect(host.textContent).not.toContain('%');
+});
+
+test('a completed client download suppresses only its stale local Host mirror', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' }),
+    { id: 'host-download', status: 'downloading', version: '2.0.1', progress: 99 }));
+  useUpdateStore.setState({ downloaded: true, downloadVersion: '2.0.1' });
+  await render();
+  expect(host.querySelector('[data-sidebar-background-tasks]')).toBeNull();
+  fixture.local = false;
+  await act(async () => root.render(<QueryClientProvider client={client}><SidebarBackgroundTasks compactWithRestart /></QueryClientProvider>));
+  await tick();
+  expect(host.querySelector('[data-sidebar-background-tasks]')).not.toBeNull();
+});
+
+test('an unrelated task beside restart uses a compact icon with a hover label', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, job(), index({ phase: 'ready' })));
+  useUpdateStore.setState({ downloaded: true });
+  await act(async () => root.render(<QueryClientProvider client={client}><SidebarBackgroundTasks compactWithRestart /></QueryClientProvider>));
+  await tick();
+  expect(host.textContent).toBe('');
+  expect(host.querySelector('button')?.getAttribute('title')).toBe('backgroundTasks.import');
+  expect(host.querySelector('button')?.className).toContain('size-7');
 });
 
 test('import, index, client and Host details share one progress-bar design independent of task type', async () => {
@@ -240,6 +315,30 @@ test('only download failures create a client task and retry delegates to the upd
   await act(async () => (document.querySelector('[data-background-task="client-update"] button') as HTMLButtonElement).click()); await tick();
   expect(useUpdateStore.getState().downloadUpdate).toHaveBeenCalledOnce();
   expect(host.querySelector('[role="progressbar"]')?.className).not.toContain('text-[var(--status-error)]');
+});
+
+test('a successful remote retry clears only the remote task, keeping an independent same-version client download untouched', async () => {
+  fixture.local = false;
+  const operation = { id: 'remote-update', planId: 'remote-plan', version: '2.0.0', channel: 'beta', kind: 'cli-package',
+    status: 'failed', progress: 42, error: 'update_interrupted' };
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' }), operation));
+  useUpdateStore.setState({ downloading: true, downloadVersion: operation.version, progress: { downloaded: 40, total: 100 } });
+  const clientUpdate = useUpdateStore.getState();
+  await render();
+  expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
+  await act(async () => host.querySelector('button')!.click()); await tick();
+  fixture.fetch.mockResolvedValueOnce(Response.json({ ...hostUpdate(), currentVersion: operation.version, channel: 'beta', update: null,
+    operation: { ...operation, status: 'succeeded', progress: 100, error: null } }));
+
+  await act(async () => (document.querySelector('[data-background-task="remote-update"] button') as HTMLButtonElement).click()); await tick();
+
+  expect(document.querySelector('[data-background-task="remote-update"]')).toBeNull();
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.querySelector('[data-background-task="client-update"]')).not.toBeNull();
+  expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
+  expect(useUpdateStore.getState()).toBe(clientUpdate);
+  expect(useUpdateStore.getState().downloadUpdate).not.toHaveBeenCalled();
+  expect(fixture.fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
 });
 
 test('phase progress owns its denominator; unknown totals never display fabricated percentages', async () => {

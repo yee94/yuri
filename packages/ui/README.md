@@ -3,47 +3,91 @@
 `@yuriai/ui` owns the shared React surfaces, runtime contracts, state and persistence.
 OpenCode package identities and protocols remain third-party contracts.
 
-Provider 品牌候选顺序由无运行时依赖的 `src/lib/providerBrand.ts` 所有；Web 的
-`useProviderLogo` 与 NSH 的原生图片适配器共用 alias/Magpie 解码规则，各自提供实际
-artwork 目录。Native 不导入 React Hook 或 `import.meta.glob`。
+## iOS keyboard and editing lifetimes
 
-移动 Projects 首页与 MobileSessionsSheet 的紧凑活动时间由无 import 的
-`src/lib/time-format-core.ts` 的 `formatRelativeShort` 所有，NSH Projects 直接复用。
-保留 Web 的 `now/m/h/d` 文本与默认 Intl locale/时区；不足七个经过天显示相对时间，
-七天起只显示短月份与日，不额外加年份。零/非法 Date 返回空文本，合法未来时间显示 `now`。
+`apps/MobileApp.tsx` treats Capacitor keyboard hide and iOS native IME
+settled-close as presentation events only. They unwind keyboard lift/insets,
+but never blur a still-focused composer or request native composer blur. iOS
+can emit them during focus/input-view reload and hardware keyboard minimization.
+An unfocused editor can still collapse; explicit composer actions, focus transfer
+and navigation retain their existing ownership. iOS app background explicitly
+blurs a focused Web composer; foreground does not restore focus. Native composer
+background termination is owned by UIKit in the mobile package.
 
-## Projects 菜单与工作树表单
+Android settled Back-close still ends composer editing. Search/question inputs
+never gain whole-page chat lift. The production-hook replay and ownership tests
+live in `src/components/ui/MobileWindowMotion.android-focus.test.tsx`; they are
+happy-dom lifecycle guards, not iOS device/HID or input-latency acceptance.
 
-`src/mobile/sessionMenuModel.ts` 拥有项目菜单的动作顺序、字典 key、图标与破坏性分组，
-Web 手机端和 NSH Projects 共用 `buildProjectMenuItems`。菜单模型仅依赖纯类型/字典类型，
-不经 i18n React context；实际点击、关闭 completion 与呈现由各 runtime 所有。
-NSH 的工作树/文件/更改额外入口保留在共享标准动作之后，不以删除能力实现一致。
+## Remote project client boundaries
 
-`src/lib/worktrees/worktreeNames.ts` 拥有无运行时依赖的分支规范化与目录 slug 规则，
-`NewWorktreeDialog` 和 NSH 创建 controller 共用；分支不截长，目录 slug 最多80字符。
-它只规范化输入，不证明分支/目录可创建，服务端校验仍为创建前置条件。
+Electron and Capacitor support a Hub's aggregate projects; browser and VS Code
+surfaces explicitly remain unsupported. Aggregation never switches the window's
+runtime endpoint. `HostRuntimeRegistry` captures a Hub/Host/directory scope for
+official SDK calls and Yuri HTTP capabilities. Filesystem calls keep the physical
+directory; serialized Location/session keys are only cache and UI identities.
 
-`src/lib/worktrees/branchSearch.ts` 的 `rankBranchesForQuery` 同时供 Web 工作树表单与
-NSH 的纯分组适配器消费；依赖相对路径的共享 fuzzy scorer，不引入 React/browser 层。
-搜索把模糊匹配置顶，但保留其他本地/远端分支；远端显示短名，值始终保留 `remotes/`。
-成功空目录、无搜索匹配和读取失败由各 runtime 的读取/呈现 owner 分开处理。
+`SelectedProjectHostBoundary` wraps project workspaces, not machine settings or
+the Hub's local sidebar consumers. A matching remote worktree selection supplies
+its own cwd. Remote selection uses `useSessionNavigationStore`, separate from the
+retained Hub session. URLs carry Hub, Host, raw cwd and optionally the Hub project
+reference so sibling worktrees restore without a local session-ID lookup.
 
-Web `NewWorktreeDialog` 的分支数据、加载和错误统一由现有 `useGitBranchesQuery`
-所有，不再通过 Git store 的独立加载状态投影。读取失败保留 Query 旧目录和组件草稿，
-表单及源/现有分支的手机 picker、桌面 dropdown 均提供错误和显式重试；失败不显示成功空态。
-刷新调用 `refetch({ cancelRefetch: false })`，绕过新鲜缓存且不叠加活跃刷新；
-Query 原有30秒新鲜期、失败重试与窗口聚焦刷新语义保留，不宣称所有读取只由点击触发。
-此读取不执行 remote fetch；创建许可仍须服务端校验，读取成功不代替创建确认。
+`RemoteProjectsBootstrap` observes the existing settings bootstrap's read-only
+`hasRemoteProjects` hint. Only that hint or cached references enable catalog
+discovery. An explicit project picker may refresh the catalog independently.
+Catalog and summaries use invalidation rather than background polling; the shared
+registry event consumer only invalidates affected Host summaries, never on token
+deltas. The existing project-order settings GET also projects the bootstrap hint
+on reference tips, including the first reference created by another client and
+the last removal. `settings.hubProjectLayout` owns Hub-local mixed project order
+and collapse state. Layout writes contain Hub reference/local project IDs, never
+remote paths in `settings.projects`. Query-owned serialized writes and confirmed
+server merge snapshots restore the layout on desktop and mobile, with rollback
+on failure. Local cache is only startup continuity.
 
-Web `NewWorktreeDialog` 的预校验在 touched 后按实际表单依赖 debounce 300ms。
-取消句柄归 ref，`useEvent` 读取最新校验逻辑；校验自身状态更新和无关父级 render
-不重新触发请求。关闭、换稿或开始创建使旧结果不可采用，但该句柄没有传入 HTTP reader，
-因此不宣称已物理中止网络。真实组件回归覆盖成功/失败各50次无关重渲染只校验一次，
-以及关闭重开后的旧响应隔离（`NewWorktreeDialog.validation.test.tsx`）。
-这些是共享表单合同；完整 Native/Web 的局部实测及未完成分支见
-`../nsh/PROJECTS-SESSION-ACCEPTANCE.md` 批次 F，不代表所有 runtime 均已端到端验收。
+Remote transcript content uses the client's IndexedDB, not the Hub transcript
+cache. Live content leases share the existing Hub event stream and refresh after
+each new ready generation. Offline cached content is continuity data, never proof
+that the remote runner is still active. See `src/sync/DOCUMENTATION.md`,
+`src/stores/DOCUMENTATION.md` and `src/lib/preview/DOCUMENTATION.md` for ownership.
 
 ## Tests
+
+Remote project preview, file tabs, terminal tabs, and context-panel persistence
+use the explicit Hub/Host/Location identity; filesystem APIs keep raw directory
+paths. Remote browser panes always use the Host preview proxy, never the client's
+Electron webview or a direct localhost fallback after proxy failure. Header usage
+and context overview observe the already-bound remote transcript and scoped model
+catalogs, preserving the existing statistics and raw-message tools without reading
+the same-ID Hub session. Context overview retains the shared content demand while
+visible. Local-only surfaces do not mount remote discovery or summary Queries.
+The Header session switcher uses separate local/remote data leaves and the same
+row presentation. Remote roots come from Host summaries, child expansion reads
+bounded Host SDK pages, and New/Select use the explicit remote navigation bridge.
+Header summary fallbacks, switcher roots, children and navigation validate project ownership
+with `resolveRemoteProjectOwner` and the Host's verified worktree topology. Explicit
+project roots take precedence; nested projects never infer aliases from a parent
+repository catalog. Each child retains its own raw directory for SDK and navigation.
+For the selected Header title, the existing Host/Location/generation-scoped session
+metadata Query is authoritative; summaries provide continuity before metadata is
+available. A disabled, memoized observer reads that Query without fetching metadata
+or acquiring content demand, including deep links whose summaries are still empty.
+Offline summaries remain visible without presenting cached busy status as live.
+Header Run actions carry the complete project Hub/Host reference and raw cwd.
+
+Runtime API authorization failures recheck the current UI session and show the
+existing unlock or pairing screen only when session status confirms rejection.
+Electron windows also recheck when focused; transient network failures retain the
+current screen. Late responses from another runtime or credential generation are
+ignored.
+Valid client credentials (including SSH-issued and Relay-pairing credentials)
+remain independent of an expired UI password cookie. Desktop Relay `/auth/session`
+rejections lead to pairing recovery, never password login. Terminal Relay socket
+authentication rejection has a typed transport status and a separate retry/switch
+screen; it is not proof that pairing was revoked. Checks coalesce while in flight
+and time out after ten seconds without treating timeout as logout. Native mobile
+keeps its existing connection flow unchanged.
 
 The desktop header shows a neutral connection glyph when more than one instance
 is configured (including the local backend), independently of probe/auth status.
@@ -61,10 +105,21 @@ The header does not probe hosts. Remote windows use read-only `sshHostIds` from
 the desktop host catalog to classify SSH mirrors without privileged SSH reads.
 The active host remains visible even with older installers lacking that metadata.
 
+Desktop window titles resolve saved Host/SSH labels by runtime identity before
+URL matching, including Relay's virtual loopback addresses. They refresh on
+runtime switches and window focus and update native titles on macOS as well as
+other desktop platforms. Title metadata uses runtime-scoped Query state; unrelated
+project metadata and parent renders do not trigger catalog reloads.
+
 Remote Instances SSH row actions show a spinner and disable repeated clicks during
 the local request and every live bootstrap/reconnect phase, including installation
 and updates. Request failure releases the local lock so the user can retry.
 
+Adding SSH from Settings or the add-project machine picker opens the same SSH
+editor directly. New entries remain unsaved drafts until Create or Connect;
+Connect saves the current fields first, and a failed save leaves the draft open.
+Closing an unsaved editor creates no connection. Logs and delete appear only for
+saved entries.
 The SSH editor uses one shared Settings card, with connection, logs, delete and
 save actions in its header rather than a separate toolbar row. Managed
 connections expose command, name and SSH password; existing external connections
@@ -194,13 +249,25 @@ material. Its directory list is a transparent scrolling region, never a nested
 card with its own fill, border or shadow. Header, path field, directory content
 and footer use aligned 24px desktop / 16px mobile content insets. Local layout
 and compact type live in `src/components/session/directory-explorer-dialog.css`.
-Explanatory subtitles and directory headings are omitted. Desktop shortcut hints
-use the shared `Kbd variant="hint"` badges with sprite `Icon` keys; macOS shows
+Explanatory subtitles and directory headings are omitted.
+The desktop show-hidden toggle sits at the right of the path input row, aligned
+with its content inset; mobile retains the compact sheet-header action.
+Desktop shortcut hints use the shared `Kbd variant="hint"` badges with sprite `Icon` keys; macOS shows
 Command, other platforms show Ctrl. The footer may wrap without squeezing its
 actions. Mobile omits keyboard hints and retains the controlled shared
 resizable sheet and 44px folder-navigation targets. Browsing, hidden folders,
 quick add, create/add, native folder selection and clone/identity behavior share
 the existing handlers across both layouts.
+The results frame uses `overflow-clip`, leaving the inner directory list as the
+only scroll owner even when touch-mode CSS rewrites `overflow-hidden` to auto.
+
+## Project settings
+
+The project dialog and Settings page share one grouped identity form. The dialog
+uses Settings control tokens and a collapsed existing-worktree list; Settings
+keeps that list expanded for search targets. Project actions and worktree setup
+command controls are no longer exposed on either surface. Identity auto-save and
+existing-worktree deletion retain their original owners.
 
 ## Assistant avatars
 
@@ -278,8 +345,6 @@ new URLs or new protocol defaults.
 
 Mobile remote desktop lives in `src/mobile/RemoteDesktopPanel.tsx`, with transient connection/gesture ownership in `src/lib/remote-desktop/` and runtime-scoped capability Query state in `src/queries/remoteDesktopQueries.ts`. It uses the existing runtime fetch/auth/socket path for direct and Relay connections. The connected Host owns capture and input; the client never falls back to its local computer. See `../web/server/lib/remote-desktop/DOCUMENTATION.md` for supported platforms, interaction, resource limits and acceptance gates.
 
-The shared input contract lives in `src/lib/remote-desktop/input.ts`. Gesture helpers import this data-only module, not the browser connection implementation, so native consumers do not pull DOM or Relay transports into their type-checking tree. `connection.ts` retains its type export for existing browser callers.
-
 The panel forwards zoom/Fit state transitions to the session connection without React state or per-frame traffic. `connection.ts` sends the bounded `view.zoomed` control only after the Host advertises `ready.zoomQuality: true`; old/non-advertising Hosts receive no unknown commands. The latest state is retained through startup, and connection closure/runtime switching rejects later control. New Hosts prioritize source-resolution detail while zoomed and restore normal adaptive quality on Fit, without reconnecting or resetting local zoom when encoded dimensions change at the same aspect ratio.
 
 The local Electron Settings → Remote instances page includes `RemoteDesktopSettings`, a default-off permission checker. `remoteDesktopSetupQueries.ts` owns native setup Query/mutation state; `lib/desktop.ts` provides the narrow local IPC calls. The mobile panel explains how to enable a disabled Host and does not open a control socket until the Host reports enabled. Permission management never targets a remote runtime or changes the phone's own permissions.
@@ -289,6 +354,12 @@ marks the active instance, and switches through the shared mobile connection
 controller in one tap. Busy connections disable switching. A failed connection or
 password challenge opens the existing instance surface; Settings retains instance
 management. With no saved instances, the menu keeps the instance-management entry.
+
+The phone Projects home carries each project's `iconImage` metadata from the
+project store through its home model into the circular project badge. Custom
+uploads and automatically discovered site logos use the shared `ProjectIconImage`
+runtime asset loader; missing, loading or failed images retain the configured
+built-in icon. Replacing or removing the image updates the badge from project state.
 
 The Host version row in About and the desktop remote-instance menu share
 `HostVersionUpdate`. It checks `/api/system/update` through the active runtime,
@@ -314,6 +385,10 @@ direct-only Hosts keep the shell-selected endpoint and adopt the stable saved
 `host:<id>` runtime key so an SSH forward's changed port does not lose UI context.
 Local windows do not reconnect another window's default remote Host. Web, VS Code
 and mobile do not participate in this native window-restore flow.
+Rejected credentials for a paired desktop Host show pairing-expired guidance
+and open local instance management to import a fresh connection link or remove
+the saved Host. Switch failures and Relay startup recovery preserve that signal;
+network failures and ordinary password-protected connections remain distinct.
 
 All runtime owners must agree on `__YURI_*`, `yuri:*`, `/api/yuri`, `Yuri*` native
 plugins, `yuri-ui` / `yuri-asset` schemes and `yuri_url_token` / `yuri_preview_token`
@@ -351,6 +426,10 @@ Saved-device connection failures in mobile history appear only as a solid error
 icon to the left of the overflow menu, without inline error details or retry copy.
 Tapping the icon retries that device immediately through the shared connection
 controller and replaces the error affordance with the row's connecting state.
+When a saved bearer credential is rejected, mobile shows a short pairing-expired
+recovery with QR scanning or a pairing link instead of a password prompt. A new
+password challenge without a saved credential remains available. Network and
+server failures do not count as a rejected pairing.
 
 ## Desktop conversation width
 
@@ -363,9 +442,12 @@ preview and its nested rail, while the panel close action hides it without delet
 An additional close shortcut on an already-empty preview closes the panel, not
 the OS window. The session overflow menu omits the redundant Changes panel entry;
 Git changes remain available in the preview's Git rail.
-The preview toolbar owns its always-visible joined Git/Files icon group
-(one rounded outline with internal dividers), expand and
-close actions. The preview's expand/restore button uses paired diagonal arrows and
+The preview toolbar owns its always-visible Git/Files icon controls, expand and
+close actions. Git/Files stay joined in one 28px-high outline with internal dividers.
+The group uses the primary header's `rounded-md`, `border-border/40` and transparent
+base; dividers use the same border token. Segments retain shared hover/selection
+tokens and inset keyboard focus. The primary header is unchanged.
+The preview's expand/restore button uses paired diagonal arrows and
 toggles the same full-workspace preview used when dragging leaves less than 350px
 for the conversation. Both use normal layout flow, identical spacing, the restore
 icon and an active resize handle. Dragging right can restore either fullscreen

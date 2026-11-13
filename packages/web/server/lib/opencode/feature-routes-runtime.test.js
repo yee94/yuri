@@ -3,6 +3,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { createWorktreeTopologyBroadcaster } from './feature-routes-runtime.js';
 
 describe('feature routes runtime composition', () => {
+  it('wires session project registration to the shared registry and strict settings reader', async () => {
+    const routes = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');
+    expect(routes).toMatch(/registerProjectsSkill\(app, \{[\s\S]*?registerProject: \(input\) => projectRegistry.register\(input\), readSettingsFromDiskStrict, sanitizeProjects/);
+  });
+  it('passes the native connection adapter to shared-session admission and the protected bridge', async () => {
+    const host = await fs.readFile(new URL('../../index.js', import.meta.url), 'utf8');
+    const routes = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');
+    expect(host).toContain('remoteConnectionsAdapter: options.remoteConnectionsAdapter');
+    expect(routes).toMatch(/registerScheduledTaskSessionSkill\(app, \{[^}]*remoteConnectionsAdapter/);
+    expect(routes).toMatch(/registerRemoteConnectionsSkill\(app, \{[^}]*adapter: remoteConnectionsAdapter/);
+  });
+
   it('passes live shared-service ownership from the host to upgrade routes', async () => {
     const host = await fs.readFile(new URL('../../index.js', import.meta.url), 'utf8');
     const routes = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');

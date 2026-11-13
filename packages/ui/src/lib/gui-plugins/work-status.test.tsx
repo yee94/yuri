@@ -173,6 +173,40 @@ it('remounts a withdrawn and re-added renderer even when React batches both cata
     expect(probe.renders).toBe(2); expect(probe.cleanups).toBe(1);
 });
 
+it('isolates remote identities and revokes mounts when a same-path Host scope is replaced', async () => {
+    const value = host(); value.install('demo', bundle(widget));
+    const scope = (hostId: string, revision = 0): NonNullable<GuiWorkStatusInput['scope']> => ({
+        location: { hubId: 'hub', hostId, instanceId: `instance-${hostId}`, directory: '/work' },
+        queryScope: ['runtime', 'hub', hostId, '/work', revision],
+    });
+    const a = input({ scope: scope('a') });
+    await show(value, a);
+    const first = probe.props[0];
+    expect(first.session?.id).toBe('viewed');
+    expect(first.session?.location).toMatchObject(a.scope!.location);
+    expect(() => first.session?.server.client).toThrow(/Unsupported GUI host API: session.server.client/);
+    const b = input({ scope: scope('b') });
+    await show(value, b);
+    const second = probe.props[1];
+    expect(first.signal.aborted).toBe(true);
+    expect(second.runtimeId).not.toBe(first.runtimeId);
+    expect(second.session?.key).not.toBe(first.session?.key);
+    const replaced = input({ scope: scope('b', 1) });
+    await show(value, replaced);
+    expect(second.signal.aborted).toBe(true);
+    expect(probe.props[2].session?.key).not.toBe(second.session?.key);
+    const entry = value.workStatus.getSnapshot()[0];
+    const handle = value.mountWorkStatus(entry, document.createElement('div'), b);
+    const direct = probe.props.at(-1)!;
+    handle.update(replaced);
+    expect(direct.signal.aborted).toBe(true);
+    expect(probe.props[2].signal.aborted).toBe(false);
+    await show(value, input());
+    expect(probe.props[2].signal.aborted).toBe(true);
+    expect(probe.props.at(-1)!.session?.server.id).toBe('runtime');
+    expect(probe.props.at(-1)!.session?.server.client).toBeDefined();
+});
+
 it('keeps two visible instances independent and distinguishes unknown Git from a clean repository', () => {
     const value = host(); value.install('demo', bundle(widget));
     const entry = value.workStatus.getSnapshot()[0];

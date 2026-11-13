@@ -2,7 +2,27 @@
 
 Owning module for global CSS under `packages/ui/src/styles/`, including touch-mode adaptations in `mobile.css`.
 
+## Hidden spinner lifetime
+
+The parked mobile root-tab underlay pauses descendant `animate-spin` animations
+until it is revealed for page-back or becomes active again. Hiding it with
+`visibility`/`content-visibility` alone does not stop WebKit's animation-driven
+touch-region traversal. Visible secondary-page spinners remain running.
+
+The reserved chat-history status slot also pauses its spinner while its existing
+authoritative `aria-busy` is false. The slot and icon stay mounted with unchanged
+geometry; an actual history load resumes the animation. Neither rule changes
+scroll ownership, content mounting, native gestures or reduced-motion policy.
+`hiddenSpinner.test.ts` covers pause/resume and unrelated visible controls; native
+CPU and animation-progress checks are required separately.
+
 ## Control selection
+
+Mobile floating glass buttons keep their material shadow while focused. The global
+focus shadow reset excludes `yuri-mobile-floating-action`; only `:active` supplies
+pointer press feedback, without hover brightening that can stick after a touch.
+Keyboard `:focus-visible` uses a separate outline without replacing the glass shadow.
+Reduced-transparency shadows retain their existing fallback recipe.
 
 `lib/theme/cssGenerator.ts` owns the global `--interactive-selection` and
 `--interactive-selection-foreground` tokens. Light mode uses a neutral 7%
@@ -11,6 +31,20 @@ consumer, including header folder buttons, preview toggles and panel tabs.
 Dark mode retains the theme's selection tokens. Controls do not add local
 selection-color overrides. Raw theme selection colors used by CodeMirror and
 terminal text selection remain unchanged.
+
+## Android native IME viewport experiment
+
+On the Android A experiment APK, `ImeSyncBridge` translates the native WebView
+with system IME frames and pins a header-only bitmap at 1:1 native pixels.
+There is no full-page screenshot cover. Browser-composited header alpha is resolved
+against the current backdrop; the captured glass backdrop is temporarily static.
+Resizing occurs only at handoff. At rest `100dvh` excludes that inset: shared shell,
+chat-scroll, full-screen forms and body-portaled sheets must not subtract it
+again. The Android hook keeps `--yuri-keyboard-inset`, `--yuri-kb-layout` and
+`--yuri-kb-scroll-inset` at zero. Keyboard-only height/bottom CSS transitions and
+composer FLIP promotion/curtains are disabled on Android; sheet motion keeps its
+existing WAAPI owner. iOS and hosted browser layout are unchanged. Deliver the
+native and Web assets together, not as Web-only OTA to the previous shell.
 
 ## Android native scrollbars
 
@@ -140,6 +174,18 @@ Icons and the inter-button gap scale with
 the circle. Only this cluster opts out of the global 36px touch minimum.
 
 The first-prompt establishing draft joins the main chat and hydrating overlay-foot contract. The idle draft keeps the in-flow Composer contract.
+
+## Assistant unread color calibration
+
+`--assistant-unread-fill` is fixed sRGB `#F95252` in both modes, targeting
+raw screenshot RGB `#CF6A58` under the same `Rec2020 Gamut with sRGB Transfer`
+profile used for voice calibration. `--assistant-unread-foreground` is opaque
+white. Desktop navigation, contact lists, pinned contacts and mobile badges
+share these tokens without accent-derived fills, translucency or inset shading.
+The mobile dock retains its outside background ring, not inverse badge colors.
+Native iOS uses the same sRGB fill through `UITabBarItem.badgeColor` and white
+badge text; this native part requires a new iOS build. Screenshot-profile RGB
+is not a portable CSS hex value; do not add a compensating CSS filter.
 
 ## `isMobile` vs `mobile-pointer` (do not confuse)
 
@@ -303,7 +349,12 @@ Phone conversation headers (session chat and Assistant) share `--yuri-mobile-hea
 and saturation on every runtime. Desktop pickers/composer catalogs retain
 `--yuri-overlay-translucent-fill` at 22%; anchored popups instead use
 `--yuri-popup-fill` at 50% of the theme elevated surface to suppress background
-text interference while retaining frost. Popup-only
+text interference while retaining frost. Electron windows marked with
+`data-yuri-vibrancy` use the solid theme elevated fill for every popup surface:
+the sidebar behind an anchored menu must not show through as competing text.
+That native material marker alone owns the override, without an additional
+`desktop-runtime` device-class gate. Blur, rim and shadow are preserved.
+Popup-only
 `--yuri-popup-edge` and `--yuri-popup-shadow` provide a fine theme-foreground rim
 and short contact elevation instead of the large overlay's 48px shadow. Light
 and dark values live in `mobile.css`, not duplicated component utility strings.
@@ -325,7 +376,7 @@ The shared notification section in `mobile.css` applies to all roots, including 
 
 Width is capped at 320px with at least 16px viewport gutters; styled notifications use a 48px minimum height, 14px title and 12px description on desktop and mobile. Status glyphs consistently use the existing Lucide sprite mappings: Circle X (error), Circle Check (success), Triangle Alert (warning), Info and Loader Circle. They use `Icon`'s medium stroke, no filled background, and a shared 18px size. Loading uses the same family instead of Sonner's default spinner and respects reduced motion. Each notification type explicitly supplies its semantic status color through `--yuri-toast-status-color`; error, warning, success and info remain distinct.
 
-The front glass fill mixes the shared glass token at 70% strength (preserving its alpha), with a translucent directional highlight, fine inset edges and short two-level elevation; no additional icon badge is painted. This material also applies to custom toasts. Text actions use ordinary foreground on a transparent resting background, with neutral hover/press states and the 36px touch floor; they are not accent-colored links. Session undo actions use the shared `Button` ghost variant. Padding, gap and radius flow through toast-specific CSS variables so important utility classes cannot restore desktop spacing. Titles and descriptions each occupy one ellipsized line, with 22px/20px line heights, a 4px content gap and 10px vertical padding; there is no nested text scroller. Error/warning Copy actions retain the complete original text. The undo countdown is an SVG inside `Button`; `index.css` excludes `.yuri-undo-countdown-svg` from the button SVG `translateZ(0)` workaround and locks the ring to `--yuri-undo-countdown-size`. `.session-mutation-undo-action` opts out of the 36px touch floor. Reduced-transparency mode uses the opaque elevated surface for every toast, not only styled ones.
+The front glass fill mixes the shared glass token at 70% strength (preserving its alpha), with a translucent directional highlight, fine inset edges and short two-level elevation; no additional icon badge is painted. This material also applies to custom toasts. Text actions use ordinary foreground on a transparent resting background, with neutral hover/press states and the 36px touch floor; they are not accent-colored links. The shared notification CSS owns these background states for both action and cancel buttons, while cancel text remains muted. Session undo actions use the shared `Button` ghost variant. Padding, gap and radius flow through toast-specific CSS variables so important utility classes cannot restore desktop spacing. Titles and descriptions each occupy one ellipsized line, with 22px/20px line heights, a 4px content gap and 10px vertical padding; there is no nested text scroller. Error/warning Copy actions retain the complete original text. The undo countdown is an SVG inside `Button`; `index.css` excludes `.yuri-undo-countdown-svg` from the button SVG `translateZ(0)` workaround and locks the ring to `--yuri-undo-countdown-size`. `.session-mutation-undo-action` opts out of the 36px touch floor. Reduced-transparency mode uses the opaque elevated surface for every toast, not only styled ones.
 
 Shared notifications default to 3500ms; the `toast.ts` wrapper gives errors and warnings 5000ms and preserves copying their complete text. Explicit caller durations still win, including loading/update notices and undo windows. Sonner owns timeout pausing during interaction and swipe dismissal.
 

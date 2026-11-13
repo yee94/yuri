@@ -13,6 +13,7 @@
 import type { StoreApi } from "zustand"
 
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from "@/lib/runtime-switch"
+import { locationKey, type HostLocation } from "@/lib/remote-projects/location"
 import type { ChildStoreManager, DirectoryStore } from "./child-store"
 import {
   createStoreTranscriptRepository,
@@ -42,6 +43,32 @@ type TranscriptRepositoryBinding = {
 }
 
 let binding: TranscriptRepositoryBinding | null = null
+type LocationBinding = { repository: TranscriptRepository; scope: (sessionID: string) => TranscriptScope }
+const locationBindings = new Map<string, LocationBinding[]>()
+const activeLocationBinding = (key: string) => locationBindings.get(key)?.at(-1)
+
+export function bindLocationTranscriptRepository(
+  location: HostLocation,
+  repository: TranscriptRepository,
+  scope: (sessionID: string) => TranscriptScope,
+): () => void {
+  if (!location.hostId) throw new Error("Local transcripts use the SyncProvider binding")
+  const key = locationKey(location)
+  const captured = { repository, scope }
+  const stack = locationBindings.get(key) ?? []
+  stack.push(captured)
+  locationBindings.set(key, stack)
+  bumpBindingRevision()
+  return () => {
+    const stack = locationBindings.get(key)
+    const index = stack?.indexOf(captured) ?? -1
+    if (!stack || index < 0) return
+    const wasActive = index === stack.length - 1
+    stack.splice(index, 1)
+    if (!stack.length) locationBindings.delete(key)
+    if (wasActive) bumpBindingRevision()
+  }
+}
 let bindingRevision = 0
 const bindingListeners = new Set<() => void>()
 
@@ -104,7 +131,8 @@ export function unbindTranscriptRepository(): void {
  * Resolve the production TranscriptRepository. When SyncProvider has not bound
  * yet, returns null so callers can no-op or fall back safely.
  */
-export function getTranscriptRepository(): TranscriptRepository | null {
+export function getTranscriptRepository(location?: HostLocation): TranscriptRepository | null {
+  if (location?.hostId) return activeLocationBinding(locationKey(location))?.repository ?? null
   return binding?.repository ?? null
 }
 
@@ -112,8 +140,8 @@ export function getTranscriptRepository(): TranscriptRepository | null {
  * Require the production repository. Throws when SyncProvider has not bound —
  * production writers must only run after provider mount.
  */
-export function requireTranscriptRepository(): TranscriptRepository {
-  const repository = getTranscriptRepository()
+export function requireTranscriptRepository(location?: HostLocation): TranscriptRepository {
+  const repository = getTranscriptRepository(location)
   if (!repository) {
     throw new Error("TranscriptRepository is not bound — SyncProvider must mount first")
   }
@@ -141,10 +169,18 @@ export function resolveTranscriptRepositoryForStore(
 }
 
 export function transcriptScope(
-  directory: string,
+  directory: string | HostLocation,
   sessionID: string,
   options?: { transport?: string; generation?: number },
 ): TranscriptScope {
+  if (typeof directory !== "string") {
+    if (directory.hostId) {
+      const scoped = activeLocationBinding(locationKey(directory))
+      if (!scoped) throw new Error("Remote transcript Location is not bound")
+      return scoped.scope(sessionID)
+    }
+    directory = directory.directory
+  }
   return {
     directory: directory.trim(),
     sessionID,
@@ -202,7 +238,7 @@ export function applyTranscriptCommand(
   scope: TranscriptScope,
   command: TranscriptCommand,
 ): TranscriptCommandResult | null {
-  const repository = getTranscriptRepository()
+  const repository = getTranscriptRepository(scope.location)
   if (!repository) return null
   return repository.apply(scope, command)
 }
@@ -212,11 +248,11 @@ export function applyTranscriptCommand(
  * Throws when the production repository does not expose fetchPreviousPage.
  */
 export async function fetchTranscriptPreviousPage(
-  directory: string,
+  directory: string | HostLocation,
   sessionID: string,
   pageSize?: number,
 ): Promise<void> {
-  const repository = requireTranscriptRepository() as TranscriptRepository & {
+  const repository = requireTranscriptRepository(typeof directory === "string" ? undefined : directory) as TranscriptRepository & {
     fetchPreviousPage?: (scope: TranscriptScope, pageSize?: number) => Promise<unknown>
   }
   if (typeof repository.fetchPreviousPage !== "function") {
@@ -229,10 +265,10 @@ export async function fetchTranscriptPreviousPage(
  * Ensure initial tail via the Query repository when available.
  */
 export async function ensureTranscriptInitial(
-  directory: string,
+  directory: string | HostLocation,
   sessionID: string,
 ): Promise<void> {
-  const repository = requireTranscriptRepository() as TranscriptRepository & {
+  const repository = requireTranscriptRepository(typeof directory === "string" ? undefined : directory) as TranscriptRepository & {
     ensureInitial?: (scope: TranscriptScope) => Promise<unknown>
   }
   if (typeof repository.ensureInitial !== "function") {
@@ -248,10 +284,10 @@ export async function ensureTranscriptInitial(
  * and ensure a fresh tail. Ensure failure leaves the empty/failed state.
  */
 export async function retryTranscriptInitial(
-  directory: string,
+  directory: string | HostLocation,
   sessionID: string,
 ): Promise<void> {
-  const repository = requireTranscriptRepository() as TranscriptRepository & {
+  const repository = requireTranscriptRepository(typeof directory === "string" ? undefined : directory) as TranscriptRepository & {
     destructiveReset?: (scope: TranscriptScope) => Promise<unknown>
     ensureInitial?: (scope: TranscriptScope) => Promise<unknown>
   }
@@ -277,11 +313,11 @@ export async function retryTranscriptInitial(
  * show the sync whisper for the whole GET.
  */
 export async function refreshTranscriptFromAuthority(
-  directory: string,
+  directory: string | HostLocation,
   sessionID: string,
   options?: { background?: boolean },
 ): Promise<void> {
-  const repository = requireTranscriptRepository() as TranscriptRepository & {
+  const repository = requireTranscriptRepository(typeof directory === "string" ? undefined : directory) as TranscriptRepository & {
     refreshFromAuthority?: (scope: TranscriptScope) => Promise<unknown>
   }
   if (typeof repository.refreshFromAuthority !== "function") {
@@ -291,11 +327,12 @@ export async function refreshTranscriptFromAuthority(
     await repository.refreshFromAuthority(transcriptScope(directory, sessionID))
     return
   }
-  beginTranscriptAuthorityRefresh(directory, sessionID)
+  const key = typeof directory === "string" ? directory : locationKey(directory)
+  beginTranscriptAuthorityRefresh(key, sessionID)
   try {
     await repository.refreshFromAuthority(transcriptScope(directory, sessionID))
   } finally {
-    endTranscriptAuthorityRefresh(directory, sessionID)
+    endTranscriptAuthorityRefresh(key, sessionID)
   }
 }
 
@@ -313,17 +350,17 @@ export async function refreshTranscriptFromAuthority(
  * cold-start and pagination fills.
  */
 export async function materializeTranscriptMessage(
-  directory: string,
+  directory: string | HostLocation,
   sessionID: string,
   messageID: string,
   options?: { readonly priority?: ExactFillPriority },
 ): Promise<void> {
-  const repository = requireTranscriptRepository()
+  const repository = requireTranscriptRepository(typeof directory === "string" ? undefined : directory)
   if (typeof repository.materializeMessage !== "function") {
     throw new Error("TranscriptRepository does not support materializeMessage")
   }
   const scope = transcriptScope(directory, sessionID)
-  const key = `${directory}\n${sessionID}\n${messageID}`
+  const key = `${typeof directory === "string" ? directory : locationKey(directory)}\n${sessionID}\n${messageID}`
   await enqueueExactFill(
     key,
     () => repository.materializeMessage!(scope, messageID),
@@ -336,10 +373,10 @@ export async function materializeTranscriptMessage(
  * Unbound / store-test repositories without the method report idle.
  */
 export function getTranscriptHydrationState(
-  directory: string,
+  directory: string | HostLocation,
   sessionID: string,
 ): TranscriptHydrationState {
-  const repository = getTranscriptRepository()
+  const repository = getTranscriptRepository(typeof directory === "string" ? undefined : directory)
   if (!repository || typeof repository.getHydrationState !== "function") {
     return { sessionID, phase: "idle", p0Satisfied: false }
   }
@@ -351,11 +388,11 @@ export function getTranscriptHydrationState(
  * report idle so later UI can subscribe without throwing.
  */
 export function getTranscriptMessageMaterializationState(
-  directory: string,
+  directory: string | HostLocation,
   sessionID: string,
   messageID: string,
 ): TranscriptMessageMaterializationState {
-  const repository = getTranscriptRepository()
+  const repository = getTranscriptRepository(typeof directory === "string" ? undefined : directory)
   if (!repository || typeof repository.getMessageMaterializationState !== "function") {
     return { sessionID, messageID, status: "idle" }
   }
@@ -365,8 +402,8 @@ export function getTranscriptMessageMaterializationState(
   )
 }
 
-export function purgeTranscriptSession(directory: string, sessionID: string): void {
-  const repository = getTranscriptRepository() as
+export function purgeTranscriptSession(directory: string | HostLocation, sessionID: string): void {
+  const repository = getTranscriptRepository(typeof directory === "string" ? undefined : directory) as
     | (TranscriptRepository & { purgeSession?: (scope: TranscriptScope) => void })
     | null
   repository?.purgeSession?.(transcriptScope(directory, sessionID))

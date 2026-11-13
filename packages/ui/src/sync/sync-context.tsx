@@ -1,7 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useRef, useCallback, useMemo } from "react"
 import { mountProjectOrderSync } from './project-order-sync'
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
+import { useRemoteChat, useRemoteMessageParts } from './remote-chat-context'
 import type { Message, Part, Todo } from '@/lib/opencode/v2-types'
+import { parseSubagentNotification } from '@/lib/opencode/subagent-notification'
 import type { Event } from '@/sync/types'
 
 import type { Session } from '@/lib/opencode/v2-types'
@@ -126,11 +129,13 @@ import {
 } from "./reconnect-recovery"
 import { opencodeClient } from "@/lib/opencode/client"
 import { usePermissionStore } from "@/stores/permissionStore"
+import { isVisibleGlobalSession } from "@/stores/globalSessions"
 import { useConfigStore } from "@/stores/useConfigStore"
 import { useTodosPersistStore } from "@/stores/useTodosPersistStore"
 import { promoteProjectForConversation, useSessionUIStore } from "./session-ui-store"
 import { toast } from "@/components/ui"
 import { appendNotification, clearSessionErrorNotifications } from "./notification-store"
+import { mountSessionUnreadSync } from './session-unread-sync'
 import { recordSessionError, summarizeOpenCodeError } from "./session-error-log"
 import {
   applyGlobalSessionActiveSnapshot,
@@ -741,6 +746,9 @@ const getQuestionToastKey = (sessionID?: string, requestID?: string) => {
 }
 
 type UiNotificationPayload = {
+  instanceId?: unknown
+  hostId?: unknown
+  hubId?: unknown
   title?: unknown
   body?: unknown
   tag?: unknown
@@ -780,6 +788,9 @@ const handleUiNotificationEvent = (payload: Event, fallbackDirectory: string): b
   }
 
   void notifications.notifyAgentCompletion({
+    instanceId: asOptionalString(notification.instanceId),
+    hostId: asOptionalString(notification.hostId),
+    hubId: asOptionalString(notification.hubId),
     title: asOptionalString(notification.title),
     body: asOptionalString(notification.body),
     tag: asOptionalString(notification.tag),
@@ -873,7 +884,7 @@ function isWindowFocused(): boolean {
 function isViewedInCurrentSession(directory: string, sessionId?: string): boolean {
   if (!sessionId) return false
   if (
-    _activeDirectory && _activeSession
+    !useSessionNavigationStore.getState().remoteSession && _activeDirectory && _activeSession
     && directory === _activeDirectory && sessionId === _activeSession
     && isWindowFocused()
   ) return true
@@ -2588,7 +2599,7 @@ export function handleEvent(
     const storeState = store.getState()
     const session = storeState.session.find((candidate) => candidate.id === sessionID)
       ?? useGlobalSessionsStore.getState().activeSessions.find((candidate) => candidate.id === sessionID)
-    if (sessionID && session && !(session as Session & { parentID?: string | null }).parentID) {
+    if (sessionID && session && isVisibleGlobalSession(session)) {
       // succeeded then idle is one completion. A lone idle (legacy) still notifies.
       const duplicateSuccess = isSuccessCompletion && payload.type === "session.idle" && turnCompleteNotified.has(sessionID)
       if (!duplicateSuccess) {
@@ -2909,6 +2920,7 @@ export function SyncProvider(props: {
   // selection as everywhere else ('auto' falls back to SSE on WS failure).
   const messageStreamTransport = useConfigStore((state) => state.settingsMessageStreamTransport)
   useEffect(() => mountProjectOrderSync(), [])
+  useEffect(() => mountSessionUnreadSync(isViewedInCurrentSession), [])
   const childStoresRef = useRef<ChildStoreManager | null>(null)
   if (!childStoresRef.current) childStoresRef.current = new ChildStoreManager()
   const childStores = childStoresRef.current
@@ -3684,10 +3696,13 @@ export function useSessionMessageLoadState(sessionID: string, directory?: string
  * falls back to the directory store while reads still go through getParts.
  */
 export function useSessionParts(messageID: string, directory?: string, sessionID?: string) {
+  const remote = useRemoteChat()
+  const remoteParts = useRemoteMessageParts(remote, sessionID ?? '', messageID)
   const system = useSyncSystem()
   const targetDirectory = directory ?? system.directory
-  const store = useDirectoryStore(targetDirectory)
-  return useTranscriptParts(messageID, targetDirectory, store, sessionID) as Part[]
+  const store = useDirectoryStore(remote ? system.directory : targetDirectory, { bootstrap: !remote })
+  const localParts = useTranscriptParts(remote ? '' : messageID, targetDirectory, store, remote ? '' : sessionID) as Part[]
+  return remote ? remoteParts : localParts
 }
 
 /**
@@ -3820,8 +3835,8 @@ type ScopedBlockingRequestCache<T extends { id: string }> = {
 
 /**
  * Live subagent dispatch edges for a session, read from its transcript's
- * running task tool parts. Fork + task_id reuse leaves the child session's
- * catalog parentID pointing at the pre-fork lineage; these edges are the
+ * foreground or settled-background task/subagent tool parts. Fork + task_id reuse
+ * leaves the child session's catalog parentID on the pre-fork lineage; these edges are the
  * authoritative supplement that keeps a running subagent (and its pending
  * questions/permissions) inside the dispatching session's blocking scope.
  */
@@ -3829,15 +3844,25 @@ export function readTaskDispatchEdgesFromTranscript(
   data: { messageOrder: readonly string[]; partsByMessageID: Readonly<Record<string, readonly Part[] | undefined>> } | null | undefined,
 ): readonly TaskDispatchEdge[] {
   if (!data) return EMPTY_TASK_DISPATCH_EDGES
-  const edges: TaskDispatchEdge[] = []
+  const edges = new Map<string, TaskDispatchEdge>()
+  const finished = new Set<string>()
   for (const messageID of data.messageOrder) {
     const parts = data.partsByMessageID[messageID]
     if (!parts) continue
     for (const edge of collectTaskDispatchEdgesFromParts(parts as Part[])) {
-      edges.push(edge)
+      edges.set(edge.sessionId, edge)
+      finished.delete(edge.sessionId)
+    }
+    for (const part of parts) {
+      if (part.type !== 'text' || !part.synthetic) continue
+      const notice = parseSubagentNotification(part.text)
+      if (!notice) continue
+      if (notice.state === 'running') finished.delete(notice.sessionID)
+      else finished.add(notice.sessionID)
     }
   }
-  return edges.length === 0 ? EMPTY_TASK_DISPATCH_EDGES : edges
+  const current = [...edges.values()].filter(edge => !finished.has(edge.sessionId))
+  return current.length === 0 ? EMPTY_TASK_DISPATCH_EDGES : current
 }
 
 /**

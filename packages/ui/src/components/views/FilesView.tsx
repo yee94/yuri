@@ -1,11 +1,16 @@
 import '@/lib/brand-storage-bootstrap';
 import React from 'react';
 import { GuiFileLinkBridge } from '@/components/gui-plugins/GuiFileLinkBridge';
+import { ProjectFilePreview } from '@/components/preview/ProjectFilePreview';
 import { LoadingImage } from '@/components/ui/LoadingImage';
 import { ImageLoadingPlaceholder } from '@/components/ui/ImageLoadingPlaceholder';
 import { useEvent } from '@reactuses/core';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { directFileResource, readRuntimeFile } from '@/lib/runtime-file-resource';
+import { acquireRuntimeImage, directFileResource, readRuntimeFile, readRuntimeFileBlob } from '@/lib/runtime-file-resource';
+import { queryClient } from '@/lib/queryRuntime';
+import { fileSearchQueryOptions } from '@/queries/fileQueries';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import { locationKey } from '@/lib/remote-projects/location';
 
 import { toast } from '@/components/ui';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -55,10 +60,9 @@ import { cn, getModifierLabel, getRevealLabelKey, hasModifier } from '@/lib/util
 import { getLanguageFromExtension, getImageMimeType, isDrawioFile, isHtmlFile, isImageFile, isPdfFile } from '@/lib/toolHelpers';
 import { acquireRuntimeUrlAuthToken, refreshRuntimeUrlAuthToken, subscribeRuntimeUrlAuthToken } from '@/lib/runtime-auth';
 import { getRuntimeApiBaseUrl, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
-import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 import { getOutsideFileGrant } from '@/lib/outsideFileGrants';
 import { DiagramEditor } from '@/components/diagram';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs as useRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { EditorView } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
@@ -73,7 +77,7 @@ import { collectExpandableDirectoryPaths, collectUnexpandedDirectoryPaths, isFil
 import { useFilesViewShowGitignored } from '@/lib/filesViewShowGitignored';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { FilePreviewError } from '@/components/ui/FilePreviewError';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useProjectDirectory as useEffectiveDirectory } from '@/lib/api/useProjectRuntimeAPIs';
 import { useInputStore } from '@/sync/input-store';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { Icon } from "@/components/icon/Icon";
@@ -516,7 +520,7 @@ const FileRow: React.FC<FileRowProps> = ({
             onClick={(e: React.MouseEvent) => { e.stopPropagation(); onOpenDialog('delete', node); }}
             className="text-destructive focus:text-destructive"
           >
-            <Icon name="delete-bin" className="mr-2 size-4" /> {t('sidebarFilesTree.menu.delete')}
+            <Icon name="delete-bin" className="mr-2 size-4 text-inherit" /> {t('sidebarFilesTree.menu.delete')}
           </Item>
         </>
       )}
@@ -736,9 +740,17 @@ const useAssetAuthRefresh = (
   return { readyKey, nonce };
 };
 
-export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = true, targetPath }) => {
+export const FilesView: React.FC<FilesViewProps> = (props) => {
+  const host = useHostRuntime();
+  if (!host?.entry.location.hostId) return <FilesViewContent {...props} />;
+  return <div className="flex h-full min-h-0 flex-col">
+    <div className="min-h-0 flex-1"><FilesViewContent key={host.entry.key} {...props} /></div>
+  </div>;
+};
+
+const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = true, targetPath }) => {
   const { t } = useI18n();
-  const { files, runtime } = useRuntimeAPIs();
+  const { files, runtime, projectScope } = useRuntimeAPIs();
   const { currentTheme, availableThemes, lightThemeId, darkThemeId } = useThemeSystem();
   const { isMobile, isTablet, screenWidth } = useDeviceInfo({ includeScreenWidth: true });
   const alwaysShowActions = isMobile || isTablet;
@@ -746,7 +758,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const showGitignored = useFilesViewShowGitignored();
 
   const currentDirectory = useEffectiveDirectory() ?? '';
-  const root = normalizePath(currentDirectory.trim());
+  const root = projectScope ? currentDirectory : normalizePath(currentDirectory.trim());
   const showEditorTabsRow = isMobile || mode !== 'editor-only';
   const suppressFileLoadingIndicator = mode === 'editor-only' && !isMobile;
   const searchFiles = useFileSearchStore((state) => state.searchFiles);
@@ -821,16 +833,24 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   }, [lightTheme, darkTheme]);
 
   const EMPTY_PATHS: string[] = React.useMemo(() => [], []);
-  const openPaths = useFilesViewTabsStore((state) => (root ? (state.byRoot[root]?.openPaths ?? EMPTY_PATHS) : EMPTY_PATHS));
-  const selectedPath = useFilesViewTabsStore((state) => (root ? (state.byRoot[root]?.selectedPath ?? null) : null));
-  const expandedPaths = useFilesViewTabsStore((state) => (root ? (state.byRoot[root]?.expandedPaths ?? EMPTY_PATHS) : EMPTY_PATHS));
-  const addOpenPath = useFilesViewTabsStore((state) => state.addOpenPath);
-  const removeOpenPath = useFilesViewTabsStore((state) => state.removeOpenPath);
-  const removeOpenPathsByPrefix = useFilesViewTabsStore((state) => state.removeOpenPathsByPrefix);
-  const removeExpandedPathsByPrefix = useFilesViewTabsStore((state) => state.removeExpandedPathsByPrefix);
-  const setSelectedPath = useFilesViewTabsStore((state) => state.setSelectedPath);
-  const toggleExpandedPath = useFilesViewTabsStore((state) => state.toggleExpandedPath);
-  const expandPaths = useFilesViewTabsStore((state) => state.expandPaths);
+  const tabsRoot = projectScope ? locationKey({ ...projectScope.location, directory: root || projectScope.location.directory }) : root;
+  const openPaths = useFilesViewTabsStore((state) => (tabsRoot ? (state.byRoot[tabsRoot]?.openPaths ?? EMPTY_PATHS) : EMPTY_PATHS));
+  const selectedPath = useFilesViewTabsStore((state) => (tabsRoot ? (state.byRoot[tabsRoot]?.selectedPath ?? null) : null));
+  const expandedPaths = useFilesViewTabsStore((state) => (tabsRoot ? (state.byRoot[tabsRoot]?.expandedPaths ?? EMPTY_PATHS) : EMPTY_PATHS));
+  const tabActions = React.useMemo(() => {
+    const state = useFilesViewTabsStore.getState();
+    if (!projectScope) return state;
+    return {
+      addOpenPath: (_root: string, path: string, options?: { allowOutsideRoot?: boolean }) => state.addOpenPath(tabsRoot, path, options),
+      removeOpenPath: (_root: string, path: string) => state.removeOpenPath(tabsRoot, path),
+      removeOpenPathsByPrefix: (_root: string, path: string) => state.removeOpenPathsByPrefix(tabsRoot, path),
+      removeExpandedPathsByPrefix: (_root: string, path: string) => state.removeExpandedPathsByPrefix(tabsRoot, path),
+      setSelectedPath: (_root: string, path: string | null, options?: { allowOutsideRoot?: boolean }) => state.setSelectedPath(tabsRoot, path, options),
+      toggleExpandedPath: (_root: string, path: string) => state.toggleExpandedPath(tabsRoot, path),
+      expandPaths: (_root: string, paths: string[]) => state.expandPaths(tabsRoot, paths),
+    };
+  }, [projectScope, tabsRoot]);
+  const { addOpenPath, removeOpenPath, removeOpenPathsByPrefix, removeExpandedPathsByPrefix, setSelectedPath, toggleExpandedPath, expandPaths } = tabActions;
 
   const toFileNode = React.useCallback((path: string): FileNode => {
     const normalized = normalizePath(path);
@@ -995,8 +1015,8 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const loadOpenInApps = useOpenInAppsStore((state) => state.loadInstalledApps);
 
   React.useEffect(() => {
-    initializeOpenInApps();
-  }, [initializeOpenInApps]);
+    if (!projectScope) initializeOpenInApps();
+  }, [initializeOpenInApps, projectScope]);
 
   const handleRevealPath = React.useCallback((targetPath: string) => {
     if (!files.revealPath) return;
@@ -1006,7 +1026,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   }, [files, t]);
 
   const handleOpenInApp = React.useCallback(async (app: { id: string; appName: string }) => {
-    if (!selectedFile?.path) {
+    if (projectScope || !selectedFile?.path) {
       return;
     }
 
@@ -1028,7 +1048,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
       }
     }
     toast.error(t('filesView.toast.openInAppFailed', { app: app.appName }));
-  }, [root, selectedFile?.path, t]);
+  }, [root, selectedFile?.path, t, projectScope]);
 
   const handleOpenDialog = React.useCallback((type: 'createFile' | 'createFolder' | 'rename' | 'delete', data: { path: string; name?: string; type?: 'file' | 'directory' }) => {
     setActiveDialog(type);
@@ -1544,11 +1564,18 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     let cancelled = false;
     setSearching(true);
 
-    searchFiles(currentDirectory, trimmedQuery, 150, {
+    const results = projectScope ? queryClient.fetchQuery(fileSearchQueryOptions(files, {
+      scope: projectScope, directory: currentDirectory, query: trimmedQuery, maxResults: 150,
+      includeHidden: showHidden, respectGitignore: !showGitignored,
+    })).then((hits) => hits.map((hit) => ({
+      path: hit.path, name: hit.path.split(/[\\/]/).pop() ?? hit.path,
+      extension: hit.path.split('.').pop(), relativePath: getDisplayPath(root, hit.path),
+    }))) : searchFiles(currentDirectory, trimmedQuery, 150, {
       includeHidden: showHidden,
       respectGitignore: !showGitignored,
       type: 'file',
-    })
+    });
+    results
       .then((hits) => {
         if (cancelled) {
           return;
@@ -1580,7 +1607,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     return () => {
       cancelled = true;
     };
-  }, [currentDirectory, debouncedSearchQuery, searchFiles, showHidden, showGitignored]);
+  }, [currentDirectory, debouncedSearchQuery, searchFiles, showHidden, showGitignored, projectScope, files, root]);
 
   const readFile = React.useCallback(async (path: string, options?: { allowOutsideWorkspace?: boolean; outsideFileGrant?: string; optional?: boolean }): Promise<string> => {
     if (files.readFile) {
@@ -1791,7 +1818,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!hasModifier(e)) {
+      if (!hasModifier(e) || (e.metaKey && e.ctrlKey)) {
         return;
       }
 
@@ -1837,7 +1864,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     activeFileLoadIdRef.current = loadId;
     const isCurrentLoad = () => {
       if (!root) return false;
-      const rootState = useFilesViewTabsStore.getState().byRoot[root];
+      const rootState = useFilesViewTabsStore.getState().byRoot[tabsRoot];
       const currentPath = boundTargetPath ?? rootState?.selectedPath ?? rootState?.openPaths[0] ?? null;
       return activeFileLoadIdRef.current === loadId && currentPath === node.path && transport === getRuntimeTransportIdentity();
     };
@@ -1860,7 +1887,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     }
 
     // Desktop: binary images are loaded via readFileBinary (data URL).
-    if (runtime.isDesktop && selectedIsImage && !isSvg) {
+    if ((runtime.isDesktop || projectScope) && selectedIsImage && !isSvg) {
       setFileContent('');
       setDraftContent('');
       setFileLoading(true);
@@ -1868,7 +1895,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     }
 
     // Web: binary images should not be read as utf8.
-    if (!runtime.isDesktop && selectedIsImage && !isSvg) {
+    if (!runtime.isDesktop && !projectScope && selectedIsImage && !isSvg) {
       setFileContent('');
       setDraftContent('');
       setLoadedFilePath(node.path);
@@ -1913,8 +1940,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
           return;
         }
         const editorContent = normalizeEditorLineEndings(content);
-        if (backgroundRefresh && isHtmlFile(node.path) && editorContent !== fileContent
-          && !runtime.isVSCode && !isRelayModeActive()) {
+        if (backgroundRefresh && isHtmlFile(node.path) && editorContent !== fileContent) {
           setHtmlDocumentRevision((revision) => revision + 1);
         }
         setBinaryFilePath(null);
@@ -2674,7 +2700,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
       pendingDrawioPreviewFrameRef.current = requestAnimationFrame(() => {
         pendingDrawioPreviewFrameRef.current = requestAnimationFrame(() => {
           pendingDrawioPreviewFrameRef.current = null;
-          if (root && pathAtToggle && useFilesViewTabsStore.getState().byRoot[root]?.selectedPath !== pathAtToggle) {
+          if (root && pathAtToggle && useFilesViewTabsStore.getState().byRoot[tabsRoot]?.selectedPath !== pathAtToggle) {
             return;
           }
           setDrawioRemountNonce((value) => value + 1);
@@ -2683,7 +2709,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
       });
       return;
     }
-  }, [draftContent, fileContent, root, selectedFile?.path]);
+  }, [draftContent, fileContent, root, selectedFile?.path, tabsRoot]);
 
   const saveDiagramXml = React.useCallback(async (path: string, xml: string) => {
     if (!files.writeFile || xml === diagramSavedXmlRef.current) {
@@ -3149,35 +3175,41 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     [lightTheme.metadata.id, darkTheme.metadata.id],
   );
 
-  const imageAssetAuthKey = selectedFile?.path && isSelectedImage && !runtime.isDesktop && !isSelectedSvg
+  const imageAssetAuthKey = selectedFile?.path && isSelectedImage && !runtime.isDesktop && !projectScope && !isSelectedSvg
     ? `${selectedFile.path}|${selectedFileReadOptions.allowOutsideWorkspace ? 'outside' : 'workspace'}|${selectedFileReadOptions.outsideFileGrant ?? ''}`
     : '';
 
-  const pdfAssetAuthKey = selectedFile?.path && isSelectedPdf
+  const pdfAssetAuthKey = selectedFile?.path && isSelectedPdf && !projectScope
     ? `${selectedFile.path}|${selectedFileReadOptions.allowOutsideWorkspace ? 'outside' : 'workspace'}|${selectedFileReadOptions.outsideFileGrant ?? ''}`
-    : '';
-
-  // Relay iframes cannot load host `/api/fs/serve` URLs (browser navigation
-  // bypasses the tunnel). Inline the document like VS Code does with srcDoc.
-  const htmlPreviewUsesInlineDocument = runtime.isVSCode || isRelayModeActive();
-  const htmlAssetAuthKey = selectedFile?.path && isHtml && htmlViewMode === 'preview' && !htmlPreviewUsesInlineDocument
-    ? selectedFile.path
     : '';
 
   const assetAuthErrorFallback = t('filesView.error.readFileFailed');
   const { readyKey: imageAssetAuthReadyKey, nonce: imagePreviewNonce } =
     useAssetAuthRefresh(imageAssetAuthKey, setFileError, assetAuthErrorFallback);
-  const { readyKey: htmlAssetAuthReadyKey, nonce: htmlPreviewNonce } =
-    useAssetAuthRefresh(htmlAssetAuthKey, setFileError, assetAuthErrorFallback);
   const { readyKey: pdfAssetAuthReadyKey, nonce: pdfPreviewNonce } =
     useAssetAuthRefresh(pdfAssetAuthKey, setFileError, assetAuthErrorFallback);
 
   const isImageAssetAuthLoading = Boolean(imageAssetAuthKey && imageAssetAuthReadyKey !== imageAssetAuthKey);
-  const isHtmlAssetAuthLoading = Boolean(htmlAssetAuthKey && htmlAssetAuthReadyKey !== htmlAssetAuthKey);
-  const isPdfAssetAuthLoading = Boolean(pdfAssetAuthKey && pdfAssetAuthReadyKey !== pdfAssetAuthKey);
+  const [projectPdfSource, setProjectPdfSource] = React.useState<{ key: string; url: string }>();
+  const projectPdfKey = projectScope && selectedFile?.path && isSelectedPdf ? JSON.stringify([projectScope.queryScope, selectedFile.path]) : '';
+  React.useEffect(() => {
+    if (!projectScope || !projectPdfKey || !selectedFile?.path) return;
+    const controller = new AbortController();
+    let source: string | undefined;
+    void readRuntimeFileBlob({ path: selectedFile.path, scope: projectScope, signal: controller.signal,
+      ...selectedFileReadOptions, directory: root || undefined }).then((blob) => {
+      if (controller.signal.aborted) return;
+      source = URL.createObjectURL(blob);
+      setProjectPdfSource({ key: projectPdfKey, url: source });
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setFileError(error instanceof Error ? error.message : assetAuthErrorFallback);
+    });
+    return () => { controller.abort(); if (source) URL.revokeObjectURL(source); };
+  }, [projectScope, projectPdfKey, selectedFile?.path, selectedFileReadOptions, root, assetAuthErrorFallback]);
+  const isPdfAssetAuthLoading = Boolean(projectPdfKey ? projectPdfSource?.key !== projectPdfKey : pdfAssetAuthKey && pdfAssetAuthReadyKey !== pdfAssetAuthKey);
 
   const imageSrc = selectedFile?.path && isSelectedImage
-    ? (runtime.isDesktop
+    ? (runtime.isDesktop || projectScope
       ? (isSelectedSvg
         ? `data:${getImageMimeType(selectedFile.path)};utf8,${encodeURIComponent(fileContent)}`
         : desktopImageSrc)
@@ -3188,7 +3220,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
           allowOutsideWorkspace: selectedFileReadOptions.allowOutsideWorkspace ? 'true' : undefined,
           outsideFileGrant: selectedFileReadOptions.outsideFileGrant,
           directory: root || undefined,
-         }).url : ''))
+         }, projectScope).url : ''))
     : '';
 
   const openSelectedImagePreview = useEvent((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -3246,13 +3278,13 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     );
   }, [imagePreviewNonce, imageSrc, openSelectedImagePreview, t]);
 
-  const pdfSrc = selectedFile?.path && isSelectedPdf && pdfAssetAuthReadyKey === pdfAssetAuthKey
+  const pdfSrc = projectPdfKey ? (projectPdfSource?.key === projectPdfKey ? projectPdfSource.url : '') : selectedFile?.path && isSelectedPdf && pdfAssetAuthReadyKey === pdfAssetAuthKey
     ? directFileResource('/api/fs/raw', {
       path: selectedFile.path,
       allowOutsideWorkspace: selectedFileReadOptions.allowOutsideWorkspace ? 'true' : undefined,
       outsideFileGrant: selectedFileReadOptions.outsideFileGrant,
       directory: root || undefined,
-    }).url
+    }, projectScope).url
     : '';
 
   const renderPdfPreview = React.useCallback((file: FileNode) => (
@@ -3268,9 +3300,10 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
 
   React.useEffect(() => {
     let cancelled = false;
+    let releaseProjectImage: (() => void) | undefined;
 
     const resolveDesktopImage = async () => {
-      if (!runtime.isDesktop || !selectedFile?.path || !isSelectedImage || isSelectedSvg) {
+      if ((!runtime.isDesktop && !projectScope) || !selectedFile?.path || !isSelectedImage || isSelectedSvg) {
         if (desktopImageBlobUrlRef.current) {
           URL.revokeObjectURL(desktopImageBlobUrlRef.current);
           desktopImageBlobUrlRef.current = '';
@@ -3287,7 +3320,13 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
       }
 
       const srcPromise = (async () => {
-          const response = await readRuntimeFile({ path: selectedFile.path, ...selectedFileReadOptions, directory: root || undefined, signal: imageReadController.signal });
+          if (projectScope) {
+            const lease = await acquireRuntimeImage(selectedFile.path, imageReadController.signal, 'preview', projectScope);
+            if (cancelled) { lease.release(); return ''; }
+            releaseProjectImage = lease.release;
+            return lease.url;
+          }
+          const response = await readRuntimeFile({ path: selectedFile.path, ...selectedFileReadOptions, directory: root || undefined, signal: imageReadController.signal, scope: projectScope });
           if (!response.ok) {
             throw new Error(t('filesView.error.readFileFailed'));
           }
@@ -3332,8 +3371,9 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     return () => {
       cancelled = true;
       imageReadController.abort();
+      releaseProjectImage?.();
     };
-  }, [files, isSelectedImage, isSelectedSvg, root, runtime.isDesktop, selectedFile?.path, selectedFileReadOptions, t]);
+  }, [files, isSelectedImage, isSelectedSvg, root, runtime.isDesktop, selectedFile?.path, selectedFileReadOptions, t, projectScope]);
 
   React.useEffect(() => {
     return () => {
@@ -3473,7 +3513,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
           </Button>,
         ) : null}
 
-        {runtime.isDesktop && isDesktopLocalOriginActive() && <DropdownMenu onOpenChange={handleToolbarDropdownOpenChange}>
+        {!projectScope && runtime.isDesktop && isDesktopLocalOriginActive() && <DropdownMenu onOpenChange={handleToolbarDropdownOpenChange}>
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -4079,30 +4119,8 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
               </ErrorBoundary>
             </div>
           ) : selectedFile && isHtml && htmlViewMode === 'preview' ? (
-            isHtmlAssetAuthLoading ? (
-              <div className="flex h-full items-center justify-center text-muted-foreground typography-ui-label">
-                {t('common.loading')}
-              </div>
-            ) : (
-            <div className="h-full overflow-hidden">
-              <iframe
-                key={`${selectedFilePath}:${htmlPreviewNonce}:${htmlDocumentRevision}`}
-                src={!htmlPreviewUsesInlineDocument && htmlAssetAuthReadyKey === htmlAssetAuthKey ? (() => {
-                  const encoded = selectedFile.path.split('/').map((segment) => encodeURIComponent(segment)).join('/');
-                  return directFileResource(`/api/fs/serve${encoded.startsWith('/') ? encoded : `/${encoded}`}`).url;
-                })() : undefined}
-                srcDoc={htmlPreviewUsesInlineDocument ? (() => {
-                  if (!runtime.isVSCode) return fileContent;
-                  const basePath = selectedFile.path.substring(0, selectedFile.path.lastIndexOf('/') + 1);
-                  if (!basePath) return fileContent;
-                  return fileContent.replace(/<head([^>]*)>/i, `<head$1><base href="${basePath}">`);
-                })() : undefined}
-                className="w-full h-full border-none"
-                sandbox="allow-scripts allow-same-origin allow-forms"
-                title={t('filesView.editor.htmlPreviewTitle')}
-              />
-            </div>
-            )
+            <ProjectFilePreview path={selectedFile.path} directory={projectScope?.location.directory ?? root ?? ''}
+              entry={projectScope} revision={htmlDocumentRevision} />
           ) : selectedFile && canUseShikiFileView && textViewMode === 'view' ? (
             renderShikiFileView(selectedFile, draftContent)
           ) : (

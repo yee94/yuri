@@ -11,6 +11,9 @@ import {
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import type { PluginEntry, PluginFile, PluginScope, RegistryResult } from '@/stores/usePluginsStore';
 import { resolveConfigQueryDirectory } from './commandQueries';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+import { captureProjectScope } from '@/lib/api/project-scope';
 
 export { resolveConfigQueryDirectory } from './commandQueries';
 
@@ -70,17 +73,20 @@ const currentRuntimeInventory = (
 export const pluginsListQueryOptions = (
   directory: string | null = resolveConfigQueryDirectory(),
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeDirectory(directory);
+  const normalizedDirectory = entry ? directory ?? entry.location.directory : normalizeDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: pluginsListQueryKey(normalizedDirectory, transport),
+    queryKey: scope.key(pluginsListQueryKey(normalizedDirectory, transport)),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<PluginsList> => {
-      const response = await runtimeFetch(buildPluginsUrl('/api/config/plugins', normalizedDirectory), {
+      const response = await scope.fetch(buildPluginsUrl('/api/config/plugins', normalizedDirectory), {
         headers: buildDirectoryHeaders(normalizedDirectory),
         signal,
       });
       if (!response.ok) throw new Error('Failed to load plugins');
       const data = await response.json() as Partial<PluginsList>;
+      scope.assertCurrent(signal);
       return { entries: data.entries ?? [], files: data.files ?? [] };
     },
     staleTime: 5_000,
@@ -145,11 +151,26 @@ export const pluginFileQueryOptions = (
 export const pluginRuntimeQueryOptions = (
   directory: string | null = resolveConfigQueryDirectory(),
   transport = getRuntimeTransportIdentity(),
+  entry?: HostRuntimeEntry,
 ) => {
-  const normalizedDirectory = normalizeDirectory(directory);
+  const normalizedDirectory = entry ? directory ?? entry.location.directory : normalizeDirectory(directory);
+  const scope = captureProjectScope(entry);
   return {
-    queryKey: pluginRuntimeQueryKey(normalizedDirectory, transport),
+    queryKey: scope.key(pluginRuntimeQueryKey(normalizedDirectory, transport)),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<PluginRuntimeInfo[]> => {
+      if (entry) {
+        const response = await entry.sdk().plugin.list({ location: { directory: normalizedDirectory ?? entry.location.directory } }, { signal });
+        scope.assertCurrent(signal);
+        if (!Array.isArray(response.data)) throw new Error('Failed to load remote plugin runtime');
+        return response.data.map((plugin): PluginRuntimeInfo => ({
+          source: plugin.source.type === 'package'
+            ? { kind: 'package', target: plugin.source.target, version: plugin.source.version ?? null,
+              outdated: plugin.source.outdated === true, updating: plugin.source.updating === true }
+            : plugin.source.type === 'local' ? { kind: 'local', path: plugin.source.path } : { kind: 'builtin' },
+          state: plugin.state.status === 'failed'
+            ? { kind: 'failed', error: plugin.state.error, ref: plugin.state.ref ?? null } : { kind: 'active' },
+        }));
+      }
       const generation = beginRuntimeRead();
       const plugins = await listPluginRuntime(normalizedDirectory, signal);
       if (generation !== runtimeReadGeneration) {
@@ -165,9 +186,10 @@ export const pluginRuntimeQueryOptions = (
 };
 
 export const usePluginsQuery = (options: { enabled?: boolean } = {}) => {
+  const host = useHostRuntime();
   const activeProjectPath = useProjectsStore((state) => state.getActiveProject?.()?.path ?? null);
   return useQuery({
-    ...pluginsListQueryOptions(normalizeDirectory(activeProjectPath) ?? normalizeDirectory(opencodeClient.getDirectory())),
+    ...pluginsListQueryOptions(host?.entry.location.directory ?? normalizeDirectory(activeProjectPath) ?? normalizeDirectory(opencodeClient.getDirectory()), undefined, host?.entry),
     enabled: options.enabled,
   });
 };
@@ -188,9 +210,10 @@ export const usePluginConfigDirectory = (): string | null => {
 };
 
 export const usePluginRuntimeQuery = (options: { enabled?: boolean } = {}) => {
+  const host = useHostRuntime();
   const directory = usePluginConfigDirectory();
   return useQuery({
-    ...pluginRuntimeQueryOptions(directory),
+    ...pluginRuntimeQueryOptions(host?.entry.location.directory ?? directory, undefined, host?.entry),
     enabled: options.enabled,
   });
 };

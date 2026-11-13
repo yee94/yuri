@@ -145,8 +145,9 @@ npm 发布需要仓库 Secret `NPM_TOKEN`（对 `@yuriai` scope 有 publish 权�
 1. 使用 `X.Y.Z-beta.N`（或其它 semver prerelease）形式；禁止把 beta 内容打成无后缀的 `X.Y.Z`。
 2. 依赖 `release.yml`：含 `-` 的版本创建/发布 GitHub Release 时设置 `prerelease: true`，从而**不会**成为 `/releases/latest`。
 3. 依赖 finalize-release **跳过** `deploy/update-service/release-manifest.json` 写入；`write-release-manifest.mjs` 对 prerelease 直接 exit 0。Agent 不得手工把该 manifest 改成 beta 版本并推送。
-4. Electron 与移动端共用 OTA 的 beta/stable 频道；稳定壳默认 stable，用户显式打开 beta 开关才订阅 beta，关闭后可确认回退同主版本 stable。
-5. beta `v*` 是否上传 iOS 由 plan mode 决定：`mode: native`（需要原生壳）**必须**上传 iOS 到 TestFlight 内测；`mode: ota`（常规 web-only beta）**不构建、不上传 iOS**。**禁止**把 prerelease 构建关联到已有外测组或提交 Beta App Review（外测组仅稳定版）。iOS 上传失败只影响内测可见性，重跑 `--failed` 即可；桌面 / APK / npm 不受影响。
+4. 官网下载区只展示最新**正式版**：`site/assets/downloads.js` 的 `resolveRelease` 跳过 prerelease、draft 与 `mobile-*/v*` OTA tag，CI 的 `sync-downloads.mjs` 在没有正式版时失败而不回退到 beta，外部用户不会从官网下载到 beta。
+5. Electron 与移动端共用 OTA 的 beta/stable 频道；稳定壳默认 stable，用户显式打开 beta 开关才订阅 beta，关闭后可确认回退同主版本 stable。
+6. beta `v*` 是否上传 iOS 由 plan mode 决定：`mode: native`（需要原生壳）**必须**上传 iOS 到 TestFlight 内测；`mode: ota`（常规 web-only beta）**不构建、不上传 iOS**。**禁止**把 prerelease 构建关联到已有外测组或提交 Beta App Review（外测组仅稳定版）。iOS 上传失败只影响内测可见性，重跑 `--failed` 即可；桌面 / APK / npm 不受影响。
 
 **发布时禁止**
 

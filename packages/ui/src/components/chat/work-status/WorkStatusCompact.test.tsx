@@ -31,7 +31,7 @@ const fixture = vi.hoisted(() => ({
   ensureStatus: vi.fn(),
   copy: vi.fn(async (_text: string) => ({ ok: true })),
 }));
-vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ git: null }) }));
+vi.mock('@/lib/api/useProjectRuntimeAPIs', () => ({ useProjectRuntimeAPIs: () => ({ git: null }) }));
 vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: fixture.copy }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: keyof typeof dict, params: Record<string, string | number> = {}) =>
   Object.entries(params).reduce<string>((text, [name, value]) => text.replace(`{${name}}`, String(value)), dict[key]) }) }));
@@ -53,7 +53,7 @@ vi.mock('@/stores/useUIStore', async (importOriginal) => ({
   normalizeContextPanelDirectoryKey: (directory: string) => directory,
   useUIStore: (selector: (state: unknown) => unknown) => selector(fixture.ui),
 }));
-vi.mock('@/stores/useGitStore', () => ({
+vi.mock('@/lib/api/useProjectGitStore', () => ({
   useGitStore: (selector: (state: unknown) => unknown) => selector({ ensureStatus: fixture.ensureStatus }),
   useGitStatus: () => ({ current: 'feature/topic', files: [{ path: 'a' }, { path: 'b' }], diffStats: {
     a: { insertions: 5, deletions: 2 }, b: { insertions: 3, deletions: 1 },

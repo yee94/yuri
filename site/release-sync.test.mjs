@@ -28,7 +28,7 @@ async function fixture() {
 }
 
 describe('CI release snapshot', () => {
-  it('writes the latest published beta and configured invitation into the browser/static snapshot', async () => {
+  it('writes the latest published stable release and configured invitation into the browser/static snapshot', async () => {
     const f = await fixture();
     const fetchImpl = vi.fn(async () => Response.json([
       release('0.1.2-beta.2'), release('0.1.1', { published_at: '2026-10-25T00:00:00Z' }),
@@ -36,7 +36,7 @@ describe('CI release snapshot', () => {
       release('9.0.0', { tag_name: 'mobile-stable/v9.0.0' }),
     ]));
     const result = await syncDownloads({ sourcePath: f.sourcePath, fetchImpl, token: 'fixture-token', testFlightUrl: invitation });
-    expect(result).toMatchObject({ version: '0.1.2-beta.2', prerelease: true, targets: { ios: invitation } });
+    expect(result).toMatchObject({ version: '0.1.1', prerelease: false, targets: { ios: invitation } });
     expect(fetchImpl.mock.calls[0][1].headers.Authorization).toBe('Bearer fixture-token');
     const source = await readFile(f.sourcePath, 'utf8');
     const generated = source.match(/\/\* release-snapshot:start \*\/ Object.freeze\(([\s\S]*?)\) \/\* release-snapshot:end \*\//);
@@ -45,9 +45,9 @@ describe('CI release snapshot', () => {
     expect(source.slice(source.indexOf('/** Select'))).toBe(f.source.slice(f.source.indexOf('/** Select')));
   });
 
-  it('fails closed without changing the snapshot on rate limits, empty catalogs or missing installers', async () => {
+  it('fails closed without changing the snapshot on rate limits, beta-only catalogs or missing installers', async () => {
     const f = await fixture();
-    for (const response of [new Response('', { status: 403 }), Response.json([]), Response.json([release('1.0.0', { assets: [] })])]) {
+    for (const response of [new Response('', { status: 403 }), Response.json([]), Response.json([release('1.0.0', { assets: [] })]), Response.json([release('1.0.1-beta.1')])]) {
       await expect(syncDownloads({ sourcePath: f.sourcePath, fetchImpl: async () => response, testFlightUrl: invitation })).rejects.toThrow();
       expect(await readFile(f.sourcePath, 'utf8')).toBe(f.source);
     }

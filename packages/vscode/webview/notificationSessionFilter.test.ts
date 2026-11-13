@@ -2,6 +2,10 @@ import { describe, expect, test } from 'vitest';
 import { shouldSkipVSCodeNotificationSession } from './notificationSessionFilter';
 
 describe('shouldSkipVSCodeNotificationSession', () => {
+  test('suppresses explicitly linked CLI workers even without native parentID', () => {
+    expect(shouldSkipVSCodeNotificationSession({ metadata: { yuri: { worker: { parentSessionID: 'root' } } } })).toBe(true);
+    expect(shouldSkipVSCodeNotificationSession({ metadata: { yuri: { worker: { parentSessionID: '' } } } })).toBe(false);
+  });
   test('skips missing session and child sessions', () => {
     expect(shouldSkipVSCodeNotificationSession(undefined)).toBe(true);
     expect(shouldSkipVSCodeNotificationSession(null)).toBe(true);

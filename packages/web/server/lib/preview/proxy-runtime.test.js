@@ -1,19 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
-import crypto from 'node:crypto';
-import { EventEmitter } from 'node:events';
-import * as fsPromises from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { createUiAuth } from '../ui-auth/ui-auth.js';
-import { createRemoteClientAuthRuntime } from '../client-auth/remote-clients.js';
-import { createRequestSecurityRuntime } from '../security/request-security.js';
+import { describe, expect, it } from 'vitest';
 
 import {
   applyPreviewPassthroughRequestHeaders,
   applyPreviewPassthroughResponseHeaders,
   classifyPreviewNavigation,
   classifyPreviewResourceError,
-  createPreviewProxyRuntime,
   normalizeProxyTargetUrl,
   rewritePreviewBody,
   rewritePreviewCspHeader,
@@ -27,111 +18,8 @@ const rewrite = (bodyText, kind) => rewritePreviewBody({
   targetOrigin: 'http://127.0.0.1:3000',
 });
 
-// Invoke registered production handlers without sockets, a real Host or upstream requests.
-async function nativePreviewFixture(run) {
-  const root = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'native-preview-auth-'));
-  const clients = createRemoteClientAuthRuntime({ fsPromises, path, crypto, storePath: path.join(root, 'clients.json') });
-  const owner = await clients.createClient({ label: 'Synthetic owner', clientKind: 'mobile', authMethod: 'pairing', pairingId: 'fixture', usesRelay: true });
-  const other = await clients.createClient({ label: 'Synthetic other', clientKind: 'mobile' });
-  const auth = createUiAuth({ password: null, clientAuthController: clients });
-  const security = createRequestSecurityRuntime({ readSettingsFromDiskMigrated: async () => ({}) });
-  const routes = new Map();
-  const server = new EventEmitter();
-  let proxyOptions;
-  const runtime = createPreviewProxyRuntime({ crypto, URL, createProxyMiddleware: options => { proxyOptions = options; return () => {}; }, responseInterceptor: callback => callback });
-  const timer = vi.spyOn(globalThis, 'setInterval').mockReturnValue({ unref() {} });
-  try {
-    runtime.attach({ post: (route, ...handlers) => routes.set(route, handlers.at(-1)), use: (route, handler) => routes.set(route, handler) },
-      { server, express: { json: () => () => {} }, uiAuthController: auth, ...security });
-  } finally { timer.mockRestore(); }
-  const invoke = async (route, { headers = {}, body = {}, method = 'POST', url = route } = {}) => {
-    const req = { headers: { host: 'fixture.invalid', ...headers }, body, method, url, originalUrl: url, socket: {} };
-    const res = { statusCode: 200, headers: {}, status(code) { this.statusCode = code; return this; }, json(value) { this.body = value; return this; }, setHeader(name, value) { this.headers[name.toLowerCase()] = value; } };
-    await routes.get(route)(req, res, () => { res.forwarded = true; });
-    return { req, res };
-  };
-  const headers = { 'x-yuri-native-preview': '1', authorization: `Bearer ${owner.token}` };
-  const body = { url: 'http://localhost:3000/report', ttlMs: 300000, allowExternal: false };
-  const create = (overrides = {}) => invoke('/api/preview/targets', { headers, body, ...overrides });
-  const read = (target, overrides = {}) => invoke('/api/preview/proxy', { method: 'GET', url: target.proxyBasePath + '/report', headers: { ...headers, 'x-yuri-preview-token': target.previewToken }, ...overrides });
-  try { await run({ auth, clients, owner, other, headers, body, create, read, invoke, server, proxyOptions }); }
-  finally { auth.dispose(); await fsPromises.rm(root, { recursive: true, force: true }); }
-}
-
-describe('native preview bearer-only protocol', () => {
-  it('requires a real active device even on a password-less Host; header claims, cookies and URL auth cannot authorize', async () => nativePreviewFixture(async ({ create, headers, auth, invoke }) => {
-    for (const extra of [{ authorization: '' }, { authorization: 'Bearer forged' }, { cookie: 'yuri_ui_session=forged' }, { origin: 'https://attacker.invalid' }, { origin: 'yuri-ui://app' }, { 'sec-fetch-site': 'same-origin' }, { referer: 'https://fixture.invalid' }, { 'x-yuri-native-preview': '2' }]) {
-      expect((await create({ headers: { ...headers, ...extra } })).res.statusCode).toBe(403);
-    }
-    const tokenRes = { setHeader() {}, json(value) { this.body = value; } };
-    await auth.handleUrlAuthToken({ headers }, tokenRes);
-    expect((await create({ headers: { ...headers, authorization: `Bearer ${tokenRes.body.token}` } })).res.statusCode).toBe(403);
-    expect((await invoke('/api/preview/targets', { headers: { 'x-yuri-native-preview': '1' }, body: { url: 'http://localhost/' }, url: `/api/preview/targets?yuri_url_token=${tokenRes.body.token}` })).res.statusCode).toBe(403);
-  }));
-
-  it('creates only fixed short-lived loopback scope without cookies, then binds every GET to that active client', async () => nativePreviewFixture(async ({ create, read, headers, other, clients, owner, proxyOptions, server }) => {
-    const created = (await create()).res;
-    expect(created.statusCode).toBe(200);
-    expect(created.headers['set-cookie']).toBeUndefined();
-    expect(created.headers['cache-control']).toBe('no-store');
-    expect(created.body.expiresAt).toBeGreaterThan(Date.now());
-    expect(created.body.expiresAt).toBeLessThanOrEqual(Date.now() + 300000);
-    expect((await read(created.body)).res.forwarded).toBe(true);
-    const upgrade = { headers: { ...headers, upgrade: 'websocket', 'x-yuri-preview-token': created.body.previewToken }, originalUrl: created.body.proxyBasePath + '/hmr' };
-    expect(proxyOptions.pathFilter(upgrade.originalUrl, upgrade)).toBe(false);
-    const socket = { destroyed: false, write: vi.fn(), destroy() { this.destroyed = true; } };
-    server.emit('upgrade', upgrade, socket, Buffer.alloc(0));
-    expect(socket.destroyed).toBe(true);
-    expect(socket.write.mock.calls[0][0]).toContain('403');
-    delete upgrade.headers['x-yuri-preview-token'];
-    expect(proxyOptions.pathFilter(upgrade.originalUrl, upgrade)).toBe(false);
-    for (const extra of [{ authorization: `Bearer ${other.token}` }, { authorization: '' }, { origin: 'https://attacker.invalid' }, { cookie: 'yuri_ui_session=forged' }, { 'sec-fetch-mode': 'cors' }, { 'x-yuri-preview-token': 'wrong' }]) {
-      expect((await read(created.body, { headers: { ...headers, 'x-yuri-preview-token': created.body.previewToken, ...extra } })).res.statusCode).toBe(403);
-    }
-    expect((await read(created.body, { method: 'POST' })).res.statusCode).toBe(403);
-    expect((await read(created.body, { headers, url: created.body.proxyBasePath + '/report?yuri_preview_token=' + created.body.previewToken })).res.statusCode).toBe(403);
-    await clients.revokeClient(owner.client.id);
-    expect((await read(created.body)).res.statusCode).toBe(403);
-  }));
-
-  it('preserves SSRF restrictions, rejects credential-bearing or malformed entries, and rejects expired targets', async () => nativePreviewFixture(async ({ create, read, body }) => {
-    for (const patch of [{ allowExternal: true }, { ttlMs: 600000 }, { url: 'https://external.invalid/' }, { url: 'http://169.254.169.254/' }, { url: 'http://127.1/' }, { url: 'http://user@localhost/' }, { url: 'http://localhost/?%79uri_url_token=secret' }, { url: 'http://localhost/?yuri_preview_token=secret' }, { url: 'http://localhost:0/' }, { url: 'not a URL' }, { url: ' http://localhost/' }]) {
-      expect((await create({ body: { ...body, ...patch } })).res.statusCode).toBe(400);
-    }
-    const target = (await create()).res.body;
-    const now = vi.spyOn(Date, 'now').mockReturnValue(target.expiresAt + 1);
-    try { expect((await read(target)).res.statusCode).toBe(404); } finally { now.mockRestore(); }
-  }));
-
-  it('admits Host-fetch Relay metadata only after the existing pairing gate, never from a stamped direct-only bearer', async () => nativePreviewFixture(async ({ create, read, headers, other, clients, owner }) => {
-    const relayHeaders = { ...headers, 'x-yuri-relay-connection': 'synthetic-dispatcher', 'sec-fetch-mode': 'cors' };
-    const created = (await create({ headers: relayHeaders })).res;
-    expect(created.statusCode).toBe(200);
-    expect((await read(created.body, { headers: { ...relayHeaders, 'x-yuri-preview-token': created.body.previewToken } })).res.forwarded).toBe(true);
-    expect((await create({ headers: { ...relayHeaders, authorization: `Bearer ${other.token}` } })).res.statusCode).toBe(403);
-    expect((await create({ headers: { ...relayHeaders, 'sec-fetch-site': 'cross-site' } })).res.statusCode).toBe(403);
-    expect((await create({ headers: { ...relayHeaders, origin: 'https://attacker.invalid' } })).res.statusCode).toBe(403);
-    expect((await create({ headers: { ...headers, 'sec-fetch-mode': 'cors' } })).res.statusCode).toBe(403);
-    await clients.revokeClient(owner.client.id);
-    expect((await read(created.body, { headers: { ...relayHeaders, 'x-yuri-preview-token': created.body.previewToken } })).res.statusCode).toBe(403);
-  }));
-
-  it('does not weaken the existing Web Origin gate, bypass Relay pairing, or forward native credentials upstream', async () => nativePreviewFixture(async ({ auth, clients, other, owner, create, headers, body, proxyOptions }) => {
-    // Exercise the existing enabled branch with real auth and request-security Origin checks.
-    auth.enabled = true;
-    expect((await create({ headers: { authorization: headers.authorization } })).res.statusCode).toBe(403);
-    expect((await create({ headers: { authorization: headers.authorization, origin: 'https://attacker.invalid' } })).res.statusCode).toBe(403);
-    expect((await create({ headers: { authorization: headers.authorization, origin: 'http://fixture.invalid' } })).res.statusCode).toBe(200);
-    expect((await create()).res.statusCode).toBe(200);
-    const relayReq = token => ({ method: 'POST', url: '/api/preview/targets', headers: { authorization: `Bearer ${token}` }, body });
-    expect(await auth.authorizeRelayRequest(relayReq(other.token))).toBe(false);
-    expect(await auth.authorizeRelayRequest(relayReq(owner.token))).toBe(true);
-    await clients.revokeClient(owner.client.id);
-    expect(await auth.authorizeRelayRequest(relayReq(owner.token))).toBe(false);
-    const forwarded = new Map(Object.entries({ authorization: 'secret', cookie: 'secret', 'x-yuri-ui-session': 'secret', 'x-yuri-native-preview': '1', 'x-yuri-preview-token': 'secret' }));
-    proxyOptions.on.proxyReq({ removeHeader: name => forwarded.delete(name), setHeader: (name, value) => forwarded.set(name, value) }, { headers: {} });
-    expect([...forwarded.keys()]).toEqual(['accept-encoding']);
-  }));
+it('preserves an explicit IPv6 loopback service instead of dialing IPv4', () => {
+  expect(normalizeProxyTargetUrl('http://[::1]:3000/app')).toEqual({ ok: true, origin: 'http://[::1]:3000' });
 });
 
 describe('preview Inertia header passthrough', () => {

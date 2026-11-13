@@ -6,6 +6,7 @@ import { clearMessageQueueScope, clearMessageQueueScopes, ensureMessageQueueStat
 import { uploadQueueAttachments, type QueueAttachmentCandidate } from './message-queue-server-attachment-adapter';
 import { getMessageQueueRuntime } from './message-queue-runtime';
 import { createMessageQueueShadowImporter, type MessageQueueShadowImportState } from './message-queue-shadow-import';
+import type { HostLocation } from '@/lib/remote-projects/location';
 
 export type MessageQueueServerCapability = 'idle' | 'available' | 'unsupported' | 'error';
 export type MessageQueueServerScopeState = MessageQueueScopeDescriptor;
@@ -18,9 +19,14 @@ export type MessageQueuePendingAdmissionItem = {
   kind: 'pending-admission'; requestID: string; queueItemID: string; operationID: string; messageID: string; content: string; createdAt: number; phase: MessageQueuePendingAdmissionPhase; attachmentCount: number;
   composerDocument?: MessageQueueAdmissionItem['composerDocument']; composerMentions?: MessageQueueAdmissionItem['composerMentions']; sendConfig?: MessageQueueAdmissionItem['sendConfig'];
 };
+type AdmissionScope = { directory: string; sessionID: string; hostId?: string; location?: HostLocation };
+const assertLocalQueueAdmission = (scope: AdmissionScope): void => {
+  if (scope.hostId || scope.location?.hostId) throw new Error('Remote prompts must use the Remote Host native inbox, not the Hub message queue');
+};
+
 export type MessageQueueStageAdmissionInput = {
   requestID: string;
-  scope: { directory: string; sessionID: string };
+  scope: AdmissionScope;
   item: {
     queueItemID: string;
     operationID: string;
@@ -35,7 +41,7 @@ export type MessageQueueStageAdmissionInput = {
 };
 export type MessageQueueUnstageAdmissionInput = {
   requestID: string;
-  scope: { directory: string; sessionID: string };
+  scope: AdmissionScope;
 };
 export type MessageQueueServerDisplayItem = MessageQueueItem | MessageQueuePendingAdmissionItem;
 export const isMessageQueuePendingAdmissionItem = (value: unknown): value is MessageQueuePendingAdmissionItem => typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'pending-admission';
@@ -56,7 +62,7 @@ export type MessageQueueServerSurface = {
   stageAdmission(input: MessageQueueStageAdmissionInput): void;
   /** Drop a staged pending-admission when flush/compile/admit fails before commit. */
   unstageAdmission(input: MessageQueueUnstageAdmissionInput): void;
-  admit(input: { requestID: string; scope: { directory: string; sessionID: string }; item: Omit<MessageQueueAdmissionItem, 'attachments'>; attachments?: readonly QueueAttachmentCandidate[] }): Promise<MessageQueueServerMutationResult>;
+  admit(input: { requestID: string; scope: AdmissionScope; item: Omit<MessageQueueAdmissionItem, 'attachments'>; attachments?: readonly QueueAttachmentCandidate[] }): Promise<MessageQueueServerMutationResult>;
   edit(input: { requestID: string; scopeID: string; revision: number; item: MessageQueueItem; patch: Parameters<typeof editTextQueueItem>[1]['item'] }): Promise<MessageQueueServerMutationResult>;
   remove(input: { requestID: string; scopeID: string; revision: number; item: MessageQueueItem }): Promise<MessageQueueServerMutationResult>;
   reserveEdit(input: { requestID: string; scopeID: string; revision: number; item: MessageQueueItem; owner: string; ttlMs: number; runtime: MessageQueueServerRuntimeCapture }): Promise<MessageQueueEditReservation | undefined>;
@@ -442,6 +448,7 @@ export const createMessageQueueServerRuntime = (dependencies: Partial<Dependenci
     // Explicit pre-await chip: ChatInput stages identity + clears composer before
     // selection.flush so QueuedMessageChips sees pending-admission immediately.
     stageAdmission: ({ requestID, scope, item }) => {
+      assertLocalQueueAdmission(scope);
       const capture = synchronizeTransport();
       const pendingKey = scopeKey({ transportIdentity: capture.transportIdentity, ...scope });
       const pending: PendingAdmission = {
@@ -469,6 +476,7 @@ export const createMessageQueueServerRuntime = (dependencies: Partial<Dependenci
       updatePendingAdmissions(pendingKey, (entries) => entries.filter((entry) => entry.requestID !== requestID));
     },
     admit: async ({ requestID, scope, item, attachments = [] }) => {
+      assertLocalQueueAdmission(scope);
       const capture = synchronizeTransport();
       const pendingScope = { transportIdentity: capture.transportIdentity, ...scope };
       const pendingKey = scopeKey(pendingScope);

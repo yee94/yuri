@@ -69,7 +69,7 @@ export function MarkstreamCodeBlockNode(props: MarkstreamCodeBlockProps) {
     || props.node.loading === true;
   const messageId = markstreamCodeBlockMessageId({
     messageId: host.messageId,
-    partId: host.part?.id,
+    partId: host.partId,
     indexKey: props.indexKey,
     language: props.node.language,
   });
@@ -88,6 +88,7 @@ export function MarkstreamCodeBlockNode(props: MarkstreamCodeBlockProps) {
         skipFadeIn
         isStreaming={streaming}
         disableStreamAnimation={host.disableStreamAnimation}
+        sourceIsPaced
         variant={host.variant}
         onShowPopup={host.onShowPopup}
         // Fence body file refs stay Morphdom-owned inside MarkdownRendererImpl.

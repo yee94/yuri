@@ -53,40 +53,53 @@ type ProbeProps = {
   revision: number
   geometry: Geometry
   nodeKey?: string
+  composer?: { height: number; reads: number }
 }
 
-let probeFollowLatest: (() => void) | null = null
+let probeFollowLatest: ReturnType<typeof useAssistantContactAutoFollow>['followLatest'] | null = null
 
-const Probe: React.FC<ProbeProps> = ({ active, assistantID, revision, geometry, nodeKey }) => {
+const Probe: React.FC<ProbeProps> = ({ active, assistantID, revision, geometry, nodeKey, composer }) => {
+  const composerRef = React.useRef<HTMLElement | null>(null)
   const { scrollRef, contentRef, followLatest } = useAssistantContactAutoFollow({
     active,
     assistantID,
     contentRevision: revision,
+    overlayComposerRef: composer ? composerRef : undefined,
   })
   probeFollowLatest = followLatest
   const attachScroller = React.useMemo<React.RefCallback<HTMLDivElement>>(() => (node) => {
     if (node && !Object.prototype.hasOwnProperty.call(node, 'scrollHeight')) {
+      const inset = () => Number.parseFloat(node.parentElement?.style.getPropertyValue('--contact-composer-height') || '0')
       Object.defineProperties(node, {
         clientHeight: { configurable: true, get: () => geometry.client },
-        scrollHeight: { configurable: true, get: () => geometry.height },
+        scrollHeight: { configurable: true, get: () => geometry.height + inset() },
         scrollTop: {
           configurable: true,
           get: () => geometry.top,
           set: (value: number) => {
             geometry.writes += 1
-            geometry.top = Math.max(0, Math.min(value, geometry.height - geometry.client))
+            geometry.top = Math.max(0, Math.min(value, geometry.height + inset() - geometry.client))
           },
         },
       })
     }
     scrollRef(node)
   }, [geometry, scrollRef])
+  const attachComposer = React.useMemo<React.RefCallback<HTMLElement>>(() => (node) => {
+    composerRef.current = node
+    if (node && composer) Object.defineProperty(node, 'offsetHeight', {
+      configurable: true, get: () => { composer.reads += 1; return composer.height },
+    })
+  }, [composer])
 
   return (
+    <div data-test-surface="">
     <div key={nodeKey} ref={attachScroller} data-test-scroller="">
       <div ref={contentRef} data-test-content="">
         <div data-test-nested="" data-message-id="test-message" />
       </div>
+    </div>
+    {composer ? <footer ref={attachComposer} data-test-composer="" /> : null}
     </div>
   )
 }
@@ -146,6 +159,60 @@ const touch = (target: Element, type: string, clientY?: number, clientX = 20) =>
 }
 
 describe('useAssistantContactAutoFollow', () => {
+  test('reserves overlay composer height, follows resizing only at the bottom, and does no work for unrelated renders', async () => {
+    const geometry: Geometry = { top: 0, height: 2000, client: 700, writes: 0 }
+    const composer = { height: 52, reads: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry, composer })
+    const footer = probe.scroller.parentElement!.querySelector('[data-test-composer]')!
+    expect(probe.scroller.parentElement!.style.getPropertyValue('--contact-composer-height')).toBe('52px')
+    expect(geometry.top).toBe(1352)
+    const reads = composer.reads
+    const writes = geometry.writes
+    for (let revision = 1; revision <= 50; revision++) await probe.render({ revision })
+    expect(composer.reads).toBe(reads)
+    expect(geometry.writes).toBe(writes)
+
+    composer.height = 100
+    TestResizeObserver.emit(footer)
+    expect(geometry.top).toBe(1400)
+    expect(probe.scroller.parentElement!.style.getPropertyValue('--contact-composer-height')).toBe('100px')
+    wheel(probe.scroller, -40)
+    geometry.top = 900
+    probe.scroller.dispatchEvent(new Event('scroll'))
+    composer.height = 140
+    TestResizeObserver.emit(footer)
+    expect(geometry.top).toBe(900)
+    expect(probe.scroller.parentElement!.style.getPropertyValue('--contact-composer-height')).toBe('140px')
+    await probe.render({ active: false })
+    const inactiveReads = composer.reads
+    TestResizeObserver.emit(footer)
+    expect(composer.reads).toBe(inactiveReads)
+    expect(TestResizeObserver.instances.some(observer => observer.observed.has(footer))).toBe(false)
+    await probe.render({ active: true, composer: undefined })
+    expect(probe.scroller.parentElement!.style.getPropertyValue('--contact-composer-height')).toBe('0px')
+    expect(geometry.top).toBe(1300)
+  })
+
+  test.each([true, false])('Android native IME layout keeps the presented position (following=%s)', async (following) => {
+    const geometry: Geometry = { top: 0, height: 2000, client: 700, writes: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })
+    expect(geometry.top).toBe(1300)
+    if (!following) {
+      wheel(probe.scroller, -20)
+      geometry.top = 900
+      probe.scroller.dispatchEvent(new Event('scroll'))
+    }
+    const before = geometry.top
+    // Native translated by 300px; the page now absorbs it at its top.
+    window.dispatchEvent(new Event('yuri:keyboard-native-layout'))
+    geometry.client = 400
+    TestResizeObserver.emit(probe.scroller)
+    expect(geometry.top).toBe(before + 300)
+    // Repeated delivery never compensates twice.
+    TestResizeObserver.emit(probe.scroller)
+    expect(geometry.top).toBe(before + 300)
+  })
+
   test('eases growth, retargets once, and cancels on upward intent without fighting the reader', async () => {
     motionState.reduced = false
     const stop = vi.fn()
@@ -498,6 +565,94 @@ describe('useAssistantContactAutoFollow', () => {
     geometry.height += 60
     await probe.render({ revision: 2 })
     expect(geometry.top).toBe(geometry.height - geometry.client)
+  })
+
+  test.each([true, false])('smoothly returns to the tail before notifying the send flight (reduced=%s)', async (reduced) => {
+    motionState.reduced = reduced
+    motionState.animate.mockReturnValue({ stop: vi.fn() })
+    const geometry: Geometry = { top: 0, height: 9000, client: 300, writes: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })
+    wheel(probe.scroller, -80)
+    geometry.top = 120
+    probe.scroller.dispatchEvent(new Event('scroll'))
+    geometry.writes = 0
+    const timing = { duration: 0.3, ease: [0.199, 0.011, 0.279, 0.91] as const }
+    const settled = vi.fn()
+
+    act(() => { probeFollowLatest?.(timing, settled) })
+    expect(geometry.top).toBe(120)
+    expect(geometry.writes).toBe(0)
+    expect(settled).not.toHaveBeenCalled()
+    expect(motionState.animate).not.toHaveBeenCalled()
+
+    // The outgoing bubble reserves layout while hidden; admission never waits.
+    geometry.height += 60
+    await probe.render({ revision: 1 })
+    if (reduced) {
+      expect(geometry.top).toBe(8760)
+      expect(motionState.animate).not.toHaveBeenCalled()
+      expect(settled).toHaveBeenCalledExactlyOnceWith(true)
+    } else {
+      expect(motionState.animate).toHaveBeenCalledExactlyOnceWith(120, 8760, expect.objectContaining({ duration: 0.22, ease: 'easeOut' }))
+      const animation = motionState.animate.mock.calls[0][2]
+      animation.onUpdate(4400)
+      expect(geometry.top).toBe(4400)
+      expect(settled).not.toHaveBeenCalled()
+      animation.onUpdate(8760)
+      animation.onComplete()
+      expect(geometry.top).toBe(8760)
+      expect(settled).toHaveBeenCalledExactlyOnceWith(true)
+    }
+  })
+
+  test('an own send stops the previous follow animation, but does not write at the bottom', async () => {
+    motionState.reduced = false
+    const stop = vi.fn()
+    motionState.animate.mockReturnValue({ stop })
+    const geometry: Geometry = { top: 600, height: 900, client: 300, writes: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })
+    geometry.height += 120
+    await probe.render({ revision: 1 })
+    motionState.animate.mock.calls[0][2].onUpdate(630)
+    act(() => { probeFollowLatest?.() })
+    expect(stop).toHaveBeenCalledOnce()
+    expect(geometry.top).toBe(630)
+    geometry.top = 720
+    geometry.writes = 0
+    act(() => { probeFollowLatest?.() })
+    expect(geometry.writes).toBe(0)
+    expect(motionState.animate).toHaveBeenCalledOnce()
+
+    await probe.render({ active: false })
+    geometry.top = 100
+    act(() => { probeFollowLatest?.() })
+    expect(geometry.top).toBe(100)
+    expect(geometry.writes).toBe(0)
+  })
+
+  test.each(['gesture', 'inactive', 'identity', 'replacement'] as const)('cancels a pending send flight on %s and ignores stale completion', async (reason) => {
+    motionState.reduced = false
+    motionState.animate.mockReturnValue({ stop: vi.fn() })
+    const geometry: Geometry = { top: 600, height: 900, client: 300, writes: 0 }
+    const probe = await mountProbe({ active: true, assistantID: 'a', revision: 0, geometry })
+    wheel(probe.scroller, -80)
+    geometry.top = 120
+    probe.scroller.dispatchEvent(new Event('scroll'))
+    const settled = vi.fn()
+    act(() => probeFollowLatest?.(undefined, settled))
+    await probe.render({ revision: 1 })
+    const animation = motionState.animate.mock.calls[0][2]
+    animation.onUpdate(300)
+    if (reason === 'gesture') wheel(probe.scroller, -20)
+    if (reason === 'inactive') await probe.render({ active: false })
+    if (reason === 'identity') await probe.render({ assistantID: 'b' })
+    if (reason === 'replacement') act(() => probeFollowLatest?.())
+    expect(settled).toHaveBeenCalledExactlyOnceWith(false)
+    const before = { top: geometry.top, writes: geometry.writes }
+    animation.onUpdate(600)
+    animation.onComplete()
+    expect({ top: geometry.top, writes: geometry.writes }).toEqual(before)
+    expect(settled).toHaveBeenCalledOnce()
   })
 
   test('compensates growth above the reader that lands in the same frame as a wheel scroll', async () => {

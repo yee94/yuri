@@ -37,6 +37,18 @@ const fixture = () => {
 };
 
 describe('desktop window session persistence', () => {
+  it('preserves a remote resource coordinate while stripping credentials and rejecting partial targets', async () => {
+    const f = fixture();
+    const main = f.addWindow(1, 'local', '/session/same-id?hubId=hub&hostId=remote&instanceId=authority&directory=%2Fsame%2Fpath&token=private#secret');
+    await f.save(main);
+    const url = new URL(f.read()[0].route, 'https://window.invalid');
+    expect(url.pathname).toBe('/session/same-id');
+    expect(Object.fromEntries(url.searchParams)).toEqual({ hubId: 'hub', hostId: 'remote', instanceId: 'authority', directory: '/same/path' });
+    expect(JSON.stringify(f.root)).not.toMatch(/private|secret/);
+    f.root.desktopWindowStates[0].route = '/session/same-id?instanceId=authority';
+    expect(f.read()[0].route).toBe('/index.html');
+  });
+
   it('keeps each window host, route, normal geometry and display mode across restart', async () => {
     const f = fixture();
     const main = f.addWindow(1, 'remote', '/session/session-one');
@@ -164,6 +176,22 @@ describe('startup instance resolution', () => {
     expect(resolveTarget).toHaveBeenCalledWith(expected, expect.objectContaining({ localUrl: 'http://localhost:3000', restoreSession: saved.length > 0 }));
   });
 
+  it('can prepare the local UI without waiting for the first saved remote target', async () => {
+    const resolveTarget = vi.fn(() => new Promise(() => {}));
+    const context = vm.createContext({
+      process: { env: {} }, URL, isDev: false, state: {},
+      spawnLocalServer: async () => 'http://localhost:3000',
+      shouldUsePackagedUi: () => true, buildPackagedUiUrl: () => 'yuri-ui://app/index.html', packagedUiOrigin: () => 'yuri-ui://app',
+      urlIdentityKey: url => new URL(url).origin,
+      readDesktopLocalClientToken: () => '', normalizeHostUrl: url => url,
+      readDesktopHostsConfig: () => ({ hosts: [], defaultHostId: 'local' }),
+      readWindowStates: () => [{ hostId: 'slow-ssh' }], resolveDesktopStartupTarget: resolveTarget,
+    });
+    vm.runInContext(`${source.slice(source.indexOf('const resolveInitialUrl ='), source.indexOf('let desktopUpdateActionBusy ='))}\nglobalThis.start = resolveInitialUrl;`, context);
+    expect(await context.start({ deferWindowRestore: true })).toMatchObject({ localUiUrl: 'yuri-ui://app/index.html' });
+    expect(resolveTarget).not.toHaveBeenCalled();
+  });
+
   const startup = (mode, hostOverrides = {}) => {
     const host = { id: 'remote', url: 'http://remote.example:3000', clientToken: 'fixture-token', ...hostOverrides };
     const connect = vi.fn(async () => {});
@@ -226,6 +254,85 @@ describe('startup instance resolution', () => {
       expect(f.connect).toHaveBeenCalledExactlyOnceWith('remote');
     });
   }
+});
+
+describe('window visibility during slow startup', () => {
+  it('creates every saved window before waiting for local startup or any remote target', () => {
+    const saved = ['local', 'slow-ssh', 'other-ssh'].map(hostId => ({ hostId, route: '/session/one', width: 900, height: 700 }));
+    const create = vi.fn(options => ({ ...options, isDestroyed: () => false }));
+    const context = vm.createContext({
+      process: { env: {} }, state: {}, readWindowStates: () => saved,
+      createBrowserWindow: create, nextWindowLabel: () => `main-${create.mock.calls.length + 1}`,
+      extractInitialDeepLinks: () => [], handleDeepLinks: vi.fn(),
+      resolveInitialUrl: () => new Promise(() => {}),
+    });
+    const start = source.indexOf('  const savedWindows = process.env.YURI_SERVER_URL');
+    const end = source.indexOf('  if (desktopOta?.state.trial)', start);
+    vm.runInContext(`(async () => { ${source.slice(start, end)} })()`, context);
+    expect(create).toHaveBeenCalledTimes(saved.length);
+    expect(create.mock.calls.map(([options]) => options.runtimeConfig?.hostId)).toEqual(saved.map(entry => entry.hostId));
+    expect(create.mock.calls.every(([options]) => options.url === null)).toBe(true);
+  });
+
+  it('does not make a healthy restored window wait for an unrelated slow SSH target', async () => {
+    let finishSlow;
+    const resolve = vi.fn(hostId => hostId === 'slow-ssh'
+      ? new Promise(done => { finishSlow = () => done({ initialUrl: 'http://localhost:5173', hostId }); })
+      : Promise.resolve({ initialUrl: 'http://localhost:5173', hostId }));
+    const windows = ['slow-ssh', 'healthy'].map(hostId => ({ __yuriHostId: hostId, webContents: {}, isDestroyed: () => false }));
+    const navigate = vi.fn(async () => {});
+    const create = vi.fn();
+    const context = vm.createContext({
+      URL, state: {}, resolveDesktopStartupTarget: resolve,
+      shouldUsePackagedUi: () => false, nextWindowLabel: () => 'main-extra',
+      createBrowserWindow: create, navigateWindow: navigate,
+      buildRendererRuntimeConfig: (_url, target) => target, buildInitScript: () => '',
+      guiPluginHost: { invalidateWindow: vi.fn() }, viewExportHost: { invalidateOwner: vi.fn() },
+    });
+    vm.runInContext(`${source.slice(source.indexOf('const restoreAdditionalDesktopWindows ='), source.indexOf('const resolveInitialUrl ='))}\nglobalThis.restore = restoreAdditionalDesktopWindows;`, context);
+    const entries = windows.map(win => ({ hostId: win.__yuriHostId, route: '/session/one' }));
+    const pending = context.restore(entries, { localOrigin: 'http://localhost:3000' }, windows);
+    await new Promise(setImmediate);
+    expect(resolve.mock.calls.map(([id]) => id)).toEqual(['slow-ssh', 'healthy']);
+    expect(navigate).toHaveBeenCalledWith(windows[1], 'http://localhost:5173/session/one', expect.any(Object));
+    expect(create).not.toHaveBeenCalled();
+    finishSlow();
+    await pending;
+    expect(navigate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['closed', 'quitting'])('does not navigate a delayed restore after %s', async (reason) => {
+    let finish;
+    const window = { webContents: {}, isDestroyed: vi.fn(() => false) };
+    const state = {};
+    const navigate = vi.fn();
+    const context = vm.createContext({
+      URL, state, resolveDesktopStartupTarget: () => new Promise(done => { finish = done; }),
+      shouldUsePackagedUi: () => false, buildRendererRuntimeConfig: (_url, target) => target,
+      buildInitScript: () => '', navigateWindow: navigate,
+    });
+    vm.runInContext(`${source.slice(source.indexOf('const restoreAdditionalDesktopWindows ='), source.indexOf('const resolveInitialUrl ='))}\nglobalThis.restore = restoreAdditionalDesktopWindows;`, context);
+    const pending = context.restore([{ hostId: 'remote', route: '/session/one' }], {}, [window]);
+    if (reason === 'closed') window.isDestroyed.mockReturnValue(true);
+    else state.quitRequested = true;
+    finish({ initialUrl: 'http://localhost:5173' });
+    await pending;
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('uses each splash window target rather than the first saved window target', () => {
+    const context = vm.createContext({
+      process: { env: {} }, LOCAL_HOST_ID: 'local',
+      readSettingsRoot: () => ({}), readWindowStates: () => [{ hostId: 'local' }],
+      readDesktopHostsConfig: () => ({ defaultHostId: 'local' }),
+      getMenuLabels: () => ({ startupConnectingRemote: 'Connecting to remote instance' }),
+      normalizeMenuLocale: value => value, app: { getLocale: () => 'en' },
+      fs: { readFileSync: () => '<svg />' }, path: { join: () => '' }, resourceRoot: () => '',
+    });
+    vm.runInContext(`${source.slice(source.indexOf('const buildStartupSplashHtml ='), source.indexOf('const isBenignNavigationAbort ='))}\nglobalThis.splash = buildStartupSplashHtml;`, context);
+    expect(context.splash('remote')).toContain('Connecting to remote instance');
+    expect(context.splash('local')).not.toContain('Connecting to remote instance');
+  });
 });
 
 describe('first window preload after the startup splash', () => {

@@ -1,5 +1,7 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
+import { animate } from 'motion/mini';
+import { useReducedMotion } from 'motion/react';
 import { useI18n } from '@/lib/i18n';
 import { formatDuration } from '@/lib/formatDuration';
 import { MorphOrb } from './MorphOrb';
@@ -21,6 +23,60 @@ const STATUS_DISPLAY_TIME_MS = 1200;
 /** Keep the last status painted briefly after isWorking drops so step gaps do not collapse the row. */
 const STATUS_CLEAR_LINGER_MS = 600;
 
+function WorkingStatusText({ text, elapsed, reducedMotion }: { text: string; elapsed: string | null; reducedMotion: boolean | null }) {
+  const element = React.useRef<HTMLSpanElement>(null);
+  const textElement = React.useRef<HTMLSpanElement>(null);
+  const initialText = React.useRef(text);
+  const latestText = React.useRef(text);
+  const fadingOut = React.useRef(false);
+  const animation = React.useRef<ReturnType<typeof animate> | null>(null);
+
+  React.useLayoutEffect(() => {
+    const node = element.current;
+    const label = textElement.current;
+    if (!node || !label) return;
+    latestText.current = text;
+    if (reducedMotion) {
+      animation.current?.stop();
+      animation.current = null;
+      fadingOut.current = false;
+      label.textContent = text;
+      node.style.opacity = '1';
+      return;
+    }
+    // Coalesce changes during fade-out without restarting it or remounting shimmer.
+    if (fadingOut.current || label.textContent === text) return;
+    animation.current?.stop();
+    fadingOut.current = true;
+    const exit = animate(node, { opacity: 0 }, { duration: 0.15, ease: 'easeInOut' });
+    animation.current = exit;
+    void exit.then(() => {
+      if (animation.current !== exit) return;
+      fadingOut.current = false;
+      label.textContent = latestText.current;
+      animation.current = animate(node, { opacity: 1 }, { duration: 0.15, ease: 'easeInOut' });
+    });
+  }, [text, reducedMotion]);
+
+  React.useLayoutEffect(() => () => {
+    animation.current?.stop();
+    animation.current = null;
+    fadingOut.current = false;
+  }, []);
+
+  // This leaf owns text replacement; React retains the initial child and slot.
+  return (
+    <span ref={element} className="flex min-w-0 items-center gap-1.5">
+      <span ref={textElement} className="animate-text-shimmer min-w-0 truncate whitespace-nowrap">{initialText.current}</span>
+      {elapsed ? (
+        <span className="typography-meta shrink-0 font-light text-muted-foreground/70 tabular-nums" aria-hidden="true">
+          {elapsed.replace(/m(?=\d)/u, 'm\u2009')}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function WorkingPlaceholder({
   isWorking,
   isMobile,
@@ -32,6 +88,7 @@ export function WorkingPlaceholder({
   isTurnSettled = false,
 }: WorkingPlaceholderProps) {
   const { locale, t } = useI18n();
+  const reducedMotion = useReducedMotion();
   const [displayedText, setDisplayedText] = React.useState<string | null>(null);
   const [displayedPermission, setDisplayedPermission] = React.useState<boolean>(false);
   const displayedTextRef = React.useRef(displayedText);
@@ -261,24 +318,17 @@ export function WorkingPlaceholder({
 
   return (
     <div
-      className="flex h-full items-center text-muted-foreground"
+      className="flex h-full w-full min-w-0 items-center text-muted-foreground"
       role="status"
       aria-live={displayedPermission ? 'assertive' : 'polite'}
       aria-label={label}
       data-waiting={displayedPermission ? 'true' : undefined}
     >
-      <span className={`flex min-w-0 items-center gap-1.5 ${isMobile ? "typography-meta !text-[length:var(--text-meta)]" : "typography-ui-header"}`}>
+      <span className={`flex w-full min-w-0 items-center gap-1.5 ${isMobile ? "typography-meta !text-[length:var(--text-meta)]" : "typography-ui-header"}`}>
         <span className={`inline-flex flex-none items-center justify-center ${isMobile ? 'h-5 w-4' : 'h-6 w-3.5'}`}>
           <MorphOrb isMobile={isMobile} />
         </span>
-        <span className="animate-text-shimmer min-w-0 truncate whitespace-nowrap">
-          {label}
-        </span>
-        {elapsed ? (
-          <span className="typography-meta shrink-0 font-light text-muted-foreground/70 tabular-nums" aria-hidden="true">
-            {elapsed}
-          </span>
-        ) : null}
+        <WorkingStatusText text={label} elapsed={elapsed} reducedMotion={reducedMotion} />
       </span>
     </div>
   );

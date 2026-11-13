@@ -4,6 +4,9 @@ import { useSidebarBrandStore } from '@/stores/useSidebarBrandStore';
 import { cn } from '@/lib/utils';
 import { YuriWordmark } from '@/components/ui/YuriWordmark';
 import { YuriLogo } from '@/components/ui/YuriLogo';
+import { Button } from '@/components/ui/button';
+import { useUIStore } from '@/stores/useUIStore';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Left-sidebar wordmark.
@@ -31,6 +34,8 @@ interface SidebarBrandMarkProps {
 }
 
 export const SidebarBrandMark: React.FC<SidebarBrandMarkProps> = ({ className }) => {
+  const { t } = useI18n();
+  const openSettingsAtItem = useUIStore(state => state.openSettingsAtItem);
   const sidebarBrandName = useSidebarBrandStore((state) => state.sidebarBrandName);
   const brandName = sidebarBrandName.trim();
   const brandWords = brandName.split(/\s+/).filter(Boolean);
@@ -47,34 +52,43 @@ export const SidebarBrandMark: React.FC<SidebarBrandMarkProps> = ({ className })
   }
 
   return (
-    <div className={cn('flex min-w-0 items-center overflow-hidden px-2 pb-2 pt-1', className)}>
-      <span
-        role="img"
-        aria-label={brandWords.join(' ')}
-        className={cn('inline-flex min-w-0 gap-[0.28em] overflow-hidden whitespace-nowrap text-foreground', brandName.includes('Yuri') ? 'items-center' : 'items-baseline')}
-        style={{
-          fontFamily: '"Syne", var(--font-sans, system-ui, sans-serif)',
-          fontSize: '1.0625rem',
-          fontWeight: 700,
-          letterSpacing: '0.08em',
-          lineHeight: 1,
-        }}
+    <div className={cn('flex min-w-0 items-center overflow-hidden pb-2 pt-1', className)}>
+      <Button
+        variant="ghost"
+        size="xs"
+        className="app-region-no-drag min-w-0 max-w-full justify-start"
+        aria-label={t('layout.brand.editName')}
+        title={t('layout.brand.editName')}
+        onClick={() => openSettingsAtItem('appearance', 'appearance.sidebar-brand')}
       >
-        {brandName.includes('Yuri') ? (
-          <span aria-hidden="true" className="inline-flex shrink-0 self-center">
-            <YuriLogo width={24} height={24} />
-          </span>
-        ) : null}
-        {brandWords.map((word, index) => (
-          <span
-            key={index}
-            aria-hidden="true"
-            className={cn('inline-flex shrink-0 items-baseline', !hasYuriWordmark && index > 0 && 'text-primary')}
-          >
-            {word === 'Yuri' ? <YuriWordmark width="2.44814cap" /> : word}
-          </span>
-        ))}
-      </span>
+        <span
+          role="img"
+          aria-label={brandWords.join(' ')}
+          className={cn('inline-flex min-w-0 gap-[0.28em] overflow-hidden whitespace-nowrap text-foreground', brandName.includes('Yuri') ? 'items-center' : 'items-baseline')}
+          style={{
+            fontFamily: '"Syne", var(--font-sans, system-ui, sans-serif)',
+            fontSize: '1.0625rem',
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            lineHeight: 1,
+          }}
+        >
+          {brandName.includes('Yuri') ? (
+            <span aria-hidden="true" className="inline-flex shrink-0 self-center">
+              <YuriLogo width={24} height={24} className="size-6" />
+            </span>
+          ) : null}
+          {brandWords.map((word, index) => (
+            <span
+              key={index}
+              aria-hidden="true"
+              className={cn('inline-flex shrink-0 items-baseline', !hasYuriWordmark && index > 0 && 'text-primary')}
+            >
+              {word === 'Yuri' ? <YuriWordmark width="2.44814cap" /> : word}
+            </span>
+          ))}
+        </span>
+      </Button>
     </div>
   );
 };

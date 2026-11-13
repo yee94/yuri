@@ -18,6 +18,11 @@ export function parseRoute(searchParams?: URLSearchParams): RouteState {
 
 export function routeStateFromPath(pathWithSearch: string): RouteState {
   const parsed = parseAppPath(pathWithSearch);
+  const query = new URL(pathWithSearch, 'https://router.invalid').searchParams;
+  const remote = query.has('hostId') ? {
+    hostId: query.get('hostId'), hubId: query.get('hubId'), directory: query.get('directory'), projectId: query.get('projectId'),
+    ...(query.has('instanceId') ? { instanceId: query.get('instanceId') } : {}),
+  } : {};
 
   switch (parsed.kind) {
     case 'plugin':
@@ -25,6 +30,7 @@ export function routeStateFromPath(pathWithSearch: string): RouteState {
     case 'new':
       return {
         ...emptyRoute(),
+        ...remote,
         isNewSession: true,
         tab: 'chat',
       };
@@ -32,6 +38,7 @@ export function routeStateFromPath(pathWithSearch: string): RouteState {
       const tab = parsed.tab as MainTab;
       return {
         sessionId: parsed.sessionId,
+        ...remote,
         isNewSession: false,
         tab: tab === 'chat' ? null : tab,
         settingsPath: null,

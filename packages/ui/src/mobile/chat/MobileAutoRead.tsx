@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useEvent, useEventListener, useLocalStorage } from '@reactuses/core';
 import { toast } from 'sonner';
 import { useMessageTTS } from '@/hooks/useMessageTTS';
@@ -7,13 +7,59 @@ import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { acquireScreenAwake } from '@/lib/voice/screen-awake';
 import { useI18n } from '@/lib/i18n';
 import { AutoReadContext, AutoReadPlaybackContext, type RenderedReply } from './auto-read-context';
+import { useRemoteChat } from '@/sync/remote-chat-context';
+import type { Message } from '@/lib/opencode/v2-types';
 
-export function MobileAutoReadProvider({ sessionId, directory, active, children }: {
+type ProviderProps = {
     sessionId: string; directory?: string; active: boolean; children: ReactNode;
-}) {
+    remoteState?: NonNullable<ReturnType<typeof useRemoteChat>>;
+    remote?: boolean;
+};
+
+export function MobileAutoReadProvider(props: ProviderProps) {
+    const context = useRemoteChat();
+    const remote = props.remoteState ?? context;
+    return <AutoReadProvider {...props} remoteState={remote ?? undefined} />;
+}
+
+type MessageSource = { identity: string; resolved: boolean; getMessages(): Iterable<Message> };
+type SourceProps = ProviderProps & { identity: string; onSource: (source: MessageSource) => void };
+
+function LocalAutoReadSource(props: SourceProps) {
+    const { identity, onSource } = props;
+    const messages = useSessionMessages(props.sessionId, props.directory);
+    const resolved = useSessionMessagesResolved(props.sessionId, props.directory);
+    useLayoutEffect(() => onSource({ identity, resolved, getMessages: () => messages }), [identity, onSource, messages, resolved]);
+    return null;
+}
+
+function RemoteAutoReadSource(props: SourceProps & { remoteState: NonNullable<ProviderProps['remoteState']> }) {
+    const { identity, onSource } = props;
+    const remote = props.remoteState;
+    const scope = useMemo(() => remote.scope(props.sessionId), [remote, props.sessionId]);
+    const subscribe = useMemo(() => (notify: () => void) => remote.repository.subscribe(scope, notify), [remote, scope]);
+    const read = useMemo(() => () => remote.repository.hasSession?.(scope)
+        || remote.repository.getRequestState?.(scope)?.status === 'ready'
+        || remote.repository.getTranscript(scope).messageOrder.length > 0, [remote, scope]);
+    const resolved = useSyncExternalStore(subscribe, read, read);
+    const getMessages = useEvent(function* () {
+        const transcript = remote.repository.getTranscript(scope);
+        for (const id of transcript.messageOrder) yield transcript.messagesByID[id];
+    });
+    useLayoutEffect(() => onSource({ identity, resolved, getMessages }), [identity, onSource, resolved, getMessages]);
+    return null;
+}
+
+function AutoReadProvider(props: ProviderProps) {
+    const { sessionId, directory, active, children, remoteState } = props;
     const { t } = useI18n();
-    const messages = useSessionMessages(sessionId, directory);
-    const resolved = useSessionMessagesResolved(sessionId, directory);
+    const identity = JSON.stringify([remoteState?.entry.key ?? (props.remote ? 'remote-pending' : 'local'), remoteState?.entry.connectionGeneration, sessionId, directory]);
+    const source = useRef<MessageSource | null>(null);
+    const [sourceStatus, setSourceStatus] = useState<{ identity: string; resolved: boolean } | null>(null);
+    const onSource = useEvent((next: MessageSource) => {
+        source.current = next;
+        setSourceStatus((previous) => previous?.identity === next.identity && previous.resolved === next.resolved ? previous : { identity: next.identity, resolved: next.resolved });
+    });
     const [preference, setPreference] = useLocalStorage('yuri.auto-read', false);
     const preferred = preference === true;
     const [runtimeEpoch, setRuntimeEpoch] = useState(0);
@@ -23,7 +69,7 @@ export function MobileAutoReadProvider({ sessionId, directory, active, children 
     const speech = useMessageTTS({ enabled });
     const state = useRef({ enabled: false, generation: 0, floor: 0, seen: new Set<string>(), observed: new Set<string>(), pending: [] as RenderedReply[], playing: false });
     const audioUnlocked = useRef(false);
-    const available = active && Boolean(sessionId) && resolved;
+    const available = active && Boolean(sessionId) && sourceStatus?.identity === identity && sourceStatus.resolved;
     const stop = useEvent(() => {
         const current = state.current;
         current.enabled = false;
@@ -74,8 +120,12 @@ export function MobileAutoReadProvider({ sessionId, directory, active, children 
     });
     const start = useEvent(() => {
         const current = state.current;
-        current.floor = Math.max(0, ...messages.map((message) => message.time.created));
-        current.seen = new Set(messages.filter((message) => message.time.completed != null || message.role !== 'assistant').map((message) => message.id));
+        current.floor = 0;
+        current.seen = new Set();
+        for (const message of source.current?.getMessages() ?? []) {
+            current.floor = Math.max(current.floor, message.time.created);
+            if (message.time.completed != null || message.role !== 'assistant') current.seen.add(message.id);
+        }
         current.enabled = true;
         setEnabled(true);
     });
@@ -83,7 +133,7 @@ export function MobileAutoReadProvider({ sessionId, directory, active, children 
         stop();
         if (preferred && available) start();
         return stop;
-    }, [sessionId, directory, preferred, available, runtimeEpoch, start, stop]);
+    }, [sessionId, directory, identity, preferred, available, runtimeEpoch, start, stop]);
     useEffect(() => subscribeRuntimeEndpointChanged(() => {
         stop();
         setRuntimeEpoch((epoch) => epoch + 1);
@@ -109,7 +159,7 @@ export function MobileAutoReadProvider({ sessionId, directory, active, children 
         }
     }, document);
     useEffect(() => {
-        if (!enabled || !active || !visible) return;
+        if (!enabled || !available || !visible) return;
         let disposed = false;
         let release: (() => Promise<void>) | undefined;
         void acquireScreenAwake().then((cleanup) => {
@@ -119,12 +169,16 @@ export function MobileAutoReadProvider({ sessionId, directory, active, children 
             if (!disposed) toast.warning(t('mobile.menu.autoReadAwakeFailed'));
         });
         return () => { disposed = true; void release?.().catch(() => undefined); };
-    }, [enabled, active, visible, sessionId, directory, runtimeEpoch, t]);
+    }, [enabled, available, visible, sessionId, directory, identity, runtimeEpoch, t]);
     const context = useMemo(() => ({ enabled: preferred, available, toggle, rendered, streaming }), [preferred, available, toggle, rendered, streaming]);
     const playback = useMemo(() => enabled && active && visible && speech.isPlaying && playingReply?.sessionId === sessionId
         ? { sessionId, messageId: playingReply.messageId, stop: disable } : null,
     [enabled, active, visible, speech.isPlaying, playingReply, sessionId, disable]);
-    return <AutoReadContext.Provider value={context}><AutoReadPlaybackContext.Provider value={playback}>{children}</AutoReadPlaybackContext.Provider></AutoReadContext.Provider>;
+    return <AutoReadContext.Provider value={context}><AutoReadPlaybackContext.Provider value={playback}>
+        {remoteState ? <RemoteAutoReadSource {...props} identity={identity} onSource={onSource} remoteState={remoteState} />
+            : props.remote ? null : <LocalAutoReadSource {...props} identity={identity} onSource={onSource} />}
+        {children}
+    </AutoReadPlaybackContext.Provider></AutoReadContext.Provider>;
 }
 
 export function MobileAutoReadMenuItem({ children }: {

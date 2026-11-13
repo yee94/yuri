@@ -1,13 +1,4 @@
 (() => {
-  if ('ResizeObserver' in window) {
-    const deviceObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        entry.target.style.setProperty('--device-scale', String(entry.contentRect.width / 428));
-      }
-    });
-    document.querySelectorAll('.phone').forEach((phone) => deviceObserver.observe(phone));
-  }
-
   document.querySelectorAll('[data-switcher]').forEach((group) => {
     const buttons = [...group.querySelectorAll('[data-choice]')];
     const panels = [...group.querySelectorAll('[data-panel]')];

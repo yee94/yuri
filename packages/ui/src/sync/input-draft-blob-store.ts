@@ -204,9 +204,9 @@ export class MemoryInputDraftBlobDriver implements InputDraftBlobDriver {
   }
 }
 
-export const createIndexedDBInputDraftBlobDriver = (): InputDraftBlobDriver => ({
+export const createIndexedDBInputDraftBlobDriver = (databaseName = DATABASE_NAME): InputDraftBlobDriver => ({
   transaction: async <T>(action: (tx: InputDraftBlobTransaction) => Promise<T>) => {
-    const database = await openDatabase()
+    const database = await openDatabase(databaseName)
     const transaction = database.transaction([BLOBS_STORE, BLOB_REFS_STORE], "readwrite")
     const blobs = transaction.objectStore(BLOBS_STORE)
     const refs = transaction.objectStore(BLOB_REFS_STORE)
@@ -230,9 +230,9 @@ export const createIndexedDBInputDraftBlobDriver = (): InputDraftBlobDriver => (
   },
 })
 
-const openDatabase = (): Promise<IDBDatabase> => migrateBrandIndexedDB(DATABASE_NAME).then(() => new Promise<IDBDatabase>((resolve, reject) => {
+const openDatabase = (databaseName: string): Promise<IDBDatabase> => (databaseName === DATABASE_NAME ? migrateBrandIndexedDB(DATABASE_NAME) : Promise.resolve()).then(() => new Promise<IDBDatabase>((resolve, reject) => {
   if (!globalThis.indexedDB) { reject(new Failure("database-unavailable")); return }
-  const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION)
+  const request = indexedDB.open(databaseName, DATABASE_VERSION)
   let settled = false
   const fail = (): void => { if (!settled) { settled = true; reject(new Failure("database-unavailable")) } }
   request.onupgradeneeded = () => {

@@ -247,8 +247,9 @@ describe('ChatContainer source contracts', () => {
     });
 
     test('desktop composer keeps a page-background fade above each transcript-style input', () => {
-        expect(source).toContain('const DesktopComposerEdgeFade');
-        expect(source).toContain('bg-gradient-to-t from-[var(--surface-background)] to-transparent');
+        const foot = readFileSync(join(here, 'ComposerFoot.tsx'), 'utf8');
+        expect(foot).toContain('const DesktopComposerEdgeFade');
+        expect(foot).toContain('bg-gradient-to-t from-[var(--surface-background)] to-transparent');
         expect(source).toContain('{!isMobile && !isDesktopExpandedInput ? <DesktopComposerEdgeFade /> : null}');
         const establishingDraftShell = source.slice(
             source.indexOf('if ((draftSubmitting || draftEstablishing) && draftPendingMessage)'),
@@ -262,10 +263,11 @@ describe('ChatContainer source contracts', () => {
             source.lastIndexOf("<div ref={composerSwapScopeRef} className={cn('relative flex flex-col h-full bg-background'"),
             source.indexOf('const MemoizedChatContainerContent'),
         );
-        for (const shell of [establishingDraftShell, hydratingShell, transcriptShell]) {
-            expect(shell.match(/<DesktopComposerEdgeFade \/>/g)).toHaveLength(1);
+        expect(establishingDraftShell.match(/<DesktopComposerEdgeFade \/>/g)).toHaveLength(1);
+        for (const shell of [hydratingShell, transcriptShell]) {
+            expect(shell).toContain('<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>');
         }
-        expect(source.match(/<DesktopComposerEdgeFade \/>/g)).toHaveLength(3);
+        expect(foot).toContain('!isMobile && !expanded && overlay');
     });
 
     test('draft handoff commits a local identity in layout and scopes immediate reveal to its retained row', () => {

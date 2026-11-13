@@ -305,17 +305,46 @@ test('uses one compact update strip, clean rows, and no GUI manager above the ed
 test('navigation update attention follows registry or runtime updates and clears when both are current', async () => {
   await mount();
   const hasUpdate = () => host.querySelector('[data-navigation-plugin-update]')?.getAttribute('data-navigation-plugin-update');
+  const updateAll = () => host.querySelector('[data-settings-item="plugins.updateAll"]');
   expect(hasUpdate()).toBe('true');
+  expect(updateAll()).not.toBeNull();
   const currentRegistry = Object.fromEntries(Object.entries(registry).map(([spec, info]) => [spec, info.kind === 'npm-ok' ? { ...info, hasUpdate: false } : info]));
   await act(async () => queryClient.setQueryData(pluginRegistryQueryOptions(directory, entries.map((entry) => entry.spec)).queryKey, currentRegistry));
   await flush();
   expect(hasUpdate()).toBe('false');
+  expect(updateAll()).toBeNull();
+  expect(host.querySelector('[data-settings-item="plugins.create"]')).not.toBeNull();
   await act(async () => queryClient.setQueryData(pluginRuntimeQueryOptions(directory).queryKey, inventory.map((plugin, index) => index === 0 ? { ...plugin, source: { ...plugin.source, outdated: true } } : plugin)));
   await flush();
   expect(hasUpdate()).toBe('true');
+  expect(updateAll()).not.toBeNull();
   await act(async () => queryClient.setQueryData(pluginRuntimeQueryOptions(directory).queryKey, inventory));
   await flush();
   expect(hasUpdate()).toBe('false');
+  expect(updateAll()).toBeNull();
+});
+
+test('update all stays visible while the last available package is updating, then disappears', async () => {
+  const currentRegistry = Object.fromEntries(Object.entries(registry).map(([spec, info]) => [spec, info.kind === 'npm-ok' ? { ...info, hasUpdate: false } : info]));
+  gateway.fetch.mockImplementation(async (url: string) => {
+    if (String(url).includes('/api/config/plugins/registry')) return Response.json({ results: Object.values(currentRegistry) });
+    return Response.json({ home: '/workspace', data: [], entries, files: [] });
+  });
+  queryClient.setQueryData(pluginRegistryQueryOptions(directory, entries.map((entry) => entry.spec)).queryKey, currentRegistry);
+  await mount();
+  expect(host.querySelector('[data-settings-item="plugins.updateAll"]')).toBeNull();
+  await act(async () => queryClient.setQueryData(pluginRuntimeQueryOptions(directory).queryKey, inventory.map((plugin, index) => index === 0 ? { ...plugin, source: { ...plugin.source, outdated: true } } : plugin)));
+  await flush();
+  let complete!: () => void;
+  gateway.update.mockImplementationOnce(() => new Promise<void>((resolve) => { complete = resolve; }));
+  const button = host.querySelector<HTMLButtonElement>('[data-settings-item="plugins.updateAll"]')!;
+  await act(async () => button.click());
+  expect(host.querySelector('[data-settings-item="plugins.updateAll"]')).toBe(button);
+  expect(button.disabled).toBe(true);
+  expect(button.getAttribute('aria-busy')).toBe('true');
+  await act(async () => complete());
+  await flush();
+  expect(host.querySelector('[data-settings-item="plugins.updateAll"]')).toBeNull();
 });
 
 test('unpinned plugins show their effective version in both the row and detail, not the registry latest', async () => {

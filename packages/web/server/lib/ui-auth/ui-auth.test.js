@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -58,6 +58,9 @@ describe('isUrlAuthWebSocketPath', () => {
     expect(isUrlAuthWebSocketPath('/api/preview/proxy/abc123/')).toBe(true);
     expect(isUrlAuthWebSocketPath('/api/preview/proxy/abc123/@vite')).toBe(true);
     expect(isUrlAuthWebSocketPath('/api/terminal/ws')).toBe(true);
+    expect(isUrlAuthWebSocketPath('/api/hosts/remote-a/api/gui-network/ws')).toBe(true);
+    expect(isUrlAuthWebSocketPath('/api/hosts/remote-a/api/gui-network/ws/extra')).toBe(false);
+    expect(isUrlAuthWebSocketPath('/api/hosts/remote-a/api/hosts/remote-b/api/gui-network/ws')).toBe(false);
     expect(isUrlAuthWebSocketPath('/api/dictation/ws')).toBe(true);
     expect(isUrlAuthWebSocketPath('/api/event/ws')).toBe(true);
     expect(isUrlAuthWebSocketPath('/api/global/event/ws')).toBe(true);
@@ -69,6 +72,31 @@ describe('isUrlAuthWebSocketPath', () => {
 });
 
 describe('ui auth client credential seam', () => {
+  for (const authMethod of ['password', 'pairing']) {
+    it(`an expired UI cookie does not block a valid ${authMethod} client credential`, async () => {
+      const createUiAuth = await loadCreateUiAuth();
+      let valid = true;
+      const auth = createUiAuth({ password: 'secret', clientAuthController: {
+        authenticateBearerToken: async (token) => valid && token === 'client-token'
+          ? { ok: true, clientId: 'device', client: { id: 'device', authMethod } } : null,
+      } });
+      const req = { method: 'GET', path: '/api/session', headers: {
+        authorization: 'Bearer client-token', cookie: 'yuri_ui_session=expired', accept: 'application/json',
+      } };
+      try {
+        const res = createResponse();
+        let admitted = false;
+        await auth.requireAuth(req, res, () => { admitted = true; });
+        expect(admitted).toBe(true);
+        await auth.handleSessionStatus(req, res);
+        expect(res.body).toEqual({ authenticated: true, scope: 'client' });
+        valid = false;
+        const revoked = createResponse();
+        await auth.handleSessionStatus(req, revoked);
+        expect(revoked.statusCode).toBe(401);
+      } finally { auth.dispose(); }
+    });
+  }
   for (const password of ['', 'secret']) {
     it(`relay requires a current relay pairing grant for bearer and URL credentials (password=${Boolean(password)})`, async () => {
       const createUiAuth = await loadCreateUiAuth();
@@ -210,6 +238,51 @@ describe('ui auth client credential seam', () => {
     expect(res.body).toEqual({ authenticated: true, scope: 'client' });
   });
 
+  it('authenticates file-preview path tokens only for reads and rechecks expiry and revocation', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const isUrlAuthWebSocketPath = await loadIsUrlAuthWebSocketPath();
+    for (const password of [null, 'secret']) {
+      let revoked = false;
+      const auth = createUiAuth({ password, requireClientAuth: true, clientAuthController: {
+        authenticateBearerToken: async (token) => !revoked && token === 'file-preview-client'
+          ? { ok: true, clientId: 'file-preview-owner' } : null,
+        listClients: async () => revoked ? [] : [{ id: 'file-preview-owner' }],
+      } });
+      try {
+        const mint = createResponse();
+        await auth.handleUrlAuthToken({ method: 'POST', path: '/auth/url-token', headers: { authorization: 'Bearer file-preview-client' } }, mint);
+        const token = mint.body.token;
+        for (const prefix of ['', '/api/hosts/remote-test']) {
+          const route = `${prefix}/api/preview/proxy/${'a'.repeat(32)}/_file/${'b'.repeat(32)}/${token}/assets/app.js`;
+          const request = { method: 'GET', url: route, originalUrl: route, headers: {} };
+          expect((await auth.resolveAuthContext(request, createResponse()))?.clientId).toBe('file-preview-owner');
+          expect((await auth.resolveAuthContext({ ...request, method: 'HEAD' }, createResponse()))?.clientId).toBe('file-preview-owner');
+          expect(await auth.resolveAuthContext(request, createResponse(), { allowUrlToken: false })).toBe(null);
+          expect(await auth.resolveAuthContext({ ...request, headers: { authorization: 'Bearer invalid-client' } }, createResponse())).toBe(null);
+          const stripped = route.replace(token, '-');
+          expect(await auth.resolveAuthContext({ ...request, url: stripped, originalUrl: stripped }, createResponse())).toBe(null);
+          expect((await auth.resolveAuthContext({ ...request, url: stripped, originalUrl: stripped,
+            headers: { authorization: 'Bearer file-preview-client' } }, createResponse()))?.clientId).toBe('file-preview-owner');
+          expect(isUrlAuthWebSocketPath(route)).toBe(false);
+          for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+            expect(await auth.resolveAuthContext({ ...request, method }, createResponse())).toBe(null);
+          }
+          expect(await auth.resolveAuthContext({ ...request, headers: { upgrade: 'websocket' } }, createResponse())).toBe(null);
+          for (const url of [`/api/config/settings/${token}`, route.replace('/assets/', '/%2f/'), route.replace('/assets/', '/%2e%2e/')]) {
+            expect(await auth.resolveAuthContext({ ...request, url, originalUrl: url }, createResponse())).toBe(null);
+          }
+          revoked = true;
+          expect(await auth.resolveAuthContext(request, createResponse())).toBe(null);
+          revoked = false;
+        }
+        const expiredRoute = `/api/preview/proxy/${'a'.repeat(32)}/_file/${'b'.repeat(32)}/${token}/index.html`;
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(mint.body.expiresAt + 1);
+        try { expect(await auth.resolveAuthContext({ method: 'GET', url: expiredRoute, headers: {} }, createResponse())).toBe(null); }
+        finally { clock.mockRestore(); }
+      } finally { auth.dispose(); }
+    }
+  });
+
   it('exchanges bearer credentials for short-lived URL auth tokens', async () => {
     const createUiAuth = await loadCreateUiAuth();
     const auth = createUiAuth({
@@ -308,6 +381,16 @@ describe('ui auth client credential seam', () => {
     });
     expect(arbitraryGetCalled).toBe(false);
     expect(arbitraryGetRes.statusCode).toBe(401);
+
+    for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      const proxyPath = '/api/preview/proxy/1234567890abcdef/form';
+      const proxyReq = { method, path: proxyPath, url: `${proxyPath}?yuri_url_token=${encodeURIComponent(urlToken)}`, headers: {} };
+      let allowed = false;
+      await auth.requireAuth(proxyReq, createResponse(), () => { allowed = true; });
+      expect(allowed, `browser preview ${method}`).toBe(true);
+    }
+    const registerReq = { method: 'POST', path: '/api/preview/targets', url: `/api/preview/targets?yuri_url_token=${encodeURIComponent(urlToken)}`, headers: {} };
+    expect(await auth.ensureSessionToken(registerReq, createResponse())).toBe(null);
 
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
       const writeReq = { method, path: '/api/fs/raw', url: `/api/fs/raw?path=%2Ftmp%2Fimage.png&yuri_url_token=${encodeURIComponent(urlToken)}`, headers: { accept: 'application/json' } };

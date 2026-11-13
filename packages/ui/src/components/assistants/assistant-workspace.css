@@ -1,0 +1,314 @@
+.yuri-assistant-wallpaper {
+  position: relative;
+  isolation: isolate;
+  background: var(--surface-background);
+}
+
+.yuri-assistant-wallpaper,
+.yuri-assistant-mobile-header {
+  --assistant-panel-background: color-mix(in srgb, var(--surface-background) 97%, black);
+  --assistant-panel-shadow: 0 4px 12px color-mix(in srgb, var(--surface-foreground) 12%, transparent);
+  --assistant-composer-shadow: 0 3px 10px color-mix(in srgb, var(--surface-foreground) 14%, transparent);
+  --assistant-tag-shadow: 0 1px 3px color-mix(in srgb, var(--surface-foreground) 10%, transparent);
+  --assistant-bubble-filter: drop-shadow(0 1px 1px color-mix(in srgb, var(--surface-foreground) 16%, transparent));
+  --assistant-panel-radius: 1.75rem;
+}
+
+:root.dark .yuri-assistant-wallpaper,
+:root.dark .yuri-assistant-mobile-header {
+  --assistant-panel-background: color-mix(in srgb, var(--surface-background) 94%, white);
+  --assistant-panel-shadow: none;
+  --assistant-composer-shadow: none;
+  --assistant-tag-shadow: none;
+  --assistant-bubble-filter: none;
+}
+
+.yuri-assistant-wallpaper::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(155deg,
+    color-mix(in srgb, var(--surface-muted-foreground) 28%, transparent),
+    color-mix(in srgb, var(--primary-base) 26%, transparent));
+  -webkit-mask: var(--assistant-wallpaper-pattern) center top / 504px 1036px repeat;
+  mask: var(--assistant-wallpaper-pattern) center top / 504px 1036px repeat;
+}
+
+.yuri-assistant-workspace[data-assistant-layout="desktop"] {
+  --assistant-workspace-inset: 1rem;
+  gap: var(--assistant-workspace-inset);
+  padding: 0 0 0 var(--assistant-workspace-inset);
+}
+
+.yuri-assistant-catalog-panel {
+  height: auto;
+  margin-block: var(--assistant-workspace-inset, 1rem);
+  border-radius: var(--assistant-panel-radius);
+  background: var(--assistant-panel-background);
+  box-shadow: var(--assistant-panel-shadow);
+}
+
+.yuri-assistant-contact-row {
+  min-height: 4.75rem;
+  border-radius: 1.125rem;
+}
+
+.yuri-assistant-conversation-header {
+  position: absolute;
+  z-index: 20;
+  inset: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding-top: 0;
+  pointer-events: none;
+}
+
+.yuri-assistant-conversation-header::before,
+.yuri-assistant-mobile-header::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 auto;
+  height: 4.5rem;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(to bottom,
+    var(--surface-background),
+    color-mix(in srgb, var(--surface-background) 80%, transparent) 55%,
+    transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, currentColor 20%, currentColor 80%, transparent);
+  mask-image: linear-gradient(to right, transparent, currentColor 20%, currentColor 80%, transparent);
+}
+
+.yuri-assistant-header-identity[data-slot="button"] {
+  display: flex;
+  height: auto;
+  min-width: 0;
+  max-width: min(70%, 20rem);
+  margin-top: 0.5rem;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0;
+  border-radius: 1.25rem;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.yuri-assistant-header-identity[data-slot="button"]:is(:hover, :active) {
+  background: transparent;
+}
+
+.yuri-assistant-header-identity [data-assistant-working-avatar] {
+  filter: drop-shadow(0 3px 5px color-mix(in srgb, light-dark(var(--surface-foreground), var(--surface-background)) 60%, transparent));
+}
+
+:root:not(.dark) .yuri-assistant-header-identity [data-assistant-working-avatar] {
+  filter: none;
+}
+
+.yuri-assistant-header-name {
+  max-width: 100%;
+  padding: 0.25rem 0.875rem;
+  border-radius: 999px;
+  background: var(--assistant-panel-background);
+  box-shadow: var(--assistant-tag-shadow);
+  color: var(--surface-foreground);
+}
+
+.yuri-assistant-workspace[data-assistant-layout="desktop"] [data-assistant-contact-transcript] {
+  padding-top: 7.5rem;
+}
+
+.yuri-assistant-workspace .yuri-contact-conversation {
+  background: transparent;
+}
+
+.yuri-assistant-workspace[data-assistant-layout="desktop"] [data-assistant-contact-composer] > form {
+  padding-bottom: 0;
+}
+
+.yuri-assistant-workspace[data-assistant-layout="desktop"] [data-assistant-contact-composer] {
+  padding-bottom: var(--assistant-workspace-inset);
+}
+
+.yuri-assistant-workspace [data-assistant-contact-composer-surface] {
+  background: var(--assistant-panel-background);
+  box-shadow: var(--assistant-composer-shadow);
+}
+
+.yuri-assistant-workspace [data-assistant-contact-composer-surface][data-composer-animated-resize] {
+  background: transparent;
+  box-shadow: none;
+}
+
+:root.dark .yuri-assistant-wallpaper :is([data-composer-material], .yuri-mobile-floating-surface, [data-slot="button"]:not(.yuri-mobile-floating-action)) {
+  box-shadow: none !important;
+}
+
+.yuri-assistant-workspace [data-composer-material] {
+  border-color: transparent;
+  background: var(--assistant-panel-background);
+  box-shadow: var(--assistant-composer-shadow);
+}
+
+.yuri-assistant-wallpaper [data-slot="button"]:not(.yuri-mobile-floating-action):focus-visible {
+  outline: 2px solid var(--interactive-focus-ring);
+  outline-offset: 2px;
+}
+
+.yuri-assistant-workspace .yuri-contact-bubble[data-contact-bubble-direction="incoming"] {
+  --contact-bubble-fill: var(--assistant-panel-background);
+}
+
+.yuri-assistant-workspace [data-assistant-contact-card] {
+  box-shadow: var(--assistant-panel-shadow);
+}
+
+.yuri-assistant-workspace .yuri-contact-bubble .yuri-contact-bubble-outline {
+  filter: var(--assistant-bubble-filter);
+}
+
+.yuri-assistant-workspace [data-assistant-contact-time] time {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: var(--assistant-panel-background);
+  box-shadow: var(--assistant-tag-shadow);
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-assistant-workspace [data-assistant-contact-transcript] > :is([data-assistant-contact-empty], [data-assistant-contact-error]) {
+  height: auto;
+  min-height: 14rem;
+  margin-block: 2rem;
+  padding: 2rem 1.5rem;
+  border-radius: var(--assistant-panel-radius);
+  background: var(--assistant-panel-background);
+  box-shadow: var(--assistant-panel-shadow);
+}
+
+.yuri-assistant-mobile-header {
+  padding-top: var(--yuri-safe-area-top, 0px);
+}
+
+.yuri-assistant-mobile-header::after {
+  content: none;
+}
+
+.yuri-assistant-mobile-header::before {
+  height: calc(var(--yuri-safe-area-top, 0px) + 10rem);
+  opacity: 1;
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--surface-background) 95%, transparent),
+    color-mix(in srgb, var(--surface-background) 80%, transparent) 35%,
+    color-mix(in srgb, var(--surface-background) 45%, transparent) 65%,
+    transparent);
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.yuri-assistant-mobile-header .yuri-mobile-detail-navigation-content {
+  min-height: 6rem;
+  align-items: start;
+  padding-top: 0;
+}
+
+.yuri-assistant-mobile-header .yuri-mobile-detail-navigation-content > button {
+  margin-top: calc((0.5rem + 28px) * var(--dpt-n, 1));
+  translate: 0 -50%;
+}
+
+.yuri-assistant-mobile-header .yuri-mobile-detail-title {
+  overflow: visible;
+}
+
+.yuri-assistant-mobile-header .yuri-assistant-header-identity {
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+.yuri-assistant-workspace[data-assistant-layout="mobile"] [data-assistant-contact-transcript] {
+  padding-top: calc(max(0.625rem, var(--yuri-safe-area-top, 0px)) + 7rem);
+}
+
+:root .yuri-assistant-workspace[data-assistant-layout="mobile"] [data-assistant-contact-composer] > .yuri-mobile-composer {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.yuri-assistant-workspace[data-assistant-layout="mobile"] .yuri-mobile-composer::after {
+  content: none;
+}
+
+.yuri-assistant-workspace[data-assistant-layout="mobile"] [data-assistant-contact-composer]::before {
+  content: "";
+  position: absolute;
+  inset: -3.5rem 0 0;
+  pointer-events: none;
+  background: var(--surface-background);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, rgb(0 0 0 / 45%) 25%, rgb(0 0 0 / 82%) 55%, rgb(0 0 0 / 95%));
+  mask-image: linear-gradient(to bottom, transparent, rgb(0 0 0 / 45%) 25%, rgb(0 0 0 / 82%) 55%, rgb(0 0 0 / 95%));
+}
+
+.yuri-assistant-mobile-header .yuri-assistant-header-name {
+  background: color-mix(in srgb, var(--assistant-panel-background) 94%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface-foreground) 16%, transparent);
+}
+
+.yuri-assistant-workspace[data-assistant-layout="mobile"] :is([data-assistant-contact-composer-surface]:not([data-composer-animated-resize]), [data-composer-material]) {
+  background: var(--assistant-panel-background);
+}
+
+.yuri-assistant-mobile-catalog-page {
+  --assistant-panel-radius: 1.75rem;
+}
+
+.yuri-assistant-mobile-catalog-page .yuri-mobile-assistant-catalog {
+  gap: 0.625rem;
+  padding: 0;
+  background: transparent;
+}
+
+.yuri-assistant-mobile-catalog-page .yuri-mobile-assistant-card-shell {
+  border-radius: 1.25rem;
+  background: var(--assistant-panel-background);
+  box-shadow: var(--assistant-panel-shadow);
+}
+
+.yuri-assistant-mobile-catalog-page .yuri-mobile-assistant-card {
+  min-height: 5rem;
+  padding: 0.875rem 0.75rem;
+  border-radius: 1.25rem;
+}
+
+.yuri-assistant-mobile-catalog-page .yuri-mobile-assistant-card:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .yuri-assistant-mobile-catalog-page .yuri-mobile-assistant-card:hover {
+    background: var(--interactive-hover);
+  }
+}
+
+@media (max-width: 900px) {
+  .yuri-assistant-workspace[data-assistant-layout="desktop"] {
+    --assistant-workspace-inset: 0.625rem;
+  }
+
+  .yuri-assistant-catalog-panel {
+    width: 15rem;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .yuri-assistant-wallpaper::before {
+    opacity: 0.25;
+  }
+
+  .yuri-assistant-catalog-panel {
+    outline: 1px solid var(--interactive-border);
+    outline-offset: -1px;
+  }
+}

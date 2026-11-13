@@ -10,6 +10,18 @@ Server-owned scheduled task runtime and routes for Yuri-only automation.
 - This module is Yuri feature logic; it is intentionally separate from OpenCode proxy/runtime internals.
 - Prompt and goal execution preserve hash-prefixed text literally; no snippet discovery or expansion occurs before dispatch.
 
+## Development isolation
+
+`NODE_ENV=development` or `YURI_ELECTRON_DEV=1/true` disables the scheduler at
+the owning runtime boundary. The Host does not open the task-run history store
+in this mode. Startup, result/history recovery and upstream session events do
+no work; no timers, worker sessions, task-state writes, result handoffs or
+notifications are created. Manual runs return an explicit disabled failure,
+and per-project synchronization rejects rather than claiming success.
+Production execution and saved task configuration remain unchanged. This does
+not change the independent Bot-channel development isolation or its opt-in test
+configuration; production messages must not be admitted by a default dev Host.
+
 ## Assistant result handoff
 
 `setTaskResultHandler(handler)` installs the Host's assistant result consumer and
@@ -231,8 +243,11 @@ of at most 20 running rows every five seconds, wrapping after the last page.
 Each pass has a ten-second upstream request deadline. It skips locally owned
 executions and rows without a session; missing session association is not proof
 of execution failure. Such rows remain unresolved rather than inventing a result.
-Recovery checks live `session.active` before examining terminal messages or Host
-goal state. Active, unavailable, malformed, and incomplete results remain pending.
+Recovery checks live `session.active` and the active sessions' authoritative parent
+chains before examining terminal messages or Host goal state. An idle parent with
+an active descendant remains running. Active, unavailable, malformed, unknown
+ancestry, and incomplete results remain pending; unrelated active roots do not
+block a confirmed-complete family.
 A session OpenCode confirms deleted (`SessionNotFoundError`) settles as `error`.
 Only confirmed terminal evidence finalizes history, with duration through the
 time recovery observes completion. It neither dispatches a new prompt nor sends
@@ -336,11 +351,17 @@ Every actual run (timer or manual):
     **Admission is not completion:** `session.prompt` / command return when the
     turn is accepted, not when the agent finishes.
   7. Wait for the real session outcome (bounded by the same watchdog):
-     - Poll `session.active` + `message.list` until the session is idle and
-       the **latest-side** message page settles. Settlement always uses
+     - Poll `session.active` + `message.list` until the session and all its descendants are idle and
+        the **latest-side** message page settles. Settlement always uses
        `message.list({ limit: 50, order: 'desc' })` (newest first) — never
        `order: 'asc'` page-0 + `at(-1)`, which reads an old page once the
-       session exceeds the limit.
+        session exceeds the limit.
+      - Family membership reuses `notifications/family-completion-gate.js`'s
+        `readSessionFamilyActivity`: only active IDs need metadata reads, shared
+        ancestors deduplicate within a probe, and concurrency is bounded to four.
+        Reads carry the run/recovery abort signal. A failed or malformed ancestry
+        read stays unknown; it cannot become successful empty activity. This same
+        rule covers ordinary and Goal runs, restart recovery, and continuation.
       - OpenCode 2.0.16 emits a native `idle` tail whose `outcome` is authoritative:
         `succeeded` → success; `failed` / `interrupted` → error. An unknown idle
         outcome keeps polling. Read it only after `session.active` confirms the

@@ -139,6 +139,7 @@ export const MOBILE_BACK_PRIORITY = {
 export type MobileParentSessionTarget = {
   id: string;
   directory: string | null;
+  onSelect?: () => void;
 };
 
 /**

@@ -34,10 +34,10 @@ vi.mock('@/apps/mobileAppContext', () => ({
 vi.mock('@/stores/useGitStore', () => ({
   useIsGitRepo: () => true,
   useGitStore: (selector: (state: {
-    directories: Map<string, { status: unknown }>;
+    directories: Map<string, { status: unknown; isGitRepo: boolean }>;
     fetchStatus: typeof fetchStatus;
   }) => unknown) => selector({
-    directories: new Map([['/repo', { status: gitState.status }]]),
+    directories: new Map([['/repo', { status: gitState.status, isGitRepo: true }]]),
     fetchStatus,
   }),
 }));

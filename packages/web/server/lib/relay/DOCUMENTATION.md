@@ -43,6 +43,11 @@ Client side (`packages/ui/src/lib/relay/`):
 - `crypto.ts`, `handshake.ts` — the E2EE primitives and handshake state machines (initiator + responder).
 - `tunnel-codec.ts` — Layer 3 frame codec, fragmentation, and outbound frame batching.
 - `tunnel-client.ts` — the client tunnel: exposes a `fetch()`-compatible and a WebSocket-compatible surface backed by the encrypted tunnel. Transient closures (including `4029` capacity/pending timeout and replacement) retry indefinitely at a fixed 3-second foreground cadence, or 60 seconds while hidden/offline. Online, visibility-visible and system-resume interrupt retry waits; an apparently connected tunnel is probed immediately. Authentication rejection stays terminal and later requests fail explicitly rather than waiting forever. Keepalive tracks send and receive separately: outbound requests cannot conceal a dead return path, and inbound-only SSE still sends pings so the Host idle reaper does not evict a healthy client. Reset fails every old stream; retries never replay mutation requests automatically.
+  Terminal socket authentication rejection additionally sets
+  `failureCode: 'relay_authentication_rejected'` for desktop recovery. Consumers
+  must not infer pairing revocation from that transport error or from an arbitrary
+  error string. Pairing rejection is confirmed by the Host's `/auth/session`
+  response through the active tunnel; neither condition requires a UI password.
 - `tunnel-payloads.ts`, `runtime-tunnel.ts`, `runtime-socket.ts` — payload helpers, the active-tunnel singleton, and the shared "open a runtime WebSocket the right way" helper.
 
 The two native-WebSocket send adapters in `tunnel-client.ts` share one byte-ownership
@@ -75,6 +80,11 @@ Everything a client normally sends to the single Yuri origin:
 - **Events** — relay `auto` uses SSE (bearer), the same path mobile uses. Desktop WebSocket upgrades over the tunnel close and drop assistant deltas; an explicit `ws` setting is unchanged.
 - **SSE** — streamed responses opened through `runtimeFetch`, including `/api/yuri/events` and SDK global SSE. Relay carries these HTTP response body frames through the tunnel.
 - **WebSocket** — the endpoints that use a real socket (the global event stream on platforms that support WS, terminal I/O, dictation, and Preview/Browser HMR under `/api/preview/proxy/<id>/...`).
+- **Mobile GUI TCP egress** — `/api/gui-network/ws` carries bounded SOCKS TCP
+  streams to the authenticated Host. It uses a separate client connection to the
+  same paired Relay identity, with a native wire so the WebView proxy needs no
+  hostname bypass. E2EE and tunnel framing are unchanged; both senders immediately
+  flush this path. Scope, auth and native probe evidence: `../gui-network/DOCUMENTATION.md`.
 
 The host dispatcher restricts tunneled traffic to explicit path allowlists (one for HTTP, one for WS). WS allowlist is exact-match for app sockets and **prefix** `/api/preview/proxy/` for Vite/dev-server HMR only (`isTunnelWsPathAllowed`).
 

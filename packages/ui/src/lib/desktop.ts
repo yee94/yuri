@@ -77,6 +77,8 @@ export type DesktopSettings = {
   desktopMinimizeToTrayEnabled?: boolean;
   desktopUiPassword?: string;
   projects?: ProjectEntry[];
+  hasRemoteProjects?: boolean;
+  hubProjectLayout?: { hubId: string; order: string[]; collapsed: Record<string, boolean> };
   projectSortOrder?: 'manual' | 'a-z' | 'z-a' | 'date-added' | 'recent';
   activeProjectId?: string;
   securityScopedBookmarks?: string[];
@@ -915,6 +917,15 @@ export const isDesktopBinaryPath = async (path: string): Promise<boolean | null>
     return typeof result === 'boolean' ? result : null;
   } catch {
     return null;
+  }
+};
+
+export const isDesktopDirectoryPath = async (path: string): Promise<boolean> => {
+  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive() || !path.trim()) return false;
+  try {
+    return await invokeDesktop<boolean>('desktop_is_directory_path', { path: path.trim() }) === true;
+  } catch {
+    return false;
   }
 };
 

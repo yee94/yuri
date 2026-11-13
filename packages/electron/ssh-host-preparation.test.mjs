@@ -36,7 +36,7 @@ describe('stored SSH relay authorization', () => {
   });
 });
 
-const fixture = (ssh = true, packaged = true, local = true, paired = false) => {
+const fixture = (ssh = true, packaged = true, local = true, paired = false, application = local) => {
   let host = { id: 'ssh-test', url: 'http://127.0.0.1:4000', clientToken: 'old-test-token',
     ...(paired ? { relay: { serverId: 'fixture', relayUrl: 'wss://relay.example', hostEncPubJwk: {} } } : {}) };
   let finish;
@@ -52,6 +52,7 @@ const fixture = (ssh = true, packaged = true, local = true, paired = false) => {
     URL,
     browserWindow: { webContents: {} },
     isLocalSender: () => local,
+    isLocalUiSender: () => application,
     readDesktopHostsConfig: () => ({ hosts: [host], defaultHostId: host.id }),
     sshManager: { readInstances: () => ({ instances: ssh ? [{ id: host.id }] : [] }), connect },
     LOCAL_HOST_ID: 'local',
@@ -80,7 +81,7 @@ describe('SSH preparation before opening desktop windows', () => {
         f.finish();
         await pending;
         expect(f.createWindow).toHaveBeenCalledWith(
-          packaged ? 'yuri-ui://app/index.html' : 'http://127.0.0.1:5000',
+          packaged ? 'yuri-ui://app/index.html' : 'http://localhost:5173',
           expect.objectContaining({ apiBaseUrl: 'http://127.0.0.1:5000', clientToken: 'new-test-token' }),
         );
       });
@@ -116,11 +117,20 @@ describe('SSH preparation before opening desktop windows', () => {
     expect(f.createWindow).not.toHaveBeenCalled();
   });
 
+  it.each(['desktop_host_prepare', 'desktop_new_window_for_host'])('%s connects a saved SSH host from the client-owned remote window', async (command) => {
+    const f = fixture(true, true, false, false, true);
+    const pending = f.invoke(command, { hostId: 'ssh-test' });
+    expect(f.connect).toHaveBeenCalledExactlyOnceWith('ssh-test');
+    f.finish();
+    await pending;
+  });
+
   it('resolves a paired host in a window-only document without invoking SSH', async () => {
     const host = { id: 'paired-ssh', relay: { serverId: 'fixture' } };
     const connect = vi.fn();
     const context = vm.createContext({
       readDesktopHostsConfig: () => ({ hosts: [host] }), isLocalSender: () => false,
+      isLocalUiSender: () => false,
       sshManager: { readInstances: () => ({ instances: [{ id: host.id }] }), connect },
     });
     vm.runInContext(`${prepareSource}\nglobalThis.prepare = prepareDesktopHost;`, context);

@@ -11,8 +11,10 @@ import { isVSCodeRuntime } from './desktop';
 import { sanitizeStarterRefs, type DraftStarterRef } from './draftStarters';
 import { createProjectIdFromPath } from './projectId';
 import { runtimeFetch } from './runtime-fetch';
+import type { HostRuntimeEntry } from './remote-projects/registry';
+import { captureProjectScope } from './api/project-scope';
 
-type ProjectRef = { id: string; path: string };
+type ProjectRef = { id: string; path: string; hostId?: string; hubId?: string };
 
 const CONFIG_FILENAME = 'yuri.json';
 // LEGACY_PROJECT_CONFIG: legacy per-project config root inside repo.
@@ -339,7 +341,28 @@ const sanitizeProjectActionsState = (value: {
  * Read the config for a project.
  * Returns null if file doesn't exist or is invalid.
  */
-async function readYuriConfig(project: ProjectRef): Promise<YuriConfig | null> {
+async function readYuriConfig(project: ProjectRef, entry?: HostRuntimeEntry): Promise<YuriConfig | null> {
+  if (project.hostId && (!entry || entry.location.hostId !== project.hostId || (project.hubId && entry.location.hubId !== project.hubId))) {
+    throw new Error('Remote project configuration requires its explicit Host scope');
+  }
+  if (entry?.location.hostId) {
+    const scope = captureProjectScope(entry);
+    const { home } = await scope.json<{ home: string }>('/api/fs/home');
+    if (!home) throw new Error('Remote home directory is unavailable');
+    const read = async (path: string): Promise<YuriConfig | null> => {
+      const response = await scope.fetch('/api/fs/read', { query: { path, optional: 'true' }, cache: 'no-store' });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`Failed to read remote project configuration (${response.status})`);
+      const text = await response.text();
+      scope.assertCurrent();
+      if (response.headers.get('x-yuri-file-exists') === 'false' || !text.trim()) return null;
+      const parsed: unknown = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid remote project configuration');
+      return parsed as YuriConfig;
+    };
+    return await read(joinPath(joinPath(home, USER_PROJECTS_DIR_SEGMENTS.join('/')), `${createProjectIdFromPath(project.path)}.json`))
+      ?? await read(getLegacyConfigPath(project.path));
+  }
   const projectDirectory = typeof project?.path === 'string' ? project.path.trim() : '';
   if (!projectDirectory) {
     return null;
@@ -415,6 +438,7 @@ async function writeYuriConfig(
   project: ProjectRef,
   config: YuriConfig
 ): Promise<boolean> {
+  if (project.hostId) throw new Error('Remote machine configuration is read-only here. Switch to that instance to make changes.');
   const projectDirectory = typeof project?.path === 'string' ? project.path.trim() : '';
   if (!projectDirectory) {
     return false;
@@ -469,6 +493,7 @@ async function updateYuriConfig(
   project: ProjectRef,
   updates: Partial<YuriConfig>
 ): Promise<boolean> {
+  if (project.hostId) throw new Error('Remote machine configuration is read-only here. Switch to that instance to make changes.');
   const existing = await readYuriConfig(project) || {};
   const merged = { ...existing, ...updates };
   return writeYuriConfig(project, merged);
@@ -477,8 +502,8 @@ async function updateYuriConfig(
 /**
  * Get worktree setup commands from config.
  */
-export async function getWorktreeSetupCommands(project: ProjectRef): Promise<string[]> {
-  const config = await readYuriConfig(project);
+export async function getWorktreeSetupCommands(project: ProjectRef, scope?: HostRuntimeEntry): Promise<string[]> {
+  const config = await readYuriConfig(project, scope);
   return config?.['setup-worktree'] ?? [];
 }
 
@@ -487,20 +512,23 @@ export async function saveWorktreeSetupCommands(project: ProjectRef, commands: s
   return updateYuriConfig(project, { 'setup-worktree': filtered });
 }
 
-export async function getWorktreeSetupWaitEnabled(project: ProjectRef): Promise<boolean> {
-  const config = await readYuriConfig(project);
+export async function getWorktreeSetupWaitEnabled(project: ProjectRef, scope?: HostRuntimeEntry): Promise<boolean> {
+  const config = await readYuriConfig(project, scope);
   return config?.['setup-worktree-wait'] === true;
 }
 
-export async function saveWorktreeSetupWaitEnabled(project: ProjectRef, enabled: boolean): Promise<boolean> {
-  return updateYuriConfig(project, { 'setup-worktree-wait': enabled });
+/** One native config read for the worktree creation transaction. */
+export async function getWorktreeSetupConfig(project: ProjectRef, scope?: HostRuntimeEntry): Promise<{ commands: string[]; wait: boolean }> {
+  const config = await readYuriConfig(project, scope);
+  return { commands: Array.isArray(config?.['setup-worktree'])
+    ? config['setup-worktree'].filter((value): value is string => typeof value === 'string') : [], wait: config?.['setup-worktree-wait'] === true };
 }
 
 /**
  * Get this project's pinned draft welcome starters.
  */
-export async function getProjectDraftStarters(project: ProjectRef): Promise<DraftStarterRef[]> {
-  const config = await readYuriConfig(project);
+export async function getProjectDraftStarters(project: ProjectRef, scope?: HostRuntimeEntry): Promise<DraftStarterRef[]> {
+  const config = await readYuriConfig(project, scope);
   return sanitizeStarterRefs(config?.draftStarters);
 }
 
@@ -508,26 +536,11 @@ export async function saveProjectDraftStarters(project: ProjectRef, starters: Dr
   return updateYuriConfig(project, { draftStarters: sanitizeStarterRefs(starters) });
 }
 
-export async function getProjectActionsState(project: ProjectRef): Promise<YuriProjectActionsState> {
-  const config = await readYuriConfig(project);
+export async function getProjectActionsState(project: ProjectRef, scope?: HostRuntimeEntry): Promise<YuriProjectActionsState> {
+  const config = await readYuriConfig(project, scope);
   return sanitizeProjectActionsState({
     actions: config?.projectActions,
     primaryActionId: config?.projectActionsPrimaryId,
-  });
-}
-
-export async function saveProjectActionsState(
-  project: ProjectRef,
-  value: YuriProjectActionsState
-): Promise<boolean> {
-  const sanitized = sanitizeProjectActionsState({
-    actions: value.actions,
-    primaryActionId: value.primaryActionId,
-  });
-
-  return updateYuriConfig(project, {
-    projectActions: sanitized.actions,
-    projectActionsPrimaryId: sanitized.primaryActionId ?? undefined,
   });
 }
 

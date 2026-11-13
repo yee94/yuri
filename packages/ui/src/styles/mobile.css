@@ -127,9 +127,6 @@
   --yuri-mobile-session-row-height: calc(2.875rem * var(--padding-scale, 1));
   --yuri-mobile-session-actions-width: 7rem;
   --yuri-mobile-worktree-action-width: 3.5rem;
-  --yuri-mobile-session-action-width: calc(
-    var(--yuri-mobile-session-actions-width) / 2
-  );
   /* The root dock is a primary Liquid Glass navigation layer: let it follow
      the phone's lower screen curve rather than reading as a small control
      floating high above it. The larger slots also keep the direct-touch
@@ -264,6 +261,10 @@
 [data-mobile-navigation-parked="true"]:not([data-mobile-back-revealing="true"]) {
   visibility: hidden;
   content-visibility: hidden;
+}
+
+[data-mobile-navigation-parked="true"]:not([data-mobile-back-revealing="true"]) .animate-spin {
+  animation-play-state: paused !important;
 }
 
 .yuri-mobile-floating-bottom-bar-frame {
@@ -501,8 +502,10 @@
   box-shadow: var(--yuri-popup-shadow);
 }
 
-:root.desktop-runtime[data-yuri-vibrancy] .yuri-session-context-menu {
-  --yuri-popup-fill: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
+/* Native vibrancy is the material gate, independent of device classification.
+   Use a solid theme fill so sidebar titles cannot bleed through portaled popups. */
+:root[data-yuri-vibrancy] .yuri-popup-surface {
+  --yuri-popup-fill: var(--surface-elevated);
 }
 
 .yuri-popup-surface .yuri-popup-separator {
@@ -524,6 +527,203 @@
   width: calc(100% + 0.5rem);
   padding-inline: 0.75rem;
   border-radius: 0;
+}
+
+.yuri-composer-picker .model-picker-search-area {
+  flex-shrink: 0;
+  padding: 0.5rem 1rem;
+  border-bottom: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-composer-picker .model-picker-search-area .model-picker-search {
+  height: 1.5rem;
+  padding-inline: 1.75rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.yuri-composer-picker .model-picker-search-area:focus-within > div > svg {
+  color: var(--surface-foreground);
+}
+
+.yuri-composer-picker .model-picker-search-area .model-picker-search:focus-visible {
+  box-shadow: 0 1px 0 var(--interactive-focus-ring);
+}
+
+.yuri-composer-picker .model-picker-search-area > div > svg {
+  left: 0;
+}
+
+.yuri-composer-picker .model-picker-list,
+.yuri-composer-picker .composer-agent-list {
+  padding: 0.375rem;
+}
+
+.yuri-composer-picker .model-picker-section-header {
+  min-height: 1.5rem;
+  padding: 0.25rem 0.625rem;
+  gap: 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  color: color-mix(in srgb, var(--surface-foreground) 80%, var(--surface-muted-foreground));
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.yuri-composer-picker .model-picker-section-header > svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-composer-picker .model-picker-section-divider {
+  height: 0.375rem;
+  margin: 0.25rem 0.625rem 0;
+  border-top: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+  background: transparent;
+}
+
+.yuri-composer-picker .model-picker-row {
+  min-height: 2.5rem;
+  margin-block: 0;
+  padding: 0.25rem 0.625rem;
+  gap: 0.375rem;
+  border-radius: 0.5rem;
+}
+
+.yuri-composer-picker .model-picker-row-main {
+  gap: 0.5rem;
+}
+
+.yuri-composer-picker .model-picker-row-placeholder {
+  height: 2.5rem;
+}
+
+.yuri-composer-picker .model-picker-row-placeholder[data-model-section="provider"] {
+  height: 2rem;
+}
+
+.yuri-composer-picker .model-picker-row[data-model-section="provider"] {
+  min-height: 2rem;
+}
+
+.yuri-composer-picker .model-picker-row[data-model-section="provider"] .model-picker-row-labels {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.yuri-composer-picker .model-picker-row[data-model-section="provider"] .model-picker-row-meta {
+  flex-shrink: 0;
+}
+
+.yuri-composer-picker .model-picker-row-labels {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+}
+
+.yuri-composer-picker .model-picker-row-name,
+.yuri-composer-picker .composer-agent-name {
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+}
+
+.yuri-composer-picker .model-picker-row-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-composer-picker .model-picker-row-provider {
+  display: block;
+}
+
+.yuri-composer-picker .model-picker-row-meta,
+.yuri-composer-picker .model-picker-row-context {
+  font-size: 0.6875rem;
+  line-height: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.yuri-composer-picker .model-picker-row-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.yuri-composer-picker .model-picker-thinking {
+  width: 4.75rem;
+  min-height: 1.75rem;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+
+.yuri-composer-picker .model-favorite-button {
+  width: 1.5rem;
+  height: 1.75rem;
+}
+
+.yuri-composer-picker .model-favorite-drag-handle {
+  opacity: 0.35;
+}
+
+.yuri-composer-picker .model-picker-row:hover .model-favorite-drag-handle,
+.yuri-composer-picker .model-favorite-drag-handle:focus-visible {
+  opacity: 1;
+}
+
+.yuri-composer-picker .composer-agent-row {
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+}
+
+.yuri-composer-picker .composer-agent-row + .composer-agent-row {
+  margin-top: 0.125rem;
+}
+
+.yuri-composer-picker .composer-agent-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 0.125rem;
+  font-size: 0.6875rem;
+  line-height: 0.9375rem;
+}
+
+.yuri-composer-picker .composer-picker-actions {
+  flex-shrink: 0;
+  padding: 0.25rem 0.375rem;
+  border-top: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-composer-picker .composer-picker-actions > [role="menuitem"] {
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  color: var(--surface-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+}
+
+.yuri-composer-picker .model-picker-footer,
+.yuri-composer-picker .composer-picker-footer {
+  flex-shrink: 0;
+  padding: 0.375rem 1rem;
+  border-top: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+  font-size: 0.6875rem;
+  line-height: 1rem;
 }
 
 .yuri-composer-autocomplete-row {
@@ -949,8 +1149,8 @@ button.yuri-mobile-worktree-label-trigger:active,
   );
 }
 
-.yuri-mobile-labeled-surface-group > .yuri-mobile-session-row:last-child,
-.yuri-mobile-labeled-surface-group-content > .yuri-mobile-session-row:last-child {
+.yuri-mobile-labeled-surface-group > .yuri-mobile-session-row:not(:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row])),
+.yuri-mobile-labeled-surface-group-content > .yuri-mobile-session-row:not(:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row])) {
   --yuri-mobile-session-radius-end-end: calc(
     var(--yuri-mobile-inset-radius) - 1px
   );
@@ -959,7 +1159,8 @@ button.yuri-mobile-worktree-label-trigger:active,
   );
 }
 
-.yuri-mobile-session-row:not(:last-child) {
+/* DnD accessibility nodes follow the rows; only another row needs a divider. */
+.yuri-mobile-session-row:has(~ .yuri-mobile-session-row, ~ [data-session-sortable-row]) {
   box-shadow: inset 0 -1px 0 var(--yuri-mobile-divider);
 }
 
@@ -1050,6 +1251,9 @@ button.yuri-mobile-worktree-label-trigger:active,
 }
 
 .yuri-mobile-session-actions {
+  --yuri-mobile-session-action-width: calc(
+    var(--yuri-mobile-session-actions-width) / 2
+  );
   width: var(--yuri-mobile-session-actions-width);
   overflow: hidden;
   border-start-end-radius: var(--yuri-mobile-session-radius-start-end);
@@ -1961,6 +2165,11 @@ button.yuri-mobile-schedule-assistant::before {
   z-index: 1;
 }
 
+.yuri-mobile-floating-action:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring) !important;
+  outline-offset: 3px;
+}
+
 .dark .yuri-mobile-floating-action {
   color: var(--surface-foreground);
 }
@@ -2393,9 +2602,7 @@ button.yuri-mobile-schedule-assistant::before {
   --error-bg: var(--yuri-toast-background);
   --warning-bg: var(--yuri-toast-background);
   --info-bg: var(--yuri-toast-background);
-  --yuri-toast-action-background: transparent;
   --yuri-toast-action-foreground: var(--foreground);
-  --yuri-toast-cancel-background: transparent;
   --yuri-toast-cancel-foreground: var(--muted-foreground);
 }
 
@@ -3106,6 +3313,16 @@ button.yuri-mobile-schedule-assistant::before {
     overscroll-behavior: none;
   }
 
+  /* Temporary experiment: keep the transcript's authored clipping instead of
+     turning every `.overflow-hidden` wrapper inside it into its own scrollport.
+     Nested scroll views absorb short reverse drags while the transcript is
+     still decelerating, so the reverse gesture never reaches the outer scroller. */
+  :root.mobile-pointer:not(.desktop-runtime)
+    .yuri-chat-scroll-content .overflow-hidden {
+    overflow: hidden !important;
+    -webkit-overflow-scrolling: auto;
+  }
+
   /* Composer clip shells must stay clippers. The generic rewrite above
      would open a second scrollport beside the textarea (two scrollbars)
      and absorb growth so the field no longer auto-expands. */
@@ -3668,18 +3885,13 @@ button.yuri-mobile-schedule-assistant::before {
    stays pinned; the composer sits at the new shell bottom above the IME.
    No transform FLIP.
 
-   Android: keyboard intent / composer focusin starts a short (~200ms)
-   composer-only CSS FLIP before IME movement. Only the bottom chat composer
-   arms this path — question cards and other fields must not. Target height
-   comes from the previous measured IME height (39dvh on the first open); a
-   state-only native event calibrates and caches the settled height. Hide is
-   ~100ms so a late close signal can catch up. No progress bridge or per-frame
-   JS geometry.
-   Header stays fixed; shell keeps solid bottom-safe breathing room.
+   Android: ImeSyncBridge resizes the native viewport's bottom with system IME
+   animation frames. Header stays fixed; all web content shares the resized
+   viewport. No CSS lift, guessed height, progress bridge or second inset.
    https://developer.android.com/develop/ui/views/layout/sw-keyboard
 
    --yuri-keyboard-inset: portal overlays. --yuri-kb-layout: iOS shell height (and
-   Android unused / kept at 0 during FLIP). --yuri-kb-scroll-inset: chat-scroll
+   Android always 0). --yuri-kb-scroll-inset: chat-scroll
    padding for non-composer fields (question cards, etc.) when the shell is
    not shrunk; cleared to 0 while composer focus owns --yuri-kb-layout. */
 /* Match the tabs-root canvas so Capacitor bottom-safe padding and any
@@ -3704,12 +3916,11 @@ button.yuri-mobile-schedule-assistant::before {
   );
 }
 
-/* Android: keep the shell's solid bottom-safe padding while the IME is open.
-   The gap paints with the shell's own --background (set on this element), so
-   the composer has breathing room above the keyboard instead of sitting flush,
-   and chat content never shows through the gap. */
+/* Android: no shell-level bottom band. Pages run to the physical edge; the
+   composer/foot owns its own small inset below (see the Android composer
+   rules), so nothing opaque is painted over the gesture area. */
 :root.yuri-capacitor-app.yuri-platform-android .yuri-mobile-app-shell {
-  padding-bottom: var(--yuri-app-bottom-safe, 16px);
+  padding-bottom: 0;
 }
 
 /* Portal surfaces (bottom sheets, overlay panels) render at <body> level, outside
@@ -3777,6 +3988,10 @@ button.yuri-mobile-schedule-assistant::before {
   padding-bottom: 0 !important;
 }
 
+[data-mobile-overlay-active="true"]:not([inert]) .pwa-overlay-panel[data-yuri-motion-id]:has([data-gui-plugin-page]) {
+  border-inline-width: 0;
+}
+
 :root.yuri-capacitor-app .pwa-overlay-panel .pwa-overlay-scroll {
   /* Surface already owns the physical bottom inset; keep only a small list gap. */
   padding-bottom: 12px;
@@ -3793,11 +4008,19 @@ button.yuri-mobile-schedule-assistant::before {
   transition: height 0.25s cubic-bezier(0.38, 0.7, 0.125, 1);
 }
 
+/* Android's viewport already moves with the IME. CSS height/bottom transitions
+   would chase that moving target and lag behind it, including portaled sheets. */
+:root.yuri-capacitor-app.yuri-native-ime .yuri-keyboard-fill-screen,
+:root.yuri-capacitor-app.yuri-native-ime .yuri-keyboard-inset-surface,
+:root.yuri-capacitor-app.yuri-native-ime .yuri-keyboard-inset-surface.yuri-mobile-window-motion {
+  transition: none;
+}
+
 /* Keyboard FLIP movers stay layer-promoted for the Capacitor session. Toggling
    will-change on every open/close churns WebKit compositor layers and slows
    later animations; keep a stable promotion on the fixed movers instead. */
-:root.yuri-capacitor-app .yuri-mobile-composer,
-:root.yuri-capacitor-app .yuri-draft-center {
+:root.yuri-capacitor-app:not(.yuri-platform-android) .yuri-mobile-composer,
+:root.yuri-capacitor-app:not(.yuri-platform-android) .yuri-draft-center {
   will-change: transform;
 }
 
@@ -3814,13 +4037,9 @@ button.yuri-mobile-schedule-assistant::before {
 }
 
 :root.yuri-capacitor-app.yuri-platform-android .yuri-mobile-app-shell .chat-scroll {
-  /* Android keeps the FLIP constant-viewport: shell shrinks by --yuri-kb-layout
-     but the scroller extends that far below so virtualizer clientHeight stays
-     stable across the composer transform. */
-  bottom: calc(
-    -1 * max(var(--yuri-kb-layout, 0px) - var(--yuri-app-bottom-safe, 0px), 0px)
-  );
-  padding-bottom: var(--yuri-kb-scroll-inset, var(--yuri-kb-layout, 0px));
+  /* Native viewport sizing is the only keyboard inset, including question fields. */
+  bottom: 0;
+  padding-bottom: 0;
 }
 
 /* iOS: page-push layout. The scroller is a normal flex sibling above the
@@ -3850,7 +4069,7 @@ button.yuri-mobile-schedule-assistant::before {
 
 /* Keep a small breathing gap between the input card and the IME on every
    native platform. Flush-to-keyboard reads too tight on iPhone. */
-:root.yuri-capacitor-app.yuri-keyboard-open .yuri-mobile-composer {
+:root.yuri-capacitor-app:not(.yuri-native-ime).yuri-keyboard-open .yuri-mobile-composer {
   /* Beat .bottom-safe-area's !important visual inset. The home indicator is
      behind the IME; leaving that padding in place parks the model row / foot
      padding under the keyboard (web only scrolls to the caret). */
@@ -3867,8 +4086,8 @@ button.yuri-mobile-schedule-assistant::before {
   box-shadow: none;
 }
 
-:root.yuri-capacitor-app.yuri-keyboard-open .yuri-mobile-composer::before,
-:root.yuri-capacitor-app.yuri-kb-animating .yuri-mobile-composer::before {
+:root.yuri-capacitor-app:not(.yuri-native-ime).yuri-keyboard-open .yuri-mobile-composer::before,
+:root.yuri-capacitor-app:not(.yuri-native-ime).yuri-kb-animating .yuri-mobile-composer::before {
   content: "";
   position: absolute;
   z-index: -2;
@@ -3941,8 +4160,8 @@ button.yuri-mobile-schedule-assistant::before {
 
 /* Capacitor chat safe-area cover: keep the home-indicator / navigation foot
    on the semantic page background while preserving higher overlay layers. */
-:root.yuri-capacitor-app body:has(.yuri-mobile-composer)::before,
-:root.yuri-capacitor-app body:has(.yuri-mobile-readonly-prompt-foot)::before {
+:root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-composer):not(:has(.yuri-assistant-workspace[data-assistant-layout="mobile"]))::before,
+:root.yuri-capacitor-app:not(.yuri-platform-android):not(.yuri-native-ime) body:has(.yuri-mobile-readonly-prompt-foot)::before {
   content: "";
   position: fixed;
   z-index: 1;
@@ -4621,4 +4840,101 @@ html.yuri-barcode-scanner-active .yuri-barcode-scanner-chrome {
 :root.yuri-native-ios-composer .yuri-scroll-to-bottom--expanded,
 :root.yuri-native-ios-composer .yuri-scroll-to-bottom--compact {
   display: none !important;
+}
+
+/* Two-WebView native IME experiment (Android; iOS WebView composer path).
+   The native IME owner translates the main WebView by the IME height and, once the
+   keyboard rests, asks the page to absorb that height at its top
+   (--yuri-native-viewport-top). At rest the page paints its own header.
+   Only while the IME moves a separate pinned transparent WebView is engaged
+   and the in-page source hides (keeping layout and its panels). Header context panels/menus stay in this page —
+   the single state owner — so they shift with the visible viewport top and
+   keep their in-page translucent/blurred surface.
+   iOS never offsets the page: a relayout is not committed within a keyboard
+   frame, so a moving shell showed a blank band under the header at close
+   start. There the shell keeps its full height (adjustPan-like) and the
+   mirror stays engaged for the whole keyboard session. */
+:root.yuri-capacitor-app.yuri-native-ime.yuri-platform-android .yuri-mobile-app-shell {
+  margin-top: var(--yuri-native-viewport-top, 0px);
+  height: calc(100dvh - var(--yuri-native-viewport-top, 0px));
+}
+
+:root.yuri-native-header-ready .yuri-native-header-source {
+  visibility: hidden;
+}
+
+:root.yuri-native-header-ready .yuri-native-header-source .fixed {
+  visibility: visible;
+}
+
+/* Fixed panels with top+bottom insets: margin shifts the top and shrinks the
+   box, so the panel starts under the pinned header and ends above the IME. */
+:root.yuri-native-ime .yuri-native-header-source .fixed {
+  margin-top: var(--yuri-native-viewport-top, 0px);
+}
+
+:root.yuri-native-ime .yuri-native-header-source .fixed [role="dialog"] {
+  max-height: min(
+    72dvh,
+    calc(
+      100dvh - var(--yuri-native-viewport-top, 0px) -
+        var(--yuri-safe-area-top, 0px) -
+        var(--yuri-mobile-detail-navigation-height, 3.5rem) - 1rem
+    )
+  ) !important;
+}
+
+/* Portaled sheets live outside the shell; keep their top inside the visible
+   region while the page absorbs the IME at its top. */
+:root.yuri-capacitor-app.yuri-native-ime .yuri-keyboard-inset-surface {
+  top: var(--yuri-native-viewport-top, 0px);
+}
+
+:root.yuri-capacitor-app.yuri-native-ime .pwa-overlay-panel {
+  max-height: calc(
+    100dvh - var(--yuri-native-viewport-top, 0px) -
+      max(0.75rem, env(safe-area-inset-top))
+  );
+}
+
+/* Android composer foot sits lower: the shell has no bottom band and no
+   opaque safe-area cover. One constant 16px gap, keyboard up or down: the
+   IME owner moves the WebView natively, so any keyboard-state padding change
+   would land as a one-frame jump at the animation bookends. The composer host
+   fill itself stays the only background (it fades to transparent in compact
+   mode). */
+:root.yuri-capacitor-app.yuri-platform-android .yuri-mobile-composer,
+:root.yuri-capacitor-app.yuri-platform-android.yuri-keyboard-open .yuri-mobile-composer,
+:root.yuri-capacitor-app.yuri-platform-android .yuri-mobile-readonly-prompt-foot {
+  padding-bottom: 16px !important;
+}
+
+/* iOS native IME path, same contract as Android: no shell bottom band and no
+   opaque safe-area cover; the composer foot owns one constant inset,
+   max(16px, home indicator), keyboard up or down. YuriNativeHeaderPlugin lifts
+   by the keyboard minus the indicator excess, so the gap above the keyboard
+   is the same 16px and nothing changes at the animation bookends. */
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) .yuri-mobile-app-shell {
+  padding-bottom: 0;
+}
+
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) .yuri-mobile-composer,
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) .yuri-mobile-readonly-prompt-foot {
+  padding-bottom: max(16px, var(--yuri-safe-area-bottom, 0px)) !important;
+}
+
+/* iOS native IME path: the lifted WKWebView would make WebKit recompute
+   env(safe-area-inset-*) from its moved frame (top/bottom drop to 0 mid-lift).
+   YuriNativeHeaderPlugin publishes the window insets as fixed variables; every
+   shared safe-area token resolves to them so the header, the composer foot and
+   the mirror header never move with the keyboard. */
+:root.yuri-capacitor-app.yuri-native-ime:not(.yuri-platform-android) {
+  --yuri-safe-area-top: var(--yuri-native-safe-top, env(safe-area-inset-top, 0px));
+  --yuri-safe-area-bottom: var(--yuri-native-safe-bottom, env(safe-area-inset-bottom, 0px));
+  --yuri-safe-area-left: var(--yuri-native-safe-left, env(safe-area-inset-left, 0px));
+  --yuri-safe-area-right: var(--yuri-native-safe-right, env(safe-area-inset-right, 0px));
+  --safe-area-inset-top: var(--yuri-safe-area-top);
+  --safe-area-inset-bottom: var(--yuri-safe-area-bottom);
+  --safe-area-inset-left: var(--yuri-safe-area-left);
+  --safe-area-inset-right: var(--yuri-safe-area-right);
 }

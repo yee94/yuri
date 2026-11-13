@@ -15,12 +15,14 @@ import { Button } from '@/components/ui/button';
 import { SortableTabsStrip } from '@/components/ui/sortable-tabs-strip';
 import { Icon } from "@/components/icon/Icon";
 import { useDeviceInfo } from '@/lib/device';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs as useRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { primeTerminalInputTransport } from '@/lib/terminalApi';
 import { extractTerminalPreviewUrl, isTerminalPreviewUrlAvailable } from '@/lib/terminalPreview';
 import { useI18n } from '@/lib/i18n';
 import { PROJECT_ACTION_ICON_MAP, type ProjectActionIconKey } from '@/lib/projectActions';
 import { isDesktopShell } from '@/lib/desktop';
+import { locationKey } from '@/lib/remote-projects/location';
+import { probeProjectPreviewUrl } from '@/lib/preview/project-preview';
 
 type Modifier = 'ctrl' | 'cmd';
 type MobileKey =
@@ -88,7 +90,7 @@ const getSequenceForKey = (key: MobileKey, modifier: Modifier | null): string | 
 
 export const TerminalView: React.FC = () => {
     const { t } = useI18n();
-    const { terminal, runtime } = useRuntimeAPIs();
+    const { terminal, runtime, projectScope } = useRuntimeAPIs();
     const { currentTheme } = useThemeSystem();
     const { monoFont } = useFontPreferences();
     const terminalFontSize = useUIStore(state => state.terminalFontSize);
@@ -104,15 +106,20 @@ export const TerminalView: React.FC = () => {
 
     const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
     const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
-    const hasActiveContext = currentSessionId !== null || newSessionDraft?.open === true;
+    const hasActiveContext = Boolean(projectScope) || currentSessionId !== null || newSessionDraft?.open === true;
 
-    const effectiveDirectory = useEffectiveDirectory() ?? null;
+    const localDirectory = useEffectiveDirectory() ?? null;
+    const physicalDirectory = localDirectory ?? projectScope?.location.directory ?? null;
+    const effectiveDirectory = projectScope ? locationKey({ ...projectScope.location, directory: physicalDirectory ?? projectScope.location.directory }) : physicalDirectory;
     const terminalSessions = useTerminalStore((s) => s.sessions);
     const terminalHydrated = useTerminalStore((s) => s.hasHydrated);
     const ensureDirectory = useTerminalStore((s) => s.ensureDirectory);
     const createTab = useTerminalStore((s) => s.createTab);
     const setActiveTab = useTerminalStore((s) => s.setActiveTab);
-    const closeTab = useTerminalStore((s) => s.closeTab);
+    const storeCloseTab = useTerminalStore((s) => s.closeTab);
+    const closeTab = React.useMemo(() => projectScope ? async (directory: string, tabId: string) => {
+        await storeCloseTab(directory, tabId, terminal.close);
+    } : storeCloseTab, [projectScope, terminal, storeCloseTab]);
     const setTabSessionId = useTerminalStore((s) => s.setTabSessionId);
     const setTabLifecycle = useTerminalStore((s) => s.setTabLifecycle);
     const setConnecting = useTerminalStore((s) => s.setConnecting);
@@ -246,8 +253,8 @@ export const TerminalView: React.FC = () => {
             return;
         }
 
-        primeTerminalInputTransport();
-    }, [isTerminalVisible, runtime.platform]);
+        if (!projectScope) primeTerminalInputTransport();
+    }, [isTerminalVisible, runtime.platform, projectScope]);
 
     React.useEffect(() => {
         if (isTerminalVisible) {
@@ -299,6 +306,10 @@ export const TerminalView: React.FC = () => {
         },
         [disconnectStream]
     );
+    React.useEffect(() => {
+        disconnectStream();
+        return disconnectStream;
+    }, [terminal, disconnectStream]);
 
     const scanTerminalPreviewOutput = React.useCallback(
         (directory: string, tabId: string, data: string) => {
@@ -324,7 +335,7 @@ export const TerminalView: React.FC = () => {
 
             const probeGeneration = previewProbeGenerationRef.current;
             pendingPreviewProbeUrlsRef.current.add(candidate);
-            void isTerminalPreviewUrlAvailable(candidate).then((available) => {
+            void (projectScope ? probeProjectPreviewUrl(projectScope, candidate) : isTerminalPreviewUrlAvailable(candidate)).then((available) => {
                 pendingPreviewProbeUrlsRef.current.delete(candidate);
                 if (!available || previewProbeGenerationRef.current !== probeGeneration) {
                     return;
@@ -338,7 +349,7 @@ export const TerminalView: React.FC = () => {
                 setTabPreviewUrl(directory, tabId, candidate, { locked: false, autoOpened: false });
             });
         },
-        [setTabPreviewUrl]
+        [setTabPreviewUrl, projectScope]
     );
 
     const startStream = React.useCallback(
@@ -561,7 +572,7 @@ export const TerminalView: React.FC = () => {
             setConnecting(directory, tabId, true);
             try {
                 const session = await terminal.createSession({
-                    cwd: directory,
+                    cwd: physicalDirectory ?? '',
                     cols: size?.cols,
                     rows: size?.rows,
                 });
@@ -611,6 +622,7 @@ export const TerminalView: React.FC = () => {
     }, [
         hasActiveContext,
         effectiveDirectory,
+        physicalDirectory,
         terminalSessionId,
         terminalLifecycle,
         activeTabId,
@@ -703,6 +715,7 @@ export const TerminalView: React.FC = () => {
         enableTabs,
         hasOpenedTerminalViewport,
         terminalHydrated,
+        terminal,
     ]);
 
     React.useEffect(() => {

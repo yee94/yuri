@@ -13,19 +13,27 @@ type AssistantContactMenuProps = {
   trigger: React.ReactElement;
   onEdit: () => void;
   onDelete: () => void;
+  doubleClickMiniChat?: boolean;
 };
 
-export function AssistantContactMenu({ assistant, trigger, onEdit, onDelete }: AssistantContactMenuProps) {
+export function AssistantContactMenu({ assistant, trigger, onEdit, onDelete, doubleClickMiniChat = false }: AssistantContactMenuProps) {
   const { t } = useI18n();
   const pin = useMutation({
     mutationKey: [getRuntimeTransportIdentity(), 'assistants', assistant.id, 'pin'],
     mutationFn: () => updateAssistant(assistant, { pinned: assistant.pinnedAt == null }),
     onError: () => toast.error(t('assistants.menu.pinError')),
   });
+  const openMiniChat = () => { void openAssistantMiniChat(assistant.id).catch(() => toast.error(t('miniChat.actions.failed'))); };
+  const contactTrigger = trigger as React.ReactElement<{ onDoubleClick?: React.MouseEventHandler }>;
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger render={trigger} />
+      <ContextMenuTrigger render={doubleClickMiniChat ? React.cloneElement(contactTrigger, {
+        onDoubleClick: (event) => {
+          contactTrigger.props.onDoubleClick?.(event);
+          if (!event.defaultPrevented && canOpenAssistantMiniChat()) openMiniChat();
+        },
+      }) : trigger} />
       <ContextMenuContent className="min-w-[10rem]">
         {assistant.pinnedAt !== undefined ? (
           <ContextMenuItem disabled={pin.isPending} onClick={() => pin.mutate()}>
@@ -34,7 +42,7 @@ export function AssistantContactMenu({ assistant, trigger, onEdit, onDelete }: A
           </ContextMenuItem>
         ) : null}
         {canOpenAssistantMiniChat() ? (
-          <ContextMenuItem onClick={() => { void openAssistantMiniChat(assistant.id).catch(() => toast.error(t('miniChat.actions.failed'))); }}>
+          <ContextMenuItem onClick={openMiniChat}>
             <Icon name="external-link" className="size-4" />
             {t('sessions.sidebar.session.menu.openMiniChatWindow')}
           </ContextMenuItem>
@@ -44,8 +52,8 @@ export function AssistantContactMenu({ assistant, trigger, onEdit, onDelete }: A
           {t('assistants.menu.edit')}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onClick={onDelete} className="text-[var(--status-error)] focus:text-[var(--status-error)] data-[highlighted]:text-[var(--status-error)] [&_svg]:text-[var(--status-error)]">
-          <Icon name="delete-bin" className="size-4" />
+        <ContextMenuItem onClick={onDelete} className="text-[var(--status-error)] focus:text-[var(--status-error)] data-[highlighted]:text-[var(--status-error)]">
+          <Icon name="delete-bin" className="size-4 text-inherit" />
           {t('assistants.settings.delete')}
         </ContextMenuItem>
       </ContextMenuContent>

@@ -5,6 +5,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { ComposerFoot, DraftComposerFoot } from './ComposerFoot';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -42,6 +43,7 @@ const compiled = ts.transpileModule(`const renderBranch = () => { ${branches} };
 }).outputText;
 const createRender = new Function(...bindings, `${compiled}\nreturn renderBranch;`);
 const Empty = () => null;
+const Passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
 const Composer = () => <textarea defaultValue="loading draft" autoFocus />;
 const host = document.createElement('div');
 let root: ReturnType<typeof createRoot>;
@@ -63,8 +65,9 @@ const render = async (overrides: Record<string, unknown>) => {
         timelineController: { historySignals: {} }, navigation: {},
         promptAvailability: {}, ChatInput: Composer,
         t: (key: string) => key,
-        ChatViewport: Empty, Skeleton: Empty, DesktopComposerEdgeFade: Empty,
+        ChatViewport: Empty, Skeleton: Empty, DesktopComposerEdgeFade: Empty, ComposerFoot, DraftComposerFoot,
         TimelineDialog: Empty, TranscriptScrollControls: Empty,
+        TranscriptSearch: Passthrough,
         ChatEmptyState: Empty, Icon: Empty, Button: Empty,
         ...overrides,
     };

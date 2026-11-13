@@ -44,27 +44,26 @@ describe('useNativeIosComposer', () => {
     expect(source).toContain('buildNativeComposerUpdatePayload');
     expect(source).toContain('echoingNativeRef');
     expect(source).toContain('echoingNativeRef.current = true');
-    expect(source).toContain(`onSend: (text) => {
+    expect(source).toContain(`onSend: (text: string) => {
+      if (!nativeIosComposerSession.owns(owner)) return;
       nativeTextRef.current = text;
-      onSend(text);
+      onSend(text, () => nativeIosComposerSession.owns(owner));
     }`);
     expect(source).not.toContain(`onSend: (text) => {
       nativeTextRef.current = text;
       echoingNativeRef.current = true;`);
     expect(source).toContain('useLayoutEffect');
-    expect(source).toContain('setNativeComposerDocumentClass(root, true)');
-    expect(source).toContain('nativeIosComposerSession.retain');
-    expect(source).toContain('nativeIosComposerSession.release');
-    expect(source).toContain('nativeIosComposerSession.bind');
-    expect(source).toContain('nativeIosComposerSession.rememberState');
+    expect(source).toContain('nativeIosComposerSession.claim(owner, root, state, handlers)');
+    expect(source).toContain('nativeIosComposerSession.releaseOwner(owner, root)');
+    expect(source).not.toContain('nativeIosComposerSession.bind');
     expect(source).toContain('attachNativeIosComposerLeaveConceal');
-    expect(source).toContain('nativeIosComposerSession.rememberState');
-    expect(source).toContain('getNativeIosComposerPlugin().update');
+    expect(source).toContain('nativeIosComposerSession.updateOwner(owner, payload)');
+    expect(source).not.toContain('getNativeIosComposerPlugin().update');
     expect(source).toContain('applyNativeComposerHeightVar');
     expect(source).toContain('packNativeIosComposerIdenticon');
     const chatInput = readFileSync(join(here, 'ChatInput.tsx'), 'utf-8');
     expect(chatInput).toContain('handoffNativeComposerSendToWeb');
-    expect(chatInput).toContain('submit: handlePrimaryAction');
+    expect(chatInput).toContain('submit: () => { if (isCurrent()) handlePrimaryAction(); }');
     expect(chatInput).toContain('useSessionMaterializationStatus');
     expect(chatInput).toContain('transcriptReady: primaryTranscriptRenderable');
     expect(chatInput).toContain('shouldHoldPrimaryComposerUserPick');

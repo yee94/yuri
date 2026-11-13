@@ -13,7 +13,7 @@ vi.mock('@/lib/desktop', () => ({
 // declare mock matcher / mockClear types; existing tests use plain arrays).
 type SwitchDesktopHostResult =
   | { ok: true; via: 'direct' | 'relay'; status: { status: 'ok'; latencyMs: number } | { status: 'ok'; latencyMs: number; via?: string } }
-  | { ok: false; status: { status: 'unreachable'; latencyMs: number }; reason: 'unreachable' | 'unsupported' };
+  | { ok: false; status: { status: 'unreachable' | 'auth'; latencyMs: number }; reason: 'unreachable' | 'unsupported' };
 
 let switchDesktopHostImpl: (...args: unknown[]) => Promise<SwitchDesktopHostResult> = async () => ({
   ok: true,
@@ -41,6 +41,8 @@ mock.module('@/lib/desktopHostSwitch', () => ({
 
 mock.module('@/lib/desktopHosts', () => ({
   redactSensitiveUrl: (value: string) => value,
+  isPairedDesktopHost: (value: { source?: string; clientToken?: string; relay?: unknown }) => Boolean(value.clientToken && (value.source === 'connect-link' || value.relay)),
+  desktopOpenLocalHostSettings: () => Promise.resolve(),
 }));
 
 mock.module('@/lib/runtime-switch', () => ({
@@ -127,6 +129,19 @@ describe('desktopHostSwitchMutation', () => {
       { description: 'Remote update failed' },
     ]]);
     expect(switchRuntimeEndpointCalls).toEqual([]);
+  });
+
+  it('guides a rejected paired host to connection management', async () => {
+    switchDesktopHostImpl = async () => ({ ok: false, status: { status: 'auth', latencyMs: 0 }, reason: 'unreachable' });
+    await switchDesktopHostInstance({ host: { ...host, source: 'connect-link' } });
+    expect(toastErrorCalls[0][0]).toBe('mobile.connect.pairing.expired');
+    expect(toastErrorCalls[0][1]).toMatchObject({ description: 'desktopHostSwitcher.pairing.reconnectHint', action: { label: 'settings.remoteInstances.openLocalManager' } });
+  });
+
+  it('preserves ordinary password authentication failures', async () => {
+    switchDesktopHostImpl = async () => ({ ok: false, status: { status: 'auth', latencyMs: 0 }, reason: 'unreachable' });
+    await switchDesktopHostInstance({ host });
+    expect(toastErrorCalls[0][0]).toBe('desktopHostSwitcher.status.authRequired');
   });
 
   test('exposes a stable mutation key for the global pending lane', () => {

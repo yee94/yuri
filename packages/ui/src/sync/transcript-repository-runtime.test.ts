@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
 import type { Message } from '@/lib/opencode/v2-types'
 
 import { QueryClient } from "@tanstack/react-query"
@@ -7,6 +7,7 @@ import { isTranscriptAuthorityRefreshInFlight } from "./transcript-authority-ref
 import { resetExactFillSchedulerForTests } from "./transcript-exact-fill-scheduler"
 import {
   bindTranscriptRepositoryInstance,
+  bindLocationTranscriptRepository,
   getTranscriptMessageMaterializationState,
   getTranscriptRepository,
   getTranscriptRepositoryBindingRevision,
@@ -55,6 +56,33 @@ function createHarnessStore(): TranscriptStoreSurface {
 }
 
 describe("transcript repository binding (Ticket 09)", () => {
+  test.each([true, false])('same-Location primary/panel bindings restore the last live owner (panel closes first=%s)', (panelFirst) => {
+    const location = { hubId: 'hub', hostId: 'remote', directory: '/repo' }
+    const primary = createStoreTranscriptRepository({ getStore: () => createHarnessStore() })
+    const panel = createStoreTranscriptRepository({ getStore: () => createHarnessStore() })
+    const mainScope = (sessionID: string) => ({ directory: '/repo', sessionID, transport: 'primary' })
+    const panelScope = (sessionID: string) => ({ directory: '/repo', sessionID, transport: 'panel' })
+    const releasePrimary = bindLocationTranscriptRepository(location, primary, mainScope)
+    const releasePanel = bindLocationTranscriptRepository(location, panel, panelScope)
+    expect(getTranscriptRepository(location)).toBe(panel)
+    const revision = getTranscriptRepositoryBindingRevision()
+    if (panelFirst) {
+      releasePanel()
+      expect(getTranscriptRepository(location)).toBe(primary)
+      expect(transcriptScope(location, 'same').transport).toBe('primary')
+      expect(getTranscriptRepositoryBindingRevision()).toBe(revision + 1)
+      releasePrimary()
+    } else {
+      releasePrimary()
+      expect(getTranscriptRepository(location)).toBe(panel)
+      expect(getTranscriptRepositoryBindingRevision()).toBe(revision)
+      releasePanel()
+    }
+    expect(getTranscriptRepository(location)).toBeNull()
+    const closedRevision = getTranscriptRepositoryBindingRevision()
+    releasePanel(); releasePrimary()
+    expect(getTranscriptRepositoryBindingRevision()).toBe(closedRevision)
+  })
   test("binding revision notifies and observers re-read Query after swap", () => {
     unbindTranscriptRepository()
     const store = createHarnessStore()

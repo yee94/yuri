@@ -61,7 +61,7 @@ describe('SendCircleIcon', () => {
   });
 
   test('ready send uses the same filled-circle control as stop', () => {
-    expect(chatInputSource).toContain('showSendCircle');
+    expect(chatInputSource).toContain('data-composer-circle="true"');
     expect(chatInputSource).toContain('<SendCircleIcon');
     expect(chatPromptComposerSource).toContain('<SendCircleIcon');
     expect(chatPromptComposerSource).toContain('data-composer-circle={sendReady ? \'true\' : undefined}');

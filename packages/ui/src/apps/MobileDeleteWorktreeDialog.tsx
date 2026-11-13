@@ -14,6 +14,8 @@ import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useAllLiveSessions } from '@/sync/sync-context';
 import type { WorktreeMetadata } from '@/types/worktree';
+import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
+import { captureProjectScope } from '@/lib/api/project-scope';
 
 type MobileDeleteWorktreeDialogProps = {
   open: boolean;
@@ -46,6 +48,7 @@ export const MobileDeleteWorktreeDialog: React.FC<MobileDeleteWorktreeDialogProp
   onDeleted,
 }) => {
   const { t } = useI18n();
+  const { git, projectScope } = useProjectRuntimeAPIs();
   const liveSessions = useAllLiveSessions();
   const globalActiveSessions = useGlobalSessionsStore((state) => state.activeSessions);
   const archiveSessions = useSessionUIStore((state) => state.archiveSessions);
@@ -62,13 +65,13 @@ export const MobileDeleteWorktreeDialog: React.FC<MobileDeleteWorktreeDialogProp
   // Sessions attached to this worktree — archived (not deleted) on removal,
   // matching the desktop behavior.
   const linkedSessions = React.useMemo(() => {
-    if (!worktreePath) return [] as Session[];
+    if (!worktreePath || projectScope) return [] as Session[];
     const merged = new Map<string, Session>();
     for (const session of [...globalActiveSessions, ...liveSessions]) {
       if (getSessionDirectory(session) === worktreePath) merged.set(session.id, session);
     }
     return Array.from(merged.values());
-  }, [globalActiveSessions, liveSessions, worktreePath]);
+  }, [globalActiveSessions, liveSessions, worktreePath, projectScope]);
 
   React.useEffect(() => {
     if (!open) {
@@ -80,7 +83,7 @@ export const MobileDeleteWorktreeDialog: React.FC<MobileDeleteWorktreeDialogProp
     }
     if (!worktree?.path) return;
     let cancelled = false;
-    void getWorktreeStatus(worktree.path)
+    void (projectScope ? git.getGitStatus(worktree.path).then((status) => ({ isDirty: status.files.length > 0 })) : getWorktreeStatus(worktree.path))
       .then((status) => {
         if (!cancelled) setIsDirty(Boolean(status?.isDirty));
       })
@@ -90,7 +93,7 @@ export const MobileDeleteWorktreeDialog: React.FC<MobileDeleteWorktreeDialogProp
     return () => {
       cancelled = true;
     };
-  }, [open, worktree?.path, worktree?.status?.isDirty]);
+  }, [open, worktree?.path, worktree?.status?.isDirty, projectScope, git]);
 
   const removeWorktreeInBackground = useEvent((operation: {
     worktree: WorktreeMetadata;
@@ -132,6 +135,32 @@ export const MobileDeleteWorktreeDialog: React.FC<MobileDeleteWorktreeDialogProp
 
   const handleConfirm = async () => {
     if (!worktree || isProcessing) return;
+    if (projectScope) {
+      setIsProcessing(true);
+      try {
+        const scope = captureProjectScope(projectScope);
+        const sessions = await projectScope.sdk().session.list({ directory: worktree.path });
+        scope.assertCurrent();
+        if (!Array.isArray(sessions.data)) throw new Error('Remote session list unavailable');
+        // Archive only authoritative sessions in this Host worktree, never Hub same-ID sessions.
+        for (const session of sessions.data) {
+          if (getSessionDirectory(session) !== normalizePath(worktree.path)) continue;
+          await projectScope.service().updateSession(session.id, { time: { archived: Date.now() } }, worktree.path);
+          scope.assertCurrent();
+        }
+        if (!git.deleteGitWorktree) throw new Error('Remote worktree removal unavailable');
+        if (deleteRemoteBranch && worktree.branch) await git.deleteRemoteBranch(project.path, { branch: worktree.branch });
+        await git.deleteGitWorktree(project.path, { directory: worktree.path, deleteLocalBranch });
+        scope.assertCurrent();
+        onDeleted?.(); onClose();
+        toast.success(t('sessions.sidebar.sessionDialogs.worktree.removedTitle'));
+      } catch (error) {
+        toast.error(t('sessions.sidebar.sessionDialogs.worktree.errorRemoveTitle'), {
+          description: error instanceof Error ? error.message : t('sessions.sidebar.dialogs.deleteResult.tryAgain'),
+        });
+      } finally { setIsProcessing(false); }
+      return;
+    }
     const operation = {
       worktree,
       project,

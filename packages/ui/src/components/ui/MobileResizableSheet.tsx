@@ -20,6 +20,8 @@ type MobileResizableSheetProps = {
   trailing?: React.ReactNode;
   ariaLabel: string;
   closeAriaLabel: string;
+  showCloseButton?: boolean;
+  compactHeader?: boolean;
   resizeAriaLabel: string;
   initiallyExpanded?: boolean;
   fitContent?: boolean;
@@ -49,6 +51,8 @@ export const MobileResizableSheet: React.FC<MobileResizableSheetProps> = ({
   trailing,
   ariaLabel,
   closeAriaLabel,
+  showCloseButton = true,
+  compactHeader = false,
   resizeAriaLabel,
   initiallyExpanded = false,
   fitContent = false,
@@ -87,17 +91,19 @@ export const MobileResizableSheet: React.FC<MobileResizableSheetProps> = ({
       >
         <div className={cn('flex min-h-0 flex-col', fillAvailableHeight && 'flex-1')}>
           <div className="shrink-0">
-            <MobileSheetSnapHandle controller={sheetSnap} ariaLabel={resizeAriaLabel} />
+            <MobileSheetSnapHandle controller={sheetSnap} ariaLabel={resizeAriaLabel} compact={compactHeader} />
             {hasHeader ? (
-              <div className={fitContent
+              <div data-mobile-sheet-header className={compactHeader
+                ? 'flex min-h-6 items-center gap-2 px-3 text-xs'
+                : fitContent
                 ? 'flex min-h-9 items-center gap-2 px-4 pb-1'
                 : 'flex min-h-10 items-center gap-2 px-4 pb-2'}
               >
                 {leading ? <div className="flex shrink-0 items-center">{leading}</div> : null}
-                <div className="min-w-0 flex-1">{title}</div>
+                <div className={cn('min-w-0 flex-1', compactHeader && 'truncate')}>{title}</div>
                 {trailing ? <div className="flex shrink-0 items-center gap-1.5">{trailing}</div> : null}
                 <div ref={setHeaderActionsSlot} className="contents" />
-                <Button
+                {showCloseButton ? <Button
                   type="button"
                   variant="ghost"
                   size="icon"
@@ -107,7 +113,7 @@ export const MobileResizableSheet: React.FC<MobileResizableSheetProps> = ({
                   style={{ touchAction: 'manipulation' }}
                 >
                   <Icon name="close" className="size-5" />
-                </Button>
+                </Button> : null}
               </div>
             ) : null}
           </div>

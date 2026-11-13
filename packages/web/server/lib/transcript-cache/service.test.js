@@ -96,6 +96,19 @@ afterEach(() => {
 });
 
 describe('createTranscriptCacheService', () => {
+  it('rejects serialized remote identities before persisting message bodies', () => {
+    const { service, dbPath } = createService();
+    for (const patch of [
+      { transport: JSON.stringify(['hub-1', 'host-1']) },
+      { directory: 'yuri-remote-location:["hub-1","host-1","/repo"]' },
+      { sessionID: 'yuri-remote-session:["hub-1","host-1","s"]' },
+      { hostId: 'host-1' },
+    ]) {
+      expect(() => writeUser(service, 'remote-message', 1, 'remote body', otherScope(patch))).toThrow();
+    }
+    expect(inspectTables(dbPath)).toMatchObject({ indexCount: 0, contentCount: 0 });
+  });
+
   it('returns null when dbPath is empty so remote servers stay body-free', () => {
     expect(createTranscriptCacheService({})).toBeNull();
     expect(createTranscriptCacheService({ dbPath: '' })).toBeNull();

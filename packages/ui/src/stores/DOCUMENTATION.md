@@ -1,25 +1,56 @@
 # UI Stores
 
-## Framework-neutral Settings types
+## Remote project location ownership
 
-Quota model selection shares the import-free `lib/quota/model-selection-core.js`
-semantics with Native: an absent provider key inherits defaults, while an explicit
-empty array selects no models. `applyDefaultSelections` does not re-add models or
-write preferences for an existing empty selection. Host persistence and response
-sanitization preserve that explicit empty array.
+`useProjectsStore` projects the Query-owned `settings.hubProjectLayout` onto the
+same project array consumed by desktop and mobile. IDs are local project IDs or
+Hub remote-reference IDs, never raw directories or upstream remote project IDs.
+It retains the layout while the catalog loads, then applies mixed ordering and
+explicit true/false collapse values when references arrive. Drag, collapse and
+activity promotion persist only the dedicated layout field; remote references
+never enter local `settings.projects`. Failed writes restore confirmed layout
+without dropping projects or unrelated metadata. Instance storage remains an
+offline startup cache, not cross-client authority.
 
-Session retention selection and visibility now share the import-free
-`lib/session-retention-policy.ts` owner with the NSH client. `globalSessions.ts`
-preserves its visibility/system-ownership exports; the React cleanup hook imports
-the same recent-five/cutoff builder. Native adds live/ancestor safety at its
-controller boundary; full-catalog authority and lifecycle remain runtime-owned.
+`useSessionNavigationStore.remoteSession` owns the aggregate selection separately
+from the Hub's local `session-ui-store`. It carries the project reference, explicit
+Hub/Host/raw directory and raw session ID; a null ID denotes a remote draft. Remote
+selection never changes the global runtime endpoint or the retained local session.
 
-`lib/mcp-config-types.ts` owns the structural `McpDraft` / `McpScope` types;
-`useMcpConfigStore.ts` re-exports them for existing consumers. Pure MCP import
-helpers import the type-only owner directly, never the Zustand store.
-`lib/opencode/plugin-runtime-types.ts` similarly owns plugin inventory shapes;
-`lib/opencode/plugins.ts` preserves its existing type exports while pure plugin
-matching and Native adapters avoid the browser SDK/runtime owner.
+Context-panel, file-tab and terminal buckets accept serialized Location identities.
+Local Location keys retain their existing directory bytes. Remote keys preserve the
+Hub and Host; containment checks decode only the physical directory instead of
+normalizing the serialized key. `useEffectiveDirectory` returns a physical cwd,
+while `useEffectiveLocationKey` returns the UI bucket identity. A selected remote
+worktree uses its session location, not the parent project's root, for both APIs and
+state. Native HTML preview targets also carry the captured location.
+
+`useTerminalStore.closeTab` requires a scoped closer for a remote live terminal.
+An absent closer or failed remote close preserves the tab and reports failure;
+it never falls back to the Hub's terminal endpoint. Local close behavior remains
+unchanged. Remote filesystem/native IDE actions likewise cannot fall back to the
+Hub filesystem merely because their selected paths look local.
+
+## Delegated worker visibility
+
+Ordinary session visibility also excludes explicit delegated CLI workers carrying
+`metadata.yuri.worker.parentSessionID`, regardless of native `parentID`. The Host
+index/unread runtime and standalone VS Code notification gate use the same marker.
+Titles and selected agents never establish worker ownership. Removing the marker
+restores ordinary catalog eligibility on refresh without restoring old unread.
+
+`openSettingsAtItem` atomically selects a Settings page, opens its surface and
+queues a transient `settingsFocusItemId`. The sidebar logo targets
+`appearance.sidebar-brand`; the mounted Appearance input consumes the request
+after modal focus setup, scrolls into view and selects its text. Closing Settings
+or switching pages cancels pending focus. The request is never persisted and
+ordinary Settings opens do not autofocus the brand field.
+
+Native `openContextPreview`/`openContextBrowser` actions open the transient
+`mobile/useMobileHtmlPreviewStore` URL sheet. Targets carry the runtime generation,
+are not persisted, and are hidden on runtime switch. The sheet and GUI host share
+native Relay ownership through `lib/preview/mobile-html-network.ts`; this selection
+store owns no transport or credentials.
 
 Provider Settings uses two transient selections: `__add_provider__` for the
 provider grid and `__custom_provider__` for a new custom draft. Catalog refresh and
@@ -63,24 +94,6 @@ replacement while still reconciling observer-owned loading/refreshing state.
 Runtime reset or a newly captured runtime clears that revision fence. Persistent
 startup seeds do not advance it. Pending deletions and loaded pagination tails
 keep their existing ownership and filtering rules.
-
-Directory pagination records `loadedMore` only after the explicit load-more reader
-successfully adopts a page. A newer bounded index head with `hasMore:true` may
-preserve that reader's older tail and deeper/terminal pagination; neither a fixed
-20-row threshold nor an older cursor alone proves that the client paged. A confirmed
-complete head (`hasMore:false`) still replaces the directory and removes old tails,
-including successful empty results. Cold startup seeds do not acquire `loadedMore`.
-
-Failed/pending directories preserve confirmed rows and pagination; saved index rows
-may seed display without proving completeness. `sessionIndexSyncByDirectory.incomplete`
-tracks those states even when the directory has no snapshot row. An explicit completed
-directory clears that marker, but missing rows alone do not authorize empty replacement.
-Unchanged maps/rows continue to share references. Projects count suffixes derive from
-either remote pages or this local incompleteness, independent of visible row limits.
-The local retry calls `refreshSessionIndex()` through the existing runtime-scoped
-Query GET; it does not start a sync job or add polling. Transport errors preserve the
-projection and reject; late responses cannot cross a runtime reset. These shared store
-semantics apply to web, Electron, VS Code and mobile consumers, not just the card UI.
 
 Global snapshot/live-upsert signatures include the session model reference,
 including variant. Model-only changes are not recency-only ticks: they must reach
@@ -423,7 +436,7 @@ windows do not inherit the local theme.
 
 `useModelPickerSectionsStore` persists model-picker section collapse choices for the empty-search view. `ModelPickerList` starts active-search results expanded, keeps collapse choices component-local during that search, and clears them when the search ends.
 
-`useUIStore` scopes the complete right workspace to the primary session: context-panel tabs, their order and active selection, open/expanded state, preview width, exact tool diff, and the right sidebar git/files selection. `contextPanelByDirectory` is the live directory-addressed projection consumed by existing panel actions and views, not a shared tab catalog. `syncWorkspacePanelsForSessionSwitch()` captures immutable panel references in `sessionWorkspacePanelById` (keyed by runtime plus session, bounded to 40 snapshots) and replaces the projection with the next session's complete snapshot. A session without a snapshot gets an empty closed panel; leaving a directory also clears its live tabs so Welcome/draft cannot reopen them. Pending file-navigation intents are cleared at the same boundary. Snapshots remain in-memory; persisted directory layout still provides startup continuity, and the initial selection before any snapshot exists preserves that layout. Callers that leave a real session must invoke the boundary: `setCurrentSession()` on session id change, and `openNewSessionDraft()` when clearing the current session for Welcome/draft (it does not go through `setCurrentSession`).
+`useUIStore` scopes the complete right workspace to the primary session: context-panel tabs, their order and active selection, open/expanded state, preview width, exact tool diff, and the right sidebar git/files selection. `contextPanelByDirectory` is the live directory-addressed projection consumed by existing panel actions and views, not a shared tab catalog. `syncWorkspacePanelsForSessionSwitch()` captures immutable panel references in `sessionWorkspacePanelById` (keyed by runtime plus session, bounded to 40 snapshots) and replaces the projection with the next session's complete snapshot. A session without a snapshot gets an empty closed panel; leaving a directory also clears its live tabs so Welcome/draft cannot reopen them. Pending file-navigation intents are cleared at the same boundary. Snapshots remain in-memory; persisted directory layout still provides startup continuity, and the initial selection before any snapshot exists preserves that layout. Callers that leave a real session must invoke the boundary: `setCurrentSession()` on session id change, and `openNewSessionDraft()` when clearing the current session for Welcome/draft (it does not go through `setCurrentSession`). A single store-owned session-switch intent subscription closes global model/agent pickers instantly; already-closed pickers skip the store write and persistence projection. ModelControls owns local mobile panels/tooltips and subscribes only while one is open, dismissing on intent or Activity cleanup. TextSelectionMenu uses one module-level subscription to clear the selection once and dismiss its sole visible menu; delayed selection reads reject stale intents.
 
 Exact tool patches selected from `edit`, `multiedit`, `write`, and `apply_patch` rows live in the transient `contextToolDiffByDirectory` map. Edit-style and write-style rows retain one file, while an `apply_patch` row retains every renderable file from that invocation. The persisted tab keeps only its target path, turn message, and focus line; regular diff navigation, scope changes, tab close, and runtime switches clear the transient patches.
 

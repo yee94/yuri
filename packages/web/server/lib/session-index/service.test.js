@@ -406,7 +406,8 @@ describe('Electron session index', () => {
 
     service.replaceDirectory({
       directory: '/repo',
-      sessions: [assistantSession, scheduledSession, smallModelSession, llmSession, ordinary],
+      sessions: [assistantSession, scheduledSession, smallModelSession, llmSession,
+        { ...session('ses_cli_worker', 95), metadata: { yuri: { worker: { parentSessionID: 'root' } } } }, ordinary],
       cursor: null,
       hasMore: false,
     });
@@ -416,6 +417,7 @@ describe('Electron session index', () => {
     service.upsert(scheduledSession);
     service.upsert(smallModelSession);
     service.upsert(llmSession);
+    service.upsert({ ...session('ses_cli_worker', 95), metadata: { yuri: { worker: { parentSessionID: 'root' } } } });
     expect(service.snapshot().directories[0].sessions.map((item) => item.id)).toEqual(['ses_ordinary']);
     service.close();
   });

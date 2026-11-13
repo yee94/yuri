@@ -6,6 +6,7 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { createDeferredSafeJSONStorage } from "@/stores/utils/safeStorage"
+import { locationSessionKey, type HostLocation } from "@/lib/remote-projects/location"
 
 type ModelSelection = { providerId: string; modelId: string }
 type LastUsedProvider = { providerID: string; modelID: string }
@@ -28,14 +29,14 @@ export type SelectionState = {
   sessionAgentModelVariantSelections: Map<string, Map<string, Map<string, string>>>
   lastUsedProvider: LastUsedProvider | null
 
-  saveSessionModelSelection: (sessionId: string, providerId: string, modelId: string) => void
-  getSessionModelSelection: (sessionId: string) => { providerId: string; modelId: string } | null
-  saveSessionAgentSelection: (sessionId: string, agentName: string) => void
-  getSessionAgentSelection: (sessionId: string) => string | null
-  saveAgentModelForSession: (sessionId: string, agentName: string, providerId: string, modelId: string) => void
-  getAgentModelForSession: (sessionId: string, agentName: string) => { providerId: string; modelId: string } | null
-  saveAgentModelVariantForSession: (sessionId: string, agentName: string, providerId: string, modelId: string, variant: string | undefined) => void
-  getAgentModelVariantForSession: (sessionId: string, agentName: string, providerId: string, modelId: string) => string | undefined
+  saveSessionModelSelection: (sessionId: string, providerId: string, modelId: string, location?: HostLocation) => void
+  getSessionModelSelection: (sessionId: string, location?: HostLocation) => { providerId: string; modelId: string } | null
+  saveSessionAgentSelection: (sessionId: string, agentName: string, location?: HostLocation) => void
+  getSessionAgentSelection: (sessionId: string, location?: HostLocation) => string | null
+  saveAgentModelForSession: (sessionId: string, agentName: string, providerId: string, modelId: string, location?: HostLocation) => void
+  getAgentModelForSession: (sessionId: string, agentName: string, location?: HostLocation) => { providerId: string; modelId: string } | null
+  saveAgentModelVariantForSession: (sessionId: string, agentName: string, providerId: string, modelId: string, variant: string | undefined, location?: HostLocation) => void
+  getAgentModelVariantForSession: (sessionId: string, agentName: string, providerId: string, modelId: string, location?: HostLocation) => string | undefined
 }
 
 const isPersistedSelectionState = (state: unknown): state is PersistedSelectionState => (
@@ -95,29 +96,34 @@ export const useSelectionStore = create<SelectionState>()(
       sessionAgentModelVariantSelections: new Map(),
       lastUsedProvider: null,
 
-      saveSessionModelSelection: (sessionId, providerId, modelId) =>
-        set((s) => {
+      saveSessionModelSelection: (sessionId, providerId, modelId, location) => {
+        sessionId = location ? locationSessionKey(location, sessionId) : sessionId
+        return set((s) => {
           const map = new Map(s.sessionModelSelections)
           map.delete(sessionId) // Delete first to ensure it moves to the end of insertion order (MRU)
           map.set(sessionId, { providerId, modelId })
-          return { sessionModelSelections: map, lastUsedProvider: { providerID: providerId, modelID: modelId } }
-        }),
+          return { sessionModelSelections: map, ...(!location?.hostId ? { lastUsedProvider: { providerID: providerId, modelID: modelId } } : {}) }
+        })
+      },
 
-      getSessionModelSelection: (sessionId) => get().sessionModelSelections.get(sessionId) ?? null,
+      getSessionModelSelection: (sessionId, location) => get().sessionModelSelections.get(location ? locationSessionKey(location, sessionId) : sessionId) ?? null,
 
-      saveSessionAgentSelection: (sessionId, agentName) =>
-        set((s) => {
+      saveSessionAgentSelection: (sessionId, agentName, location) => {
+        sessionId = location ? locationSessionKey(location, sessionId) : sessionId
+        return set((s) => {
           if (s.sessionAgentSelections.get(sessionId) === agentName) return s
           const map = new Map(s.sessionAgentSelections)
           map.delete(sessionId) // Delete first to ensure it moves to the end of insertion order (MRU)
           map.set(sessionId, agentName)
           return { sessionAgentSelections: map }
-        }),
+        })
+      },
 
-      getSessionAgentSelection: (sessionId) => get().sessionAgentSelections.get(sessionId) ?? null,
+      getSessionAgentSelection: (sessionId, location) => get().sessionAgentSelections.get(location ? locationSessionKey(location, sessionId) : sessionId) ?? null,
 
-      saveAgentModelForSession: (sessionId, agentName, providerId, modelId) =>
-        set((s) => {
+      saveAgentModelForSession: (sessionId, agentName, providerId, modelId, location) => {
+        sessionId = location ? locationSessionKey(location, sessionId) : sessionId
+        return set((s) => {
           const existing = s.sessionAgentModelSelections.get(sessionId)?.get(agentName)
           if (existing?.providerId === providerId && existing?.modelId === modelId) return s
           const outer = new Map(s.sessionAgentModelSelections)
@@ -128,13 +134,15 @@ export const useSelectionStore = create<SelectionState>()(
           outer.set(sessionId, inner)
 
           return { sessionAgentModelSelections: outer }
-        }),
+        })
+      },
 
-      getAgentModelForSession: (sessionId, agentName) =>
-        get().sessionAgentModelSelections.get(sessionId)?.get(agentName) ?? null,
+      getAgentModelForSession: (sessionId, agentName, location) =>
+        get().sessionAgentModelSelections.get(location ? locationSessionKey(location, sessionId) : sessionId)?.get(agentName) ?? null,
 
-      saveAgentModelVariantForSession: (sessionId, agentName, providerId, modelId, variant) =>
-        set((s) => {
+      saveAgentModelVariantForSession: (sessionId, agentName, providerId, modelId, variant, location) => {
+        sessionId = location ? locationSessionKey(location, sessionId) : sessionId
+        return set((s) => {
           const key = `${providerId}/${modelId}`
           const outer = new Map(s.sessionAgentModelVariantSelections)
           const existingAgentMap = outer.get(sessionId)
@@ -168,9 +176,11 @@ export const useSelectionStore = create<SelectionState>()(
           agentMap.set(agentName, modelMap)
           outer.set(sessionId, agentMap)
           return { sessionAgentModelVariantSelections: outer }
-        }),
+        })
+      },
 
-      getAgentModelVariantForSession: (sessionId, agentName, providerId, modelId) => {
+      getAgentModelVariantForSession: (sessionId, agentName, providerId, modelId, location) => {
+        sessionId = location ? locationSessionKey(location, sessionId) : sessionId
         const key = `${providerId}/${modelId}`
         return get().sessionAgentModelVariantSelections.get(sessionId)?.get(agentName)?.get(key)
       },

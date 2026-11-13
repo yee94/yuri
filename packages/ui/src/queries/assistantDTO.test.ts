@@ -5,6 +5,17 @@ import { assistantContractFixtures } from '../../../web/server/lib/assistants/co
 import { createScheduleCardPart } from '../../../web/server/lib/assistants/cards.js';
 import { AssistantAPIError, parseAssistantCapabilityDTO, parseAssistantContactCardAdmission, parseAssistantContactPage, parseAssistantContactPeerAdmission, parseAssistantHistoryPage, parseCompactResponse, parseMessageAdmission, parseSessionBinding, parseShareOperation, parseAssistantSnapshotDTO } from './assistantDTO';
 describe('Assistant DTO parsing', () => {
+  test('round-trips remote card targets and rejects malformed present targets instead of making them local', () => {
+    const target = { hubId: 'hub', hostId: 'host', instanceId: 'instance' };
+    const card = { type: 'card', cardType: 'session', sessionID: 'same', directory: '/repo', title: 'Remote', status: 'busy', branch: null, target };
+    const parse = (value: unknown) => parseAssistantContactCardAdmission({ admitted: true, messageID: 'm', card: value }).card;
+    expect(parse(JSON.parse(JSON.stringify(card)))).toEqual(card);
+    const { target: _target, ...local } = card;
+    expect(parse(local)).toEqual(local);
+    for (const invalid of [null, {}, { ...target, instanceId: '' }, { ...target, hubId: ' hub' }, { hostId: 'host' }]) {
+      expect(() => parse({ ...card, target: invalid })).toThrow(AssistantAPIError);
+    }
+  });
   test('preserves nullable pin timestamps and distinguishes legacy Hosts without pin support', () => {
     const parse = (pinnedAt: unknown) => parseAssistantSnapshotDTO({ revision: 1, enabled: true, assistants: [{ ...assistantContractFixtures.assistant, pinnedAt }] }).assistants[0];
     expect(parse(123).pinnedAt).toBe(123);

@@ -11,6 +11,12 @@ public class MainActivity extends BridgeActivity {
     static final String ACTION_ASSISTANT_OPEN_READY = "com.yuri.app.ASSISTANT_OPEN_READY";
 
     private ImeSyncBridge imeSyncBridge;
+    private boolean imeSyncEnabled;
+
+    void setImeSyncEnabled(boolean enabled) {
+        imeSyncEnabled = enabled;
+        if (imeSyncBridge != null) imeSyncBridge.setEnabled(enabled);
+    }
 
     @Override
     protected void attachBaseContext(Context newBase) {
@@ -33,14 +39,15 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(YuriVirtualAssetPlugin.class);
         registerPlugin(YuriMediaPlugin.class);
         registerPlugin(YuriViewExportPlugin.class);
+        registerPlugin(YuriGuiNetworkPlugin.class);
         registerPlugin(YuriPhysicalScalePlugin.class);
         registerPlugin(YuriNotificationsPlugin.class);
+        registerPlugin(YuriNativeHeaderPlugin.class);
         super.onCreate(savedInstanceState);
         dispatchShare(getIntent());
-        // After the Keyboard plugin installs its root animation callback, remove
-        // that callback so IME animation stays off the app's main-thread callback
-        // path. Also owns WebView-parent padding/backdrop and emits state-only
-        // IME bookends for cached-height CSS composer choreography.
+        // After Keyboard/SystemBars load, install the native viewport IME owner.
+        // It keeps the top pinned and resizes only the bottom with system frames;
+        // JavaScript receives bookends rather than per-frame geometry.
         // Double-post = after load.
         if (getBridge() != null && getBridge().getWebView() != null) {
             applyDeviceParityTextZoom();
@@ -48,9 +55,19 @@ public class MainActivity extends BridgeActivity {
                 getBridge().getWebView().post(() -> {
                     imeSyncBridge = new ImeSyncBridge(this);
                     imeSyncBridge.attach();
+                    imeSyncBridge.setEnabled(imeSyncEnabled);
                 })
             );
         }
+    }
+
+    @Override
+    public void onDestroy() {
+        if (imeSyncBridge != null) {
+            imeSyncBridge.detach();
+            imeSyncBridge = null;
+        }
+        super.onDestroy();
     }
 
     @Override

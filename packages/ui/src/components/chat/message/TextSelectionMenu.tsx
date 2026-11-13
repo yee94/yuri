@@ -1,5 +1,5 @@
 import React from 'react';
-import { createPortal, flushSync } from 'react-dom';
+import { createPortal } from 'react-dom';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { cn, isMacOS } from '@/lib/utils';
@@ -10,8 +10,10 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { composerQuoteKey } from '@/stores/composerQuotes';
 import { useComposerQuoteStore } from '@/stores/useComposerQuoteStore';
 import { useSessionBtwStore } from '@/stores/useSessionBtwStore';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import { locationSessionKey } from '@/lib/remote-projects/location';
 import { openSessionBtw } from '@/components/layout/btwComposerFocus';
-import { subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
+import { getSessionSwitchIntent, subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { Button } from '@/components/ui/button';
 import { keyboardOverlapPx, parseCssPx } from '@/lib/keyboardOverlap';
 import { holdNativeComposerCover, TEXT_SELECTION_NATIVE_COMPOSER_COVER } from '@/lib/nativeComposerCover';
@@ -85,12 +87,12 @@ const readTextSelectionBarFrame = (lastHeightPx: number): TextSelectionBarFrame 
 let dismissVisibleTextSelectionMenu: (() => void) | null = null;
 
 subscribeSessionSwitchIntent(() => {
-  if (typeof window !== 'undefined') {
+  // Chromium's document Selection also exposes the focused textarea selection.
+  // Clearing it here makes the departing composer capture 0–0 on a second mount.
+  if (typeof window !== 'undefined' && !document.activeElement?.matches('textarea[data-chat-input="true"]')) {
     window.getSelection()?.removeAllRanges();
   }
-  if (dismissVisibleTextSelectionMenu) {
-    flushSync(dismissVisibleTextSelectionMenu);
-  }
+  dismissVisibleTextSelectionMenu?.();
 });
 
 const BLOCK_TAGS = new Set([
@@ -311,10 +313,13 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
   const isMenuVisibleRef = React.useRef(false);
   const selectionBarHeightRef = React.useRef(0);
   const [selectionBarFrame, setSelectionBarFrame] = React.useState<TextSelectionBarFrame | null>(null);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const primarySessionId = useSessionUIStore((state) => state.currentSessionId);
   const effectiveDirectory = useEffectiveDirectory() ?? null;
   const isMobile = useUIStore((state) => state.isMobile);
   const sessionSurface = useSessionSurface();
+  const hostRuntime = useHostRuntime();
+  const remote = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
+  const currentSessionId = remote ? sessionSurface.sessionId : primarySessionId;
   const canUseTextSelectionActions = getSessionSurfaceActionAvailability(sessionSurface).textSelectionMutation;
   const canAddToSideChat = sessionSurface.kind === 'primary' && Boolean(currentSessionId);
 
@@ -322,33 +327,20 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
     isMenuVisibleRef.current = position.show;
   }, [position.show]);
 
-  React.useEffect(() => {
-    return () => {
-      if (openRafRef.current !== null) {
-        window.cancelAnimationFrame(openRafRef.current);
-        openRafRef.current = null;
-      }
-      if (mouseUpTimeoutRef.current !== null) {
-        window.clearTimeout(mouseUpTimeoutRef.current);
-        mouseUpTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
   const hideMenu = React.useCallback(() => {
     pendingSelectionRef.current = null;
     if (dismissVisibleTextSelectionMenu === hideMenu) {
       dismissVisibleTextSelectionMenu = null;
     }
-
-    if (!isMenuVisibleRef.current) {
-      return;
+    if (mouseUpTimeoutRef.current !== null) {
+      window.clearTimeout(mouseUpTimeoutRef.current);
+      mouseUpTimeoutRef.current = null;
     }
-
     if (openRafRef.current !== null) {
       window.cancelAnimationFrame(openRafRef.current);
       openRafRef.current = null;
     }
+    if (!isMenuVisibleRef.current) return;
     setIsOpening(false);
 
     setPosition((prev) => ({ ...prev, show: false }));
@@ -356,11 +348,8 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
     isMenuVisibleRef.current = false;
   }, []);
 
-  React.useEffect(() => () => {
-    if (dismissVisibleTextSelectionMenu === hideMenu) {
-      dismissVisibleTextSelectionMenu = null;
-    }
-  }, [hideMenu]);
+  // Activity hide tears down Effects but retains state; do not restore an old popup.
+  React.useLayoutEffect(() => hideMenu, [hideMenu]);
 
   const getDesktopClampedX = React.useCallback((anchorX: number) => {
     if (typeof window === 'undefined') {
@@ -515,9 +504,10 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
       }
       // Read the finalized selection directly. Shadow-root selectionchange may
       // finish after the document-level mouseup event.
+      const intent = getSessionSwitchIntent();
       mouseUpTimeoutRef.current = window.setTimeout(() => {
         mouseUpTimeoutRef.current = null;
-        handleSelectionChange();
+        if (getSessionSwitchIntent() === intent) handleSelectionChange();
       }, 10);
     };
 
@@ -652,7 +642,7 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
   const addSelectionToChat = useEvent((markdownText: string) => {
     if (!markdownText) return;
     const draftId = useSessionUIStore.getState().newSessionDraft.draftID;
-    const key = composerQuoteKey(currentSessionId, draftId);
+    const key = composerQuoteKey(remote && currentSessionId ? locationSessionKey(remote.location, currentSessionId) : currentSessionId, draftId);
     if (!key) return;
     useComposerQuoteStore.getState().addQuote(key, markdownText);
     clearSelection();
@@ -665,7 +655,7 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
 
   const addSelectionToSideChat = useEvent((markdownText: string) => {
     if (!markdownText || !currentSessionId) return;
-    const scope = { sessionId: currentSessionId, directory: effectiveDirectory };
+    const scope = { sessionId: currentSessionId, directory: remote?.location.directory ?? effectiveDirectory, host: remote };
     useSessionBtwStore.getState().addQuote(scope, markdownText);
     clearSelection();
     openSessionBtw(scope);

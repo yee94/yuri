@@ -19,10 +19,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { generatePullRequestDescription } from '@/lib/gitApi';
+import { useProjectGitActions } from '@/lib/api/useProjectGitActions';
 import { renderMagicPrompt } from '@/lib/magicPrompts';
 import { openExternalUrl } from '@/lib/url';
-import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { useProjectRuntimeAPIs as useRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { useDeviceInfo } from '@/lib/device';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
@@ -310,6 +310,7 @@ export const PullRequestSection: React.FC<{
   onGeneratedDescription?: () => void;
 }> = ({ directory, branch, baseBranch, trackingBranch, remotes = [], remoteBranches = [], onGeneratedDescription }) => {
   const { t } = useI18n();
+  const { generatePullRequestDescription } = useProjectGitActions();
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const { github } = useRuntimeAPIs();
   const githubAuthQuery = useGitHubAuthQuery();

@@ -104,6 +104,7 @@ describe('sent-message edit submission routing', () => {
         const sent: unknown[] = [];
         let enqueued = 0;
         const context = {
+            hostRuntime: null,
             useEvent: (fn: unknown) => fn,
             useSessionUIStore: { getState: () => ({ stagedMessageEdit: input.editing ? { sessionId: 'session-a', messageId: 'msg_1' } : null }) },
             useSessionGoalArmStore: { getState: () => ({ armed: false }) }, parseSlashCommandInvocation: () => null,

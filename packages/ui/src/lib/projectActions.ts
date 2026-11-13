@@ -3,6 +3,7 @@ import type {
   DesktopSshPortForward,
 } from '@/lib/desktopSsh';
 import type { IconName } from "@/components/icon/icons";
+import { normalizeLocationStateKey } from '@/lib/remote-projects/location';
 
 export type ProjectActionIconKey =
   | 'play'
@@ -67,7 +68,7 @@ export const normalizeProjectActionDirectory = (value: string): string => {
 };
 
 export const toProjectActionRunKey = (directory: string, actionId: string): string => {
-  return `${normalizeProjectActionDirectory(directory)}::${actionId}`;
+  return `${normalizeLocationStateKey(directory)}::${actionId}`;
 };
 
 export type ProjectActionDesktopForwardOption = {

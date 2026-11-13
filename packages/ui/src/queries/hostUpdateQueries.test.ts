@@ -35,6 +35,50 @@ test('a newer release or failed discovery cannot silently replace a failed updat
   expect(fixture.fetch).toHaveBeenCalledTimes(1);
 });
 
+test('a remote update that already succeeded reconciles the stale failed task without another update plan', async () => {
+  const succeeded = { ...operation, status: 'succeeded' as const, progress: 100, error: null };
+  const completed = { ...snapshot(), currentVersion: operation.version, update: null, operation: succeeded };
+  fixture.fetch.mockResolvedValue(Response.json(completed));
+  client.setQueryData(hostUpdateQueryOptions('one', 1).queryKey, snapshot());
+
+  await expect(resumeHostUpdate(operation, 'one', 1)).resolves.toEqual(succeeded);
+
+  expect(fixture.fetch).toHaveBeenCalledTimes(1);
+  expect(client.getQueryData(hostUpdateQueryOptions('one', 1).queryKey)).toEqual(completed);
+});
+
+test.each(['checking', 'downloading', 'installing', 'restarting'] as const)('an authoritative %s task is resumed by observation, not submitted again', async (status) => {
+  const active = { ...operation, status, error: null };
+  const current = { ...snapshot(), update: null, operation: active };
+  fixture.fetch.mockResolvedValue(Response.json(current));
+
+  await expect(resumeHostUpdate(operation, 'one', 1)).resolves.toEqual(active);
+
+  expect(fixture.fetch).toHaveBeenCalledTimes(1);
+  expect(client.getQueryData(hostUpdateQueryOptions('one', 1).queryKey)).toEqual(current);
+});
+
+test.each([
+  { id: 'another-operation' },
+  { version: '2.0.1' },
+  { channel: 'stable' },
+  { kind: 'installer' },
+])('another authoritative task cannot complete the original task: %j', async (changed) => {
+  fixture.fetch.mockResolvedValue(Response.json({ ...snapshot(), currentVersion: operation.version, update: null,
+    operation: { ...operation, ...changed, status: 'succeeded', progress: 100, error: null } }));
+
+  await expect(resumeHostUpdate(operation, 'one', 1)).rejects.toThrow('update_plan_changed');
+  expect(fixture.fetch).toHaveBeenCalledTimes(1);
+});
+
+test('success without the running target version is not completion', async () => {
+  fixture.fetch.mockResolvedValue(Response.json({ ...snapshot(), update: null,
+    operation: { ...operation, status: 'succeeded', progress: 100, error: null } }));
+
+  await expect(resumeHostUpdate(operation, 'one', 1)).rejects.toThrow('update_plan_changed');
+  expect(fixture.fetch).toHaveBeenCalledTimes(1);
+});
+
 test('switching runtime during revalidation never submits or seeds another runtime', async () => {
   fixture.fetch.mockImplementation(async () => { fixture.generation++; return Response.json(snapshot()); });
   await expect(resumeHostUpdate(operation, 'one', 1)).rejects.toThrow('Stale update runtime');

@@ -7,6 +7,7 @@ import type { Session } from '@/lib/opencode/v2-types';
 import {
   derivePinnedSessions,
   listInProgressHomeSessions,
+  rankByManualOrder,
   resolveTopSectionSecondaryMeta,
 } from './pinnedSessions';
 import type { DirectoryOwner } from './sessionOwnership';
@@ -71,6 +72,16 @@ describe('derivePinnedSessions', () => {
     expect(derivePinnedSessions(sessions.slice(1), pins, order).map((item) => item.id))
       .toEqual(['new', 'added']);
     expect(order).toEqual(['missing', 'old', 'unpinned', 'new']);
+  });
+});
+
+describe('rankByManualOrder', () => {
+  test('mixes local and remote identities by the saved order and keeps unranked items last in input order', () => {
+    const items = [{ id: 'local-a' }, { id: 'remote:h:/p:r1' }, { id: 'local-b' }, { id: 'remote:h:/p:r2' }];
+    const order = ['remote:h:/p:r2', 'local-a', 'gone'];
+    expect(rankByManualOrder(items, (item) => item.id, order).map((item) => item.id))
+      .toEqual(['remote:h:/p:r2', 'local-a', 'remote:h:/p:r1', 'local-b']);
+    expect(rankByManualOrder(items, (item) => item.id).map((item) => item.id)).toEqual(items.map((item) => item.id));
   });
 });
 

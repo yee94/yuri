@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ChatView } from './ChatView';
 import { statusBarPopoverSurfaceClassName } from '../chat/statusBarPopover';
 import { WorkStatusToggle } from '../chat/work-status/WorkStatusToggle';
+import type { HostLocation } from '@/lib/remote-projects/location';
 
 const fixture = vi.hoisted(() => ({
     session: {
@@ -20,7 +21,12 @@ const fixture = vi.hoisted(() => ({
     },
     transcript: [] as object[],
     paintedWidths: [] as (string | null)[],
+    remoteLocation: null as HostLocation | null,
+    remoteSession: null as { sessionId: string | null; location: HostLocation } | null,
+    lastExplicit: undefined as unknown,
 }));
+vi.mock('@/contexts/HostRuntimeProvider', () => ({ useHostRuntime: () => fixture.remoteLocation ? { entry: { location: fixture.remoteLocation } } : null }));
+vi.mock('@/stores/useSessionNavigationStore', () => ({ useSessionNavigationStore: (selector: (state: { remoteSession: typeof fixture.remoteSession }) => unknown) => selector({ remoteSession: fixture.remoteSession }) }));
 
 vi.mock('@/stores/useUIStore', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/stores/useUIStore')>(),
@@ -37,7 +43,8 @@ vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/components/chat/ChatErrorBoundary', () => ({ ChatErrorBoundary: ({ children }: React.PropsWithChildren) => children }));
 vi.mock('@/components/chat/work-status/WorkStatusCompact', () => ({ WorkStatusCompact: () => <span>Project status</span> }));
 vi.mock('@/components/chat/ChatContainer', () => ({
-    ChatContainer: () => {
+    ChatContainer: ({ explicitSession }: { explicitSession?: unknown }) => {
+        fixture.lastExplicit = explicitSession;
         React.useLayoutEffect(() => {
             fixture.paintedWidths.push(document.querySelector<HTMLElement>('aside[aria-hidden="false"]')?.style.width ?? null);
         });
@@ -57,6 +64,7 @@ const resize = (width: number) => {
 beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     fixture.session.currentSessionId = null;
+    fixture.remoteLocation = null; fixture.remoteSession = null; fixture.lastExplicit = undefined;
     Object.assign(fixture.session.newSessionDraft, { open: true, draftEstablishing: false, draftSubmitting: false, pendingUserMessage: null });
     Object.assign(fixture.ui, { isMobile: false, isRightSidebarOpen: false, workStatusPanelEnabled: true, workStatusPanelFits: false, workStatusOverlayOpen: false, contextPanelByDirectory: {} });
     fixture.ui.setWorkStatusPanelFits.mockImplementation((fits: boolean) => { fixture.ui.workStatusPanelFits = fits; });
@@ -83,6 +91,19 @@ beforeEach(() => {
     host = document.createElement('div');
     document.body.append(host);
     root = createRoot(host);
+});
+
+it('the real mobile draft ChatView forwards Host identity and raw remote session instead of the retained Hub selection', async () => {
+    fixture.ui.isMobile = true;
+    fixture.session.currentSessionId = 'hub-session';
+    fixture.remoteLocation = { hubId: 'hub', hostId: 'remote', directory: '/remote/worktree' };
+    fixture.remoteSession = { location: fixture.remoteLocation, sessionId: 'remote-session' };
+    await act(async () => root.render(<ChatView selectionOverride={{ sessionId: null, directory: null, viewKey: 'draft' }} />));
+    expect(fixture.lastExplicit).toMatchObject({ sessionId: 'remote-session', directory: '/remote/worktree', location: fixture.remoteLocation });
+    expect(host.querySelector('aside')).toBeNull();
+    fixture.remoteSession = { location: { ...fixture.remoteLocation, hostId: 'another-host' }, sessionId: 'foreign-session' };
+    await act(async () => root.render(<ChatView selectionOverride={{ sessionId: null, directory: null, viewKey: 'draft' }} />));
+    expect(fixture.lastExplicit).toMatchObject({ sessionId: null, location: fixture.remoteLocation });
 });
 afterEach(async () => {
     await act(async () => root.unmount());

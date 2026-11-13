@@ -1,7 +1,5 @@
 import type { AssistantContactMessage } from '@/queries/assistantDTO'
 
-const TIME_SEPARATOR_GAP = 5 * 60 * 1000
-
 const sameLocalDay = (left: Date, right: Date) => (
   left.getFullYear() === right.getFullYear()
   && left.getMonth() === right.getMonth()
@@ -18,12 +16,25 @@ export function getContactTimeSeparators(messages: readonly AssistantContactMess
     if (!visible) continue
     const date = new Date(message.createdAt)
     if (!Number.isFinite(date.getTime())) continue
-    if (!previous || !sameLocalDay(previous, date) || date.getTime() - previous.getTime() > TIME_SEPARATOR_GAP) {
+    if (!previous || !sameLocalDay(previous, date)) {
       separators.set(message.messageID, message.createdAt)
     }
     previous = date
   }
   return separators
+}
+
+export function createContactDateFormatter(locale: string, todayLabel: string, yesterdayLabel: string, now: Date) {
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const date = new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' })
+  const yearDate = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric' })
+  return (timestamp: number): string => {
+    const value = new Date(timestamp)
+    if (sameLocalDay(value, now)) return todayLabel
+    if (sameLocalDay(value, yesterday)) return yesterdayLabel
+    return (value.getFullYear() === now.getFullYear() ? date : yearDate).format(value)
+  }
 }
 
 export function createContactTimeFormatter(locale: string, todayLabel: string, now: Date) {

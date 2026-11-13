@@ -46,6 +46,18 @@ const createApp = async (credentials, magpie) => {
 };
 
 describe('config-sync HTTP routes', () => {
+  it('prepares the headless gateway explicitly and sanitizes failure output', async () => {
+    let failed = false;
+    const { app } = await createApp(undefined, {
+      ensureGateway: async () => { if (failed) throw new Error('private raw child output'); return { ready: true }; },
+    });
+    expect((await request(app).post('/api/yuri/config-sync/magpie/gateway').expect(200)).body).toEqual({ ready: true });
+    failed = true;
+    const result = await request(app).post('/api/yuri/config-sync/magpie/gateway').expect(503);
+    expect(result.body.code).toBe('magpie_gateway_failed');
+    expect(result.text).not.toContain('private raw');
+  });
+
   it('discovers Magpie without import and requires a selected transfer before finalizing', async () => {
     const payload = Buffer.from('fixture-magpie-payload');
     const received = [];
