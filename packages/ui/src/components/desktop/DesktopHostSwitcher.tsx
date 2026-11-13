@@ -978,7 +978,7 @@ export function DesktopHostSwitcherDialog({
                         isEditing && 'pointer-events-none opacity-70'
                       )}
                       onClick={() => void handleSwitch(host)}
-                      disabled={Boolean(switchingHostId)}
+                      disabled={switchingHostId === host.id}
                       aria-busy={switchingHostId === host.id}
                       aria-current={isActive ? 'true' : undefined}
                       aria-label={t('desktopHostSwitcher.actions.switchToAria', { instance: displayLabel })}
@@ -1032,7 +1032,7 @@ export function DesktopHostSwitcherDialog({
                             variant="outline"
                             size="sm"
                             className="h-8 px-2.5"
-                            disabled={Boolean(switchingHostId)}
+                            disabled={switchingHostId === host.id}
                             onClick={(e) => {
                               e.stopPropagation();
                               void connectSshHostInPlace(host);
@@ -1083,7 +1083,7 @@ export function DesktopHostSwitcherDialog({
                               e.stopPropagation();
                               openInNewWindow(host);
                             }}
-                            disabled={Boolean(switchingHostId) || isBlockedDisplayStatus(statusKind)}
+                            disabled={switchingHostId === host.id || isBlockedDisplayStatus(statusKind)}
                             aria-busy={switchingHostId === host.id}
                             aria-label={t('desktopHostSwitcher.actions.openInNewWindowAria')}
                           >
@@ -1142,7 +1142,6 @@ export function DesktopHostSwitcherDialog({
             type="button"
             className={cn('w-full flex items-center gap-2 px-2 py-2 text-left text-muted-foreground hover:text-foreground hover:bg-interactive-hover/30 transition-colors', embedded && 'rounded-xl px-3 py-3')}
             onClick={openRemoteInstancesSettings}
-            disabled={Boolean(switchingHostId)}
           >
             <Icon name="add" className="h-4 w-4" />
             <span className="typography-ui-label">{t('desktopHostSwitcher.actions.addInstance')}</span>
