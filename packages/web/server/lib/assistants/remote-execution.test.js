@@ -14,7 +14,7 @@ vi.mock('../opencode/native-goal.js', () => ({ getNativeSessionGoal: async () =>
 const require = createRequire(import.meta.url);
 const target = (hostId = 'remote-a') => ({ hubId: 'hub', hostId, instanceId: `instance-${hostId}` });
 const remoteDirectory = '/remote-only/same/project';
-const fixture = ({ nativeCompletion, sessionIDs = ['ses_same'] } = {}) => {
+const fixture = ({ nativeCompletion, sessionIDs = ['ses_same'], projectModels = false, worktree = null } = {}) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'assistant-remote-'));
   const requests = [];
   const leases = new Set();
@@ -33,7 +33,7 @@ const fixture = ({ nativeCompletion, sessionIDs = ['ses_same'] } = {}) => {
           if (unavailable) throw new Error('offline');
           requests.push({ hostId, route, method: init.method || 'GET', body: init.body });
           if (route === '/api/projects') return { projects: [{ id: 'project', path: remoteDirectory, label: `Project ${hostId}` }] };
-          if (route.startsWith('/api/git/worktrees')) return [];
+          if (route.startsWith('/api/git/worktrees')) return worktree ? [{ path: remoteDirectory }, { path: worktree, branch: 'feature' }] : [];
           if (route === '/api/yuri/session-index') return { directories: [{ directory: remoteDirectory, sessions: [{ id: 'ses_same', title: hostId, time: { updated: 10 } }] }] };
           if (route.endsWith('/archive')) return { session: { id: 'ses_same' } };
           throw new Error(`Unexpected Yuri route: ${route}`);
@@ -45,7 +45,7 @@ const fixture = ({ nativeCompletion, sessionIDs = ['ses_same'] } = {}) => {
           requests.push({ hostId, route, method: init.method, body, signal: init.signal, headers: new Headers(init.headers) });
           const url = new URL(route, 'http://remote.invalid');
           if (url.pathname === '/api/provider') return Response.json({ data: [{ id: hostId, name: hostId }] });
-          if (url.pathname === '/api/model') return Response.json({ data: [{ id: 'remote-model', providerID: hostId, capabilities: { input: { image: true } } }] });
+          if (url.pathname === '/api/model') return Response.json({ data: [{ id: projectModels && url.searchParams.get('location[directory]') !== (worktree || remoteDirectory) ? 'server-default-model' : 'remote-model', providerID: hostId, capabilities: { input: { image: true } } }] });
           if (url.pathname.endsWith('/model') && init.method === 'POST') return new Response(null, { status: 204 });
           if (url.pathname === '/api/session/active') return Response.json({ data: busy.get(hostId) ? Object.fromEntries(sessionIDs.map((id) => [id, { type: 'running' }])) : {} });
           if (url.pathname === '/api/session' && init.method === 'GET') return Response.json({ data: [{ id: 'ses_same', title: hostId, location: { directory: remoteDirectory }, time: { updated: 10 } }], cursor: {} });
@@ -121,6 +121,71 @@ const fixture = ({ nativeCompletion, sessionIDs = ['ses_same'] } = {}) => {
 };
 
 describe('Hub assistant remote execution', () => {
+  it('lists models in the selected machine and project, rather than the remote server working directory', async () => {
+    const f = fixture({ projectModels: true });
+    try {
+      await f.send(async (call) => {
+        for (const identity of [target(), target('remote-b')]) {
+          const listed = await call('list_models', { target: identity, directory: remoteDirectory });
+          expect(listed.content[0].text).toContain('modelID="remote-model"');
+          expect(listed.content[0].text).not.toContain('server-default-model');
+          expect(listed.details).toMatchObject({ target: identity, directory: remoteDirectory });
+        }
+      });
+      expect(f.requests.filter((request) => new URL(request.route, 'http://remote.invalid').pathname === '/api/model')).toHaveLength(2);
+      expect(f.localClient).not.toHaveBeenCalled();
+    } finally { f.close(); }
+  });
+
+  it.each([false, true])('validates explicit models in the authoritative project on create/reuse (%s)', async (reuse) => {
+    const f = fixture({ projectModels: true });
+    try {
+      await f.send(async (call) => {
+        const result = await call('assign_session', { target: target(),
+          ...(reuse ? { sessionID: 'ses_same', directory: '/wrong-hint' } : { projectPath: remoteDirectory }),
+          model: 'remote-a/remote-model', prompt: 'Use the project model' });
+        expect(result.details.assigned, JSON.stringify(result)).toMatchObject({ target: target(), directory: remoteDirectory, model: { providerID: 'remote-a', modelID: 'remote-model' } });
+      });
+      expect(f.requests.filter((request) => new URL(request.route, 'http://remote.invalid').pathname === '/api/model')).toHaveLength(1);
+      expect(f.requests.find((request) => request.method === 'POST' && request.route.endsWith('/model'))).toMatchObject({ hostId: 'remote-a', body: { model: { providerID: 'remote-a', id: 'remote-model' } } });
+    } finally { f.close(); }
+  });
+
+  it('continues remote sessions without model/catalog reads when the target owns selection', async () => {
+    const f = fixture();
+    try {
+      await f.send((call) => call('assign_session', { target: target(), sessionID: 'ses_same', prompt: 'Keep the target model' }));
+      expect(f.requests.filter((request) => ['/api/model', '/api/provider'].includes(new URL(request.route, 'http://remote.invalid').pathname))).toHaveLength(0);
+      expect(f.requests.some((request) => request.method === 'POST' && request.route.endsWith('/model'))).toBe(false);
+    } finally { f.close(); }
+  });
+
+  it('resolves the branch worktree before querying models and creating the session', async () => {
+    const worktree = '/remote-only/worktrees/feature';
+    const f = fixture({ projectModels: true, worktree });
+    try {
+      await f.send(async (call) => {
+        const result = await call('assign_session', { target: target(), projectPath: remoteDirectory, branch: 'feature', model: 'remote-a/remote-model', prompt: 'Use worktree configuration' });
+        expect(result.details.assigned, JSON.stringify(result)).toMatchObject({ directory: worktree });
+      });
+      expect(f.requests.find((request) => request.method === 'POST' && request.route === '/api/session').body.location.directory).toBe(worktree);
+      const catalog = f.requests.filter((request) => ['/api/model', '/api/provider'].includes(new URL(request.route, 'http://remote.invalid').pathname));
+      expect(catalog).toHaveLength(2);
+      expect(catalog.every((request) => new URL(request.route, 'http://remote.invalid').searchParams.get('location[directory]') === worktree)).toBe(true);
+    } finally { f.close(); }
+  });
+
+  it('rejects an unregistered model-query directory before querying the catalog', async () => {
+    const f = fixture();
+    try {
+      await f.send(async (call) => {
+        const result = await call('list_models', { target: target(), directory: '/unregistered' });
+        expect(result.details).toMatchObject({ error: 'workspace_forbidden', target: target() });
+      });
+      expect(f.requests.some((request) => request.route.startsWith('/api/model'))).toBe(false);
+      expect(f.localClient).not.toHaveBeenCalled();
+    } finally { f.close(); }
+  });
   it.each([{ sessionIDs: ['ses_same'] }, { sessionIDs: Array.from({ length: 20 }, (_, i) => `ses_worker_${i}`) }])('shares one authority snapshot for 20 contacts during reconciliation (%j)', async ({ sessionIDs }) => {
     const f = fixture({ sessionIDs });
     try {

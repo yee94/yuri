@@ -661,12 +661,13 @@ export async function assignSession(input = {}) {
   }
 
   const assistant = input.assistant && typeof input.assistant === 'object' ? input.assistant : {};
+  const selectedModel = typeof input.resolveModel === 'function' ? await input.resolveModel(directory) : input.model;
   let resolvedModel;
   if (input.useTargetDefaults === true) {
     resolvedModel = { source: 'target-default', acceptsImages: null };
-  } else if (input.model && typeof input.model === 'object' && !Array.isArray(input.model)) {
-    const objectProvider = trim(input.model.providerID, 256);
-    const objectModel = trim(input.model.modelID, 256);
+  } else if (selectedModel && typeof selectedModel === 'object' && !Array.isArray(selectedModel)) {
+    const objectProvider = trim(selectedModel.providerID, 256);
+    const objectModel = trim(selectedModel.modelID, 256);
     if (!objectProvider || !objectModel) {
       throw new AssignError(
         ASSIGN_CODES.VALIDATION,
@@ -676,11 +677,11 @@ export async function assignSession(input = {}) {
     resolvedModel = {
       providerID: objectProvider,
       modelID: objectModel,
-      source: input.model.source || 'explicit',
-      acceptsImages: input.model.acceptsImages === true ? true : input.model.acceptsImages === false ? false : null,
+      source: selectedModel.source || 'explicit',
+      acceptsImages: selectedModel.acceptsImages === true ? true : selectedModel.acceptsImages === false ? false : null,
     };
   } else {
-    if (input.model !== undefined && input.model !== null && typeof input.model !== 'string') {
+    if (selectedModel !== undefined && selectedModel !== null && typeof selectedModel !== 'string') {
       throw new AssignError(
         ASSIGN_CODES.VALIDATION,
         'assign_session model must be a string or resolved {providerID,modelID} object.',
@@ -689,7 +690,7 @@ export async function assignSession(input = {}) {
     resolvedModel = resolveAssignWorkerModel({
       providerID: input.providerID,
       modelID: input.modelID,
-      model: input.model,
+      model: selectedModel,
       fallback: {
         providerID: assistant.providerID,
         modelID: assistant.modelID,

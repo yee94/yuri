@@ -46,6 +46,19 @@ Read, new/continue, watch, stop, steer, archive and delete consume this same acc
 Archive goes to the target's existing Host archive route; remote delete never invokes
 Hub metadata cleanup. Mutations are not automatically replayed after uncertainty.
 
+`list_models` accepts an optional registered `directory` alongside `target` and
+returns both coordinates with its catalog. Omitted target explicitly means the
+local Hub; omitted directory means instance-default discovery, not the selected
+project. For project workers, query their exact target/directory. Remote queries
+never incorporate Hub favorites or the contact's own model.
+Assignment resolves the final project/worktree (or authoritative reused-session
+directory) before `assignSession` invokes its optional `resolveModel(directory)`
+callback. The service loads provider/model catalogs with that SDK Location, rather
+than the remote service's working directory. Explicit models are validated before
+session creation. Default remote assignment skips catalog and model-history reads;
+the target keeps ownership of model selection. Catalog reads remain on demand,
+with one provider/model pair per explicit validation and no cross-target cache.
+
 Remote watches retain their own Gateway status demand independently of the contact
 turn or any UI client. The persisted watch key incorporates all three target IDs
 and the raw session ID; existing local keys are unchanged. Only target/directory,

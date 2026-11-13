@@ -2059,11 +2059,12 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   const resolveContactTurnSettlement = (messageID, result) => {
     contactTurnSettlement(messageID).resolve(result);
   };
-  const loadAssignCatalog = async (signal) => {
+  const loadAssignCatalog = async (signal, directory) => {
     try {
       // Catalog owns its 8s AbortSignal deadline; optional parent signal is forwarded.
       return await loadConnectedCatalog(client(), {
         timeoutMs: CONTACT_CATALOG_DEADLINE_MS,
+        ...(directory ? { directory } : {}),
         ...(signal ? { signal } : {}),
       });
     } catch (error) {
@@ -2077,8 +2078,18 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     }
   };
   const loadContactModelContext = async (signal, params = {}) => scopedWork({ ...params, signal }, async () => {
+    let directory;
+    if (params.directory !== undefined) {
+      if (typeof params.directory !== 'string' || !params.directory.trim() || params.directory.length > 4096) {
+        throw new AssignError(ASSIGN_CODES.VALIDATION, 'directory must be a non-empty project path.');
+      }
+      directory = await (execution.current()?.resolveDirectory || resolveAssignDirectory)({
+        directory: params.directory, allowedRoots: getAllowedRoots(),
+        managedWorkspaceRoot: path.resolve(dataDir, 'assistant-workspaces'),
+      });
+    }
     const [catalogResult, preferencesResult] = await Promise.allSettled([
-      loadAssignCatalog(signal),
+      loadAssignCatalog(signal, directory),
       execution.current() ? Promise.resolve(null) : awaitWithDeadline(Promise.resolve().then(() => readModelPreferences()), CONTACT_CATALOG_DEADLINE_MS, 'upstream_error'),
     ]);
     const catalog = catalogResult.status === 'fulfilled' ? catalogResult.value : null;
@@ -2086,6 +2097,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     const preferences = preferencesResult.status === 'fulfilled' ? preferencesResult.value : null;
     return {
       ...targetFields(),
+      ...(directory ? { directory } : {}),
       connectedModels: normalizeConnectedModels((catalog?.models || []).map((model) => ({ ...model, providerName: providerNames.get(model.providerID) }))),
       modelCatalogAvailable: catalog !== null,
       modelPreferences: preferences && typeof preferences === 'object' ? {
@@ -2432,6 +2444,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       || (typeof params.model === 'string' && params.model.trim())
       || (params.model && typeof params.model === 'object'),
     );
+    const useTargetDefaults = Boolean(execution.current() && !explicitModel);
     const reuseSessionID = typeof params.sessionID === 'string' && params.sessionID.trim()
       ? params.sessionID.trim()
       : '';
@@ -2450,55 +2463,58 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         titleHint: typeof params.title === 'string' ? params.title : null,
         signal,
         // Messages only needed when following session model without explicit selection.
-        includeMessages: !explicitModel,
+        includeMessages: !explicitModel && !useTargetDefaults,
       });
     }
     // Reused session without explicit model may follow the session's last model (catalog-gated).
-    const followSessionModel = Boolean(reuseSessionID && !explicitModel);
-    const needsCatalog = explicitModel || hasAssignImageParts(fileParts) || followSessionModel;
-    let catalog = null;
-    let sessionModel = null;
-    if (needsCatalog) {
-      if (followSessionModel && !explicitModel && !hasAssignImageParts(fileParts)) {
-        // Session-follow degrades on catalog failure; explicit/image stay fail-closed.
-        try {
-          catalog = await loadAssignCatalog(signal);
-        } catch {
-          catalog = null;
+    const followSessionModel = Boolean(reuseSessionID && !explicitModel && !useTargetDefaults);
+    const resolveWorkerModel = async (directory) => {
+      if (useTargetDefaults) return { source: 'target-default', acceptsImages: null };
+      const needsCatalog = explicitModel || hasAssignImageParts(fileParts) || followSessionModel;
+      let catalog = null;
+      let sessionModel = null;
+      if (needsCatalog) {
+        if (followSessionModel && !explicitModel && !hasAssignImageParts(fileParts)) {
+          // Session-follow degrades on catalog failure; explicit/image stay fail-closed.
+          try {
+            catalog = await loadAssignCatalog(signal, directory);
+          } catch {
+            catalog = null;
+          }
+        } else {
+          catalog = await loadAssignCatalog(signal, directory);
         }
-      } else {
-        catalog = await loadAssignCatalog(signal);
       }
-    }
-    if (followSessionModel && catalog && reuseScope) {
-      sessionModel = extractAssignSessionModel({
-        session: reuseScope.session,
-        messages: reuseScope.messages,
-      });
-      if (!sessionModel) {
-        sessionModel = await lookupReusedSessionModel({
-          sessionID: reuseSessionID,
-          directory: reuseScope.directory,
-          signal,
+      if (followSessionModel && catalog && reuseScope) {
+        sessionModel = extractAssignSessionModel({
+          session: reuseScope.session,
+          messages: reuseScope.messages,
         });
+        if (!sessionModel) {
+          sessionModel = await lookupReusedSessionModel({
+            sessionID: reuseSessionID,
+            directory: reuseScope.directory,
+            signal,
+          });
+        }
       }
-    }
-    const useTargetDefaults = Boolean(execution.current() && !explicitModel);
-    const workerModel = useTargetDefaults ? { source: 'target-default', acceptsImages: null } : resolveAssignWorkerModel({
-      providerID: params.providerID,
-      modelID: params.modelID,
-      model: params.model,
-      fallback: { providerID: row.provider_id, modelID: row.model_id },
-      sessionModel,
-      catalog,
-    });
-    let acceptsImages = workerModel.acceptsImages;
-    if (hasAssignImageParts(fileParts) && acceptsImages == null && catalog) {
-      const entry = catalog.models.find((item) => (
-        item?.providerID === workerModel.providerID && item?.modelID === workerModel.modelID
-      ));
-      acceptsImages = entry?.acceptsImages === true;
-    }
+      const workerModel = resolveAssignWorkerModel({
+        providerID: params.providerID,
+        modelID: params.modelID,
+        model: params.model,
+        fallback: { providerID: row.provider_id, modelID: row.model_id },
+        sessionModel,
+        catalog,
+      });
+      let acceptsImages = workerModel.acceptsImages;
+      if (hasAssignImageParts(fileParts) && acceptsImages == null && catalog) {
+        const entry = catalog.models.find((item) => (
+          item?.providerID === workerModel.providerID && item?.modelID === workerModel.modelID
+        ));
+        acceptsImages = entry?.acceptsImages === true;
+      }
+      return { ...workerModel, acceptsImages };
+    };
     // Worker model is prompt-only. Never mutate the contact assistant row.
     // Forward tool variant + AbortSignal; lookupMessage uses real SDK exact/list paths.
     const assigned = await assignSession({
@@ -2517,13 +2533,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       fileParts,
       ...(params.variant !== undefined ? { variant: params.variant } : {}),
       ...(signal ? { signal } : {}),
-      model: {
-        providerID: workerModel.providerID,
-        modelID: workerModel.modelID,
-        source: workerModel.source,
-        acceptsImages,
-      },
-      acceptsImages,
+      resolveModel: resolveWorkerModel,
       assistant: execution.current() ? { id: row.assistant_id, name: row.name } : output(row),
       defaultProjectPath: execution.current() ? null : row.workspace_path,
       ...(execution.current() ? { resolveDirectory: execution.current().resolveDirectory } : {}),
