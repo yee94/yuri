@@ -113,7 +113,7 @@ test('remote running and unread sessions join the shared leading list and disapp
   expect(activity.mock.lastCall?.[1]).toEqual([]);
 });
 
-test('remote pinned sessions are published for the shared pinned list, not the in-progress list', async () => {
+test.each([false, true])('remote pinned rows retain project subtitles in the leading list (mobile=%s)', async (mobile) => {
   const value = snapshot('a');
   const base = value.directories[0].sessions[0];
   const data = { ...value, pinnedSessionIds: ['pin-a', 'pin-b'], unread: { revision: 1, sessions: {} }, directories: [{ ...value.directories[0], sessions: [
@@ -122,10 +122,34 @@ test('remote pinned sessions are published for the shared pinned list, not the i
     { ...base, id: 'plain', title: 'plain', time: { created: 3, updated: 3 }, metadata: { yuri: { sessionStatus: { type: 'idle' } } } },
   ] }] };
   const activity = vi.fn();
-  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={registry(async () => json(data))} onActivityItems={activity} /></QueryClientProvider>));
+  const entry = registry(async () => json(data));
+  entry.applyCatalog({ supported: true, hubId: 'hub', projects: [project('a'), project('b')], hosts: [
+    { id: 'a', name: 'user@development.example.com', source: 'ssh', state: 'connected' },
+    { id: 'b', name: 'Other machine', source: 'direct', state: 'connected' },
+  ] });
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} mobile={mobile} onActivityItems={activity} /></QueryClientProvider>));
   await flush(); await flush();
-  const items = activity.mock.lastCall?.[1] as Array<{ remoteSessionId: string; pinned: boolean }>;
+  const items = activity.mock.lastCall?.[1] as Array<{ remoteSessionId: string; pinned: boolean; content: React.ReactNode }>;
   expect(items.map((item) => [item.remoteSessionId, item.pinned])).toEqual([['pin-b', true], ['pin-a', true]]);
+  const leading = document.createElement('div');
+  document.body.append(leading);
+  const leadingRoot = createRoot(leading);
+  try {
+    await act(async () => leadingRoot.render(<>{items.map((item) => <React.Fragment key={item.remoteSessionId}>{item.content}</React.Fragment>)}</>));
+    const titles = leading.querySelectorAll(mobile ? '.yuri-mobile-session-title' : '[data-session-title]');
+    expect(titles).toHaveLength(2);
+    expect([...leading.querySelectorAll('span')].filter((span) => span.textContent === 'Project a').length).toBeGreaterThanOrEqual(2);
+    const identities = [...leading.querySelectorAll('[data-remote-host]')];
+    expect(identities).toHaveLength(2);
+    expect(identities.every((element) => element.getAttribute('data-remote-host') === 'a'
+      && element.textContent === 'development.example.com'
+      && element.getAttribute('aria-label')?.includes('user@development.example.com'))).toBe(true);
+    expect(leading.textContent).not.toContain('Other machine');
+    if (mobile) expect([...leading.querySelectorAll('.yuri-mobile-session-subtitle')].map((element) => element.textContent)).toEqual(['Project adevelopment.example.com', 'Project adevelopment.example.com']);
+  } finally {
+    await act(async () => leadingRoot.unmount());
+    leading.remove();
+  }
 });
 
 function folderFixture() {

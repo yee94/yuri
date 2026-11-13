@@ -28,14 +28,15 @@ export function MobileRemoteProjectShell({ project, registry, label, collapsed, 
   </MobileProjectSurface>;
 }
 
-export function MobileRemoteSummaryRow({ session, active, search, pending, pinned, unread, status, dragItem, onSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
+export function MobileRemoteSummaryRow({ session, active, search, pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, onSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
   const { t } = useI18n();
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const title = session.title ?? t('mobile.sessions.untitled');
   const activityTime = session.time.updated || session.time.created;
   return <>
     <MobileSessionRow session={{ id: session.id, title, active, pinned, unread: Boolean(unread), archived: Boolean(session.time.archived),
-      activityLabel: activityTime ? formatSessionCompactDateLabel(activityTime) : undefined }} highlightQuery={search}
+      subtitle: [secondaryMeta?.projectLabel, secondaryMeta?.branchLabel?.trim()].filter(Boolean).join(' · ') || undefined,
+      activityLabel: activityTime ? formatSessionCompactDateLabel(activityTime) : undefined }} highlightQuery={search} subtitleSuffix={subtitleSuffix}
       indicator={status === 'busy' || status === 'retry' ? 'running' : unread ? 'completed-unread' : 'idle'}
       onSelect={onSelect} onPin={() => { if (!pending) onPin(); }} onArchive={() => { if (!pending) onArchive(); }} onOpenActions={() => setActionsOpen(true)} />
     {actionsOpen ? <MobileActionSheet id={`remote-session-actions:${JSON.stringify([dragItem.directory, dragItem.id])}`} title={title} open onOpenChange={setActionsOpen} items={[

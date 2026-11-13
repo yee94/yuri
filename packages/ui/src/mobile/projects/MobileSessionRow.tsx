@@ -47,6 +47,7 @@ export type MobileSessionRowProps = {
   className?: string;
   /** Substring to wrap in `<mark>` — same helper as the desktop sidebar. */
   highlightQuery?: string;
+  subtitleSuffix?: React.ReactNode;
 };
 
 function MobileSessionRowImpl({
@@ -63,6 +64,7 @@ function MobileSessionRowImpl({
   indicator,
   className,
   highlightQuery,
+  subtitleSuffix,
 }: MobileSessionRowProps) {
   const { t } = useI18n();
   const reorderDragging = React.useContext(SessionRowDragContext);
@@ -214,9 +216,12 @@ function MobileSessionRowImpl({
               ) : null}
               {session.archived ? <Icon name="archive" className="size-3 shrink-0 text-muted-foreground" aria-hidden /> : null}
             </span>
-            {session.subtitle ? (
-              <span className="yuri-mobile-session-subtitle truncate text-muted-foreground">
-                {highlightQuery ? renderHighlightedText(session.subtitle, highlightQuery) : session.subtitle}
+            {session.subtitle || subtitleSuffix ? (
+              <span className="yuri-mobile-session-subtitle flex min-w-0 items-center gap-2 text-muted-foreground">
+                {session.subtitle ? <span className={cn('truncate', subtitleSuffix && 'max-w-[60%] shrink-0')}>
+                  {highlightQuery ? renderHighlightedText(session.subtitle, highlightQuery) : session.subtitle}
+                </span> : null}
+                {subtitleSuffix}
               </span>
             ) : null}
           </span>
