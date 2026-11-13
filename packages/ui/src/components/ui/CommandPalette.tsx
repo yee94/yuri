@@ -939,7 +939,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
           ? 'yuri-global-search-page yuri-global-search-mobile fixed inset-0 z-50 m-0 flex max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-background p-0'
           : 'yuri-global-search z-50 w-[min(56rem,calc(100vw-3rem))]'}
         containerClassName="block p-0"
-        overlayClassName="bg-transparent dark:bg-transparent"
+        overlayClassName={isMobile ? 'bg-transparent dark:bg-transparent' : undefined}
         showCloseButton={false}
       >
         <DialogHeader className="sr-only">

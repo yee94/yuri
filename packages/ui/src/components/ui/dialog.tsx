@@ -96,7 +96,7 @@ function DialogContent({
 
   return (
     <DialogPortal>
-      <DialogOverlay className={cn("rounded-none", presentation === 'picker' && "bg-transparent dark:bg-transparent", overlayClassName)} />
+      <DialogOverlay className={cn("rounded-none", presentation === 'picker' && "yuri-picker-backdrop", overlayClassName)} />
       <div
         className={cn(
           "fixed inset-0 z-50 flex justify-center pointer-events-none",

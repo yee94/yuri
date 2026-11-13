@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 import express from 'express';
 import request from 'supertest';
 import { createSessionUnreadStore } from './session-unread-store.js';
@@ -182,6 +183,85 @@ describe('shared session unread', () => {
     second.observe({ id: 'one', kind: 'running', sequence: 19 });
     second.observe({ id: 'one', kind: 'complete', sequence: 21 });
     expect(second.snapshot()).toEqual(expected);
+  });
+
+  it('notifies both Host clients when another connection marks shared state read or unread', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-unread-peers-'));
+    cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const dbPath = path.join(dir, 'state.sqlite');
+    let desktopView;
+    let webView;
+    const desktopChanged = vi.fn(() => { desktopView = desktop.snapshot(); });
+    const webChanged = vi.fn(() => { webView = web.snapshot(); });
+    const desktop = createSessionUnreadStore({ dbPath, onChanged: desktopChanged });
+    cleanup.push(() => desktop.close());
+    const web = createSessionUnreadStore({ dbPath, onChanged: webChanged });
+    cleanup.push(() => web.close());
+    desktopView = desktop.snapshot();
+    webView = web.snapshot();
+
+    web.mark({ id: 'one', directory: '/project', unread: true });
+    await vi.waitFor(() => expect(desktopView).toEqual(webView), { timeout: 2500 });
+    expect(desktopView.sessions.one.unreadCount).toBe(1);
+    desktop.mark({ id: 'one', unread: false, expectedRevision: desktopView.sessions.one.revision });
+    await vi.waitFor(() => expect(webView).toEqual(desktopView), { timeout: 2500 });
+    expect(webView.sessions.one.unreadCount).toBe(0);
+    expect(desktopChanged).toHaveBeenCalledTimes(2);
+    expect(webChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it('suppresses repeated and non-public peer changes and clears revision timers on close', () => {
+    vi.useFakeTimers();
+    const baseline = vi.getTimerCount();
+    const memory = createSessionUnreadStore({ dbPath: ':memory:' });
+    expect(vi.getTimerCount()).toBe(baseline);
+    memory.close();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-unread-peer-timers-'));
+    cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const dbPath = path.join(dir, 'state.sqlite');
+    const desktopChanged = vi.fn();
+    const webChanged = vi.fn();
+    const desktop = createSessionUnreadStore({ dbPath, onChanged: desktopChanged });
+    const web = createSessionUnreadStore({ dbPath, onChanged: webChanged });
+    try {
+      expect(vi.getTimerCount()).toBe(baseline + 2);
+      web.mark({ id: 'one', unread: true });
+      vi.advanceTimersByTime(50_000);
+      expect(desktopChanged).toHaveBeenCalledExactlyOnceWith(1);
+      expect(webChanged).toHaveBeenCalledExactlyOnceWith(1);
+      for (let i = 0; i < 50; i++) {
+        web.observe({ id: 'one', kind: 'running', sequence: i + 1 });
+        vi.advanceTimersByTime(1000);
+      }
+      expect(desktopChanged).toHaveBeenCalledTimes(1);
+      expect(webChanged).toHaveBeenCalledTimes(1);
+      desktop.remove('one');
+      vi.advanceTimersByTime(1000);
+      expect(webChanged).toHaveBeenLastCalledWith(2);
+      expect(web.snapshot()).toEqual({ revision: 2, sessions: {} });
+    } finally {
+      desktop.close(); web.close();
+      expect(vi.getTimerCount()).toBe(baseline);
+      vi.useRealTimers();
+    }
+  });
+
+  it('detects a separate process commit without a local lifecycle event or client refresh', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-unread-process-'));
+    cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const dbPath = path.join(dir, 'state.sqlite');
+    const changed = vi.fn();
+    const store = createSessionUnreadStore({ dbPath, onChanged: changed });
+    cleanup.push(() => store.close());
+    const moduleUrl = new URL('./session-unread-store.js', import.meta.url).href;
+    execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { createSessionUnreadStore } from ${JSON.stringify(moduleUrl)};
+      const store = createSessionUnreadStore({ dbPath: ${JSON.stringify(dbPath)} });
+      store.mark({ id: 'one', directory: '/project', unread: true });
+      store.close();
+    `], { timeout: 5000 });
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledExactlyOnceWith(1), { timeout: 2500 });
+    expect(store.snapshot().sessions.one.unreadCount).toBe(1);
   });
 
   it('isolates failures, subagents and system sessions; new execution clears only its error', async () => {

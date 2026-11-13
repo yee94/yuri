@@ -14,6 +14,7 @@ interface Props {
   open: boolean;
   onOpenChange(open: boolean): void;
   forceMobile?: boolean;
+  origin?: { x: number; y: number };
   registry: HostRuntimeRegistry;
   hostId: string;
   machinePicker: React.ReactNode;
@@ -21,7 +22,7 @@ interface Props {
 }
 
 /** All filesystem arguments remain physical paths; only transport and query keys carry identity. */
-export function RemoteDirectoryExplorerDialog({ open, onOpenChange, forceMobile, registry, hostId, machinePicker, onRegistered }: Props) {
+export function RemoteDirectoryExplorerDialog({ open, onOpenChange, forceMobile, origin, registry, hostId, machinePicker, onRegistered }: Props) {
   const { t } = useI18n();
   const device = useDeviceInfo();
   const { directory, setPath, pending, error, home, listing, submit } = useRemoteDirectoryExplorerModel({ open, registry, hostId, onOpenChange, onRegistered });
@@ -52,6 +53,6 @@ export function RemoteDirectoryExplorerDialog({ open, onOpenChange, forceMobile,
     <Button size="xs" disabled={pending || !directory || listing.isError || listing.isPending} onClick={() => void submit(false)}>{t(pending ? 'directoryExplorerDialog.actions.adding' : 'directoryExplorerDialog.actions.addProject')}</Button>
   </div>;
   const changeOpen = (next: boolean) => { if (!pending) onOpenChange(next); };
-  return <DirectoryExplorerSurface open={open} onOpenChange={changeOpen} mobile={forceMobile ?? device.isMobile} footer={footer}
+  return <DirectoryExplorerSurface open={open} onOpenChange={changeOpen} origin={origin} mobile={forceMobile ?? device.isMobile} footer={footer}
     error={error?.message || home.error?.message || listing.error?.message}>{body}</DirectoryExplorerSurface>;
 }

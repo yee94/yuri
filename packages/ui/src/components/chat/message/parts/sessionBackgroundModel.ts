@@ -36,7 +36,7 @@ export type SessionBackgroundProjection = {
 };
 
 /** Terminal facts projected from synthetic completion notices / metadata. */
-export type BackgroundCompletionState = ShellNotificationState | SubagentNotificationState;
+export type BackgroundCompletionState = ShellNotificationState | Exclude<SubagentNotificationState, 'running'>;
 
 export type BackgroundCompletionIndex = {
     /** shellID / jobID / tag id → terminal state */
@@ -184,7 +184,8 @@ export const collectBackgroundCompletions = (
             }
             const subNotice = parseSubagentNotification(text);
             if (subNotice) {
-                rememberChild(subNotice.sessionID, subNotice.state);
+                if (subNotice.state === 'running') byChildSessionID.delete(subNotice.sessionID);
+                else rememberChild(subNotice.sessionID, subNotice.state);
             }
         }
     }

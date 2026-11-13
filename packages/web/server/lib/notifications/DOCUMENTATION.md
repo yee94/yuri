@@ -42,6 +42,16 @@ client notification store had no durable data to migrate).
 - Successful commits publish `yuri:session-unread-changed` revision tips through
   `/api/yuri/events`. Clients lead with GET and recover on stream-ready/reconnect.
 
+Multiple Host processes sharing the same data directory (such as desktop and HMR)
+also share the database but not SSE clients. Each file-backed store checks the
+single global revision row once per second and publishes only newer revisions to
+its own clients, including commits from another process. This is independent of
+session count and never reads transcripts or scans session rows on a tick. Local
+commits still publish immediately; duplicate tips are suppressed. Failed checks
+retain the published revision and retry on the next tick. In-memory stores have
+no timer; closing a file-backed store clears its timer. Snapshot revision and rows
+are read in one transaction so concurrent external commits cannot mix versions.
+
 All authenticated clients of one Host share this state (not per-device or
 per-client-token). Web, Electron, hosted mobile and Capacitor use the same
 authenticated runtime HTTP/SSE transport, including Relay. Standalone VS Code
@@ -68,7 +78,7 @@ Android notification-only subscriptions send the App locale in `Accept-Language`
   existing contact notification path, while an explicit silent review sends
   nothing. Unowned tasks retain `notifyOnScheduledTasks` and the manual-run gate.
   Result handoff/recovery belongs to `scheduled-tasks`, not this notification module.
-- `family-completion-gate.js` (with a TypeScript declaration): dependency-free, runtime-local completion barrier shared by Host fanout and the VS Code webview. The Host supplies authoritative HTTP reads; VS Code supplies official SDK reads.
+- `family-completion-gate.js` (with a TypeScript declaration): dependency-free, runtime-local completion barrier shared by Host fanout and the VS Code webview. The Host supplies authoritative HTTP reads; VS Code supplies official SDK reads. Scheduled-task settlement/recovery also reuses its bounded `readSessionFamilyActivity` ancestry reader, with run-scoped SDK cancellation; scheduling remains owned by `scheduled-tasks`.
 - `packages/web/server/lib/notifications/live-activity-refresh-runtime.js`: periodic Live Activity snapshot refresh (default 30s, `YURI_LIVE_ACTIVITY_REFRESH_INTERVAL_MS` overrides, `0` disables). Each tick snapshots the authoritative session states once, recomputes every persisted Live Activity token's snapshot, and pushes updates only for real changes — busy→retry transitions, newly visible top-level sessions, idle completions the event path missed, and stale-row recovery. Entries whose recomputed snapshot is unchanged never send (APNs budgets Live Activity updates per hour). Rows for sessions without authoritative server state are preserved as-is; server-side-only sub-states (`permission`/`input`/`tool`) keep their last value while the session stays busy. When no row is working anymore the refresh sends `end` and clears accepted tokens.
 - `packages/web/server/lib/notifications/template-runtime.js`: notification template variables and session text/title enrichment runtime. Zen-model helpers are retained as compatibility stubs only.
 - `packages/web/server/lib/notifications/message.js`: helper implementation module.

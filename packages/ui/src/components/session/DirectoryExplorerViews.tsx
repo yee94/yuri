@@ -10,8 +10,9 @@ import { cn } from '@/lib/utils';
 import type { RemoteHost } from '@/lib/remote-projects/types';
 
 /** One presentation owner for machine, local-directory and remote-directory steps. */
-export function DirectoryExplorerSurface({ open, onOpenChange, mobile, children, footer, trailing, hints, initialFocus, error }: {
+export function DirectoryExplorerSurface({ open, onOpenChange, mobile, origin, children, footer, trailing, hints, initialFocus, error }: {
   open: boolean; onOpenChange(open: boolean): void; mobile: boolean;
+  origin?: { x: number; y: number };
   children: React.ReactNode; footer: React.ReactNode; trailing?: React.ReactNode;
   hints?: React.ReactNode; initialFocus?: false;
   error?: string;
@@ -26,7 +27,9 @@ export function DirectoryExplorerSurface({ open, onOpenChange, mobile, children,
     {children}<div className="yuri-directory-footer">{footer}</div>
   </MobileResizableSheet>;
   return <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent presentation="picker" className="yuri-directory-dialog" initialFocus={initialFocus}>
+    <DialogContent presentation="picker" className="yuri-directory-dialog" initialFocus={initialFocus}
+      data-source-motion={origin ? '' : undefined}
+      style={origin ? { transformOrigin: `calc(${origin.x}px - 50vw + 50%) calc(${origin.y}px - 10vh)` } : undefined}>
       <DialogHeader className="yuri-directory-header">
         <div className="flex min-w-0 items-center justify-between gap-2">
           <DialogTitle className="yuri-directory-title truncate">{title}</DialogTitle>{headerActions}

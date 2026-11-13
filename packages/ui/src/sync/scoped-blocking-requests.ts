@@ -1,4 +1,5 @@
 import type { Part, Session } from '@/lib/opencode/v2-types'
+import { canonicalizeBuiltInToolName } from '@/lib/toolHelpers'
 
 type BlockingRequest = { id: string }
 
@@ -20,31 +21,33 @@ const readSessionIdCandidate = (value: unknown): string | undefined => {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-const readDispatchEdgeFromRecord = (value: unknown): TaskDispatchEdge | undefined => {
+const readDispatchEdgeFromRecord = (value: unknown, ownerSessionID: string): TaskDispatchEdge | undefined => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
   const record = value as Record<string, unknown>
-  const parentSessionId = readSessionIdCandidate(record.parentSessionId)
-  const sessionId = readSessionIdCandidate(record.sessionId)
+  const parentSessionId = readSessionIdCandidate(record.parentSessionId) ?? readSessionIdCandidate(ownerSessionID)
+  const sessionId = readSessionIdCandidate(record.sessionId) ?? readSessionIdCandidate(record.sessionID)
   if (!parentSessionId || !sessionId || parentSessionId === sessionId) return undefined
   return { parentSessionId, sessionId }
 }
 
 /**
  * Extract live subagent dispatch edges from a session's task tool parts.
- * A task part contributes an edge only while the task is running: completed
- * tasks no longer block the parent, and their historical edges would leak
- * unrelated requests into the scope forever.
+ * A completed tool with metadata.status=running still owns a background child.
+ * These edges establish request ownership, not proof that work is currently live;
+ * the transcript reader retires them on final subagent reports.
  */
 export const collectTaskDispatchEdgesFromParts = (parts: Part[]): TaskDispatchEdge[] => {
   const edges: TaskDispatchEdge[] = []
   for (const part of parts) {
-    if (part?.type !== "tool" || part.tool !== "task") continue
+    if (part?.type !== "tool" || typeof part.tool !== 'string' || canonicalizeBuiltInToolName(part.tool) !== "task") continue
     const state = (part as { state?: unknown }).state
     if (!state || typeof state !== "object" || Array.isArray(state)) continue
     const stateRecord = state as Record<string, unknown>
-    if (stateRecord.status !== "running") continue
     const metadata = stateRecord.metadata
-    const edge = readDispatchEdgeFromRecord(metadata)
+    const background = stateRecord.status === 'completed' && metadata && typeof metadata === 'object'
+      && !Array.isArray(metadata) && (metadata as Record<string, unknown>).status === 'running'
+    if (stateRecord.status !== 'running' && stateRecord.status !== 'pending' && stateRecord.status !== 'started' && !background) continue
+    const edge = readDispatchEdgeFromRecord(metadata, part.sessionID)
     if (edge) edges.push(edge)
   }
   return edges

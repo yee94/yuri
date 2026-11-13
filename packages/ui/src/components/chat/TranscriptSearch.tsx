@@ -53,7 +53,8 @@ export function TranscriptSearch({ messages, enabled, canOpen, onNavigate, child
     useEventListener('keydown', (event: KeyboardEvent) => {
         if (!enabled || event.defaultPrevented || event.isComposing) return;
         if (!(event.target instanceof Node && searchRef.current?.contains(event.target)) && !canOpen(event)) return;
-        if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
+        const primaryModifierOnly = event.metaKey !== event.ctrlKey;
+        if (primaryModifierOnly && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
             event.preventDefault();
             event.stopPropagation();
             if (!visible) {

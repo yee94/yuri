@@ -197,7 +197,7 @@ const patchTurn = (key: string, turnId: string, patch: Partial<SessionBtwTurn>):
 const quoteBlock = (quote: string): string =>
   quote.split('\n').map((line) => `> ${line}`).join('\n');
 
-const formatUserTurn = (turn: Pick<SessionBtwTurn, 'question' | 'quotes'>): string =>
+export const formatSessionBtwUserTurn = (turn: Pick<SessionBtwTurn, 'question' | 'quotes'>): string =>
   turn.quotes.length === 0
     ? turn.question
     : ['Quoted from the conversation:', ...turn.quotes.map(quoteBlock), turn.question].join('\n\n');
@@ -206,16 +206,16 @@ const buildBtwPrompt = (history: readonly SessionBtwTurn[], current: Pick<Sessio
   const earlier = history
     .filter((turn) => turn.answer)
     .slice(-MAX_SESSION_BTW_PROMPT_TURNS);
-  if (earlier.length === 0) return [SESSION_BTW_INSTRUCTIONS, formatUserTurn(current)].join('\n\n');
+  if (earlier.length === 0) return [SESSION_BTW_INSTRUCTIONS, formatSessionBtwUserTurn(current)].join('\n\n');
   const transcript = earlier
-    .map((turn) => `User: ${formatUserTurn(turn)}\n\nAssistant: ${turn.answer}`)
+    .map((turn) => `User: ${formatSessionBtwUserTurn(turn)}\n\nAssistant: ${turn.answer}`)
     .join('\n\n');
   return [
     SESSION_BTW_INSTRUCTIONS,
     'Earlier in this side conversation:',
     transcript,
     'Follow-up question:',
-    formatUserTurn(current),
+    formatSessionBtwUserTurn(current),
   ].join('\n\n');
 };
 

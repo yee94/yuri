@@ -483,12 +483,16 @@ const SubagentNotificationCard: React.FC<{ notification: SubagentNotification }>
     const { isMobile } = useDeviceInfo();
     const { t } = useI18n();
     const canOpen = Boolean(effectiveDirectory && !isMobile && !isVSCodeRuntime());
-    const stateLabel = notification.state === 'completed'
+    const stateLabel = notification.state === 'running'
+        ? t('chat.usedGroup.running')
+        : notification.state === 'completed'
         ? t('chat.messageBody.subagent.completed')
         : notification.state === 'error'
             ? t('chat.messageBody.subagent.error')
             : t('chat.messageBody.subagent.cancelled');
-    const fallbackDescription = notification.state === 'completed'
+    const fallbackDescription = notification.state === 'running'
+        ? t('chat.messageBody.subtask.title')
+        : notification.state === 'completed'
         ? t('chat.messageBody.subagent.completedDescription')
         : notification.state === 'error'
             ? t('chat.messageBody.subagent.errorDescription')

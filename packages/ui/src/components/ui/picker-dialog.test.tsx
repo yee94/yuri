@@ -9,6 +9,7 @@ import { Input } from './input';
 import { Button } from './button';
 import { ShortcutKbd } from './kbd';
 import { HelpDialog } from './HelpDialog';
+import { DirectoryExplorerSurface } from '../session/DirectoryExplorerViews';
 
 const fixture = vi.hoisted(() => ({ setHelpOpen: vi.fn(), overrides: {} as Record<string, string>, mobile: false }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: fixture.mobile }) }));
@@ -60,7 +61,9 @@ describe('desktop picker presentation', () => {
     expect(popup.classList.contains('yuri-composer-autocomplete-surface')).toBe(presentation === 'picker');
     expect(document.getElementById(popup.getAttribute('aria-labelledby')!)?.textContent).toBe('Picker test');
     expect(popup.parentElement?.className).toContain(presentation === 'picker' ? 'block p-0' : 'items-center p-4');
-    expect(document.querySelector('[data-slot="dialog-overlay"]')?.className.includes('bg-transparent')).toBe(presentation === 'picker');
+    const backdrop = document.querySelector('[data-slot="dialog-overlay"]')!;
+    expect(backdrop.classList.contains('yuri-picker-backdrop')).toBe(presentation === 'picker');
+    expect(backdrop.className).not.toContain('bg-transparent');
     const close = popup.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]');
     if (presentation === 'default') {
       expect(close).not.toBeNull();
@@ -85,6 +88,23 @@ describe('desktop picker presentation', () => {
       backdrop.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }));
       backdrop.click();
     });
+    expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
+  });
+
+  test('directory picker shares the picker scrim and uses source origin without changing keyboard fallback', async () => {
+    const onOpenChange = vi.fn();
+    const render = (origin?: { x: number; y: number }) => <DirectoryExplorerSurface open onOpenChange={onOpenChange}
+      mobile={false} origin={origin} initialFocus={false} footer={<Button>Next</Button>}><div>Machines</div></DirectoryExplorerSurface>;
+    await act(async () => root.render(render({ x: 36, y: 312 })));
+    const popup = document.querySelector<HTMLElement>('.yuri-directory-dialog')!;
+    expect(popup.hasAttribute('data-source-motion')).toBe(true);
+    expect(popup.style.transformOrigin).toBe('calc(36px - 50vw + 50%) calc(312px - 10vh)');
+    expect(document.querySelector('[data-slot="dialog-overlay"]')?.classList.contains('yuri-picker-backdrop')).toBe(true);
+
+    await act(async () => root.render(render()));
+    expect(popup.hasAttribute('data-source-motion')).toBe(false);
+    expect(popup.style.transformOrigin).toBe('');
+    await act(async () => popup.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
 
@@ -134,6 +154,7 @@ describe('desktop picker presentation', () => {
     expect(popup.querySelectorAll('kbd[data-variant="hint"]').length).toBeGreaterThan(20);
     expect(popup.querySelector('kbd[data-variant="default"]')).toBeNull();
     expect(popup.querySelector('[data-slot="dialog-close"]')).toBeNull();
+    expect(document.querySelector('[data-slot="dialog-overlay"]')?.classList.contains('yuri-picker-backdrop')).toBe(true);
     const first = popup.querySelector('.yuri-help-shortcut-row')!;
     expect(first.querySelector('kbd[aria-label="K"]')).not.toBeNull();
     expect(popup.textContent).not.toContain('Pro tips');
@@ -175,6 +196,8 @@ describe('desktop picker audit coverage', () => {
     expect(readFileSync(join(here, path), 'utf8')).toMatch(/presentation=(?:"picker"|\{isMobile \? 'default' : 'picker'\})/);
   });
   test('global search opts in only for the desktop dialog, leaving mobile page geometry explicit', () => {
-    expect(readFileSync(join(here, 'CommandPalette.tsx'), 'utf8')).toContain("presentation={isMobile ? 'default' : 'picker'}");
+    const source = readFileSync(join(here, 'CommandPalette.tsx'), 'utf8');
+    expect(source).toContain("presentation={isMobile ? 'default' : 'picker'}");
+    expect(source).toContain("overlayClassName={isMobile ? 'bg-transparent dark:bg-transparent' : undefined}");
   });
 });

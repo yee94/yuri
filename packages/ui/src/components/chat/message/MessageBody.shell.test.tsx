@@ -23,7 +23,10 @@ vi.hoisted(() => {
   })));
 });
 vi.mock('../FileAttachment', () => ({ MessageFilesDisplay: () => null }));
-vi.mock('../MarkdownRenderer', () => ({ MarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p> }));
+vi.mock('../MarkdownRenderer', () => ({
+  MarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p>,
+  SimpleMarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p>,
+}));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/workspace' }));
 vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: mocks.copy }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ locale: 'en', t: (key: string) => key }) }));
@@ -238,6 +241,27 @@ describe('user shell results', () => {
       streamPhase="completed" allowAnimation={false} shouldShowHeader={false}
     />));
   };
+
+  test.each([false, true])('renders running subagent reports as nonterminal cards, not raw tags or cancelled reports (mobile=%s)', async (isMobile) => {
+    for (const state of ['running', 'completed', 'error', 'cancelled']) {
+      const normalized = normalizeSessionProjectionMessage('parent', {
+        id: 'report', type: 'synthetic',
+        metadata: { source: 'subagent', childID: 'child', state: 'completed' },
+        text: `<subagent sessionID="child" state="${state}">Partial answer</subagent>`,
+      })!;
+      await act(async () => root.render(<MessageBody
+        messageId="report" parts={normalized.parts} isUser isMessageCompleted isMobile={isMobile}
+        copiedCode={null} onCopyCode={() => {}} expandedTools={new Set()} onToggleTool={() => {}} onShowPopup={() => {}}
+        streamPhase="completed" allowAnimation={false} shouldShowHeader={false}
+      />));
+      expect(container.textContent).toContain(state === 'running' ? 'chat.usedGroup.running' : `chat.messageBody.subagent.${state}`);
+      expect(container.textContent).not.toContain('<subagent');
+      if (state === 'running') {
+        expect(container.textContent).not.toContain('chat.messageBody.subagent.completed');
+        expect(container.textContent).not.toContain('chat.messageBody.subagent.cancelled');
+      }
+    }
+  });
 
   test('renders raw output immediately and copies its exact whitespace with feedback', async () => {
     const output = '  /workspace\n<script>literal text</script>\n\n';

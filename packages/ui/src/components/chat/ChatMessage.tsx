@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import MessageHeader from './message/MessageHeader';
 import MessageBody from './message/MessageBody';
+import { UserMessageBubble } from './message/UserMessageBubble';
 import type { AgentMentionInfo } from './message/types';
 import type { StreamPhase, ToolPopupContent } from './message/types';
 import { deriveMessageRole } from './message/messageRole';
@@ -1099,7 +1100,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     const assistantTopPaddingClass = !isUser && shouldShowHeader
         ? (isMobile ? (stickyUserHeader ? 'pt-4' : 'pt-0') : 'pt-6')
         : 'pt-0';
-    const userMessageRadius = 'var(--radius-xl)';
     const isShellResult = isUserShellMessage(message);
 
     return (
@@ -1127,16 +1127,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                             >
                                 <div {...messageHoverHandlers} className={cn('relative flex', isShellResult ? 'justify-start' : 'justify-end', !isMobile ? 'yuri-user-shell-hover-scope' : undefined)}>
                                     <div className={cn(isShellResult ? 'w-full min-w-0' : 'max-w-[85%]', showStickyInlineHoverRow && !isShellResult ? 'pb-5' : undefined)}>
-                                        <div
-                                            style={isShellResult ? undefined : {
-                                                backgroundColor: 'var(--chat-user-message-bg)',
-                                                borderRadius: userMessageRadius,
-                                                borderBottomRightRadius: 'var(--radius-sm)',
-                                            }}
-                                            className={isShellResult ? 'min-w-0 text-left' : 'px-3 py-1.5 shadow-none'}
-                                            data-user-message-bubble={isShellResult ? undefined : 'true'}
-                                            data-shell-result={isShellResult ? 'true' : undefined}
-                                        >
+                                        <UserMessageBubble isShellResult={isShellResult}>
                                             <MessageBody
                                                 messageId={message.info.id}
                                                 parts={displayParts}
@@ -1174,7 +1165,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                                 userActionsMode={useExternalUserActionsRow ? 'external-content' : 'inline'}
                                                 stickyUserHeaderEnabled={stickyUserHeader && !isShellResult}
                                             />
-                                        </div>
+                                        </UserMessageBubble>
                                         {useExternalUserActionsRow ? (
                                             <MessageBody
                                                 messageId={message.info.id}

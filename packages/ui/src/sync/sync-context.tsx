@@ -4,6 +4,7 @@ import { mountProjectOrderSync } from './project-order-sync'
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
 import { useRemoteChat, useRemoteMessageParts } from './remote-chat-context'
 import type { Message, Part, Todo } from '@/lib/opencode/v2-types'
+import { parseSubagentNotification } from '@/lib/opencode/subagent-notification'
 import type { Event } from '@/sync/types'
 
 import type { Session } from '@/lib/opencode/v2-types'
@@ -3834,8 +3835,8 @@ type ScopedBlockingRequestCache<T extends { id: string }> = {
 
 /**
  * Live subagent dispatch edges for a session, read from its transcript's
- * running task tool parts. Fork + task_id reuse leaves the child session's
- * catalog parentID pointing at the pre-fork lineage; these edges are the
+ * foreground or settled-background task/subagent tool parts. Fork + task_id reuse
+ * leaves the child session's catalog parentID on the pre-fork lineage; these edges are the
  * authoritative supplement that keeps a running subagent (and its pending
  * questions/permissions) inside the dispatching session's blocking scope.
  */
@@ -3843,15 +3844,25 @@ export function readTaskDispatchEdgesFromTranscript(
   data: { messageOrder: readonly string[]; partsByMessageID: Readonly<Record<string, readonly Part[] | undefined>> } | null | undefined,
 ): readonly TaskDispatchEdge[] {
   if (!data) return EMPTY_TASK_DISPATCH_EDGES
-  const edges: TaskDispatchEdge[] = []
+  const edges = new Map<string, TaskDispatchEdge>()
+  const finished = new Set<string>()
   for (const messageID of data.messageOrder) {
     const parts = data.partsByMessageID[messageID]
     if (!parts) continue
     for (const edge of collectTaskDispatchEdgesFromParts(parts as Part[])) {
-      edges.push(edge)
+      edges.set(edge.sessionId, edge)
+      finished.delete(edge.sessionId)
+    }
+    for (const part of parts) {
+      if (part.type !== 'text' || !part.synthetic) continue
+      const notice = parseSubagentNotification(part.text)
+      if (!notice) continue
+      if (notice.state === 'running') finished.delete(notice.sessionID)
+      else finished.add(notice.sessionID)
     }
   }
-  return edges.length === 0 ? EMPTY_TASK_DISPATCH_EDGES : edges
+  const current = [...edges.values()].filter(edge => !finished.has(edge.sessionId))
+  return current.length === 0 ? EMPTY_TASK_DISPATCH_EDGES : current
 }
 
 /**

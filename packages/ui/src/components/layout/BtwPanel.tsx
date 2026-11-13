@@ -3,6 +3,8 @@ import { useEvent } from '@reactuses/core';
 import { ChatPromptComposer } from '@/components/chat/ChatPromptComposer';
 import { ComposerQuoteChips } from '@/components/chat/ComposerQuoteChips';
 import { MarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import UserTextPart from '@/components/chat/message/parts/UserTextPart';
+import { UserMessageBubble } from '@/components/chat/message/UserMessageBubble';
 import { AssistantMessageActionButtons } from '@/components/chat/message/AssistantMessageActionButtons';
 import { AssistantMessageFooter, MESSAGE_ACTION_ICON_BUTTON_CLASS, MESSAGE_ACTION_ICON_CLASS, MESSAGE_ACTION_ICON_WEIGHT } from '@/components/chat/message/AssistantMessageFooter';
 import { formatAbsoluteMessageTimestamp, formatTurnDuration } from '@/components/chat/message/timeFormat';
@@ -19,13 +21,17 @@ import { isPhoneBtwScopeOpen } from '@/mobile/useMobileNavigationStore';
 import { ensureNativeComposerCover, releaseNativeComposerCover, BTW_SHEET_NATIVE_COMPOSER_COVER } from '@/lib/nativeComposerCover';
 import { useI18n } from '@/lib/i18n';
 import { useDeviceInfo } from '@/lib/device';
+import { HostRuntimeProvider } from '@/contexts/HostRuntimeProvider';
+import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import { normalizeDirectoryKey } from '@/lib/pathNormalization';
+import type { TextPart } from '@/lib/opencode/v2-types';
 import { useUIStore } from '@/stores/useUIStore';
 import { ModelLogo } from '@/components/ui/ModelLogo';
 import { getProviderModelDisplayName } from '@/lib/modelDisplay';
 import { useConfigStore } from '@/stores/useConfigStore';
 import {
   EMPTY_SESSION_BTW_ENTRY,
+  formatSessionBtwUserTurn,
   getSessionBtwKey,
   resolveSessionBtwSendSelection,
   useSessionBtwStore,
@@ -50,6 +56,14 @@ const BtwTurnView = React.memo(function BtwTurnView({ turn, isLast, sessionId, d
   const { t } = useI18n();
   const { hasTouchInput } = useDeviceInfo();
   const messageId = `btw:${sessionId}:${turn.id}`;
+  const questionMessageId = `${messageId}:question`;
+  const questionPart = React.useMemo<TextPart>(() => ({
+    id: questionMessageId,
+    sessionID: sessionId,
+    messageID: questionMessageId,
+    type: 'text',
+    text: formatSessionBtwUserTurn({ quotes: turn.quotes, question: turn.question }),
+  }), [questionMessageId, sessionId, turn.question, turn.quotes]);
   const replyRef = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
     if (isMobile && replyRef.current) return bindMessageTimeFocus(replyRef.current, messageId);
@@ -64,10 +78,14 @@ const BtwTurnView = React.memo(function BtwTurnView({ turn, isLast, sessionId, d
     return result.ok;
   });
   return <div className="flex flex-col gap-2" data-btw-turn={turn.id}>
-    <div className="ml-8 flex flex-col gap-1.5 self-end rounded-xl bg-[var(--surface-elevated)] px-3 py-2">
-      {turn.quotes.map((quote, index) => <p key={index} data-btw-quote data-conversation-quote
-        className="m-0 whitespace-pre-wrap break-words border-l-2 border-border pl-1.5 typography-meta text-muted-foreground">{quote}</p>)}
-      <div className="whitespace-pre-wrap break-words typography-markdown text-foreground">{turn.question}</div>
+    <div className="relative flex justify-end">
+      <div className="max-w-[85%]">
+        <UserMessageBubble>
+          <div className="overflow-x-hidden overflow-y-hidden leading-relaxed text-foreground/90 text-base">
+            <UserTextPart part={questionPart} messageId={questionMessageId} isMobile={isMobile} />
+          </div>
+        </UserMessageBubble>
+      </div>
     </div>
     {turn.pending ? <p role="status" className="flex items-center gap-1.5 typography-meta text-muted-foreground">
       <Icon name="loader-4" className="size-3.5 animate-spin" aria-hidden="true" />
@@ -181,7 +199,12 @@ function BtwComposer({
  * Self-contained side conversation. Only the side turns render here; the main
  * session history is never loaded, and nothing is requested until a send.
  */
-export function BtwPanel({ scope, foot = 'panel', active = true }: { scope: SessionBtwScope; foot?: BtwComposerFoot; active?: boolean }) {
+export function BtwPanel({ scope, foot = 'panel', active = true, hostRegistry }: {
+  scope: SessionBtwScope;
+  foot?: BtwComposerFoot;
+  active?: boolean;
+  hostRegistry?: HostRuntimeRegistry;
+}) {
   const { t } = useI18n();
   const key = getSessionBtwKey(scope);
   const turns = useSessionBtwStore((state) => (state.entries[key] ?? EMPTY_SESSION_BTW_ENTRY).turns);
@@ -199,7 +222,7 @@ export function BtwPanel({ scope, foot = 'panel', active = true }: { scope: Sess
   React.useLayoutEffect(() => {
     notifyContentChange('structural');
   }, [turns.length, lastTurn?.answer, lastTurn?.pending, notifyContentChange]);
-  return <section className="flex h-full min-h-0 min-w-0 flex-col text-foreground" aria-label={t('chat.btw.title')}>
+  const panel = <section className="flex h-full min-h-0 min-w-0 flex-col text-foreground" aria-label={t('chat.btw.title')}>
     <div ref={scrollRef} data-btw-transcript className="overlay-scrollbar-container min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
       <div className="flex flex-col gap-5">
         {turns.length === 0
@@ -210,6 +233,9 @@ export function BtwPanel({ scope, foot = 'panel', active = true }: { scope: Sess
     </div>
     <BtwComposer key={key} scope={scope} pending={pending} quotes={quotes} foot={foot} />
   </section>;
+  return scope.host && hostRegistry
+    ? <HostRuntimeProvider registry={hostRegistry} location={scope.host.location}>{panel}</HostRuntimeProvider>
+    : panel;
 }
 
 /**

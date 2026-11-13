@@ -3,6 +3,7 @@ import { DateTime } from 'luxon';
 import parser from 'cron-parser';
 import { makeOpenCodeV2Client } from '../opencode/v2-client.js';
 import { getNativeSessionGoal } from '../opencode/native-goal.js';
+import { readSessionFamilyActivity } from '../notifications/family-completion-gate.js';
 import { buildScheduledTaskMetadata } from '../session-metadata/system-session.js';
 import { SCHEDULED_SLOT_CLAIMED_CODE } from './run-history-store.js';
 import {
@@ -389,6 +390,24 @@ const isSessionNotFoundError = (error) => {
   return Number(error.status ?? error.statusCode ?? error.response?.status) === 404;
 };
 
+const isSessionFamilyBusy = async (client, sessionID, requestOptions) => {
+  const activeMap = await client.session.active(requestOptions);
+  if (!activeMap || typeof activeMap !== 'object' || Array.isArray(activeMap)) {
+    throw new Error('Unknown session activity');
+  }
+  if (Object.prototype.hasOwnProperty.call(activeMap, sessionID)) return true;
+  const { activeRoots } = await readSessionFamilyActivity({
+    loadActiveSessionIds: () => Object.keys(activeMap),
+    loadParent: async (id) => {
+      if (id === sessionID) return null;
+      const session = await client.session.get({ sessionID: id }, requestOptions);
+      if (!session || session.id !== id || session.error) throw new Error('Unknown session ancestry');
+      return session.parentID ?? null;
+    },
+  });
+  return activeRoots.has(sessionID);
+};
+
 const snapshotSessionOutcome = async ({
   client,
   sessionID,
@@ -398,21 +417,12 @@ const snapshotSessionOutcome = async ({
 }) => {
   const requestOptions = signal ? { signal } : undefined;
 
-  if (typeof client?.session?.active === 'function') {
-    try {
-      const activeMap = await client.session.active(requestOptions);
-      if (!(activeMap && typeof activeMap === 'object' && !Array.isArray(activeMap))) {
-        // Malformed active payload is unknown — never idle-success.
-        return { outcome: 'busy' };
-      }
-      if (Object.prototype.hasOwnProperty.call(activeMap, sessionID)) {
-        return { outcome: 'busy' };
-      }
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      // active failure = unknown; do not fall through to message.list success.
-      return { outcome: 'busy' };
-    }
+  try {
+    if (await isSessionFamilyBusy(client, sessionID, requestOptions)) return { outcome: 'busy' };
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    // Activity or ancestry failure stays unknown, never idle-success.
+    return { outcome: 'busy' };
   }
 
   if (goalEnabled) {
@@ -865,16 +875,10 @@ export const createScheduledTasksRuntime = (deps) => {
       signal?.throwIfAborted?.();
 
       let sessionBusy = null;
-      if (typeof client?.session?.active === 'function') {
-        try {
-          const activeMap = await client.session.active(requestOptions);
-          if (activeMap && typeof activeMap === 'object' && !Array.isArray(activeMap)) {
-            sessionBusy = Object.prototype.hasOwnProperty.call(activeMap, sessionID);
-          }
-          // Malformed / thrown active stays null → unknown, keep polling.
-        } catch (error) {
-          if (signal?.aborted) throw error;
-        }
+      try {
+        sessionBusy = await isSessionFamilyBusy(client, sessionID, requestOptions);
+      } catch (error) {
+        if (signal?.aborted) throw error;
       }
 
       if (sessionBusy !== false) {

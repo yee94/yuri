@@ -27,11 +27,13 @@ vi.mock('@/components/chat/MarkdownRenderer', () => {
   };
   return {
     MarkdownRenderer: (props: Parameters<typeof render>[0]) => render(props),
-    SimpleMarkdownRenderer: ({ content }: { content: string }) => render({ content }),
+    SimpleMarkdownRenderer: ({ content, messageId }: { content: string; messageId?: string }) => <div data-user-markdown data-message-id={messageId}>{content}</div>,
   };
 });
 vi.mock('@/components/ui', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/lib/clipboard', () => ({ copyTextToClipboard: vi.fn(async () => ({ ok: true })) }));
+vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo' }));
+vi.mock('@/queries/installedSkillsQueries', () => ({ useInstalledSkillsQuery: () => ({ data: [] }) }));
 vi.mock('@/components/ui/ModelLogo', () => ({ ModelLogo: () => <span data-model-logo /> }));
 vi.mock('@/sync/selection-store', () => ({
   useSelectionStore: {
@@ -135,7 +137,7 @@ describe('Btw side conversation panel', () => {
     const footer = host.querySelector<HTMLElement>('[data-message-footer]')!;
     expect(footer.style.containerName).toBe('message-footer');
     expect(footer.className).toContain(foot === 'page' ? 'mt-1.5' : 'mt-2.5');
-    expect(footer.className).toContain(foot === 'page' ? 'mb-0.5' : 'mb-2');
+    expect(footer.className).toContain(foot === 'page' ? 'mb-2' : 'mb-3');
     expect(footer.textContent).toContain('1.3s');
     expect(footer.querySelector('[data-message-time]')?.textContent).toBe(formatAbsoluteMessageTimestamp(completedAt));
     expect(footer.querySelector('use[href="#yuri-pulse"]')).toBeNull();
@@ -251,6 +253,21 @@ describe('Btw side conversation panel', () => {
       variant: 'assistant',
       enableFileReferences: false,
     }));
+  });
+
+  test('questions reuse the session user bubble, Markdown and quote rendering', async () => {
+    useSessionBtwStore.setState({ entries: {
+      [getSessionBtwKey(scope)]: { quotes: [], turns: [{ id: 't1', quotes: ['selected excerpt'], question: '/why **this**?', answer: '', error: null, pending: true }] },
+    } });
+    await act(async () => root.render(<BtwPanel scope={scope} />));
+    const bubble = host.querySelector<HTMLElement>('[data-user-message-bubble="true"]')!;
+    expect(bubble.style.backgroundColor).toBe('var(--chat-user-message-bg)');
+    expect(bubble.style.borderRadius).toBe('var(--radius-xl)');
+    expect(bubble.style.borderBottomRightRadius).toBe('var(--radius-sm)');
+    expect(bubble.parentElement?.className).toContain('max-w-[85%]');
+    expect(bubble.querySelector('[data-conversation-quote]')?.textContent).toBe('selected excerpt');
+    expect(bubble.querySelector('[data-user-markdown]')?.textContent).toBe('/why **this**?');
+    expect(bubble.querySelector('[data-transcript-search-part]')).toBeTruthy();
   });
 
   test('answer arrival does not drag a reader back to the bottom', async () => {

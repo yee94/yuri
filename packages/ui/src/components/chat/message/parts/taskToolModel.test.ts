@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'vitest';
 import type { Message, Part } from '@/lib/opencode/v2-types';
 
 import {
@@ -76,6 +76,15 @@ describe('taskToolModel', () => {
         expect(parseSubagentNotification('普通用户输入')).toBe(undefined);
         expect(parseSubagentNotification('<subagent sessionID="ses_child_4">缺 state</subagent>')).toBe(undefined);
         expect(parseSubagentNotification(undefined)).toBe(undefined);
+    });
+
+    test('parses an idle report with outstanding background work without marking it complete', () => {
+        expect(parseSubagentNotification('<subagent sessionID="ses_child" state="running" description="Research">Partial answer\n\nBackground work still running:\n- shell (sh_1): build</subagent>')).toEqual({
+            sessionID: 'ses_child',
+            state: 'running',
+            description: 'Research',
+            body: 'Partial answer\n\nBackground work still running:\n- shell (sh_1): build',
+        });
     });
 
     test('parses official shell background completion notifications', () => {

@@ -1818,7 +1818,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!hasModifier(e)) {
+      if (!hasModifier(e) || (e.metaKey && e.ctrlKey)) {
         return;
       }
 

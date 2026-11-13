@@ -16,7 +16,10 @@ export type SessionCreateRequest = {
 
 type DeleteListener = (request: SessionDeleteRequest) => void;
 type CreateListener = (request: SessionCreateRequest) => void;
-type DirectoryListener = () => void;
+type SessionDirectoryRequest = {
+  origin?: { x: number; y: number };
+};
+type DirectoryListener = (request: SessionDirectoryRequest) => void;
 type GitRefreshHint = { directory: string };
 type GitRefreshListener = (hint: GitRefreshHint) => void;
 
@@ -54,8 +57,15 @@ export const sessionEvents = {
       directoryListeners.delete(listener);
     };
   },
-  requestDirectoryDialog() {
-    directoryListeners.forEach((listener) => listener());
+  requestDirectoryDialog(event?: { currentTarget: EventTarget | null; detail: number }) {
+    const request: SessionDirectoryRequest = {};
+    if (event && event.detail > 0 && event.currentTarget instanceof HTMLElement) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        request.origin = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      }
+    }
+    directoryListeners.forEach((listener) => listener(request));
   },
   onGitRefreshHint(listener: GitRefreshListener) {
     gitRefreshListeners.add(listener);

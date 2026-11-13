@@ -22,15 +22,29 @@ export function createSessionUnreadStore({ dbPath, onChanged = () => {} }) {
     );
   `);
   const find = db.prepare('SELECT * FROM session_unread WHERE id = ?');
-  const revision = () => db.prepare('SELECT revision FROM unread_meta WHERE id = 1').get().revision;
+  const readRevision = db.prepare('SELECT revision FROM unread_meta WHERE id = 1');
+  const revision = () => readRevision.get().revision;
+  let publishedRevision = revision();
+  const publish = () => {
+    const next = revision();
+    if (next <= publishedRevision) return;
+    onChanged(next);
+    publishedRevision = next;
+  };
+  // Desktop and development Hosts can share this file, but not their SSE clients.
+  const peerTimer = dbPath === ':memory:' ? null : setInterval(() => {
+    try { publish(); }
+    catch { console.warn('[session-unread] shared revision check failed; retrying'); }
+  }, 1000);
+  peerTimer?.unref();
   const publicRow = (row) => ({
     directory: row.directory, unreadCount: row.unreadCount, hasError: Boolean(row.hasError),
     manual: Boolean(row.manual), revision: row.revision,
   });
-  const snapshot = () => ({
+  const snapshot = db.transaction(() => ({
     revision: revision(),
     sessions: Object.fromEntries(db.prepare('SELECT * FROM session_unread').all().map(row => [row.id, publicRow(row)])),
-  });
+  }));
   const writeRow = db.prepare(`INSERT OR REPLACE INTO session_unread
     (id, directory, unreadCount, hasError, manual, revision, terminal, eventAt, sequence)
     VALUES (@id, @directory, @unreadCount, @hasError, @manual, @revision, @terminal, @eventAt, @sequence)`);
@@ -46,7 +60,7 @@ export function createSessionUnreadStore({ dbPath, onChanged = () => {} }) {
       writeRow.run(next.row);
       return next.publish;
     })();
-    if (changed) onChanged(revision());
+    if (changed) publish();
   };
   return {
     snapshot,
@@ -86,8 +100,8 @@ export function createSessionUnreadStore({ dbPath, onChanged = () => {} }) {
         db.prepare('UPDATE unread_meta SET revision = revision + 1 WHERE id = 1').run();
         return true;
       })();
-      if (changed) onChanged(revision());
+      if (changed) publish();
     },
-    close: () => db.close(),
+    close: () => { clearInterval(peerTimer); db.close(); },
   };
 }

@@ -95,6 +95,52 @@ describe('scheduled-tasks development isolation', () => {
 });
 
 describe('scheduled-tasks history recovery', () => {
+  it.each(['descendant', 'unknown', 'malformed', 'cyclic', 'unrelated'])('uses %s ancestry before recovering running history or task state', async (ancestry) => {
+    vi.useFakeTimers();
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'scheduled-family-recovery-'));
+    const store = createScheduledTaskRunHistoryStore({ dbPath: path.join(directory, 'runs.sqlite') });
+    const startedAt = Date.now() - 1000;
+    store.startRun({ id: 'run', projectId: 'project-1', taskId: 'task-1', startedAt });
+    store.attachSession('run', 'ses_parent');
+    let task = { ...scheduledTask, state: { ...scheduledTask.state, lastStatus: 'running', lastRunAt: startedAt, lastSessionId: 'ses_parent' } };
+    let childRunning = true;
+    const get = vi.fn(async ({ sessionID }) => {
+      if (ancestry === 'unknown') throw new Error('offline');
+      if (ancestry === 'malformed') return { id: 'wrong-session' };
+      return { id: sessionID, parentID: ancestry === 'cyclic' ? sessionID : ancestry === 'unrelated' ? undefined : 'ses_parent' };
+    });
+    const list = vi.fn(async () => ({ data: [{ type: 'idle', outcome: 'succeeded' }] }));
+    makeOpenCodeV2Client.mockReturnValue({ session: { active: async () => childRunning ? { ses_child: { type: 'running' } } : {}, get }, message: { list } });
+    const runtime = createRuntime(null, {
+      runHistoryStore: store,
+      projectConfigRuntime: {
+        listScheduledTasks: async () => [task],
+        updateScheduledTaskState: async (_project, _id, patch) => {
+          task = { ...task, state: { ...task.state, ...patch } };
+          return { task };
+        },
+      },
+    });
+    try {
+      await runtime.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const expected = ancestry === 'unrelated' ? 'success' : 'running';
+      expect(store.listRuns().runs[0].status).toBe(expected);
+      expect(task.state.lastStatus).toBe(expected);
+      if (expected === 'running') expect(list).not.toHaveBeenCalled();
+      childRunning = false;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(store.listRuns().runs[0].status).toBe('success');
+      expect(task.state.lastStatus).toBe('success');
+      expect(get.mock.calls.every(([, options]) => options.signal instanceof AbortSignal)).toBe(true);
+    } finally {
+      runtime.stop();
+      store.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['success', 'error', 'busy', 'unavailable', 'incomplete', 'restarted'])('repairs a running task snapshot with %s authority independently of history recovery', async (outcome) => {
     vi.useFakeTimers();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scheduled-state-recovery-'));
@@ -237,7 +283,10 @@ describe('scheduled-tasks history recovery', () => {
       return { data: [{ type: 'idle', outcome: sessionID === 'ses_failed' ? 'failed' : 'succeeded' }] };
     });
     makeOpenCodeV2Client.mockReturnValue({
-      session: { active: vi.fn(async () => busy ? { ses_live: {} } : {}) },
+      session: {
+        active: vi.fn(async () => busy ? { ses_live: { type: 'running' } } : {}),
+        get: vi.fn(async ({ sessionID }) => ({ id: sessionID })),
+      },
       message: { list: messageList },
     });
     const runtime = createRuntime(vi.fn(async () => ({ task: null })), { runHistoryStore: store });
@@ -1098,6 +1147,44 @@ describe('scheduled-tasks run history and session lifecycle', () => {
     );
 
     vi.useRealTimers();
+  });
+
+  it.each([false, true])('does not finalize or notify while an idle scheduled session has a live nested subagent (goal=%s)', async (goalEnabled) => {
+    vi.useFakeTimers();
+    const history = createHistoryStore();
+    let childRunning = true;
+    const client = createSuccessfulClient({ activeImpl: () => childRunning ? { ses_nested: { type: 'running' } } : {} });
+    client.get.mockImplementation(async ({ sessionID }) => ({ id: sessionID, parentID: sessionID === 'ses_nested' ? 'ses_child' : 'ses_1' }));
+    const notifyTaskRun = vi.fn();
+    getNativeSessionGoal.mockResolvedValue({ status: 'complete' });
+    const update = vi.fn(async (_project, _task, state) => ({ task: { ...scheduledTask, state: { ...scheduledTask.state, ...state } } }));
+    const runtime = createRuntime(update, {
+      runHistoryStore: history, notifyTaskRun, waitForOpenCodeReady: async () => {},
+      projectConfigRuntime: {
+        listScheduledTasks: async () => [{ ...scheduledTask, execution: { ...scheduledTask.execution, goalEnabled } }],
+        updateScheduledTaskState: update,
+      },
+    });
+    try {
+      await runtime.syncProject('project-1');
+      const run = runtime.runNow('project-1', 'task-1');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(history.finishRun).not.toHaveBeenCalled();
+      expect(notifyTaskRun).not.toHaveBeenCalled();
+      expect(client.messageList).not.toHaveBeenCalled();
+      expect(getNativeSessionGoal).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(history.finishRun).not.toHaveBeenCalled();
+      childRunning = false;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect((await run).ok).toBe(true);
+      expect(history.finishRun).toHaveBeenCalledTimes(1);
+      expect(notifyTaskRun).toHaveBeenCalledTimes(1);
+      expect(client.get).toHaveBeenCalledWith({ sessionID: 'ses_nested' }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    } finally {
+      runtime.stop();
+      vi.useRealTimers();
+    }
   });
 
   it('does not prompt when attachSession fails and finalizes the run as error', async () => {

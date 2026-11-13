@@ -31,6 +31,7 @@ import './directory-explorer-dialog.css';
 interface DirectoryExplorerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  origin?: { x: number; y: number };
   /** Force mobile layout regardless of device detection */
   forceMobile?: boolean;
   onRemoteProjectAdded?: (project: RemoteProject, location: HostLocation) => void | Promise<void>;
@@ -162,7 +163,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
   const hasMachines = supportsRemoteProjects() && catalog.data?.supported && selectableHosts.length > 0;
   const showMachines = hasMachines && step === 'machine';
   if (supportsRemoteProjects() && catalog.isPending && !catalog.data) {
-    return <DirectoryExplorerSurface open={props.open} onOpenChange={machine.changeOpen} mobile={isMobile} footer={null}>
+    return <DirectoryExplorerSurface open={props.open} onOpenChange={machine.changeOpen} origin={props.origin} mobile={isMobile} footer={null}>
       <p role="status" className="yuri-directory-empty text-muted-foreground">{t('common.loading')}</p>
     </DirectoryExplorerSurface>;
   }
@@ -176,7 +177,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
       && selectedHost.state !== 'unauthorized' && selectedHost.state !== 'incompatible'));
     const footer = <DirectoryMachineActions pending={machine.pending} failed={Boolean(machine.error)} canContinue={canContinue}
       onNext={machine.next} onAddSsh={openSshSettings} />;
-    return <DirectoryExplorerSurface open={props.open} onOpenChange={machine.changeOpen} mobile={isMobile} footer={footer} error={catalog.error?.message}>
+    return <DirectoryExplorerSurface open={props.open} onOpenChange={machine.changeOpen} origin={props.origin} mobile={isMobile} footer={footer} error={catalog.error?.message}>
       <DirectoryMachineList hosts={selectableHosts} selectedId={hostId} onSelect={machine.selectHost} pending={catalog.isPending}
         error={machine.error} steps={steps} canContinue={canContinue} onNext={machine.next} />
     </DirectoryExplorerSurface>;
@@ -202,6 +203,7 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   open,
   onOpenChange,
   forceMobile,
+  origin,
   machinePicker,
   discoveryError,
 }) => {
@@ -776,7 +778,7 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
     </div>
   );
 
-  return <DirectoryExplorerSurface open={open} onOpenChange={onOpenChange} mobile={isMobile}
+  return <DirectoryExplorerSurface open={open} onOpenChange={onOpenChange} origin={origin} mobile={isMobile}
     trailing={isMobile ? showHiddenToggle : undefined} hints={shortcutHints} footer={renderFooter()} initialFocus={false} error={discoveryError}>
     {content}
   </DirectoryExplorerSurface>;

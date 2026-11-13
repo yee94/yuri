@@ -3189,7 +3189,7 @@ const ContextPanelContentView: React.FC<ContextPanelProps & { remoteSessions?: A
           const visible = previewVisible && activeTab?.id === tab.id;
           return <React.Activity key={`btw:${directoryKey}:${btwSessionId}:${tab.id}`} name="context-panel-btw" mode={visible ? 'visible' : 'hidden'}>
             {btwSessionId
-              ? <BtwPanel scope={{ sessionId: btwSessionId, directory: effectiveDirectory, host: remote ? host.entry : undefined }} active={visible} />
+              ? <BtwPanel scope={{ sessionId: btwSessionId, directory: effectiveDirectory, host: remote ? host.entry : undefined }} hostRegistry={remote ? host.registry : undefined} active={visible} />
               : <p className="p-4 text-muted-foreground">{t('chat.btw.sessionRequired')}</p>}
           </React.Activity>;
         })}

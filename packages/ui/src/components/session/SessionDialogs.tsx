@@ -55,6 +55,7 @@ type DeleteDialogState = {
 export const SessionDialogs: React.FC = () => {
     const { t } = useI18n();
     const [isDirectoryDialogOpen, setIsDirectoryDialogOpen] = React.useState(false);
+    const [directoryDialogOrigin, setDirectoryDialogOrigin] = React.useState<{ x: number; y: number }>();
     const [deleteDialog, setDeleteDialog] = React.useState<DeleteDialogState | null>(null);
     const [deleteDialogSummaries, setDeleteDialogSummaries] = React.useState<Array<{ session: Session; metadata: WorktreeMetadata }>>([]);
     const [deleteDialogShouldRemoveRemote, setDeleteDialogShouldRemoveRemote] = React.useState(false);
@@ -163,7 +164,8 @@ export const SessionDialogs: React.FC = () => {
     }, [openDeleteDialog, showDeletionDialog, deleteSessionsWithoutDialog]);
 
     React.useEffect(() => {
-        return sessionEvents.onDirectoryRequest(() => {
+        return sessionEvents.onDirectoryRequest(({ origin }) => {
+            setDirectoryDialogOrigin(origin);
             setIsDirectoryDialogOpen(true);
         });
     }, []);
@@ -740,6 +742,7 @@ export const SessionDialogs: React.FC = () => {
             <DirectoryExplorerDialog
                 open={isDirectoryDialogOpen}
                 onOpenChange={setIsDirectoryDialogOpen}
+                origin={directoryDialogOrigin}
             />
         </>
     );

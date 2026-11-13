@@ -1,5 +1,30 @@
 .yuri-directory-dialog {
   max-height: min(42rem, 80dvh);
+  transition-property: opacity, scale;
+  transition-duration: 180ms, 320ms;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.yuri-directory-dialog[data-starting-style],
+.yuri-directory-dialog[data-ending-style] {
+  opacity: 0;
+  scale: 1;
+}
+
+.yuri-directory-dialog[data-source-motion][data-starting-style],
+.yuri-directory-dialog[data-source-motion][data-ending-style] {
+  scale: 0.06;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yuri-directory-dialog {
+    transition-duration: 0ms;
+  }
+
+  .yuri-directory-dialog[data-source-motion][data-starting-style],
+  .yuri-directory-dialog[data-source-motion][data-ending-style] {
+    scale: 1;
+  }
 }
 
 .yuri-directory-header {

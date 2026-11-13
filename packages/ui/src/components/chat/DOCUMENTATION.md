@@ -1,5 +1,9 @@
 # Chat components
 
+## BTW user messages
+
+`BtwPanel` renders questions through the same `UserMessageBubble` and `UserTextPart` as primary session messages, including `--chat-user-message-bg`, radius, Markdown, references and long-message disclosure. `formatSessionBtwUserTurn` supplies the canonical quote prefix for both display and prompt replay, so BTW questions beginning with `/` retain their quotes without gaining primary-command semantics. Remote BTW wraps this shared renderer in its existing `HostRuntimeProvider`, keeping Skill lookups and file actions on the owning Host.
+
 ## Remote Project primary chat
 
 Remote session autocomplete selects from the **same Host summaries Query** as the

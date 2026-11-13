@@ -152,8 +152,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
   - Part-level metadata and output parsing exist only for older persisted records and never override state metadata.
   - `readTaskStatusFromRecord` / `readTaskRunningFromOutput` detect the background-subagent
     running hint (settled output that still says `status: running`) — hint only, not live proof.
-  - `parseSubagentNotification` parses the synthetic `<subagent sessionID state description>`
-    completion notification injected into the parent session; non-matching text returns undefined.
+   - `parseSubagentNotification` re-exports the shared `lib/opencode/subagent-notification.ts` parser for synthetic `<subagent sessionID state description>` reports. It accepts `running` as well as `completed/error/cancelled`; non-matching text returns undefined. A `running` report uses the existing running label and delegated-task fallback title, with no new UI copy. The tag's state takes precedence over message metadata: OpenCode 2.3 can retain period-level `metadata.state=completed` while the tag says outstanding work is still running.
   - `parseShellNotification` parses official `<shell id state command>` completion notices
     (`core/shell/result.ts`); non-matching text returns undefined.
 
@@ -164,9 +163,10 @@ Use this doc when you ask an agent to change tool/header/description behavior.
     `state.status` still running/pending/started.
   - `hasSettledBackgroundRunningHint` = tool settled (`completed`) while metadata still says
     `running` (official shell/subagent background return shape). Never alone drives permanent busy.
-  - `collectBackgroundCompletions` + `resolveBackgroundToolActivity` project terminal facts from
-    synthetic notices and (for subagent) live child session status; background-running only while
-    those authorities have not settled.
+   - `collectBackgroundCompletions` + `resolveBackgroundToolActivity` project terminal facts from
+     synthetic notices and (for subagent) live child session status; background-running only while
+     those authorities have not settled.
+   - `running` subagent reports never enter the terminal completion index and clear an earlier period's terminal fact for that child. Later final reports settle normally; live child status retains its existing precedence.
   - Move action calls official `session.background({ sessionID })` on the **parent** session
     (whole-session detach of every currently blocking backgroundable tool). Idle is a no-op.
   - `ToolPart` shows a "Move to background" control only while that row is blocking; failures
