@@ -116,7 +116,7 @@ test('compact SSH identity prioritizes the host while its tooltip and full-name 
   expect(container.querySelector('[data-remote-host]')?.textContent).toBe('My build machine');
 });
 
-test('remote icon hover shows the machine name in a real tooltip', async () => {
+test('remote icon hover waits before showing the machine name, even inside an instant provider', async () => {
   const registry = new HostRuntimeRegistry('hub', { transportIdentity: 'transport', isCurrent: () => true, fetch: vi.fn(), sdk: () => { throw new Error('Unused'); }, service: () => { throw new Error('Unused'); } });
   registry.applyCatalog(catalog);
   await act(async () => root.render(<TooltipProvider delay={0}><RemoteHostIndicator registry={registry} hostId="a" nameOnlyTip /></TooltipProvider>));
@@ -128,7 +128,29 @@ test('remote icon hover shows the machine name in a real tooltip', async () => {
     icon.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
   });
   await flush(); await flush();
+  expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
   expect(document.querySelector('[data-slot="tooltip-content"]')?.textContent).toBe('Machine A');
+});
+
+test('briefly crossing the remote identity does not open its tooltip after leaving', async () => {
+  const registry = new HostRuntimeRegistry('hub', { transportIdentity: 'transport', isCurrent: () => true, fetch: vi.fn(), sdk: () => { throw new Error('Unused'); }, service: () => { throw new Error('Unused'); } });
+  registry.applyCatalog(catalog);
+  await act(async () => root.render(<RemoteHostIndicator registry={registry} hostId="a" compactName />));
+  const identity = container.querySelector('[data-remote-host="a"]')!;
+  await act(async () => {
+    identity.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
+    identity.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+    identity.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    identity.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+  });
+  await flush();
+  await act(async () => {
+    identity.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, relatedTarget: document.body }));
+    identity.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }));
+  });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+  expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
 });
 
 test('mobile identity long press opens its tooltip without invoking the enclosing project gestures', async () => {

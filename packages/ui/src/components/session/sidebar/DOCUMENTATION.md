@@ -58,6 +58,8 @@ actions; the sidebar's original glass/background stays continuous. The clip is
 derived from the rendered action count (24px buttons, 4px gaps and overlay insets).
 Invisible actions do not reserve their full width or shrink labels. Host tooltips show the
 full name above separate bulleted status, last-sync and optional error rows.
+Remote identity tooltips use a local 600ms hover delay instead of the sidebar's
+instant tooltip group, so briefly crossing a machine label does not open details.
 Mobile project cards and recent-session project chips/root headers reuse this
 compact identity. Touch long-press on the identity opens only its tooltip, not
 the enclosing project's action menu; project labels have priority within the row.

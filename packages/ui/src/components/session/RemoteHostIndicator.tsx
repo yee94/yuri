@@ -33,7 +33,7 @@ export const RemoteHostIndicator = React.memo(function RemoteHostIndicator({ reg
   const tip = nameOnlyTip ? host?.name ?? hostId : details;
   const name = host?.name ?? hostId;
   const compactLabel = host?.source === 'ssh' && /^[^\s@]+@[^\s@]+$/.test(name) ? name.slice(name.indexOf('@') + 1) : name;
-  return <Tooltip><TooltipTrigger asChild onPointerDown={(event) => {
+  return <Tooltip delayDuration={600}><TooltipTrigger asChild onPointerDown={(event) => {
     if (isolateLongPress && (event.pointerType === 'touch' || event.pointerType === 'pen')) event.stopPropagation();
   }}><span aria-label={tip} data-remote-host={hostId} onContextMenuCapture={isolateLongPress ? (event) => { event.preventDefault(); event.stopPropagation(); } : undefined} className={cn('inline-flex items-center gap-1 align-middle', compactName ? 'h-5 min-w-0 max-w-48 text-[11px] leading-5 text-foreground/70' : ['h-4 justify-center text-xs leading-none text-muted-foreground', composer || showName ? 'min-w-0' : 'w-4 shrink-0'])}>
     <Icon name="computer" className="block size-3 shrink-0" />
