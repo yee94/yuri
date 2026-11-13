@@ -11,6 +11,7 @@ test('desktop draft layout, local model/Agent pickers and Enter handoff', async 
   await app.press('id:new-session-effort-favorite-fixture-gpt-model');
   await app.press('id:new-session-variant-favorite-fixture-gpt-model-high');
   await app.waitFor('id:new-session-selection-search', { state: 'gone' });
+  expect(app.spanStyle('text:GPT fixture').fontSize).toBe(14);
   await app.wait(300);
   expect(app.enabled('id:new-session-agent')).toBe(true);
   await app.press('id:new-session-agent');

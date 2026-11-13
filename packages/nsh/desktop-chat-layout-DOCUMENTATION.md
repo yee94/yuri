@@ -123,6 +123,14 @@ Row 和 Composer 的**原 full-width outer**各自单次 `paddingRight`；原 Li
 
 ## 验证
 
+### 首屏共列与模型触发器
+
+`new-session-layout.tsx` 是 `NativeNewSessionPage` 原布局的纯呈现 seam。桌面直接复用 `NativeDesktopChatColumn`，不再在页面构造时固定为 752pt；窗口跨越 1600pt 断点和侧栏挤压后，使用实际父列宽度及同一组内距。底部保持 Web 的 6vh，移动容器不变，不新增 draft、List、连接或网络 owner。
+
+首屏和 Session 的桌面模型/variant 标签改用 `nativeChatTextStyle('meta')`，随 canonical 字体百分比变化；模型触发器使用 1.5 倍行高、上下各 4pt 以及水平 10pt。Agent 保留 24pt，首屏附件/听写按钮在桌面为 24pt，手机仍为原尺寸。不是固定缩放手机控件，也不改变选择、发送和输入事件。旧的 `desktop-new-session.fixture.tsx` 已接同一合成 writer producer/client 和 handoff authority，不再因缺开发接口停在等待页；没有移除产品 writer gate。
+
+`tests/desktop-chat-layout/NewSession.test.tsx` 实测生产布局在 1068→1700→800→680→1068 的宽度为 752→912→508→388→752，保留同一稿件；另验 iOS 原容器。`chat-composer-selection.test.ts` 的桌面场景使用真实 macOS platform model，不用 iOS model 下的 desktop presentation 冒充桌面字体；移动端 11pt 保持不变。这些均为 headless 引擎证据，不是原生截图、真实输入法或 input-to-paint 性能签收。
+
 运行：
 
 ```sh

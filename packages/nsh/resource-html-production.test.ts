@@ -143,7 +143,7 @@ function production(options: { targetLine?: number; route?: 'files' | 'preview';
   const button = (label: string) => { const value = nodes().find(node => node.type === 'Button' && (text(node).includes(label) || node.props.accessibilityLabel === label)); if (!value) throw Error('Missing production action ' + label); return value; };
   const press = (node: Node) => { if (node.props.disabled) throw Error('Disabled production action'); (node.props.onPress as () => void)(); };
   if (options.globalConnection) {
-    // Execute the exact production global effect, including its real connection-ID dependency.
+    // Execute the exact production global effect, including its stable Host identity dependency.
     const file = ts.createSourceFile('application.tsx', readFileSync(path.join(root, 'application.tsx'), 'utf8'), ts.ScriptTarget.ES2023, true, ts.ScriptKind.TSX);
     let entry: ts.CallExpression | undefined;
     const visit = (node: ts.Node) => {
@@ -151,7 +151,8 @@ function production(options: { targetLine?: number; route?: 'files' | 'preview';
       ts.forEachChild(node, visit);
     };
     visit(file); if (!entry) throw Error('Missing production connection clear effect');
-    vm.runInNewContext('let previous; ' + entry.getText(file), { effect, untracked, app: { connection }, nav, resourceConnectionClear });
+    const desktopHostIdentity = () => { const value = connection(); return JSON.stringify([value.id, value.url, value.authorizationID]); };
+    vm.runInNewContext('let previous; ' + entry.getText(file), { effect, untracked, desktopHostIdentity, resourceConnectionClear });
   }
   nodes();
   return { nodes, find, button, press, location, visible, scope: receipt, native, guiResult, guiRetirement, guiPresent, guiClose, controller: () => controller,

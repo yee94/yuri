@@ -60,7 +60,7 @@ pub fn bootstrap() -> Result<&'static str> {
           terminal.onData(send);"#)?;
         let raw = replace_once(raw, "blocked=true;retain", "blocked=true;blockedOwner=item.key;retain")?;
         let raw = replace_once(raw, "if(value.focus&&live)input.focus();", "if((value.focus||focusRequested)&&live){input.focus();focusRequested=false;}")?;
-        let raw = replace_once(raw, "const now = () => Date.now(), lineHeight = Math.max(12,Math.round(config.size*1.35));", "const now = () => Date.now();")?;
+        let raw = replace_once(raw, "const now = () => Date.now(), lineHeight = () => Math.max(12,Math.round(terminal.options.fontSize*1.35));", "const now = () => Date.now(), lineHeight = () => terminal.renderer.getMetrics().height;")?;
         let raw = replace_once(raw, "document.getElementById('terminal').addEventListener('click',()=>{if(live&&!moved)input.focus();});", "document.getElementById('terminal').addEventListener('click',()=>{if(live&&!moved&&!terminal.hasSelection())input.focus();});")?;
         let raw = replace_once(raw, "if(event.metaKey&&!keys[event.key])return;", "if((event.ctrlKey||event.metaKey)&&event.code==='KeyV')return;if(event.metaKey&&!keys[event.key])return;if(event.altKey&&!event.ctrlKey&&!event.metaKey&&event.key.length===1){event.preventDefault();send('\\x1b'+event.key);return;}")?;
         let raw = replace_once(raw, "const handler=e=>{e.preventDefault();e.clipboardData?.setData('text/plain',text);};\n            document.addEventListener('copy',handler);document.execCommand('copy');document.removeEventListener('copy',handler);return;", "copySelection();return;")?;
@@ -77,7 +77,6 @@ pub fn bootstrap() -> Result<&'static str> {
             if(viewportActive&&terminal.hasSelection()){event.preventDefault();event.clipboardData?.setData('text/plain',terminal.getSelection());}
           });
           const keys={Escape:"#)?;
-        let raw = replace_once(raw, "lines=Math.trunc(total/lineHeight);remainder=total-lines*lineHeight;", "cellHeight=terminal.renderer.getMetrics().height,lines=Math.trunc(total/cellHeight);remainder=total-lines*cellHeight;")?;
         // Use the same addon's real measured cells without its 50ms resize lock:
         // native dock layout must not lose a resize while a hidden page's timers
         // are throttled. No JS estimate or synthetic default cell dimensions.

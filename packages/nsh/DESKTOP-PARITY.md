@@ -15,6 +15,8 @@
 
 ## 对齐范围
 
+本次首屏/Session 聚焦验证已新增独立无凭据入口 `dev/desktop-ui/`：直接使用生产应用根及合成只读 Host，不加载产品钥匙串或真实网络。首屏共用响应式列、桌面模型字号及开发 fixture 的 writer 接线已修正。完整根的启动循环已定位到缺失的资源清理实例和异常前未推进的 Host 身份记录；已补齐原退休 registry 接线并将清理隔离在 untracked 中，保留资源退休门禁。六个 focused Vitest 文件共 52 个外层测试通过，包含 Mac/Windows 模型的完整根首屏→Session、唯一 Input/List 与零网络，以及资源退休回归。仍未取得真实 AppKit/Win32 同状态截图与 Electron 对帧，不能将 headless 通过报告为视觉还原完成。复现和未验边界见 [像素对齐账本](./tests/desktop-pixel-parity/README.md#无凭据整页复现)。
+
 | 区域 | 当前代码与证据 | 尚须完成 / 验收 |
 | --- | --- | --- |
 | 窗口与 chrome | `desktop*` 原生窗口、控件预留、拖动区、应用菜单、编辑 role；独立 headless 合同 | 标题栏逐项布局、真实菜单优先级、拖动/双击/全屏、Windows snap/读屏；多窗口、Mini Chat、固定、路由/bounds/Host 恢复、深链、托盘、缩放、客户端更新 |

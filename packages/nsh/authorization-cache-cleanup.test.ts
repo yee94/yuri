@@ -1,5 +1,32 @@
 import { expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { authorizationCacheCleanupBridge, createAuthorizationCacheCleanup, createAuthorizationCacheCleanupRoot } from './authorization-cache-cleanup';
+
+it('production manifest admits the exact native cleanup handshake before opening startup', async () => {
+  const manifest = JSON.parse(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'nsh.json'), 'utf8'));
+  const calls: string[] = [];
+  let ready = 0, retired = 0, failed = false;
+  const bridge = authorizationCacheCleanupBridge(async name => {
+    if (!manifest.capabilities.host.includes(name)) throw Error('Host call not granted: ' + name);
+    calls.push(name);
+    if (name === 'authorization.cache.ready') return { owner: 'startup-owner', tickets: ['retired-ticket'] };
+    if (name === 'authorization.cache.list') return [];
+    if (name === 'authorization.cache.claim') return { connectionID: 'fixture', authorizationID: 'retired' };
+    return true;
+  });
+  const root = createAuthorizationCacheCleanupRoot({ bridge, retire: async () => { retired++; }, subscribe: () => () => {},
+    onReady: () => { ready++; }, onState: state => { failed = state.failed; } });
+  try {
+    await root.start();
+    expect(failed).toBe(false);
+    expect(ready).toBe(1);
+    expect(retired).toBe(1);
+    await root.retry();
+    expect(new Set(calls)).toEqual(new Set(['authorization.cache.ready', 'authorization.cache.list', 'authorization.cache.claim', 'authorization.cache.ack', 'authorization.cache.retry']));
+  } finally { root.dispose(); }
+});
 
 it('claims only native tickets and ACKs only successful exact owner cleanup; partial failures remain retryable', async () => {
   const calls: unknown[] = [];

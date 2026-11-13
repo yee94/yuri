@@ -22,6 +22,16 @@
 
 **当前没有成功的新会话原生对照图，没有有效并排/叠图结论，没有像素相似度通过声明。Windows 实机像素尚未验证。**
 
+## 无凭据整页复现
+
+`dev/desktop-ui/App.tsx` 直接挂载生产 `YuriNativeApp`，只替换公开 Host 边界为本地合成记录。它使用独立的 `example.yuri.desktop-ui-preview` 存储身份，不加载产品 Rust Host、NativeStartup 或钥匙串，也不连接 Electron/真实 OpenCode；普通业务写入明确拒绝。该入口只用于首屏/Session UI 排障，不能证明真实后端联通。
+
+可重复命令：`/path/to/prepared/bin/nsh test packages/nsh/dev/desktop-ui/Preview.test.tsx`（仓库根执行，不需要产品凭据）。早期完整根触发过 `gc_decref_child` 的 `JS_REF_COUNT(p) > 0` 断言并以 SIGABRT 退出；后续 trace 还复现了单次 commit 约 131 万次操作和 328,805 个 mount items 后超时。最小化定位到 Host 身份变更的导航 reset：缺失 `resourceConnectionClear` 实例导致在记录新身份前异常，且 reset 读取导航信号，形成重复重置。
+
+2026-11-10 已补齐现有 `createResourceConnectionClear` 的根实例，通过原始导航 adapter 保留资源 retirement/重试，不先 pop 资源页；先记录身份，再以 untracked 调用清理，避免订阅清理内部读取。完整根在 Mac/Windows headless 模型均已通过首屏→Session、唯一 Input/List、无 root error 与零真实网络的验证；未关闭 GC、提高限制、伪造系统 active 或删除主界面。QuickJS 底层断言自身未单独做引擎修复，结论仅为该完整根复现已不再触发。此入口不使用产品凭据，也不证明真实 Host 联通。
+
+首屏响应式列与 Session 模型栏的局部修正、无凭据布局/交互验证见 `../../desktop-chat-layout-DOCUMENTATION.md`。六个 focused Vitest 文件共 52 项通过：`desktop-ui-preview-native`、`desktop-new-session-native`、`chat-composer-selection`、`desktop-chat-layout-core`、`desktop-chat-layout-native` 和 `resource-html-production`。全包 TypeScript 检查仍报告主应用、附件与其它模块的接口不一致，dead-code 仍缺 `vite-plugin-pwa`；没有为得到绿色结果修改这些无关模块或安装依赖。系统锁屏检查仍为 `1`，真实 AppKit 对帧未通过，不能将完整根 headless 测试报告为“两页视觉已还原”。
+
 ## 继续验收的门槛
 
 1. 桌面解锁、真实原生窗口可见且进入前台；重跑原流程，不伪造生命周期。

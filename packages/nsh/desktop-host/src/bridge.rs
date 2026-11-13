@@ -28,6 +28,11 @@ const HANDLED: &[&str] = &[
     "connection.edit",
     "connection.select",
     "connection.remove",
+    "authorization.cache.ready",
+    "authorization.cache.list",
+    "authorization.cache.claim",
+    "authorization.cache.ack",
+    "authorization.cache.retry",
     "runtime.request",
     "runtime.stream",
     "runtime.stop",
@@ -67,6 +72,8 @@ mod http_jobs;
 mod http_receipts;
 #[path = "notification_retirement.rs"]
 mod notification_retirement;
+#[path = "history_retirement.rs"]
+mod history_retirement;
 #[cfg_attr(
     not(test),
     allow(
@@ -685,6 +692,10 @@ impl State {
             native,
             extra,
         };
+        if history_retirement::pending(&state)?.iter().any(|(host, authorization)|
+            state.connections.iter().any(|c| &c.id == host && &c.authorization == authorization)) {
+            return Err("secure_store_invalid".into());
+        }
         if state
             .notification_retirements
             .iter()
@@ -788,6 +799,7 @@ struct Actor {
     native_receipts: std::collections::HashSet<String>,
     native_poison: Arc<AtomicBool>,
     http_receipts: http_receipts::Book,
+    history_cleanup: history_retirement::Cleanup,
     #[cfg(test)]
     browser: crate::browser_view::Port,
     services: host_services::Port,
@@ -850,6 +862,7 @@ impl Actor {
             native_receipts: std::collections::HashSet::new(),
             native_poison: Arc::new(AtomicBool::new(false)),
             http_receipts: Default::default(),
+            history_cleanup: Default::default(),
         }
     }
     fn load(&mut self) -> Result<()> {
@@ -967,6 +980,7 @@ impl Actor {
     fn commit(&mut self, mut next: State, invalidates: bool) -> Result<Value> {
         next.native.prune(&next.connections);
         notification_retirement::extend(self.state(), &mut next)?;
+        let history_pending = history_retirement::extend(self.state(), &mut next)?;
         if invalidates {
             next.rotate()?;
             if !self.native_selected_live(&next) {
@@ -985,6 +999,7 @@ impl Actor {
             self.invalidate();
         }
         self.state = Some(next);
+        if history_pending { let _ = self.host.send("authorization.cache.pending", json!({})); }
         let retained: std::collections::HashSet<_> = self
             .state()
             .native
@@ -1106,6 +1121,7 @@ impl Actor {
     }
     fn immediate(&mut self, name: &str, value: &Value) -> Result<Value> {
         match name {
+            name if name.starts_with("authorization.cache.") => self.history_cleanup(name, value),
             "runtime.http.cancel" => self.http_cancel(value),
             "connection.editor" => editor::descriptor(self.state(), value),
             "connection.rename" | "connection.edit" => {

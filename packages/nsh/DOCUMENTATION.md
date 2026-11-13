@@ -59,6 +59,7 @@
 | `drafts.ts` | Host/草稿范围的文本、附件、引用与未知发送快照持久化及恢复 CAS |
 | `attachments.ts` / `attachment-pick.ts` / `ios/AttachmentReceiptJournal.swift` | session URI 与携带 generation 的 contact descriptor 隔离、state 原 revision/page/generation adopter、lost ACK 原操作 GET 核对、原 scope 精确退役与重启 metadata write-ahead；复用 NSH 设备存储目录与 Keychain 原授权引用，草稿预览不转换为文件系统路径，详见 `ios/README.md#attachments` |
 | `new-session*.ts*` | 未发送的新会话页面、本地选择与恢复、首次创建 receipt、Chat admission 及导航所有权转移 |
+| `new-session-layout.tsx` | 首屏纯布局；桌面复用 Session 的响应式列宽与内距，移动保留原容器，不拥有连接、草稿或请求 |
 | `composer*.ts*` | 原生命令、magic 模板、五域引用搜索、范围重定位与发送编译 |
 | `composer-local-commands*.ts*` | 直接消费 Web 纯 classifier/metadata 的 desktop 本地 registry/admission、逐步 undo/redo 与无附件 magic 编译适配；生产接线与完整缺项见 `COMPOSER-LOCAL-COMMANDS.md` |
 | `composer-timeline*.ts*` | 按 Web 结构的原生 Timeline Dialog、用户全文搜索、日期/时间、分页、jump/revert/fork 与跨开关 pending/unknown gate；不新建 Chat/history transport |
@@ -109,7 +110,7 @@
 | `resource-html-*.ts*` / `ios/ResourceWebPreviewView.swift` / `ios/ResourceHTMLComponents.swift` | 文件 HTML 默认内联预览、源码切换、原生全屏 Dialog 与精确系统操作 presenter；每代稳定构造内容/NavPage/NavStack，exact anchor 的 UIKit dismiss completion 才放行同代 closed。ResourcePreviewOwner 唯一持有 read/stat/lease，专用 renderer 不误用通用 presenter 的 unsupported；装配合同与实际 WK 未验边界见 `tests/resource-html-viewer-contract.md` |
 | `resource-navigation.tsx` / `resource-retirement.ts` | Files/直接资源预览的原生 Back 先等待 captured owner retirement，再 pop；禁用先 pop 的边缘手势。scope boundary 撤销读取后保留旧展示根等待退休，失败在原根重试；body 在 page/Each owner 构造期只创建一次 |
 | `ResourcePresentationAnchor`（`ios/ResourceHTMLComponents.swift`） | 本代确切 controller 的 opening/dismiss 能力独立于 Host 动作授权；registerPresenter 严格校验 captured receipt，失败不重授。关闭失败按 owner/generation/attempt 拒绝退休，可在同 controller 重试；只有真实 UIKit dismiss completion 发 closed |
-| `application.tsx` connection clear / `createResourceConnectionClear` | 仅连接 ID 变化的全局清理登记上述两类资源页的退休 gate；同步撤销旧 owner 读取，等 exact retirement 与全屏同代 onClose 后按捕获 route identity 删除。generation 丢弃旧完成回调，失败复用原页重试，后续新增 routes 不被旧清理删除 |
+| `application.tsx` connection clear / `createResourceConnectionClear` | 稳定 Host 身份（连接 ID、origin、authorizationID）变化时，全局清理登记上述两类资源页的退休 gate；同步撤销旧 owner 读取，等 exact retirement 与全屏同代 onClose 后按捕获 route identity 删除。generation 丢弃旧完成回调，失败复用原页重试，后续新增 routes 不被旧清理删除；普通 lease 续期不清理。根先记录已处理身份，再以 untracked 调用清理；无资源 gate 时才交原桌面 reset，不先销毁资源页 |
 | `resources*.ts*` / `resource-svg.tsx` / `ios/ResourceBridge.swift` / `ios/ResourceSVGImageComponent.swift` | 只读文件/opaque 联系人附件与原件 lease；文件独有的串行 stat watcher、独立 WK SVG 图片模式及未验边界见 `tests/resources-svg-watcher-contract.md` |
 
 联系人资源 descriptor 的 generation 由 `ResourceBridge.ContactAttachmentResource` 严格解析并随完整身份保存在原件 lease；原 authenticated transport 拥有读取与新 presentation 的核验。新版/legacy wire、reset 拒绝和独立合成附件载体验证边界见 `tests/resource-html-viewer-contract.md#contact-attachment-generation-admission` 与 `tests/contact-resource-uikit/README.md`。这不转移附件上传、state/journal 或 HTML anchor/global-clear 的所有权。

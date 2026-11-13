@@ -29,6 +29,8 @@ Cargo manifest 精确约束 NSH `=0.4.0`；桌面 check/test/build 统一通过 
 - macOS 默认仅 ad-hoc 开发签名，`NSH_SIGN_IDENTITY` 可换开发身份；没有发布、公证、安装器、Windows 签名或自动更新。
 - 脚本不启动常驻服务或应用窗口；需要手动启动时遵循仓库 tmux 规则。
 
+`NativeStartup` 在业务根之前调用五项 `authorization.cache.{ready,list,claim,ack,retry}`。源 manifest 已授予这些方法并不代表旧 executable 已实现；只更新 bundle、沿用加入这些 handler 之前的 Host，会停在启动错误提示，连连接页都未进入。`authorization-cache-cleanup.test.ts` 覆盖 manifest 与启动握手，实际交付仍须核验配套 native Host。缺 handler 的错误与系统钥匙串等待、后端认证失败是不同阶段，不能以开窗或 `/health` 成功代表真实连接成功。
+
 ## 实现边界
 
 | 能力 | 当前行为 |
@@ -39,6 +41,7 @@ Cargo manifest 精确约束 NSH `=0.4.0`；桌面 check/test/build 统一通过 
 | `connection.editor/rename/edit` | 只读元数据 descriptor、exact schema／version CAS 的 direct 元数据编辑；跨 origin 改动要求显式重新授权，metadata-only 不轮 lease |
 | `connection.connect`＋`id/version` | 原 ID 的 direct 重新授权；要求新 token 或 password，密码响应及最终 probe 后复验 CAS；保留 recency／selection，新 authorizationID，只有选中项轮 lease |
 | `connection.select/remove` | 持久事务成功后更新；选中连接变化取消旧 HTTP／SSE 并轮换 lease；删除选中项不猜另一个默认连接 |
+| `authorization.cache.ready/list/claim/ack/retry` | 原连接 actor 在删除或更换授权的同一 Vault 事务中记录历史缓存清理任务；窗口认领精确票据，JS 完成对应历史缓存清理后才能持久确认。启动先处理遗留任务；失败保留任务供重试。当前仅验证单窗口，生产多窗口清理协调尚未验收 |
 | `runtime.request` | 保留 method/path/query/JSON body 和 `{status,body}`；新增可选 `writerGrant`，session/assistant/new-session mutation 在 native fetch 前强制要求 exact grant；GET 不取 writer |
 | `desktop.writer.capabilities/acquire/release/renew` | 原 Vault durable held grant；native stable origin/auth 的同 owner 原子续 lease，不销毁 draft；pending/unknown veto、clean final-close 释放、crash 不解锁；root、正式 Chat 与新会话已接 consumer，冷 held-grant resolver/生产多窗仍未开放 |
 | `desktop.openInApps.capabilities/read/scan/select/open` | 产品已精确授予五项；原 actor 消费进程级 catalog，发现/选择不授予 Host 目录权限；真实本机目录映射 producer 缺失，open 明确 unsupported；未执行系统应用扫描/打开 |

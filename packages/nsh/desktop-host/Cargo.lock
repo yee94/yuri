@@ -1962,6 +1962,8 @@ dependencies = [
 [[package]]
 name = "nsh-base"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5298bbdc8874c2b5a1e6b99588cb120253d905d82628aed42ba799fecc5859bc"
 dependencies = [
  "chrono",
  "html5ever",
@@ -1990,6 +1992,8 @@ dependencies = [
 [[package]]
 name = "nsh-core"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "171f17b402bedb0cead975d3abcefbf0e7963583fbdbf1dbcb03ef73ba11191d"
 dependencies = [
  "cap-std",
  "crc32fast",
@@ -2024,6 +2028,8 @@ dependencies = [
 [[package]]
 name = "nsh-engine"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a22f5b30bd9501790a6e487d07593e626117ce9b063fbf8ebdc7f44d1bd829c4"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -2044,6 +2050,8 @@ dependencies = [
 [[package]]
 name = "nsh-js"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79e175909211c71b49591e2c56d255802d7a8a61ea7a948f46c265c5e6fad291"
 dependencies = [
  "futures-util",
  "getrandom 0.4.3",
@@ -2064,6 +2072,8 @@ dependencies = [
 [[package]]
 name = "nsh-macros"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08e449212388f9e8352235b45c1b07a9acc192e86a375e19643a6c0849d56580"
 dependencies = [
  "imagesize 0.15.0",
  "proc-macro2",
@@ -2076,6 +2086,8 @@ dependencies = [
 [[package]]
 name = "nsh-package"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad1562533ba286bad9a13f8790bc6a4c9ca6acc3977151bc513b5f6940909c11"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
@@ -2090,6 +2102,8 @@ dependencies = [
 [[package]]
 name = "nsh-platform-macos"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e6f8b7c6e28d04c50c89c0d14482f66890d54edfed46418e2a7ba8c6d6786d6"
 dependencies = [
  "block2",
  "crossbeam-channel",
@@ -2115,6 +2129,8 @@ dependencies = [
 [[package]]
 name = "nsh-platform-windows"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5058703e4e6f4beef699f9eb75434455f973d58d36a21658161cae89cea433fd"
 dependencies = [
  "crossbeam-channel",
  "image",

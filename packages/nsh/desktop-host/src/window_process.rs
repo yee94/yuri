@@ -268,6 +268,9 @@ impl Context {
             return Ok(());
         }
         let mut next = State::load(&*self.actor.vault, self.actor.loopback)?;
+        let prior_history = history_retirement::pending(old)?;
+        let history_changed = history_retirement::pending(&next)?.iter().any(|pair|
+            !prior_history.contains(pair));
         next.native.inherit_live(&old.native);
         if let Some(native) = native { next.native.inherit_live(native); }
         // Shared registry/credentials are authoritative. Selection and lease belong ONLY to this view.
@@ -296,6 +299,7 @@ impl Context {
             }
         }
         self.actor.state = Some(next);
+        if history_changed { let _ = self.actor.host.send("authorization.cache.pending", json!({})); }
         self.generation = generation;
         let retained: HashSet<_> = self
             .actor

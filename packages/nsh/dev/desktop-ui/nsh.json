@@ -1,0 +1,11 @@
+{
+  "name": "Yuri UI Preview (sample data)",
+  "id": "example.yuri.desktop-ui-preview",
+  "version": "0.1.0",
+  "build": 1,
+  "appearance": "dark",
+  "theme": "../../theme.json",
+  "capabilities": {
+    "host": ["connection.*", "runtime.*", "desktop.writer.*", "desktop.files.journal.*", "desktop.window.closeDecision", "appearance.*", "notification.*", "native.diagnostics.status"]
+  }
+}

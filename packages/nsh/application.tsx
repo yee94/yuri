@@ -3615,7 +3615,7 @@ function NativeRetentionRoot(props: { hostID: string; generation: number }) {
   return <></>;
 }
 
-export function YuriNativeApp() {
+export function YuriNativeApp(props: { startupFeedback?: JSX.Element; startupFeedbackVisible?: boolean } = {}) {
   let changesCurrent = true;
   cleanup(() => { changesCurrent = false; projectChangesHandle.set(null); });
   if (platform.desktop) {
@@ -3660,7 +3660,7 @@ export function YuriNativeApp() {
     else if (top?.kind === 'chat') nav.push({ kind: 'session-switcher', source: top.target });
   })));
   }
-  void run(async () => {
+  const initializeRoot = async () => {
     // Host appearance is authoritative; legacy unscoped Storage `appearance` must not override it.
     language.set((await Storage.getItem("language")) || "system");
     await loadConnections();
@@ -3715,14 +3715,17 @@ export function YuriNativeApp() {
   cleanup(stopLinks);
   cleanup(() => projectChangesSource.set(null));
   effect(() => { epoch(); lifecycle(); projectChangesSource.set(null); });
+  const resourceConnectionClear = createResourceConnectionClear<Route>({
+    routes: nav.routes,
+    setRoutes: routes => rawNavigation.setRoutes(routes),
+    popToRoot: () => { if (desktopSystemNavigationReset) desktopSystemNavigationReset(); else rawNavigation.popToRoot(); },
+  });
   let previous: string | undefined;
   effect(() => {
     const selected = desktopHostIdentity();
-    if (previous && selected !== previous) {
-      if (desktopSystemNavigationReset) desktopSystemNavigationReset(); else rawNavigation.popToRoot();
-      untracked(() => resourceConnectionClear.clear());
-    }
+    const changed = previous !== undefined && selected !== previous;
     previous = selected;
+    if (changed) untracked(() => resourceConnectionClear.clear());
   });
   return (
     <View class="flex-1 bg-background">
@@ -3835,7 +3838,7 @@ export function YuriNativeApp() {
         onHandle={handle => projectChangesHandle.set(handle)} onClose={() => projectChangesSource.set(null)} onBlocked={() => report(new Error(t('common.unavailable')))}
         onOpenPreview={(path, line, source) => { void run(async () => openResourceFile(path, source.directory, line)); }} />
       <NativeDeviceChatPreferences />
-      <NativeFeedbackLayer layoutKey={nav.routes().at(-1)}><NativeRootErrorFeedback /><NativeAppearanceFeedback suppressed={rootErrorVisible()} /></NativeFeedbackLayer>
+      <NativeFeedbackLayer layoutKey={nav.routes().at(-1)}><NativeRootErrorFeedback /><If when={!rootErrorVisible()}>{props.startupFeedback}</If><NativeAppearanceFeedback suppressed={rootErrorVisible() || !!props.startupFeedbackVisible} /></NativeFeedbackLayer>
     </View>
   );
 }

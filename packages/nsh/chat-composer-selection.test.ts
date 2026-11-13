@@ -6,7 +6,7 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-function run(steps: string[], failFirst = false, deferWrite = false, closedOnly = false) {
+function run(steps: string[], failFirst = false, deferWrite = false, closedOnly = false, platform?: 'macos') {
   const temporary = mkdtempSync(path.join(tmpdir(), 'nsh-composer-selection-'));
   const fixture = path.join(temporary, 'host.js');
   writeFileSync(fixture, `export function createHost() {
@@ -35,7 +35,14 @@ function run(steps: string[], failFirst = false, deferWrite = false, closedOnly 
     } };
   }`);
   try {
-    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'chat-composer-selection-fixture.tsx', '--web-host', fixture], { cwd: directory, encoding: 'utf8', timeout: 60_000, input: ['await app.waitFor("label:build");', ...steps].join('\n') });
+    const statements = ['await app.waitFor("label:build");', ...steps].join('\n');
+    const entry = platform ? path.join(temporary, 'Selection.test.tsx') : 'chat-composer-selection-fixture.tsx';
+    if (platform) {
+      writeFileSync(path.join(temporary, 'nsh.json'), JSON.stringify({ name: 'Composer selection fixture', id: 'example.yuri.composer-selection', theme: path.join(directory, 'theme.json'), capabilities: { host: ['connection.list', 'runtime.request'] } }));
+      writeFileSync(path.join(temporary, 'App.tsx'), `import ${JSON.stringify(path.join(directory, 'chat-composer-selection-fixture.tsx'))};\n`);
+      writeFileSync(entry, `import { expect, open, test } from 'nsh/test';\ntest('desktop selection presentation', async () => { const app = await open(${JSON.stringify(path.join(directory, 'chat-composer-selection-fixture.tsx'))}, { platform: ${JSON.stringify(platform)} });\n${statements}\n});\n`);
+    }
+    const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', entry, '--web-host', fixture], { cwd: directory, encoding: 'utf8', timeout: 60_000, ...(platform ? {} : { input: statements }) });
     expect(result.error, result.stdout + result.stderr).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
@@ -58,7 +65,9 @@ test('short Agent tap cycles without opening a sheet, reveals then retracts labe
 
 test('desktop Agent click opens the actual selector without cycling; inactive model selection is disabled', () => {
   run([
+    'expect(app.spanStyle("text:Fixture model").fontSize).toBe(11);',
     'await app.press("id:fixture-desktop");',
+    'expect(app.spanStyle("text:Fixture model").fontSize).toBe(14);',
     'await app.type("id:fixture-composer", "Desktop retained draft");',
     'await app.press("id:chat-agent-selection");',
     'await app.waitFor("id:model-agent-plan");',
@@ -68,7 +77,7 @@ test('desktop Agent click opens the actual selector without cycling; inactive mo
     'await app.press("id:fixture-hide");',
     'expect(app.enabled("id:chat-selection")).toBe(false);',
     'expect(app.value("id:fixture-composer")).toBe("Desktop retained draft");',
-  ]);
+  ], false, false, false, 'macos');
 }, 75_000);
 
 test('pending Agent write rejects reentry and reads authority after settlement', () => {

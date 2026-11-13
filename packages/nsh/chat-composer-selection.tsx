@@ -7,6 +7,7 @@ import { LONG_PRESS_MOVE_PX, LONG_PRESS_MS } from '../ui/src/lib/touch-gestures/
 import { ChatModels } from './chat-models';
 import { createModelPickerSheet } from './model-picker-presentation';
 import { NativeAgentAvatar, NativeModelLogo, nativeAgentAccent } from './chat-identity';
+import { nativeChatTextStyle } from './appearance';
 import { t } from './i18n';
 import { createPageOperations } from './page-operations';
 import { assistantPath, query, sessionPath } from './runtime';
@@ -104,6 +105,8 @@ export function NativeComposerSelection(props: {
   const providerID = () => text(model().providerID);
   const nextVariant = computed(() => nativeDesktopNextModelVariant(providers(), model()));
   const controlHeight = () => props.presentation === 'desktop' ? 24 : 26;
+  const modelTextStyle = () => props.presentation === 'desktop' ? { ...nativeChatTextStyle('meta'), lineHeight: (nativeChatTextStyle('meta').fontSize ?? 14) * 1.5 } : { fontSize: 11, lineHeight: 14 };
+  const modelHeight = () => props.presentation === 'desktop' ? modelTextStyle().lineHeight + 8 : 26;
   const displayName = () => getProviderModelDisplayName(providers().find(provider => provider.id === providerID()), modelID());
   effect(() => {
     const value = { providerID: providerID(), modelID: modelID(), label: displayName() };
@@ -165,10 +168,10 @@ export function NativeComposerSelection(props: {
       <View testID={labelVisible() ? 'chat-agent-cycle-label' : undefined} accessibilityElementsHidden={!labelVisible()} style={{ maxWidth: labelVisible() ? 160 : 0, opacity: labelVisible() ? 1 : 0, overflow: 'hidden', transitionProperty: 'all', transitionDuration: 280, transitionTimingFunction: 'ease-in-out' }}><Text class="text-xs pl-1 pr-0.5" style={{ color: nativeAgentAccent(agent()), numberOfLines: 1 }}>{agentLabel()}</Text></View>
     </Button>
     </View>
-    <Button testID="chat-selection" class="flex-row items-center gap-1 rounded-lg active:bg-accent disabled:opacity-40" style={{ height: controlHeight(), minHeight: controlHeight(), maxHeight: controlHeight(), maxWidth: props.presentation === 'desktop' ? 260 : 144, flexShrink: 1, minWidth: 0 }} hitSlop={6} disabled={!props.active || pending() || !ready()} accessibilityLabel={`${displayName() || t('chat.modelControls.selectModel')}${text(model().variant) ? ` ${formatEffortLabel(text(model().variant))}` : ''}`} onPress={() => open('model')}>
+    <Button testID="chat-selection" class="flex-row items-center gap-1 rounded-lg active:bg-accent disabled:opacity-40" style={{ height: modelHeight(), minHeight: modelHeight(), maxHeight: modelHeight(), paddingHorizontal: props.presentation === 'desktop' ? 10 : 0, maxWidth: props.presentation === 'desktop' ? 260 : 144, flexShrink: 1, minWidth: 0 }} hitSlop={6} disabled={!props.active || pending() || !ready()} accessibilityLabel={`${displayName() || t('chat.modelControls.selectModel')}${text(model().variant) ? ` ${formatEffortLabel(text(model().variant))}` : ''}`} onPress={() => open('model')}>
       <NativeModelLogo modelID={modelID()} providerID={providerID()} size={16} />
-      <Text class="text-foreground" style={{ fontSize: 11, lineHeight: 14, fontWeight: '500', maxWidth: props.presentation === 'desktop' ? 220 : 96, minWidth: 0, flexShrink: 1, numberOfLines: 1 }}>{error() || displayName() || t('sessions.scheduledTasks.editor.model.label')}</Text>
-      <If when={!!model().variant}><Text class="text-muted-foreground" style={{ fontSize: 11, lineHeight: 14 }}>{formatEffortLabel(text(model().variant))}</Text></If>
+      <Text class="text-foreground" style={{ ...modelTextStyle(), fontWeight: '500', maxWidth: props.presentation === 'desktop' ? 220 : 96, minWidth: 0, flexShrink: 1, numberOfLines: 1 }}>{error() || displayName() || t('sessions.scheduledTasks.editor.model.label')}</Text>
+      <If when={!!model().variant}><Text class="text-muted-foreground" style={modelTextStyle()}>{formatEffortLabel(text(model().variant))}</Text></If>
     </Button>
     <Sheet detents={[.72, .98]} open={props.open !== null && props.active} closeOnSwipe onOpenChange={event => { if (!event.open) props.onOpenChange(null); }} popupClass="bg-background rounded-t-3xl" popupStyle={{ height: sheet.height() }} backdropClass="bg-background/50">
       <If when={props.open !== null && props.active}>

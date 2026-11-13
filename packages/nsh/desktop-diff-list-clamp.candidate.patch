@@ -1,0 +1,187 @@
+--- a/crates/nsh-core/src/core/list.rs
++++ b/crates/nsh-core/src/core/list.rs
+@@ -43,7 +43,8 @@
+ //! never rendered, so the first offset is off. Their target stays pinned:
+ //! after each round of measurements the list follows it (`follow_pin`),
+ //! retargeting an animated scroll in flight, until the rows in the
+-//! viewport are measured, the user scrolls away or the items change.
++//! viewport are measured and the index alignment is no longer constrained
++//! by content bounds, the user scrolls away or the items change.
+ //!
+ //! # In its parent's viewport
+ //!
+@@ -716,8 +717,9 @@
+ 
+     /// After measurements: where a pinned list goes for its target, which
+     /// moved as estimated sizes became real ones. The pin ends once the
+-    /// list is there and every item in the viewport is measured (nothing
+-    /// visible can move it any more).
++    /// list is there and every item in the viewport is measured. An index
++    /// alignment still constrained by the content bounds keeps following:
++    /// measured loading rows may adopt larger bodies in later turns.
+     pub(super) fn follow_pin(&mut self, anchored: f32) -> Follow {
+         let Some(mut pin) = self.pin else {
+             return Follow::Stay;
+@@ -744,7 +746,13 @@
+             self.jump(target);
+         }
+         pin.at = target;
+-        self.pin = (!self.viewport_measured()).then_some(pin);
++        let constrained_index = match pin.target {
++            PinTarget::Index { index, view_position, view_offset } => {
++                (self.unclamped_offset_for_index(index, view_position, view_offset) - target).abs() > PIN_SLACK
++            }
++            PinTarget::End => false,
++        };
++        self.pin = (constrained_index || !self.viewport_measured()).then_some(pin);
+         if delta == 0.0 {
+             Follow::Stay
+         } else {
+@@ -1210,18 +1218,22 @@
+     /// start of the viewport, 1: end) shifted by `view_offset`, clamped to
+     /// the content.
+     pub(super) fn offset_for_index(&self, index: u32, view_position: f32, view_offset: f32) -> f32 {
++        let offset = self.unclamped_offset_for_index(index, view_position, view_offset);
++        let (min, max) = self.offset_limits();
++        offset.clamp(min, max)
++    }
++
++    fn unclamped_offset_for_index(&self, index: u32, view_position: f32, view_offset: f32) -> f32 {
+         let index = index.min(self.count.saturating_sub(1));
+         let size = self.row_size(self.row_of(index));
+         let at = self.to_content(self.item_at(index), size);
+         let free = self.viewport - size;
+-        let offset = if self.inverted {
++        if self.inverted {
+             // Mirrored like the inverted list itself.
+             at - (1.0 - view_position) * free + view_offset
+         } else {
+             at - view_position * free - view_offset
+-        };
+-        let (min, max) = self.offset_limits();
+-        offset.clamp(min, max)
++        }
+     }
+ 
+     pub(super) fn end_offset(&self) -> f32 {
+@@ -2164,6 +2176,46 @@
+         assert!(!l.pinned());
+     }
+ 
++    #[test]
++    fn clamped_index_pin_survives_late_visible_body_growth_until_user_scroll() {
++        let mut l = list(40, 64.0, 830.0);
++        for i in 0..40 {
++            l.measured(i, 64.0);
++        }
++        let target = PinTarget::Index { index: 39, view_position: 0.0, view_offset: 0.0 };
++        let at = l.target_offset(target);
++        l.pin(Some(target), at, false);
++        l.jump(at);
++        assert_eq!(l.follow_pin(0.0), Follow::Stay);
++        assert!(l.pinned(), "the requested index alignment is still clamped by the content end");
++        for i in 28..40 {
++            let anchor = l.measured(i, 80.0);
++            l.offset += anchor;
++            l.follow_pin(anchor);
++            assert!(l.item_at(39) + l.row_extent(39) <= l.offset + l.viewport);
++        }
++        let user_at = l.offset - 100.0;
++        l.reported(user_at, 0);
++        assert!(!l.pinned());
++        l.measured(38, 120.0);
++        assert_eq!(l.follow_pin(0.0), Follow::Stay);
++        assert_eq!(l.offset, user_at);
++    }
++
++    #[test]
++    fn measured_unclamped_index_pin_still_finishes() {
++        let mut l = list(40, 64.0, 830.0);
++        for i in 0..40 {
++            l.measured(i, 64.0);
++        }
++        let target = PinTarget::Index { index: 10, view_position: 0.0, view_offset: 0.0 };
++        let at = l.target_offset(target);
++        l.pin(Some(target), at, false);
++        l.jump(at);
++        assert_eq!(l.follow_pin(0.0), Follow::Stay);
++        assert!(!l.pinned());
++    }
++
+     /// A list in its parent's viewport, 100 rows of 50, starting `start`
+     /// down a page of `max + 400` in a 400 pt viewport scrolled to
+     /// `offset`.
+--- a/crates/nsh-testing/src/screen.rs
++++ b/crates/nsh-testing/src/screen.rs
+@@ -373,7 +373,10 @@
+             MountItem::ModalConfig { id, config } => {
+                 self.nodes.entry(*id).or_default().close_on_escape = config.close_on_escape;
+             }
+-            MountItem::Frame { id, frame } => self.nodes.entry(*id).or_default().frame = *frame,
++            MountItem::Frame { id, frame } => {
++                self.nodes.entry(*id).or_default().frame = *frame;
++                self.clamp_scroll(*id);
++            }
+             MountItem::ViewStyle { id, style } => {
+                 let view = self.nodes.entry(*id).or_default();
+                 view.hidden = style.hidden;
+@@ -447,6 +450,7 @@
+                 if let Some(scroll) = self.scroll_mut(*id) {
+                     scroll.content = Some(*size);
+                 }
++                self.clamp_scroll(*id);
+             }
+             MountItem::ScrollBy { id, dx, dy } => {
+                 // Not clamped: the core knows its content.
+@@ -510,6 +514,18 @@
+ 
+     /// What a platform view does with `command`, as far as the model
+     /// keeps it.
++    fn clamp_scroll(&mut self, id: NodeId) {
++        let end = self.scroll_end(id);
++        if let Some(scroll) = self.scroll_mut(id) {
++            let offset = if scroll.horizontal { &mut scroll.x } else { &mut scroll.y };
++            let next = (*offset).clamp(Points::ZERO, end);
++            if *offset != next {
++                *offset = next;
++                self.scrolled.push(id);
++            }
++        }
++    }
++
+     fn command(&mut self, id: NodeId, command: &Command) {
+         match command {
+             Command::ReadScrollSnapshot { call } => {
+@@ -2028,6 +2044,32 @@
+         MountItem::ViewStyle {
+             id,
+             style: Box::new(style),
++        }
++    }
++
++    #[test]
++    fn content_shrink_and_frame_growth_clamp_and_report_without_issuing_scrolls() {
++        for horizontal in [false, true] {
++            let mut screen = Screen::default();
++            screen.apply(&batch(vec![create(2, ViewKind::Scroll), frame(2, 0.0, 0.0, 100.0, 100.0)]));
++            let scroll = screen.scroll_mut(2).unwrap();
++            scroll.horizontal = horizontal;
++            scroll.content = Some(Size::new(Points(1000.0), Points(1000.0)));
++            scroll.x = if horizontal { Points(850.0) } else { Points::ZERO };
++            scroll.y = if horizontal { Points::ZERO } else { Points(850.0) };
++            scroll.applied = 7;
++            screen.apply(&batch(vec![MountItem::ScrollContent { id: 2, size: Size::new(Points(200.0), Points(200.0)) }]));
++            let scroll = screen.scroll(2).unwrap();
++            assert_eq!(if horizontal { scroll.x } else { scroll.y }, Points(100.0));
++            assert_eq!(scroll.applied, 7);
++            assert_eq!(screen.take_scrolled(), vec![2]);
++            screen.apply(&batch(vec![frame(2, 0.0, 0.0, 300.0, 300.0)]));
++            let scroll = screen.scroll(2).unwrap();
++            assert_eq!(if horizontal { scroll.x } else { scroll.y }, Points::ZERO);
++            assert_eq!(scroll.applied, 7);
++            assert_eq!(screen.take_scrolled(), vec![2]);
++            screen.apply(&batch(vec![MountItem::ScrollContent { id: 2, size: Size::new(Points(2000.0), Points(2000.0)) }]));
++            assert!(screen.take_scrolled().is_empty(), "content growth must not invent movement");
+         }
+     }
+ 

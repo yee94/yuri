@@ -73,6 +73,7 @@ workspaces/
 *.pid
 .worktrees/
 test-results/
+.nsh/
 
 # Local deepwork progress
 .slim/deepwork/

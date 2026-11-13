@@ -103,6 +103,50 @@ fn actor() -> (Actor, MemoryVault, Arc<FakeNetwork>) {
 }
 
 #[test]
+fn authorization_cache_cleanup_preserves_retirements_until_exact_claim_and_ack() {
+    let (mut actor, vault, _) = actor();
+    let ready = actor.immediate("authorization.cache.ready", &json!({})).unwrap();
+    let owner = ready["owner"].as_str().unwrap();
+    assert_eq!(ready["tickets"], json!([]));
+    actor.immediate("connection.remove", &json!({"id":"synthetic-host"})).unwrap();
+    assert_eq!(history_retirement::pending(&State::load(&vault, false).unwrap()).unwrap(), vec![("synthetic-host".into(), "synthetic-authorization".into())]);
+    let tickets = actor.immediate("authorization.cache.list", &json!({"owner":owner})).unwrap();
+    let ticket = tickets[0].as_str().unwrap();
+    assert!(actor.immediate("authorization.cache.ack", &json!({"owner":owner,"ticket":ticket})).is_err());
+    assert!(actor.immediate("authorization.cache.claim", &json!({"owner":"forged","ticket":ticket})).is_err());
+    assert_eq!(actor.immediate("authorization.cache.claim", &json!({"owner":owner,"ticket":ticket})).unwrap(), json!({"connectionID":"synthetic-host","authorizationID":"synthetic-authorization"}));
+    vault.fail.store(true, Ordering::Relaxed);
+    assert!(actor.immediate("authorization.cache.ack", &json!({"owner":owner,"ticket":ticket})).is_err());
+    assert_eq!(history_retirement::pending(&State::load(&vault, false).unwrap()).unwrap().len(), 1);
+    vault.fail.store(false, Ordering::Relaxed);
+    assert_eq!(actor.immediate("authorization.cache.ack", &json!({"owner":owner,"ticket":ticket})).unwrap(), json!(true));
+    assert_eq!(actor.immediate("authorization.cache.list", &json!({"owner":owner})).unwrap(), json!([]));
+    let restored = State::load(&vault, false).unwrap();
+    assert!(restored.extra.get("historyRetirements").is_none());
+}
+
+#[test]
+fn authorization_cache_cleanup_recovers_after_restart_and_rejects_old_tickets() {
+    let (mut actor, vault, network) = actor();
+    let first = actor.immediate("authorization.cache.ready", &json!({})).unwrap();
+    let mut next = actor.state().clone();
+    next.connections[0].authorization = "new-authorization".into();
+    actor.commit(next, true).unwrap();
+    let old_owner = first["owner"].as_str().unwrap();
+    let old_tickets = actor.immediate("authorization.cache.list", &json!({"owner":old_owner})).unwrap();
+    let old_ticket = old_tickets[0].as_str().unwrap();
+    let (tx, _) = mpsc::sync_channel(QUEUE);
+    let mut restarted = Actor::new(HostChannel::default(), tx, Box::new(vault), network);
+    restarted.load().unwrap();
+    let ready = restarted.immediate("authorization.cache.ready", &json!({})).unwrap();
+    assert_eq!(ready["tickets"].as_array().unwrap().len(), 1);
+    assert!(restarted.immediate("authorization.cache.claim", &json!({"owner":old_owner,"ticket":old_ticket})).is_err());
+    let owner = ready["owner"].as_str().unwrap();
+    let ticket = ready["tickets"][0].as_str().unwrap();
+    assert_eq!(restarted.immediate("authorization.cache.claim", &json!({"owner":owner,"ticket":ticket})).unwrap(), json!({"connectionID":"synthetic-host","authorizationID":"synthetic-authorization"}));
+}
+
+#[test]
 fn installed_tabs_follow_committed_publication_preserve_metadata_and_cannot_revive_after_shutdown()
 {
     let (mut actor, vault, _) = actor();

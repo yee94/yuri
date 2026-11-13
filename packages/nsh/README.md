@@ -45,6 +45,17 @@ macOS 输出 `.nsh/desktop/YuriNative.app`，Windows 输出 `.nsh/desktop/YuriNa
 
 桌面构建及 `scripts/nsh.mjs` 的 check/bundle 入口统一消费 [版本锚定兼容补丁](./patches/nsh-0.4.0/README.md)，自行构建并校验同源 CLI/runtime，不以旧 `NSH_BIN` 或版本字符串作为补丁生效证明。iOS 原生 framework 构建仍使用原发行包流程。
 
+### 无凭据 UI 开发
+
+`dev/desktop-ui/App.tsx` 挂载同一个生产 `YuriNativeApp`，仅 Host 使用本地只读样本。独立 app ID 隔离开发存储，不加载产品 Rust Host、NativeStartup 或钥匙串，不连接或写入 Electron 后端；会话内容不是真实模型回复。使用已准备的同补丁 CLI，从仓库根执行：
+
+```sh
+"$NSH_BIN" run packages/nsh/dev/desktop-ui/App.tsx --port 8791
+"$NSH_BIN" test packages/nsh/dev/desktop-ui/Preview.test.tsx
+```
+
+真实桌面展示仍需要系统解锁并允许窗口进入前台。两平台 headless 首屏→Session 通过不等于 AppKit/Win32 绘制或 Electron 像素对齐通过；当前证据见 [像素对齐账本](./tests/desktop-pixel-parity/README.md)。
+
 ## 验证
 
 ```sh
