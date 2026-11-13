@@ -28,6 +28,8 @@ const isAllowedHttpPath = (pathname) =>
   || pathname === '/auth'
   || pathname.startsWith('/auth/');
 
+const PREVIEW_TARGETS_PATH = /^\/api\/preview\/targets(?:\/[^/]+)?\/?$/;
+
 const ALLOWED_WS_PATHS = new Set([
   '/api/global/event/ws',
   '/api/event/ws',
@@ -191,7 +193,7 @@ export const createTunnelHost = ({
   // HTTP
   // -------------------------------------------------------------------------
 
-  const buildRequestHeaders = (rawHeaders) => {
+  const buildRequestHeaders = (rawHeaders, path = '') => {
     const headers = {};
     for (const [name, value] of Object.entries(rawHeaders)) {
       if (typeof name !== 'string' || typeof value !== 'string') continue;
@@ -201,6 +203,13 @@ export const createTunnelHost = ({
       headers[lower] = value;
     }
     headers['x-yuri-relay-connection'] = connectionId;
+    // Tunneled renderer fetches cannot set Origin (forbidden header), but the
+    // preview target routes require an allowed Origin. Present the loopback
+    // origin we dial, as the WS path does; scoped to these routes only so other
+    // same-origin checks keep treating tunneled requests as origin-less.
+    if (!headers.origin && PREVIEW_TARGETS_PATH.test(path)) {
+      headers.origin = `http://127.0.0.1:${getLocalPort()}`;
+    }
     return headers;
   };
 
@@ -245,7 +254,7 @@ export const createTunnelHost = ({
     try {
       response = await fetch(url, {
         method,
-        headers: buildRequestHeaders(request.headers),
+        headers: buildRequestHeaders(request.headers, request.path),
         body: requestBody,
         duplex: hasBody ? 'half' : undefined,
         signal: stream.abort.signal,
@@ -480,7 +489,7 @@ export const createTunnelHost = ({
           url: `${request.path}${request.query ? `?${request.query}` : ''}`,
           headers: websocket
             ? { upgrade: 'websocket', 'x-yuri-relay-connection': connectionId }
-            : buildRequestHeaders(request.headers),
+            : buildRequestHeaders(request.headers, request.path),
         }) === true;
       } catch {
         authorized = false;

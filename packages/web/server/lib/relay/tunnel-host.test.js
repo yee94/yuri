@@ -43,6 +43,30 @@ describe('relay admission before loopback access', () => {
   });
 });
 
+describe('tunneled HTTP Origin for preview target routes', () => {
+  const origins = async (method, path, headers = {}) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
+    const frames = [];
+    const host = createTunnelHost({ authorizeRequest: async () => true, connectionId: 'origin-test', getLocalPort: () => 4321,
+      sendFrame: (frame) => { frames.push(decodeTunnelFrame(frame)); }, getBufferedAmount: () => 0 });
+    try {
+      await host.handleFrame(encodeTunnelFrame(TunnelFrameType.HttpRequest, 1, encodeJsonPayload({ method, path, query: '', headers })));
+      await waitFor(() => frames.some((frame) => frame.frameType === TunnelFrameType.StreamEnd));
+      return fetchMock.mock.calls[0][1].headers.origin;
+    } finally { host.close(); fetchMock.mockRestore(); }
+  };
+
+  it('presents the dialed loopback origin for preview target registration', async () => {
+    expect(await origins('POST', '/api/preview/targets')).toBe('http://127.0.0.1:4321');
+    expect(await origins('DELETE', '/api/preview/targets/abc123')).toBe('http://127.0.0.1:4321');
+  });
+
+  it('leaves other routes origin-less and keeps an explicit origin', async () => {
+    expect(await origins('POST', '/api/system/dev-shutdown')).toBeUndefined();
+    expect(await origins('POST', '/api/preview/targets', { origin: 'yuri-ui://app' })).toBe('yuri-ui://app');
+  });
+});
+
 /** Minimal EventEmitter-shaped fake used only by createTunnelHost tests. */
 class FakeWebSocket {
   static OPEN = 1;
