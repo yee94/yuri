@@ -297,6 +297,24 @@ status removal, retained empty placeholder or extra scroll compensation. Verify
 the whole pin-reveal root and reading position at completion, not just Markdown
 height. Wrapped metadata/Changes controls can still legitimately add another row.
 
+The non-embedded transcript `StatusRow` uses 14px bottom padding to match that
+footer footprint. The tool-row default bottom padding (6px desktop / 4px mobile)
+left the live pin-reveal root 8px / 10px shorter than its completed state.
+Bottom margins cannot fill this difference: they collapse outside the measured
+root. Keep the live status and footer top aligned, and reserve the difference
+with in-flow padding on the status owner, not a delayed removal or scroll write.
+Its bottom margin matches the outer status wrapper's 4px margin; an 8px child
+margin otherwise escapes the pin-reveal root and shrinks the scrollable height
+by 4px on removal even when the measured root height is unchanged.
+Embedded composer rows retain their existing spacing.
+For a turn observed live by `MessageBody`, the footer occupies its final space
+immediately and fades in with Motion over 200ms (`easeOut`, opacity only).
+The reveal reuses the existing message-scoped streaming lifecycle marker; it
+adds no separate lifecycle Effect, state update, timer or subscription.
+Cold settled history does not replay the entrance, metadata updates keep the same
+footer node, and reduced motion reveals synchronously. No height/scale/translation
+animation or retained live status is involved in this handoff.
+
 ## Composer status popovers
 
 Desktop primary-session composers (including VS Code) snapshot their in-flow

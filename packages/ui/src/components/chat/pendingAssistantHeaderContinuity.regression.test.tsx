@@ -299,6 +299,23 @@ describe('new conversation assistant header continuity', () => {
     });
   };
 
+  test('footer reuses the observed streaming lifecycle; cold history does not replay the fade', async () => {
+    mocks.realBody = true;
+    const streaming = assistantMessage({ parts: [textPart('Stable answer')] });
+    await renderFrame({ assistant: streaming, working: true, streaming: true });
+    expect(container.querySelector('[data-message-footer]')).toBeNull();
+
+    const completed = assistantMessage({ completed: true, parts: [textPart('Stable answer')] });
+    await renderFrame({ assistant: completed, working: false, streaming: false });
+    const footer = container.querySelector<HTMLElement>('[data-message-footer]')!;
+    expect(footer).not.toBeNull();
+    expect(Number(footer.style.opacity)).toBeLessThan(1);
+
+    await renderMessages([], false);
+    await renderFrame({ assistant: completed, working: false, streaming: false });
+    expect(container.querySelector<HTMLElement>('[data-message-footer]')?.style.opacity).toBe('1');
+  });
+
   test.each([
     [false, 'live'], [true, 'live'], [false, 'sorted'], [true, 'sorted'],
   ] as const)('keeps turn activity stable through an empty continuation and hidden reasoning (mobile=%s, mode=%s)', async (mobile, mode) => {

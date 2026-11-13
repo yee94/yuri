@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion, useReducedMotion } from 'motion/react';
 import { Icon } from '@/components/icon/Icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
@@ -50,7 +51,7 @@ const AssistantTpsMeta = ({ label }: { label: string }) => {
 };
 
 export const AssistantMessageFooter = React.memo(function AssistantMessageFooter({
-    messageId, isMobile, actions, tps, duration, timestamp, activity, trailing,
+    messageId, isMobile, actions, tps, duration, timestamp, activity, trailing, animateReveal = false,
 }: {
     messageId: string;
     isMobile: boolean;
@@ -60,9 +61,14 @@ export const AssistantMessageFooter = React.memo(function AssistantMessageFooter
     timestamp?: string | null;
     activity?: React.ReactNode;
     trailing?: React.ReactNode;
+    animateReveal?: boolean;
 }) {
+    const reducedMotion = useReducedMotion();
     // Every completion state shares the same footprint, including textless/interrupted replies.
-    return <div className={isMobile ? MESSAGE_FOOTER_ROW_MOBILE_CLASS : MESSAGE_FOOTER_ROW_CLASS}
+    return <motion.div className={isMobile ? MESSAGE_FOOTER_ROW_MOBILE_CLASS : MESSAGE_FOOTER_ROW_CLASS}
+        initial={animateReveal && !reducedMotion ? { opacity: 0 } : false}
+        animate={{ opacity: 1 }}
+        transition={{ duration: reducedMotion ? 0 : 0.2, ease: 'easeOut' }}
         data-message-footer="true" style={MESSAGE_FOOTER_CONTAINER_STYLE}>
         {actions ? <div className={MESSAGE_FOOTER_ACTION_GROUP_CLASS} data-message-action-group="true">{actions}</div> : null}
         {(tps || duration || timestamp || activity) ? <div className={MESSAGE_FOOTER_META_GROUP_CLASS}>
@@ -82,5 +88,5 @@ export const AssistantMessageFooter = React.memo(function AssistantMessageFooter
             {timestamp ? <AssistantAbsoluteTime messageId={messageId} label={timestamp} focusReveal={isMobile} /> : null}
         </div> : null}
         {trailing}
-    </div>;
+    </motion.div>;
 });

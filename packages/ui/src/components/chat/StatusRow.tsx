@@ -261,7 +261,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
   }
 
   return (
-    <div ref={popoverRef} className={cn(isEmbedded ? "mb-1" : "mb-2", isMobile && "relative", !isEmbedded && "chat-column -mt-2", !isEmbedded && getToolRowBlockClass(isMobile), className)} style={STATUS_ROW_CONTAINER_STYLE}>
+    <div ref={popoverRef} className={cn("mb-1", isMobile && "relative", !isEmbedded && "chat-column -mt-2", !isEmbedded && getToolRowBlockClass(isMobile), !isEmbedded && "pb-3.5", className)} style={STATUS_ROW_CONTAINER_STYLE}>
       {/*
         When showPendingChanges is set (ChatInput pending-changes row), the parent is
         already `chat-input-column`. Use the same horizontal inset as the composer

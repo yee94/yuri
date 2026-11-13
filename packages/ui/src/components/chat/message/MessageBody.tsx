@@ -2089,6 +2089,7 @@ const AssistantMessageBody = React.memo(({
                 )}
                 {shouldShowTurnFooter && (
                     <AssistantMessageFooter messageId={messageId} isMobile={isMobile}
+                        animateReveal={hasStreamingHapticLifecycle}
                         actions={<>{messageActionButtons}{finalTurnActionButtons}</>}
                         tps={assistantTpsText} duration={turnDurationText} timestamp={footerTimestamp}
                         activity={showBackgroundActivity && sessionId ? <BackgroundActivityHint sessionId={sessionId} activityParts={turnGroupingContext?.activityParts} /> : null}
