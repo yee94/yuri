@@ -69,7 +69,7 @@ export async function createRemoteTransport(host, { fetchImpl = fetch, signal } 
       if (closed) throw failure('stale_host', 409);
       const url = new URL(route, base);
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-      const socket = new WebSocket(url, protocols, { headers });
+      const socket = new WebSocket(url, protocols, { headers: { ...headers, Origin: base.origin } });
       socket.onmessage = onMessage || null;
       sockets.add(socket);
       socket.once('close', () => sockets.delete(socket));

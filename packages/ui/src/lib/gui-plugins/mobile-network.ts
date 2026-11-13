@@ -3,15 +3,14 @@ import { getActiveRelayDescriptor, type RelayRuntimeDescriptor } from '@/lib/rel
 import { createRelayTunnelClient, type RelayTunnelClient, type RelayTunnelWebSocket } from '@/lib/relay/tunnel-client';
 import { wsUrlToTunnelPath } from '@/lib/relay/tunnel-payloads';
 import { getRuntimeApiBaseUrl, getRuntimeGeneration, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
-import { refreshRuntimeUrlAuthToken, subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
-import { getRuntimeUrlResolver } from '@/lib/runtime-url';
+import { subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
+import { openGuiNetworkChannel } from '@/lib/gui-network/channel';
 import { createMobileGuiWireFactory } from './mobile-network-wire';
 import { mobileGuiNetworkBridge as plugin, prepareMobileGuiNetwork, type MobileGuiDirectTarget, type MobileGuiNetworkEvent as NativeEvent } from './mobile-network-bridge';
 
 const CHUNK = 16 * 1024;
 const WINDOW = 128 * 1024;
 const MAX_STREAMS = 32;
-const READY_TIMEOUT_MS = 20_000;
 const IDLE_CLOSE_MS = 60_000;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
@@ -26,7 +25,7 @@ export type MobileGuiNetwork = {
 };
 
 type Stream = { chain: Promise<void>; queued: number; credit: number; opened: boolean };
-type Channel = { tunnel: RelayTunnelClient; socket: RelayTunnelWebSocket; hostOrigin?: string; heartbeat: ReturnType<typeof setInterval> };
+type Channel = { tunnel: RelayTunnelClient; socket: RelayTunnelWebSocket; hostOrigin?: string; close(): void };
 
 const targetOf = (raw: string): MobileGuiDirectTarget | null => {
   try {
@@ -89,9 +88,7 @@ export async function openMobileGuiNetwork(signal: AbortSignal, onFailure: () =>
     channel = undefined;
     clearTimeout(idle);
     if (!closing) return;
-    clearInterval(closing.heartbeat);
-    closing.socket.onclose = null; closing.socket.onerror = null; closing.socket.onmessage = null;
-    closing.socket.close();
+    closing.close();
     closing.tunnel.close();
   };
   // Loss affects only in-flight plugin connections; the next connection reconnects with backoff.
@@ -149,53 +146,28 @@ export async function openMobileGuiNetwork(signal: AbortSignal, onFailure: () =>
     const wait = retryAt - Date.now();
     if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
     assertCurrent();
-    await refreshRuntimeUrlAuthToken();
-    assertCurrent();
-    const tunnel = createRelayTunnelClient({ ...descriptor!, createWireSocket: wireFactory!.createWireSocket });
-    const socket = tunnel.openWebSocket(wsUrlToTunnelPath(getRuntimeUrlResolver().websocket('/api/gui-network/ws')));
-    let hostOrigin: string | undefined;
+    let tunnel: RelayTunnelClient | undefined;
     try {
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => settle(new Error('relay_unavailable')), READY_TIMEOUT_MS);
-        const abort = () => settle(new DOMException('GUI runtime ended', 'AbortError'));
-        signal.addEventListener('abort', abort, { once: true });
-        function settle(error?: Error) {
-          clearTimeout(timeout); signal.removeEventListener('abort', abort);
-          if (error) reject(error); else resolve();
-        }
-        socket.onerror = () => settle(new Error('relay_unavailable'));
-        socket.onclose = () => settle(new Error('relay_unavailable'));
-        socket.onmessage = event => {
-          try {
-            const message: unknown = typeof event.data === 'string' ? JSON.parse(event.data) : null;
-            if (!message || typeof message !== 'object' || !('type' in message) || message.type !== 'ready'
-              || !('version' in message) || message.version !== 1) throw new Error('unsupported_host');
-            if ('httpOrigin' in message) {
-              if (typeof message.httpOrigin !== 'string') throw new Error('unsupported_host');
-              const origin = new URL(message.httpOrigin);
-              if (origin.protocol !== 'http:' || origin.hostname !== 'localhost' || origin.username || origin.password
-                || origin.pathname !== '/' || origin.search || origin.hash
-                || ![origin.origin, `${origin.origin}/`].includes(message.httpOrigin)) throw new Error('unsupported_host');
-              hostOrigin = origin.origin;
-            }
-            settle();
-          } catch { settle(new Error('unsupported_host')); }
-        };
+      const opened = await openGuiNetworkChannel({
+        signal,
+        openSocket(url) {
+          assertCurrent();
+          tunnel = createRelayTunnelClient({ ...descriptor!, createWireSocket: wireFactory!.createWireSocket });
+          return tunnel.openWebSocket(wsUrlToTunnelPath(url));
+        },
+        onMessage: receive,
+        onFailure: () => { if (channel?.tunnel === tunnel) lose(); },
       });
-      assertCurrent();
-    } catch (error) { socket.close(); tunnel.close(); throw error; }
-    const opened: Channel = { tunnel, socket, hostOrigin, heartbeat: setInterval(() => send({ type: 'ping' }), 20_000) };
-    socket.onclose = () => { if (channel === opened) lose(); };
-    socket.onerror = () => { if (channel === opened) lose(); };
-    socket.onmessage = receive;
-    failures = 0;
-    return opened;
+      if (!current()) { opened.close(); throw new DOMException('GUI runtime ended', 'AbortError'); }
+      failures = 0;
+      return { ...opened, tunnel: tunnel! };
+    } catch (error) { tunnel?.close(); throw error; }
   };
   const ensureChannel = (): Promise<Channel> => {
     if (channel) return Promise.resolve(channel);
     if (!connecting) {
       const attempt = dial().then(opened => {
-        if (connecting !== attempt || !current()) { opened.socket.close(); opened.tunnel.close(); throw new DOMException('GUI runtime ended', 'AbortError'); }
+        if (connecting !== attempt || !current()) { opened.close(); opened.tunnel.close(); throw new DOMException('GUI runtime ended', 'AbortError'); }
         channel = opened;
         scheduleIdle();
         return opened;

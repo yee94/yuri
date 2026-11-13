@@ -13,6 +13,7 @@ const fixture = vi.hoisted(() => ({
   sessions: [{ id: 'same-session', title: 'Remote child', directory: '/workspace' }],
   t: (key: string) => key,
   query: vi.fn(),
+  network: vi.fn(), local: true,
 }));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => fixture.directory }));
 vi.mock('@/hooks/useDesktopWindowControlsLayout', () => ({ useDesktopWindowControlsLayout: () => ({ usesFramelessChrome: false }) }));
@@ -28,6 +29,8 @@ vi.mock('@/lib/runtime-auth', () => ({ refreshRuntimeUrlAuthToken: async () => '
 vi.mock('@/lib/runtime-url', () => ({ getRuntimeUrlResolver: () => ({ authenticatedAsset: (path: string) => `http://hub.test${path}` }) }));
 vi.mock('@/lib/relay/runtime-tunnel', () => ({ isRelayModeActive: () => false }));
 vi.mock('@/lib/preview/relay-preview-gateway-client', () => ({ hasDesktopPreviewGateway: () => false, ensurePreviewGatewayOrigin: vi.fn() }));
+vi.mock('@/lib/preview/desktop-browser-network', () => ({ openDesktopBrowserNetwork: (...args: unknown[]) => fixture.network(...args) }));
+vi.mock('@/lib/desktopLocalRuntime', () => ({ isLocalRuntimeActive: () => fixture.local }));
 vi.mock('@/queries/remoteProjectQueries', () => ({ useRemoteHostSummaries: () => { fixture.query(); return { data: { directories: [{ directory: fixture.directory, sessions: fixture.sessions }] } }; } }));
 vi.mock('@/sync/sync-context', () => ({
   useDirectoryStore: () => ({ subscribe: () => () => {}, getState: () => ({ session: [] }) }),
@@ -67,6 +70,8 @@ beforeEach(() => {
   settings.disableIframePageLoading = true;
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} });
   vi.clearAllMocks();
+  fixture.local = true;
+  fixture.network.mockReset().mockImplementation(async (_signal, _failure, entry) => ({ partition: `yuri-browser-relay-${entry?.location.hostId ?? 'hub'}` }));
   previewProxyTargetCache.clear();
   fixture.fetch.mockImplementation(async (path: string) => path === '/api/preview/targets'
     ? Response.json({ proxyBasePath: '/api/preview/proxy/0123456789abcdef', previewToken: 'preview-test', expiresAt: Date.now() + 60_000 })
@@ -99,30 +104,33 @@ it('also attributes non-loopback remote preview origins to the selected Host rat
   expect(fixture.localFetch).not.toHaveBeenCalled();
 });
 
-it('keeps the browser controls but never mounts Electron webview or falls back to client localhost after remote failure', async () => {
+it('gates the Remote Project webview on its network and retries without falling back to client localhost', async () => {
   const scope = host('host-b');
-  fixture.fetch.mockResolvedValue(Response.json({ error: 'host offline' }, { status: 503 }));
+  fixture.network.mockRejectedValue(new Error('host offline'));
   useUIStore.getState().openContextBrowser(scope.entry.key, 'http://localhost:3000');
   await render(scope);
-  expect(node.querySelector('input')).not.toBeNull();
   expect(node.querySelector('webview')).toBeNull();
-  expect(node.querySelector('iframe')?.getAttribute('src') ?? '').not.toContain('localhost');
-  expect(fixture.fetch).toHaveBeenCalled();
+  expect(node.querySelector('iframe')).toBeNull();
+  expect(fixture.network).toHaveBeenCalledWith(expect.any(AbortSignal), expect.any(Function), scope.entry);
   expect(fixture.localFetch).not.toHaveBeenCalled();
-  expect(node.querySelector('[role="alert"]')?.textContent).toContain('host offline');
-  fixture.fetch.mockImplementation(async () => Response.json({ proxyBasePath: '/api/preview/proxy/0123456789abcdef', previewToken: 'recovered-preview', expiresAt: Date.now() + 60_000 }));
-  const retry = node.querySelector<HTMLButtonElement>('[role="alert"] button')!;
+  fixture.network.mockResolvedValue({ partition: 'yuri-browser-relay-recovered' });
+  const retry = [...node.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'contextPanel.preview.actions.retry')!;
   await act(async () => retry.click());
-  expect(node.querySelector('iframe')?.src).toContain('/api/hosts/host-b/api/preview/proxy/');
+  expect(node.querySelector('webview')?.getAttribute('partition')).toBe('yuri-browser-relay-recovered');
+  expect(node.querySelector('webview')?.getAttribute('src')).toBe('http://localhost:3000/');
+  expect(fixture.fetch).not.toHaveBeenCalled();
   expect(fixture.localFetch).not.toHaveBeenCalled();
 });
 
-it('registers loopback browser URLs without allowExternal so the Host accepts them', async () => {
+it('Web uses the client network even for a Remote Project and never registers a proxy target', async () => {
+  delete window.__YURI_ELECTRON__;
   const scope = host('host-a');
   useUIStore.getState().openContextBrowser(scope.entry.key, 'http://localhost:5180/');
   await render(scope);
-  const registration = fixture.fetch.mock.calls.find(([path]) => path === '/api/preview/targets');
-  expect(JSON.parse(registration?.[1].body)).toEqual({ url: 'http://localhost:5180/' });
+  expect(node.querySelector('iframe')?.src).toBe('http://localhost:5180/');
+  expect(fixture.fetch).not.toHaveBeenCalled();
+  expect(fixture.localFetch).not.toHaveBeenCalled();
+  expect(fixture.network).not.toHaveBeenCalled();
 });
 
 it('routes the actual child session surface by raw Host location and isolates same-path panel selection', async () => {
@@ -144,18 +152,33 @@ it('routes the actual child session surface by raw Host location and isolates sa
   expect(fixture.localTranscript).not.toHaveBeenCalled();
 });
 
-it('retains the complete iframe browser on success, avoids double Host prefixes and makes zero new requests for 50 unrelated renders', async () => {
+it('retains the isolated browser across 50 unrelated renders and changes network owner with Remote Project', async () => {
   const scope = host('host-a');
-  fixture.fetch.mockResolvedValue(Response.json({ proxyBasePath: '/api/hosts/host-a/api/preview/proxy/0123456789abcdef', previewToken: 'preview-test', expiresAt: Date.now() + 60_000 }));
   useUIStore.getState().openContextBrowser(scope.entry.key, 'http://localhost:3000/a');
   await render(scope);
-  expect(node.querySelector('iframe')?.src).toContain('/api/hosts/host-a/api/preview/proxy/');
-  expect(node.querySelector('iframe')?.src).not.toContain('/api/hosts/host-a/api/hosts/');
-  const requests = fixture.fetch.mock.calls.length;
+  const webview = node.querySelector('webview');
+  expect(webview?.getAttribute('partition')).toBe('yuri-browser-relay-host-a');
   for (let i = 0; i < 50; i++) await render(scope);
-  expect(fixture.fetch).toHaveBeenCalledTimes(requests);
+  expect(fixture.network).toHaveBeenCalledOnce();
+  expect(node.querySelector('webview')).toBe(webview);
   expect(node.querySelector('input')).not.toBeNull();
   expect(fixture.native).not.toHaveBeenCalled();
+  const other = host('host-b');
+  useUIStore.getState().openContextBrowser(other.entry.key, 'http://localhost:3000/a');
+  await render(other);
+  expect(fixture.network.mock.calls[0][0].aborted).toBe(true);
+  expect(node.querySelector('webview')?.getAttribute('partition')).toBe('yuri-browser-relay-host-b');
+});
+
+it.each([true, false])('Electron session on local=%s selects direct versus current-Hub networking', async local => {
+  fixture.local = local;
+  const location = { hubId: 'hub://one', directory: fixture.directory };
+  const scope = { entry: { location, key: locationKey(location), connectionGeneration: 0, sdk: () => ({}) } } as unknown as HostRuntimeContextValue;
+  useUIStore.getState().openContextBrowser(scope.entry.key, 'http://localhost:5180/');
+  await render(scope);
+  expect(node.querySelector('webview')?.getAttribute('partition')).toBe(local ? 'persist:yuri-browser' : 'yuri-browser-relay-hub');
+  expect(fixture.network).toHaveBeenCalledTimes(local ? 0 : 1);
+  expect(fixture.localFetch).not.toHaveBeenCalled();
 });
 
 it('does not commit an old Host registration after switching the same-path panel', async () => {

@@ -858,7 +858,8 @@ export const createRelayTunnelClient = (options: RelayTunnelClientOptions): Rela
 
   const openTunnelWebSocket = (pathWithQuery: string, protocols?: string[], headers?: Record<string, string>): RelayTunnelWebSocket => {
     const { path, query } = splitPathQuery(pathWithQuery);
-    const immediate = path === '/api/remote-desktop/ws' || path === '/api/gui-network/ws';
+    const immediate = path === '/api/remote-desktop/ws' || path === '/api/gui-network/ws'
+      || /^\/api\/hosts\/[^/]+\/api\/gui-network\/ws$/.test(path);
     let readyState = WS_CONNECTING;
     let channelRef: ActiveChannel | null = null;
     let streamId = 0;

@@ -155,6 +155,30 @@ their API runtime changes. Development windows must not load remote HTML merely
 because the selected backend is remote. Explicit `YURI_SERVER_URL` retains its
 separate development override behavior.
 
+## Browser execution network
+
+`browser-relay-network.mjs` and `browser-socks-gateway.mjs` adapt the shared GUI
+TCP channel to Chromium SOCKS5. Despite the bridge's Relay name, direct/SSH
+remote runtimes and Remote Projects use it too. The renderer chooses the
+session's Host-scoped route; main receives opaque bytes, not credentials or
+target URLs with Yuri auth. Client-local sessions use their normal direct
+Browser partition. Web clients never request this capability.
+
+Each remote Browser owns an in-memory partition configured before guest creation
+with SOCKS5 and `<-loopback>` (including IP literals). The app session is untouched.
+Main gates IPC to the trusted application main frame, rejects cross-window
+partition attachment and strips guest preload/Node capabilities. Navigation,
+renderer loss and release close owned guests and TCP streams; the dead partition
+never switches back to DIRECT. There is no old Browser iframe-proxy fallback.
+Main/preload changes require a new installer.
+
+`YURI_BROWSER_NETWORK_EVIDENCE=1` enables `scripts/browser-network-evidence.test.mjs`:
+real Electron preload/session/webview under loopback HMR and bundled-scheme
+origins, HTTP, 256 KiB upload, cross-port WS, HTTPS, localhost/IPv4/IPv6,
+post-release failure and unchanged application networking. The fixture uses
+real GUI auth/Origin gates but does not render the entire application.
+Remote Host direct/real E2EE Relay coverage lives in Web `remote-hosts/routes.test.js`.
+
 ## Leased image disk cache
 
 `image-disk-cache.mjs` owns the optional `imageCache` preload capability. Shared UI authorizes the file and requests its SHA-256 through the active runtime's stat API, then keys bytes by stable runtime/credential scope and content fingerprint (no session/path partition). Downloaded content is hash-verified before commit; only an opaque key and bounded chunks cross IPC. Old Hosts retain the previous path/size/mtime compatibility key. Completed files live in `userData/image-cache-v1`, not IndexedDB. The existing `yuri-asset://cache/<opaque-id>` handler supports repeated/concurrent reads, while the older `stream` host remains a one-use progressive stream. The local-sender-gated `image-cache:clear` IPC purges cached bodies and leases on credential invalidation/logout; normal endpoint switches keep durable bytes. That clear capability requires the updated installer.

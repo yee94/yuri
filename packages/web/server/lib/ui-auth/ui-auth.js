@@ -320,7 +320,7 @@ const isUrlAuthReadableHttpPath = (pathname) => {
 export const isUrlAuthWebSocketPath = (pathname) => {
   if (typeof pathname !== 'string' || !pathname) return false;
   if (parseFilePreviewPath(pathname)) return false;
-  const remote = /^\/api\/hosts\/[^/]+(\/api\/(?:terminal\/ws|preview\/proxy\/.*))$/.exec(pathname);
+  const remote = /^\/api\/hosts\/[^/]+(\/api\/(?:terminal\/ws|gui-network\/ws|preview\/proxy\/.*))$/.exec(pathname);
   if (remote) return isUrlAuthWebSocketPath(remote[1]);
   return pathname === '/api/event/ws'
     || pathname === '/api/global/event/ws'

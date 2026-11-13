@@ -88,6 +88,11 @@ Projects 顶部“应用”打开图标卡片列表，并在共享手机 Sheet �
 
 ### Capacitor 网络生命周期
 
+HTML、插件与 Electron Browser 的鉴权、ready 校验、心跳和通道清理由
+`../gui-network/channel.ts` 统一承载；`HtmlNetworkBoundary` 统一执行前等待、
+失败重试和先卸载内容再释放的生命周期。这里的移动端适配器仅保留原生桥、
+按需连接、退避与流控；Electron 的独立 partition/SOCKS 适配归桌面 shell。
+
 **增量原则：应用自身网络保持原路。** 启动、同步、发消息、扫码配对新设备等都不经过
 插件网关；`mobile-main.tsx` 不再预装代理。只有挂载中的插件视图（`GuiPluginMount` 的
 page/panel/settings）和内置 HTML 预览（特定后缀文件、`localhost` 链接 Sheet）通过

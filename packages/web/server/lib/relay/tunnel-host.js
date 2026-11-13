@@ -51,7 +51,7 @@ const PREVIEW_PROXY_WS_PATH_PREFIX = '/api/preview/proxy/';
  */
 export const isTunnelWsPathAllowed = (path) => {
   if (typeof path !== 'string' || !path) return false;
-  if (/^\/api\/hosts\/[^/]+\/api\/(?:terminal\/ws(?:\?|$)|preview\/proxy\/)/.test(path)) return true;
+  if (/^\/api\/hosts\/[^/]+\/api\/(?:(?:terminal|gui-network)\/ws(?:\?|$)|preview\/proxy\/)/.test(path)) return true;
   // Path only (no query) — tunnel open payload already splits query.
   if (ALLOWED_WS_PATHS.has(path)) return true;
   try {
@@ -413,7 +413,8 @@ export const createTunnelHost = ({
         for (const frame of encodeFragmentedMessage(frameType, streamId, bytes)) {
           await waitForBackpressure(null);
           if (streams.get(streamId) !== stream || closed) return;
-          await send(frame, open.path === '/api/remote-desktop/ws' || open.path === '/api/gui-network/ws');
+          await send(frame, open.path === '/api/remote-desktop/ws' || open.path === '/api/gui-network/ws'
+            || /^\/api\/hosts\/[^/]+\/api\/gui-network\/ws$/.test(open.path));
         }
       });
     });

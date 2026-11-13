@@ -1,4 +1,12 @@
-# Mobile GUI network egress
+# HTML/GUI network egress
+
+Electron Browser also consumes this protocol through an isolated SOCKS5 session.
+Remote Project sessions use the authenticated Hub
+`/api/hosts/:hostId/api/gui-network/ws` upgrade, which forwards to this endpoint
+on the selected execution Host. Client-local Electron sessions and ordinary Web
+Browser views connect directly and do not acquire a GUI TCP channel.
+The shared UI channel owner is `ui/src/lib/gui-network/channel.ts`; platform
+adapters retain their own native SOCKS/stream-credit ownership.
 
 `runtime.js` owns `/api/gui-network/ws`: an authenticated, origin-checked TCP
 multiplexer reached through the existing private Relay dispatcher. Target bytes

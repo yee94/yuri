@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -26,6 +27,9 @@ import { createTerminalRuntime } from '../terminal/runtime.js';
 import { readTerminalWsControlFrame, createTerminalWsControlFrame } from '../terminal/terminal-ws-protocol.js';
 import { createTranscriptCacheService } from '../transcript-cache/service.js';
 import { runRemoteProjectOperation } from '../gui-customization/projects-remote.js';
+import { attachGuiNetwork } from '../gui-network/runtime.js';
+import { createRequestSecurityRuntime } from '../security/request-security.js';
+import { createBrowserSocksGateway } from '../../../../electron/browser-socks-gateway.mjs';
 
 const require = createRequire(import.meta.url);
 const disposers = [];
@@ -33,7 +37,7 @@ afterEach(async () => { for (const dispose of disposers.splice(0).reverse()) awa
 const wait = async (test) => { await vi.waitFor(test, { timeout: 5000, interval: 10 }); };
 
 async function host({ adapter = null, supportedRemote = true, failHubWrite = false, requestTimeoutMs = 500,
-  operationTimeoutMs = requestTimeoutMs, indexStats, requireClientAuth = false, productionTerminal = false, terminalFrames = [] } = {}) {
+  operationTimeoutMs = requestTimeoutMs, indexStats, requireClientAuth = false, productionTerminal = false, terminalFrames = [], productionGuiNetwork = false } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-remote-host-test-'));
   const clients = createRemoteClientAuthRuntime({ fsPromises: fs, path, crypto, storePath: path.join(directory, 'clients.json') });
   const issued = await clients.createClient({ clientKind: 'desktop-local', authMethod: 'pairing', pairingId: 'test-pairing' });
@@ -73,8 +77,9 @@ async function host({ adapter = null, supportedRemote = true, failHubWrite = fal
   app.get('/auth/session', auth.handleSessionStatus);
   app.post('/auth/url-token', auth.handleUrlAuthToken);
   app.use('/api', auth.requireAuth);
+  const security = createRequestSecurityRuntime({ readSettingsFromDiskMigrated: async () => ({}) });
   runtime = registerRemoteHostRoutes(app, { gateway, getAuth: () => auth, server,
-    isRequestOriginAllowed: () => true, remoteClientAuthRuntime: clients,
+    isRequestOriginAllowed: productionGuiNetwork ? security.isRequestOriginAllowed : () => true, remoteClientAuthRuntime: clients,
     readSettings: async () => settings,
     persistSettings: async (update) => { settings = { ...settings, ...update(settings) }; return settings; },
     validateDirectoryPath: async (value) => typeof value === 'string' && value.startsWith('/')
@@ -90,6 +95,7 @@ async function host({ adapter = null, supportedRemote = true, failHubWrite = fal
     isRequestOriginAllowed: async () => true, rejectWebSocketUpgrade: (socket) => socket.destroy(),
     TERMINAL_INPUT_WS_HEARTBEAT_INTERVAL_MS: 30000, TERMINAL_INPUT_WS_REBIND_WINDOW_MS: 1000,
     TERMINAL_INPUT_WS_MAX_REBINDS_PER_WINDOW: 3 }) : null;
+  const guiNetwork = productionGuiNetwork ? attachGuiNetwork({ server, uiAuthController: auth, isRequestOriginAllowed: security.isRequestOriginAllowed }) : null;
   const terminal = new WebSocketServer({ noServer: true });
   server.on('upgrade', async (req, socket, head) => {
     if (productionTerminal) return;
@@ -148,7 +154,7 @@ async function host({ adapter = null, supportedRemote = true, failHubWrite = fal
   const url = `http://127.0.0.1:${server.address().port}`;
   const headers = { Authorization: `Bearer ${issued.token}`, 'Content-Type': 'application/json' };
   disposers.push(async () => {
-    runtime.stop(); terminal.close(); transcript.close(); auth.dispose();
+    guiNetwork?.stop(); runtime.stop(); terminal.close(); transcript.close(); auth.dispose();
     await terminalRuntime?.shutdown();
     for (const socket of sockets) socket.destroy();
     await new Promise((resolve) => server.close(resolve));
@@ -174,7 +180,7 @@ async function host({ adapter = null, supportedRemote = true, failHubWrite = fal
 
 async function aggregate(options = {}) {
   const remote = await host({ requireClientAuth: options.requireClientAuth, productionTerminal: options.productionTerminal,
-    terminalFrames: options.terminalFrames });
+    terminalFrames: options.terminalFrames, productionGuiNetwork: options.productionGuiNetwork });
   let hosts = [{ id: 'remote-1', label: 'Remote', source: 'direct', apiUrl: remote.url, clientToken: remote.issued.token }];
   const listeners = new Set();
   const adapter = { listHosts: async () => hosts, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); } };
@@ -182,7 +188,68 @@ async function aggregate(options = {}) {
   return { hub, remote, setHosts(next) { hosts = next; for (const fn of listeners) fn(); } };
 }
 
+async function assertBrowserTcp(hub, route, remote) {
+  const token = (await (await hub.call('/auth/url-token', 'POST')).json()).token;
+  const address = `${hub.url.replace('http:', 'ws:')}${route}?yuri_url_token=${token}`;
+  const rejectUpgrade = (url, origin) => new Promise((resolve, reject) => {
+    const ws = new WebSocket(url, { headers: { Origin: origin } });
+    ws.on('error', () => {});
+    ws.on('unexpected-response', (_req, res) => { res.resume(); ws.terminate(); resolve(res.statusCode); });
+    ws.on('open', () => { ws.terminate(); reject(new Error('Unexpected admission')); });
+  });
+  expect(await rejectUpgrade(address, 'https://untrusted.example')).toBe(403);
+  expect(await rejectUpgrade(address.replace(token, 'invalid'), hub.url)).toBe(403);
+  const ws = new WebSocket(address, { headers: { Origin: hub.url } });
+  ws.on('error', () => {});
+  let ready;
+  const socks = createBrowserSocksGateway({ send: value => {
+    if (ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(Buffer.isBuffer(value) ? value : JSON.stringify(value)); return true;
+  } });
+  ws.on('message', (bytes, binary) => {
+    if (!binary && JSON.parse(bytes).type === 'ready') { ready = JSON.parse(bytes); return; }
+    socks.receive(binary ? bytes : bytes.toString());
+  });
+  let browser;
+  const connections = new Set();
+  const destination = net.createServer(socket => {
+    connections.add(socket); socket.once('close', () => connections.delete(socket));
+    socket.on('data', bytes => socket.write(bytes));
+  });
+  try {
+    destination.listen(0, '127.0.0.1'); await once(destination, 'listening');
+    if (ws.readyState === WebSocket.CONNECTING) await once(ws, 'open');
+    await wait(() => expect(ready?.httpOrigin).toBe(`http://localhost:${remote.server.address().port}`));
+    const { port } = await socks.start();
+    browser = net.connect(port, '127.0.0.1');
+    browser.on('error', () => {});
+    await once(browser, 'connect');
+    const read = length => new Promise(resolve => {
+      const receive = () => { const bytes = browser.read(length); if (bytes) { browser.off('readable', receive); resolve(bytes); } };
+      browser.on('readable', receive); receive();
+    });
+    browser.write(Buffer.from([5, 1, 0]));
+    expect(await read(2)).toEqual(Buffer.from([5, 0]));
+    const request = Buffer.from([5, 1, 0, 1, 127, 0, 0, 1, 0, 0]);
+    request.writeUInt16BE(destination.address().port, 8); browser.write(request);
+    expect((await read(10))[1]).toBe(0);
+    const bytes = crypto.randomBytes(512 * 1024);
+    browser.write(bytes);
+    expect(await read(bytes.length)).toEqual(bytes);
+    ws.close();
+    await wait(() => expect(connections.size).toBe(0));
+  } finally {
+    browser?.destroy(); await socks.close(); ws.terminate();
+    for (const socket of connections) socket.destroy();
+    await new Promise(resolve => destination.close(resolve));
+  }
+}
+
 describe('Remote Host production HTTP contract', () => {
+  it('routes Browser SOCKS to the Remote Project Host with URL auth and real Origin checks', async () => {
+    const { hub, remote } = await aggregate({ productionGuiNetwork: true, requireClientAuth: true, requestTimeoutMs: 5000 });
+    await assertBrowserTcp(hub, '/api/hosts/remote-1/api/gui-network/ws', remote);
+  });
   it('forwards metadata writes with their directory and patch, but rejects other methods and stale targets', async () => {
     const { hub, remote } = await aggregate();
     const writes = [];
@@ -1407,7 +1474,7 @@ describe('Remote Host production HTTP contract', () => {
 
   it.each([0, 1, 2])('uses the real E2EE Relay client for Relay-only hosts, including terminal forwarding (%i)', async (iteration) => {
     const productionTerminal = iteration === 2;
-    const remote = await host({ requireClientAuth: true, productionTerminal });
+    const remote = await host({ requireClientAuth: true, productionTerminal, productionGuiNetwork: true });
     const relay = createPrivateRelayServer({ host: '127.0.0.1', port: 0 });
     await relay.start();
     const encryption = await generateEcdhKeyPair();
@@ -1428,7 +1495,8 @@ describe('Remote Host production HTTP contract', () => {
     const paired = await remote.clients.createClient({ clientKind: 'desktop', authMethod: 'pairing', pairingId: 'relay-pair', usesRelay: true });
     const descriptor = { id: 'relay-only', name: 'Relay Host', source: 'relay', clientToken: paired.token,
       relay: { relayUrl, serverId, hostEncPubJwk: identity.hostEncPubJwk } };
-    const hub = await host({ adapter: { listHosts: async () => [descriptor] }, requestTimeoutMs: 5000 });
+    const hub = await host({ adapter: { listHosts: async () => [descriptor] }, requestTimeoutMs: 5000, productionGuiNetwork: true });
+    if (iteration === 1) await assertBrowserTcp(hub, '/api/hosts/relay-only/api/gui-network/ws', remote);
     if (productionTerminal) {
       const authorize = hub.auth.resolveAuthContext;
       let upgrades = 0;
@@ -1458,7 +1526,7 @@ describe('Remote Host production HTTP contract', () => {
       .toMatchObject({ created: true, session: { sessionID: 'ses_relay_new', directory: registered.project.path, target } });
     expect(createSession).toHaveBeenCalledOnce();
     await wait(() => expect(remote.statusStreams).toBe(1));
-    const socket = new WebSocket(`${hub.url.replace('http:', 'ws:')}/api/hosts/relay-only/api/terminal/ws`, { headers: hub.headers });
+    const socket = new WebSocket(`${hub.url.replace('http:', 'ws:')}/api/hosts/relay-only/api/terminal/ws`, { headers: { ...hub.headers, Origin: hub.url } });
     disposers.push(() => socket.terminate());
     const frames = [];
     if (productionTerminal) socket.on('message', (data) => frames.push(readTerminalWsControlFrame(data)));

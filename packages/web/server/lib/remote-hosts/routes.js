@@ -10,7 +10,7 @@ import { projectRemoteConfiguration } from './configuration.js';
 import { RUNTIME_CONTRACT_MIN_VERIFIED } from '../opencode/runtime-contract.js';
 import { parseFilePreviewPath, replaceFilePreviewUrlAuthToken } from '../preview/file-preview-path.js';
 
-const websocketPath = (path) => path === '/api/terminal/ws' || path.startsWith('/api/preview/proxy/');
+const websocketPath = (path) => path === '/api/terminal/ws' || path === '/api/gui-network/ws' || path.startsWith('/api/preview/proxy/');
 const safeRoute = (route, method) => {
   if (!route.startsWith('/api/') || /[\\\r\n]/.test(route)) return false;
   const pathname = new URL(route, 'http://remote.invalid').pathname;

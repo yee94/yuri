@@ -348,4 +348,14 @@ contextBridge.exposeInMainWorld('__YURI_DESKTOP__', {
   imageCache: imageCacheApi,
   // Relay Preview iframe origin (http://127.0.0.1:<ephemeral>). Local page only.
   previewGateway: previewGatewayApi,
+  browserRelay: isLocalPage && process.isMainFrame ? {
+    start: () => ipcRenderer.invoke('yuri:browser-relay:start'),
+    write: (scope, data) => ipcRenderer.invoke('yuri:browser-relay:write', { scope, data }),
+    stop: (scope) => ipcRenderer.invoke('yuri:browser-relay:stop', { scope }),
+    subscribe: (handler) => {
+      const listener = (_event, payload) => handler(payload);
+      ipcRenderer.on('yuri:browser-relay:data', listener);
+      return () => ipcRenderer.removeListener('yuri:browser-relay:data', listener);
+    },
+  } : undefined,
 });

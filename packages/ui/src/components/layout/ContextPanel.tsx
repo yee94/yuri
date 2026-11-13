@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { DiffView } from '@/components/views/DiffView';
 import { FilesView } from '@/components/views/FilesView';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
-import { isLoopbackHttpUrl, openExternalUrl } from '@/lib/url';
+import { openExternalUrl } from '@/lib/url';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
@@ -57,7 +57,6 @@ import { ContextPanelSessionTranscript } from './ContextPanelSessionTranscript';
 import {
   normalizeBrowserUrl,
   resolveBrowserPaneNavigation,
-  shouldUseDesktopWebviewBrowser,
 } from './browserPaneNavigation';
 import {
   createContextPanelNavigationState,
@@ -80,7 +79,6 @@ import {
   renderPreviewScreenshot,
   desktopAnnotationToFile,
   getCachedProxyTarget,
-  getBrowserProxyTargetKey,
   previewProxyTargetCache,
 } from '@/lib/preview/screenshot-capture';
 import { resolveRelayPreviewFrameSrc } from '@/lib/preview/relay-preview-frame-src';
@@ -89,6 +87,10 @@ import {
   hasDesktopPreviewGateway,
 } from '@/lib/preview/relay-preview-gateway-client';
 import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
+import { openDesktopBrowserNetwork } from '@/lib/preview/desktop-browser-network';
+import { HtmlNetworkBoundary } from '@/components/preview/HtmlNetworkBoundary';
+import { getRuntimeGeneration, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { isLocalRuntimeActive } from '@/lib/desktopLocalRuntime';
 
 const CONTEXT_PANEL_MIN_WIDTH = 300;
 const CONTEXT_PANEL_MAX_WIDTH = 1400;
@@ -561,20 +563,6 @@ const stripPreviewTokenFromUrl = (value: string): string => {
   if (!value) return value;
   try {
     const parsed = new URL(value);
-    parsed.searchParams.delete('yuri_preview_token');
-    parsed.searchParams.delete('yuri_client_token');
-    parsed.searchParams.delete('yuri_url_token');
-    return parsed.toString();
-  } catch {
-    return value;
-  }
-};
-
-const stripPreviewQueryParams = (value: string): string => {
-  if (!value) return value;
-  try {
-    const parsed = new URL(value);
-    parsed.searchParams.delete('yuriPreview');
     parsed.searchParams.delete('yuri_preview_token');
     parsed.searchParams.delete('yuri_client_token');
     parsed.searchParams.delete('yuri_url_token');
@@ -1419,26 +1407,35 @@ type DesktopBrowserPaneProps = {
   initialUrl: string;
   directory: string;
   tabID: string;
+  partition?: string;
 };
 
 const isElectronBrowserRuntime = (): boolean => {
   return typeof window !== 'undefined' && Boolean(window.__YURI_ELECTRON__);
 };
 
-const BROWSER_PREVIEW_STEP_TIMEOUT_MS = 15_000;
-
-const withBrowserPreviewTimeout = <T,>(promise: Promise<T>, step: string): Promise<T> => new Promise<T>((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error(`${step} timed out`)), BROWSER_PREVIEW_STEP_TIMEOUT_MS);
-  promise.then(
-    (value) => { clearTimeout(timer); resolve(value); },
-    (error) => { clearTimeout(timer); reject(error); },
-  );
-});
+function useBrowserAnnotationTarget() {
+  const entry = useHostRuntime()?.entry;
+  const localSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const localDraftOpen = useSessionUIStore((state) => state.newSessionDraft?.open);
+  const remoteSelection = useSessionNavigationStore((state) => state.remoteSession);
+  const selectedRemote = entry && remoteSelection && locationKey(remoteSelection.location) === entry.key ? remoteSelection : null;
+  const currentSessionId = entry?.location.hostId ? selectedRemote?.sessionId ?? null : localSessionId;
+  const newSessionDraftOpen = entry?.location.hostId ? !selectedRemote?.sessionId : localDraftOpen;
+  const addLocalAttachedFile = useInputStore((state) => state.addAttachedFile);
+  const addAttachedFile = useEvent(async (file: File) => {
+    if (!entry?.location.hostId) return addLocalAttachedFile(file);
+    const owner = { transportIdentity: getRuntimeTransportIdentity(), location: entry.location };
+    const draft = currentSessionId ? sessionDraftKey(owner, currentSessionId) : newSessionDraftKey(owner, 'remote-new-session');
+    await useInputStore.getState().addDraftLocalAttachment(draft, file);
+  });
+  const annotationSessionKey = entry?.location.hostId ? locationSessionKey(entry.location, currentSessionId ?? 'draft') : currentSessionId ?? (newSessionDraftOpen ? 'draft' : null);
+  return { annotationSessionKey, addAttachedFile };
+}
 
 const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID }) => {
   const host = useHostRuntime();
   const entry = host?.entry;
-  const fetchPreview = entry?.fetch ?? runtimeFetch;
   const { t } = useI18n();
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
   const setContextPanelTabTargetPath = useUIStore((state) => state.setContextPanelTabTargetPath);
@@ -1452,24 +1449,8 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
   const [reloadNonce, bumpReload] = React.useReducer((value: number) => value + 1, 0);
   const [isLoading, setIsLoading] = React.useState(Boolean(startUrl));
   const [isInspecting, setIsInspecting] = React.useState(false);
-  const [hoverTarget, setHoverTarget] = React.useState<PreviewElementMetadata | null>(null);
-  const [proxyState, setProxyState] = React.useState<PreviewProxyState>({ status: 'idle' });
-  const [urlAuthReadyKey, setUrlAuthReadyKey] = React.useState('');
-  const localSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const localDraftOpen = useSessionUIStore((state) => state.newSessionDraft?.open);
-  const remoteSelection = useSessionNavigationStore((state) => state.remoteSession);
-  const selectedRemote = entry && remoteSelection && locationKey(remoteSelection.location) === entry.key ? remoteSelection : null;
-  const currentSessionId = entry?.location.hostId ? selectedRemote?.sessionId ?? null : localSessionId;
-  const newSessionDraftOpen = entry?.location.hostId ? !selectedRemote?.sessionId : localDraftOpen;
+  const { annotationSessionKey, addAttachedFile } = useBrowserAnnotationTarget();
   const addInlineCommentDraft = useInlineCommentDraftStore((state) => state.addDraft);
-  const addLocalAttachedFile = useInputStore((state) => state.addAttachedFile);
-  const addAttachedFile = useEvent(async (file: File) => {
-    if (!entry?.location.hostId) return addLocalAttachedFile(file);
-    const owner = { transportIdentity: getRuntimeTransportIdentity(), location: entry.location };
-    const draft = currentSessionId ? sessionDraftKey(owner, currentSessionId) : newSessionDraftKey(owner, 'remote-new-session');
-    await useInputStore.getState().addDraftLocalAttachment(draft, file);
-  });
-  const annotationSessionKey = entry?.location.hostId ? locationSessionKey(entry.location, currentSessionId ?? 'draft') : currentSessionId ?? (newSessionDraftOpen ? 'draft' : null);
 
   const persistUrl = React.useCallback((url: string) => {
     if (!url || url === 'about:blank' || !directory || !tabID) return;
@@ -1542,233 +1523,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
     }
   }, [currentUrl]);
 
-  React.useEffect(() => {
-    if (!loadedUrl) {
-      setProxyState({ status: 'idle' });
-      return;
-    }
-
-    const proxyTargetKey = entry?.location.hostId
-      ? `${entry.key}|${entry.connectionGeneration}|${getBrowserProxyTargetKey(loadedUrl)}`
-      : getBrowserProxyTargetKey(loadedUrl);
-    const cached = getCachedProxyTarget(proxyTargetKey);
-    if (cached?.previewToken) {
-      setProxyState({ status: 'ready', proxyBasePath: cached.proxyBasePath, previewToken: cached.previewToken, expiresAt: cached.expiresAt });
-      return () => { if (entry?.location.hostId) previewProxyTargetCache.delete(proxyTargetKey); };
-    }
-    if (cached) {
-      previewProxyTargetCache.delete(proxyTargetKey);
-    }
-
-    let cancelled = false;
-    setProxyState({ status: 'loading' });
-    setIsLoading(true);
-
-    void (async () => {
-      try {
-        const response = await fetchPreview('/api/preview/targets', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(entry?.location.hostId ? { 'x-opencode-directory': entry.location.directory } : {}) },
-          credentials: 'include',
-          body: JSON.stringify({ url: loadedUrl, ...(isLoopbackHttpUrl(loadedUrl) ? {} : { allowExternal: true }) }),
-          signal: AbortSignal.timeout(BROWSER_PREVIEW_STEP_TIMEOUT_MS),
-        });
-
-        if (!response.ok) {
-          const errorBody = await response.json().catch(() => ({}));
-          const message = typeof errorBody?.error === 'string'
-            ? errorBody.error
-            : `HTTP ${response.status}`;
-           if (!cancelled) {
-             setProxyState({ status: 'error', message });
-             setIsLoading(false);
-          }
-          return;
-        }
-
-        const body = await response.json() as { proxyBasePath?: unknown; previewToken?: unknown; expiresAt?: unknown };
-        const proxyBasePath = typeof body.proxyBasePath === 'string' && validPreviewBasePath(entry, body.proxyBasePath) ? scopedPreviewPath(entry, body.proxyBasePath) : '';
-        const previewToken = typeof body.previewToken === 'string' ? body.previewToken : '';
-        const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : 0;
-        if (!validPreviewBasePath(entry, proxyBasePath) || !previewToken || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-           if (!cancelled) {
-             setProxyState({ status: 'error', message: t('contextPanel.preview.proxyError') });
-             setIsLoading(false);
-          }
-          return;
-        }
-
-        if (cancelled) return;
-        entry?.sdk();
-        previewProxyTargetCache.set(proxyTargetKey, { proxyBasePath, previewToken, expiresAt });
-        if (!cancelled) {
-          setProxyState({ status: 'ready', proxyBasePath, previewToken, expiresAt });
-        }
-      } catch (error) {
-         if (!cancelled) {
-           const message = error instanceof Error ? error.message : String(error);
-           setProxyState({ status: 'error', message });
-           setIsLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (entry?.location.hostId) previewProxyTargetCache.delete(proxyTargetKey);
-    };
-  }, [entry, fetchPreview, loadedUrl, reloadNonce, t]);
-
-  const proxyUrlAuthKey = loadedUrl && proxyState.status === 'ready'
-    ? `${proxyState.proxyBasePath}|${proxyState.previewToken || ''}|${reloadNonce}`
-    : '';
-
-  React.useEffect(() => {
-    if (!proxyUrlAuthKey) {
-      setUrlAuthReadyKey('');
-      return;
-    }
-
-    let cancelled = false;
-    setUrlAuthReadyKey('');
-    const failStep = (message: string) => {
-      if (cancelled) return;
-      setProxyState({ status: 'error', message });
-      setIsLoading(false);
-    };
-    void withBrowserPreviewTimeout(refreshRuntimeUrlAuthToken(getRuntimeApiBaseUrl()), 'url auth')
-      .then((token) => {
-        if (cancelled) return;
-        if (token) setUrlAuthReadyKey(proxyUrlAuthKey);
-        else failStep('url auth unavailable');
-      })
-      .catch((error) => failStep(error instanceof Error ? error.message : String(error)));
-
-    return () => {
-      cancelled = true;
-    };
-  }, [proxyUrlAuthKey]);
-
-  const proxySrc = React.useMemo(() => {
-    if (urlAuthReadyKey !== proxyUrlAuthKey) return '';
-    if (!loadedUrl || proxyState.status !== 'ready') return '';
-    try {
-      const parsed = new URL(loadedUrl);
-      const path = parsed.pathname || '/';
-      const searchParams = new URLSearchParams(parsed.search);
-      searchParams.delete('yuri_url_token');
-      searchParams.delete('yuri_client_token');
-      searchParams.set('yuriPreview', String(reloadNonce));
-      searchParams.set('yuri_preview_token', proxyState.previewToken || '');
-      const search = searchParams.toString();
-      return getRuntimeUrlResolver().authenticatedAsset(scopedPreviewPath(entry, `${proxyState.proxyBasePath}${path}${search ? `?${search}` : ''}${parsed.hash}`));
-    } catch {
-      return '';
-    }
-  }, [entry, loadedUrl, proxyState, proxyUrlAuthKey, reloadNonce, urlAuthReadyKey]);
-
-  // Electron + Relay: iframe must load http://127.0.0.1:<ephemeral> (loopback
-  // gateway). LAN/direct keep authenticatedAsset as-is — do not start gateway.
-  const relayBrowserActive = isRelayModeActive() && hasDesktopPreviewGateway();
-  const [previewGatewayOrigin, setPreviewGatewayOrigin] = React.useState('');
-  React.useEffect(() => {
-    if (!relayBrowserActive) {
-      setPreviewGatewayOrigin('');
-      return;
-    }
-    let cancelled = false;
-    setPreviewGatewayOrigin('');
-    const failGateway = (message: string) => {
-      if (cancelled) return;
-      setPreviewGatewayOrigin('');
-      if (!proxyUrlAuthKey) return;
-      setProxyState({ status: 'error', message });
-      setIsLoading(false);
-    };
-    void withBrowserPreviewTimeout(ensurePreviewGatewayOrigin(), 'preview gateway')
-      .then((origin) => {
-        if (cancelled) return;
-        if (origin) setPreviewGatewayOrigin(origin);
-        else failGateway('preview gateway unavailable');
-      })
-      .catch((error) => failGateway(error instanceof Error ? error.message : String(error)));
-    return () => {
-      cancelled = true;
-    };
-  }, [relayBrowserActive, proxyUrlAuthKey]);
-
-  const frameSrc = proxySrc
-    ? resolveRelayPreviewFrameSrc({
-      relayActive: relayBrowserActive,
-      gatewayOrigin: previewGatewayOrigin || null,
-      authenticatedAssetUrl: proxySrc,
-    })
-    : '';
-  // Under relay+electron wait for gateway origin before treating the frame as ready.
-  const relayGatewayPending = relayBrowserActive && Boolean(proxySrc) && !previewGatewayOrigin;
-  const iframeSrc = relayGatewayPending
-    ? ''
-    : (frameSrc || (proxyState.status === 'error' && !relayBrowserActive && !entry?.location.hostId ? loadedUrl : ''));
-
-  const getCurrentUrlFromFrameUrl = React.useCallback((frameUrl: string): string => {
-    if (!frameUrl || !loadedUrl || proxyState.status !== 'ready') return '';
-    try {
-      const parsedFrameUrl = new URL(frameUrl, window.location.origin);
-      const proxyBasePath = proxyState.proxyBasePath.endsWith('/')
-        ? proxyState.proxyBasePath.slice(0, -1)
-        : proxyState.proxyBasePath;
-      // Frame may be same-origin (LAN) or loopback gateway origin (Relay).
-      const proxyOrigin = getPreviewProxyOrigin(iframeSrc || proxySrc);
-      const originOk = parsedFrameUrl.origin === window.location.origin
-        || (Boolean(proxyOrigin) && parsedFrameUrl.origin === proxyOrigin);
-      if (!originOk || !parsedFrameUrl.pathname.startsWith(proxyBasePath)) {
-        return '';
-      }
-
-      const rest = parsedFrameUrl.pathname.slice(proxyBasePath.length) || '/';
-      const upstreamOrigin = new URL(loadedUrl).origin;
-      return stripPreviewQueryParams(new URL(`${rest}${parsedFrameUrl.search}${parsedFrameUrl.hash}`, upstreamOrigin).toString());
-    } catch {
-      return '';
-    }
-  }, [iframeSrc, loadedUrl, proxySrc, proxyState]);
-
-  const getUpstreamUrlFromLocalFrameUrl = React.useCallback((frameUrl: string): string => {
-    if (!frameUrl || !loadedUrl || proxyState.status !== 'ready') return '';
-    try {
-      const parsedFrameUrl = new URL(frameUrl, window.location.origin);
-      const upstreamOrigin = new URL(loadedUrl).origin;
-      const proxyOrigin = getPreviewProxyOrigin(iframeSrc || proxySrc);
-      const isLocalFrameOrigin = parsedFrameUrl.origin === window.location.origin
-        || (Boolean(proxyOrigin) && parsedFrameUrl.origin === proxyOrigin);
-      if (!isLocalFrameOrigin || upstreamOrigin === window.location.origin) {
-        return '';
-      }
-
-      const proxyBasePath = proxyState.proxyBasePath.endsWith('/')
-        ? proxyState.proxyBasePath.slice(0, -1)
-        : proxyState.proxyBasePath;
-      if (parsedFrameUrl.pathname.startsWith(proxyBasePath)) {
-        return '';
-      }
-
-      return stripPreviewQueryParams(new URL(`${parsedFrameUrl.pathname}${parsedFrameUrl.search}${parsedFrameUrl.hash}`, upstreamOrigin).toString());
-    } catch {
-      return '';
-    }
-  }, [iframeSrc, loadedUrl, proxySrc, proxyState]);
-
-  const postInspectMode = React.useCallback((enabled: boolean) => {
-    const frameWindow = iframeRef.current?.contentWindow;
-    if (!frameWindow) return;
-    // targetOrigin must match the iframe document origin (gateway under Relay).
-    postPreviewBridgeMessage(frameWindow, iframeSrc || proxySrc, {
-      source: 'yuri-preview-parent',
-      version: 1,
-      type: 'set-inspect-mode',
-      enabled,
-    });
-  }, [iframeSrc, proxySrc]);
+  const iframeSrc = loadedUrl;
 
   const attachBrowserAnnotation = React.useCallback(async (target: PreviewElementMetadata) => {
     const sessionKey = annotationSessionKey;
@@ -1815,11 +1570,9 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
 
   const cancelInspect = React.useCallback(() => {
     const iframe = iframeRef.current;
-    setHoverTarget(null);
-    postInspectMode(false);
     if (!iframe) return;
     void runIframeScript<unknown>(iframe, DESKTOP_BROWSER_CANCEL_INSPECT_SCRIPT).catch(() => {});
-  }, [postInspectMode]);
+  }, []);
 
   React.useEffect(() => {
     if (!isInspecting) return;
@@ -1836,51 +1589,6 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
 
   React.useEffect(() => () => cancelInspect(), [cancelInspect]);
 
-  React.useEffect(() => {
-    const handler = (event: MessageEvent<PreviewBridgeMessage>) => {
-      if (event.source !== iframeRef.current?.contentWindow) return;
-      const data = event.data;
-      if (!data || data.source !== 'yuri-preview-bridge' || data.version !== 1) return;
-
-      if (data.type === 'ready') {
-        const frameUrl = typeof data.url === 'string' ? data.url : '';
-        const nextUrl = getCurrentUrlFromFrameUrl(frameUrl);
-        if (nextUrl && nextUrl !== currentUrl) {
-          applyUrl(nextUrl, { inFrame: true });
-        }
-        return;
-      }
-
-      if (data.type === 'hover') {
-        setHoverTarget(isPreviewElementMetadata(data.target) ? data.target : null);
-        return;
-      }
-
-      if (data.type === 'select' && isPreviewElementMetadata(data.target)) {
-        setHoverTarget(null);
-        setIsInspecting(false);
-        postInspectMode(false);
-        void attachBrowserAnnotation(data.target);
-        return;
-      }
-
-      if (data.type === 'navigate-preview') {
-        const nextUrl = typeof data.url === 'string' ? data.url : '';
-        const upstreamUrl = getUpstreamUrlFromLocalFrameUrl(nextUrl);
-        if (upstreamUrl) {
-          applyUrl(upstreamUrl);
-          return;
-        }
-        if (nextUrl) {
-          applyUrl(nextUrl);
-        }
-      }
-    };
-
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, [applyUrl, attachBrowserAnnotation, currentUrl, getCurrentUrlFromFrameUrl, getUpstreamUrlFromLocalFrameUrl, postInspectMode]);
-
   const handleInspect = React.useCallback(() => {
     const iframe = iframeRef.current;
     if (!iframe || !currentUrl) return;
@@ -1888,13 +1596,6 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
     if (isInspecting) {
       setIsInspecting(false);
       cancelInspect();
-      return;
-    }
-
-    if (proxySrc) {
-      setHoverTarget(null);
-      setIsInspecting(true);
-      postInspectMode(true);
       return;
     }
 
@@ -1910,25 +1611,18 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
         toast.error(t('contextPanel.browser.inspectUnavailable'));
       }
     })();
-  }, [attachBrowserAnnotation, cancelInspect, currentUrl, isInspecting, postInspectMode, proxySrc, t]);
+  }, [attachBrowserAnnotation, cancelInspect, currentUrl, isInspecting, t]);
 
   const handleIframeLoad = React.useCallback(() => {
     try {
       const frameUrl = iframeRef.current?.contentWindow?.location.href || '';
-      const upstreamUrl = getUpstreamUrlFromLocalFrameUrl(frameUrl);
-      if (upstreamUrl) {
-        applyUrl(upstreamUrl, { inFrame: true });
-        return;
-      }
+      if (frameUrl && frameUrl !== 'about:blank') applyUrl(frameUrl, { inFrame: true });
     } catch {
-      // Cross-origin direct iframe fallback; regular load handling still applies.
+      // Cross-origin iframe location remains browser-owned.
     }
 
     setIsLoading(false);
-    if (isInspecting && proxySrc) {
-      postInspectMode(true);
-    }
-  }, [applyUrl, getUpstreamUrlFromLocalFrameUrl, isInspecting, postInspectMode, proxySrc]);
+  }, [applyUrl]);
 
   return (
     <div className="absolute inset-0 flex flex-col bg-background">
@@ -1962,7 +1656,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
         >
           <Icon name="cursor" className="h-3.5 w-3.5" />
         </Button>
-        <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={entry?.location.hostId ? !iframeSrc : !currentUrl} onClick={() => void openExternalUrl(entry?.location.hostId ? iframeSrc : currentUrl)}>
+        <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={!currentUrl} onClick={() => void openExternalUrl(currentUrl)}>
           <Icon name="external-link" className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -1979,27 +1673,6 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
               allowFullScreen
               onLoad={handleIframeLoad}
             />
-            {isInspecting && hoverTarget ? (
-              <div
-                className="pointer-events-none absolute rounded-sm border-2 border-[var(--interactive-focus-ring)] bg-[var(--interactive-focus-ring)]/35"
-                style={{
-                  left: hoverTarget.bounds.x,
-                  top: hoverTarget.bounds.y,
-                  width: hoverTarget.bounds.width,
-                  height: hoverTarget.bounds.height,
-                }}
-              >
-                <div className="absolute -top-6 left-0 max-w-64 truncate rounded bg-[var(--surface-elevated)] px-2 py-0.5 typography-micro text-foreground shadow">
-                  {hoverTarget.tag}{hoverTarget.text ? ` · ${hoverTarget.text}` : ''}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : proxyState.status === 'error' ? (
-          <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center typography-meta text-muted-foreground">
-            <span>{t('contextPanel.preview.proxyError')}</span>
-            <span>{proxyState.message}</span>
-            <Button type="button" size="sm" onClick={() => bumpReload()}>{t('contextPanel.preview.actions.retry')}</Button>
           </div>
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-background p-6 text-center">
@@ -2009,7 +1682,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
             <span className="max-w-md typography-micro leading-relaxed text-status-warning/70">{t('contextPanel.browser.trustNotice')}</span>
           </div>
         )}
-        {(isLoading || relayGatewayPending) ? (
+        {isLoading ? (
           <div className="absolute inset-0 flex items-center justify-center bg-background/70 typography-micro text-muted-foreground">
             {t('common.loading')}
           </div>
@@ -2019,7 +1692,20 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
   );
 };
 
-const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID }) => {
+const ElectronBrowserPane: React.FC<DesktopBrowserPaneProps> = (props) => {
+  const entry = useHostRuntime()?.entry;
+  const generation = React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getRuntimeGeneration, getRuntimeGeneration);
+  const openNetwork = React.useMemo(() => (signal: AbortSignal, fail: () => void) =>
+    openDesktopBrowserNetwork(signal, fail, entry), [entry]);
+  const scopeKey = `${generation}:${entry?.key ?? ''}:${entry?.connectionGeneration ?? 0}`;
+  return entry?.location.hostId || !isLocalRuntimeActive()
+    ? <HtmlNetworkBoundary key={scopeKey} open={openNetwork}>
+        {network => <DesktopBrowserPane {...props} partition={network.partition} />}
+      </HtmlNetworkBoundary>
+    : <DesktopBrowserPane key={scopeKey} {...props} />;
+};
+
+const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID, partition = 'persist:yuri-browser' }) => {
   const { t } = useI18n();
   const webviewRef = React.useRef<WebviewElement | null>(null);
   const setContextPanelTabTargetPath = useUIStore((state) => state.setContextPanelTabTargetPath);
@@ -2037,10 +1723,8 @@ const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dir
     if (!url || url === 'about:blank' || !directory || !tabID) return;
     setContextPanelTabTargetPath(directory, tabID, url);
   }, [directory, tabID, setContextPanelTabTargetPath]);
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const newSessionDraftOpen = useSessionUIStore((state) => state.newSessionDraft?.open);
+  const { annotationSessionKey, addAttachedFile } = useBrowserAnnotationTarget();
   const addInlineCommentDraft = useInlineCommentDraftStore((state) => state.addDraft);
-  const addAttachedFile = useInputStore((state) => state.addAttachedFile);
 
   // Listen to webview navigation events
   React.useEffect(() => {
@@ -2191,7 +1875,7 @@ const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dir
         setIsInspecting(false);
         if (!target || !isPreviewElementMetadata(target)) return;
 
-        const sessionKey = currentSessionId ?? (newSessionDraftOpen ? 'draft' : null);
+        const sessionKey = annotationSessionKey;
         if (!sessionKey) {
           toast.error(t('contextPanel.preview.inspect.attachNoSession'));
           return;
@@ -2237,7 +1921,7 @@ const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dir
         toast.success(t('contextPanel.preview.inspect.attached'));
       })
       .catch(() => setIsInspecting(false));
-  }, [addAttachedFile, addInlineCommentDraft, currentSessionId, currentUrl, isInspecting, newSessionDraftOpen, t]);
+  }, [addAttachedFile, addInlineCommentDraft, annotationSessionKey, currentUrl, isInspecting, t]);
 
   return (
     <div className="absolute inset-0 flex flex-col bg-background">
@@ -2278,7 +1962,7 @@ const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dir
         <webview
           ref={webviewRef}
           src={initialWebviewSrcRef.current}
-          partition="persist:yuri-browser"
+          partition={partition}
           allowpopups
           style={{ width: '100%', height: '100%', border: 'none' }}
         />
@@ -2898,14 +2582,9 @@ const ContextPanelContentView: React.FC<ContextPanelProps & { remoteSessions?: A
     () => tabs.filter((tab) => tab.mode === 'diff' || tab.mode === 'file-diff'),
     [tabs],
   );
-  // Electron LAN/direct: native webview. Electron + Relay: Host preview proxy iframe.
-  const BrowserPane = shouldUseDesktopWebviewBrowser({
-    isElectron: !remote && isElectronBrowserRuntime(),
-    relayActive: isRelayModeActive(),
-  })
-    ? DesktopBrowserPane
-    : IframeBrowserPane;
-  const nativeBrowserVisible = previewVisible && activeTab?.mode === 'browser' && BrowserPane === DesktopBrowserPane;
+  // Browser network follows the session Location, not the window's Relay mode.
+  const BrowserPane = isElectronBrowserRuntime() ? ElectronBrowserPane : IframeBrowserPane;
+  const nativeBrowserVisible = previewVisible && activeTab?.mode === 'browser' && BrowserPane === ElectronBrowserPane;
   React.useLayoutEffect(() => {
     if (!nativeBrowserVisible) return;
     // MainLayout owns one ContextPanel. Publish only visibility transitions;

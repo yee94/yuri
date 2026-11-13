@@ -28,13 +28,3 @@ export const resolveBrowserPaneNavigation = (
   if (nextUrl === currentUrl) return null;
   return nextUrl;
 };
-
-/**
- * Electron LAN/direct keeps the native `<webview>` Desktop Browser.
- * Electron + Relay must use the iframe Host preview proxy (loopback gateway),
- * never client-side `loadURL` of the user's localhost.
- */
-export const shouldUseDesktopWebviewBrowser = (input: {
-  isElectron: boolean;
-  relayActive: boolean;
-}): boolean => Boolean(input.isElectron) && !input.relayActive;

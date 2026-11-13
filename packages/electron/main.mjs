@@ -14,6 +14,7 @@ import { DEEP_LINK_PROTOCOLS, isAppDeepLink } from './deep-link-protocol.mjs';
 import { LEGACY_UI_PROTOCOL, prepareDesktopMigration, migrateDesktopOrigin } from './brand-migration.mjs';
 import { loadDesktopBackend } from './desktop-backend.mjs';
 import { createDesktopRemoteHostsAdapter } from './remote-hosts.mjs';
+import { registerBrowserRelayNetwork } from './browser-relay-network.mjs';
 import { nativeNotificationIdentity } from './notification-identity.mjs';
 import { importHostBrandData } from '@yuriai/web/server/lib/brand-migration.js';
 import { isBinaryFile } from '@yuriai/web/server/lib/fs/binary-file.js';
@@ -5963,6 +5964,8 @@ ipcMain.handle('yuri:preview-gateway:ensure', async (event) => {
   gateway.markOwnerPresent();
   return { origin: started.origin };
 });
+
+registerBrowserRelayNetwork({ app, ipcMain, session, authorize: requireLocalAssetSender });
 
 ipcMain.handle('yuri:preview-gateway:release', async (event) => {
   requireLocalPreviewGatewaySender(event, 'preview-gateway:release');

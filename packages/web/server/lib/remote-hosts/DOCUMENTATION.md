@@ -185,7 +185,8 @@ short reads in `finally` and retain background watch demand until settlement.
     `x-yuri-mime` and `x-yuri-filename` along with their original body bytes; size
     and digest validation still execute on the Remote. These allowlisted metadata
     headers never replace Remote authentication or forward Hub credentials.
-- `/api/hosts/:hostId/api/terminal/ws` and `/api/hosts/:hostId/api/preview/proxy/*`
+- `/api/hosts/:hostId/api/terminal/ws`, `/api/hosts/:hostId/api/gui-network/ws`
+  and `/api/hosts/:hostId/api/preview/proxy/*`
   mount real upgrades, mirrored in Relay and URL-token allowlists. Host removal
    closes direct sockets and Relay substreams, including pending handshakes.
    Client revocation tracks the raw upgrade socket before waiting for the upstream;
@@ -198,7 +199,12 @@ short reads in `finally` and retain background watch demand until settlement.
     authorization check and client upgrade. Overflow fails the upgrade and closes
     the upstream; revocation, socket closure and failure discard the queue.
     Direct and E2EE Relay use the same admission path. No greeting is synthesized
-    and no terminal handshake timeout is extended to conceal missing frames.
+     and no terminal handshake timeout is extended to conceal missing frames.
+     GUI TCP routes reuse the same credential, Origin and revocation gates for
+     Browser sessions belonging to a Remote Project. Direct server-to-server
+     upgrades set Origin to the admitted target's origin, never the Hub page's
+     origin. Hub URL tokens are stripped; the Remote transport supplies its own
+     saved credential. This does not open generic GUI-network HTTP forwarding.
 
 The target-side local authority is `GET/POST /api/projects` and `PATCH
 /api/projects/:id`. It only returns local projects. Authenticated

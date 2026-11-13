@@ -1,5 +1,23 @@
 # Mobile HTML networking
 
+## Desktop Browser and shared ownership
+
+Browser network routing follows the session's execution Location. Web Browser
+iframes load the original URL on the client without target registration,
+URL-auth or proxy rewriting. Electron local sessions also load directly.
+Electron remote sessions use an isolated SOCKS webview partition via
+`desktop-browser-network.ts`; Remote Projects use their Host-scoped GUI TCP
+route rather than the current Hub. Direct/SSH and Relay use the same adapter.
+The guest mounts only after proxy configuration completes, and runtime/scope
+loss closes it without a client-network fallback. This requires a new installer.
+
+The protocol/auth/ready/heartbeat implementation is shared with native-mobile
+HTML and plugins in `../gui-network/channel.ts`. `HtmlNetworkBoundary` owns the
+shared execution/retry lifecycle; `MobileHtmlNetworkBoundary` now only selects
+the mobile eager/lazy acquisition adapter. Browser's former iframe proxy
+registration/auth/gateway branch was removed. Other file/preview gateway
+consumers still own their existing routes, as described below.
+
 ## Remote project scope
 
 `project-preview.ts` provides `resolveProjectPreviewUrl(entry, url, signal)` for

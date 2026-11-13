@@ -58,6 +58,9 @@ describe('isUrlAuthWebSocketPath', () => {
     expect(isUrlAuthWebSocketPath('/api/preview/proxy/abc123/')).toBe(true);
     expect(isUrlAuthWebSocketPath('/api/preview/proxy/abc123/@vite')).toBe(true);
     expect(isUrlAuthWebSocketPath('/api/terminal/ws')).toBe(true);
+    expect(isUrlAuthWebSocketPath('/api/hosts/remote-a/api/gui-network/ws')).toBe(true);
+    expect(isUrlAuthWebSocketPath('/api/hosts/remote-a/api/gui-network/ws/extra')).toBe(false);
+    expect(isUrlAuthWebSocketPath('/api/hosts/remote-a/api/hosts/remote-b/api/gui-network/ws')).toBe(false);
     expect(isUrlAuthWebSocketPath('/api/dictation/ws')).toBe(true);
     expect(isUrlAuthWebSocketPath('/api/event/ws')).toBe(true);
     expect(isUrlAuthWebSocketPath('/api/global/event/ws')).toBe(true);
