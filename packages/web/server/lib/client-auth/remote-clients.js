@@ -287,8 +287,17 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
     });
   };
 
+  // In-process desktop owner only; this is not an HTTP authentication grant.
+  const ensureDesktopLocalClientToken = async (token) => {
+    const authenticated = await authenticateBearerToken(token);
+    if (authenticated?.client.clientKind === 'desktop-local' && !authenticated.client.usesRelay) return token;
+    const issued = await createClient({ label: 'Yuri Desktop', clientKind: 'desktop-local', dedupeKey: 'desktop-local' });
+    return issued.token;
+  };
+
   return {
     subscribeRevocation(listener) { revocationListeners.add(listener); return () => revocationListeners.delete(listener); },
+    ensureDesktopLocalClientToken,
     authenticateBearerToken,
     createClient,
     listClients,

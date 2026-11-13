@@ -2090,6 +2090,7 @@ async function main(options = {}) {
     httpServer: server,
     getPort: () => tunnelRuntimeContext.getActivePort(),
     getOpenCodePort: () => openCodePort,
+    ensureDesktopLocalClientToken: remoteClientAuthRuntime.ensureDesktopLocalClientToken,
     // In-process desktop only: never serialize this authenticated client to a renderer.
     getGuiPluginClient: () => trustedGuiPluginClient({
       managed: Boolean(openCodeProcess && !isExternalOpenCode),

@@ -847,6 +847,18 @@ describe('Remote Host production HTTP contract', () => {
     expect((await hub.call('/api/hosts/absent/api/fs/raw')).status).toBe(404);
   });
 
+  it('admits the native local credential while a passwordless session alone cannot discover remote hosts', async () => {
+    const { hub } = await aggregate();
+    const session = await fetch(`${hub.url}/auth/session`);
+    expect(session.status).toBe(200);
+    expect((await fetch(`${hub.url}/api/hosts`)).status).toBe(401);
+    const token = await hub.clients.ensureDesktopLocalClientToken('');
+    const response = await fetch(`${hub.url}/api/hosts`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(200);
+    expect((await response.json()).hosts).toHaveLength(1);
+    expect((await fetch(`${hub.url}/api/hosts`)).status).toBe(401);
+  });
+
   it('creates remote first; retries a Hub disk failure by association without duplicating or deleting remote data', async () => {
     const { hub, remote } = await aggregate({ failHubWrite: true });
     const route = '/api/hosts/remote-1/projects';

@@ -1,4 +1,6 @@
-import { test, expect } from 'vitest';
+import { test, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,6 +8,33 @@ import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DesktopOta } from './desktop-ota.mjs';
+
+test('native startup establishes and saves its local credential before returning the backend URL', async () => {
+  const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('  const port = handle.getPort();', source.indexOf('const spawnLocalServer ='));
+  const end = source.indexOf('\n  return url;\n};', start) + '\n  return url;'.length;
+  const root = { desktopLocalClientToken: 'stale-token', unrelated: true };
+  let release;
+  const ensured = new Promise((resolve) => { release = resolve; });
+  const handle = { getPort: () => 4321, ensureDesktopLocalClientToken: vi.fn(() => ensured) };
+  const persist = vi.fn(async (mutate) => mutate(root));
+  const context = vm.createContext({ handle, state: {}, buildLocalUrl: (port) => `http://127.0.0.1:${port}`,
+    readDesktopLocalClientToken: () => root.desktopLocalClientToken, mutateSettingsRoot: persist });
+  const pending = vm.runInContext(`(async () => { ${source.slice(start, end)} })()`, context);
+  expect(handle.ensureDesktopLocalClientToken).toHaveBeenCalledWith('stale-token');
+  expect(persist).not.toHaveBeenCalled();
+  release('valid-local-token');
+  expect(await pending).toBe('http://127.0.0.1:4321');
+  expect(root).toEqual({ desktopLocalClientToken: 'valid-local-token', desktopLocalPort: 4321, unrelated: true });
+  const saved = { ...root };
+  handle.ensureDesktopLocalClientToken.mockRejectedValueOnce(new Error('credential store unavailable'));
+  await expect(vm.runInContext(`(async () => { ${source.slice(start, end)} })()`, context)).rejects.toThrow('credential store unavailable');
+  expect(persist).toHaveBeenCalledTimes(1);
+  expect(root).toEqual(saved);
+  persist.mockRejectedValueOnce(new Error('settings write failed'));
+  await expect(vm.runInContext(`(async () => { ${source.slice(start, end)} })()`, context)).rejects.toThrow('settings write failed');
+  expect(root).toEqual(saved);
+});
 
 test('installed backend loads its real server entry under Node without mocked imports', async () => {
   const loader = new URL('./desktop-backend.mjs', import.meta.url).href;

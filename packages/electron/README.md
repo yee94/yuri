@@ -20,6 +20,12 @@ into the in-process backend. Its catalog belongs to this computer and is
 independent of every window's active runtime. SSH initialization reuses the native
 manager; explicit pairing provenance remains required for Relay fallback. Native
 settings changes reconcile the server-owned gateway without a background poll.
+Before loading any window, native in-process startup validates the saved local
+desktop bearer and replaces missing, invalid or non-local credentials through the
+backend controller. It saves the result in the existing local credential setting;
+passwordless UI-session success alone is not Remote Project authorization. Valid
+local credentials are reused, and Relay pairing grants remain separate. This
+startup fix requires an updated desktop installer and backend.
 Aggregate admission uses the manager's `ensureConnected`: it awaits any complete
 in-flight initialization, reuses a live Ready session only when its normalized
 SSH configuration still matches (accounting for the persisted chosen forward

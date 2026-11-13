@@ -1797,8 +1797,10 @@ const spawnLocalServer = async () => {
   state.serverHandle = handle;
   state.sidecarUrl = url;
 
+  const clientToken = await handle.ensureDesktopLocalClientToken(readDesktopLocalClientToken());
   await mutateSettingsRoot((root) => {
     root.desktopLocalPort = port;
+    root.desktopLocalClientToken = clientToken;
   });
 
   return url;

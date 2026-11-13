@@ -5,6 +5,12 @@ This module owns Yuri UI authentication for browser access, including password s
 
 Trusted-device access has one durable credential model: a remote client bearer token stored by `packages/web/server/lib/client-auth/remote-clients.js`. Password, passkey, and Pairing v2 are issuance methods for that credential, not separate credential systems. Issued client tokens are returned once, stored server-side only as hashes, and are later authenticated via `Authorization: Bearer yuri_client_...`.
 
+The native in-process desktop owner uses the server controller's
+`ensureDesktopLocalClientToken` before loading windows. It reuses an authenticated
+direct `desktop-local` bearer or issues a non-expiring, direct-only replacement
+through the same client store. This method is not exposed through HTTP or renderer
+IPC; anonymous/passwordless browser sessions gain no additional authorization.
+
 An expired UI session cookie does not invalidate a current client bearer. Both
 `requireAuth` and `/auth/session` accept that client independently, including
 SSH-issued and paired credentials. UI-session-only routes retain their separate
