@@ -202,13 +202,14 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
   };
   const sessionProps = (session: SessionIndexSession, scope: string, depth = 0): RemoteSummaryRowProps => ({
     session, active: selectedSession === session.id, search: query, selected: selected.has(session.id), pending: pending || !online,
+    pinDisabled: pending,
     dragItem: { directory: scope, id: session.id }, reorderable: depth === 0,
     status: online ? (session.metadata as { yuri?: { sessionStatus?: { type?: string } } } | undefined)?.yuri?.sessionStatus?.type : 'unknown',
-    pinned: Boolean(snapshot?.pinnedSessionIds.includes(session.id) || session.time.pinned), unread: snapshot?.unread?.sessions[session.id]?.unreadCount ?? 0,
+    pinned: data.pinnedIds.has(session.id), unread: snapshot?.unread?.sessions[session.id]?.unreadCount ?? 0,
     onSelect: () => openRow(session, scope),
     onMultiSelect: () => setSelected((previous) => { const next = new Map(previous); if (next.has(session.id)) next.delete(session.id); else next.set(session.id, scope); return next; }),
     onRename: () => setEditor({ kind: 'title', id: session.id, directory: scope, value: session.title ?? '' }),
-    onPin: () => void mutate(async () => { await request(scope, `/api/yuri/session-index/session/${encodeURIComponent(session.id)}/pin`, snapshot?.pinnedSessionIds.includes(session.id) || session.time.pinned ? 'DELETE' : 'POST'); }),
+    onPin: () => void mutate(async () => { await request(scope, `/api/yuri/session-index/session/${encodeURIComponent(session.id)}/pin`, data.pinnedIds.has(session.id) ? 'DELETE' : 'POST'); }),
     onUnread: () => void mutate(async () => { const previous = snapshot?.unread?.sessions[session.id]; await request(scope, `/api/yuri/session-unread/${encodeURIComponent(session.id)}`, 'PUT', { unread: !previous?.unreadCount, expectedRevision: previous?.revision ?? 0 }); }),
     onArchive: () => void updateRows([session.id], { time: { archived: session.time.archived ? null : Date.now() } }, scope),
     onDelete: () => requestDelete([{ id: session.id, title: session.title, directory: scope }]),

@@ -59,6 +59,13 @@ task status callbacks.
   the existing session-index service and its newest-20 directory bound. Each
   partition hashes `hub:<stable Hub ID>:remote-host:<host ID>`; no mutable local
   runtime endpoint or local filesystem resolution participates.
+  Remote pin membership also belongs to this Hub partition. Existing persisted
+  pins are retained; refresh never imports or clears pins from a Host snapshot.
+  `POST`/`DELETE /api/hosts/:hostId/api/yuri/session-index/session/:id/pin`
+  terminate on the Hub before the generic proxy, use the existing index DB and
+  emit the existing host-scoped index-change tip. Unpin is idempotent, requires no
+  remote connection, and cannot modify the same session ID on another Host.
+  The target-instance fence and aggregate client authorization still apply.
 - `transport.js` owns authenticated direct/SSH-forwarded requests and reuses the
   normative E2EE Relay client. `build:remote-host-relay` compiles that client once;
   normal web build/prepack and `build:llm-bridge` include the build. The generated

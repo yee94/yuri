@@ -717,7 +717,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     return result.changes > 0;
   };
 
-  const setPinned = (sessionID, pinnedAt = Date.now()) => {
+  const setPinned = db.transaction((sessionID, pinnedAt = Date.now()) => {
     if (typeof sessionID !== 'string' || !sessionID) return false;
     const timestamp = toTimestamp(pinnedAt);
     if (!timestamp) return false;
@@ -725,15 +725,15 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     upsertPin.run(key, sessionID, timestamp);
     writeSummaryPinnedAt.run(timestamp, key, sessionID);
     return true;
-  };
+  });
 
-  const clearPinned = (sessionID) => {
+  const clearPinned = db.transaction((sessionID) => {
     if (typeof sessionID !== 'string' || !sessionID) return false;
     const key = runtimeKey();
     const pinResult = deletePin.run(key, sessionID);
     const summaryResult = writeSummaryPinnedAt.run(null, key, sessionID);
     return pinResult.changes > 0 || summaryResult.changes > 0;
-  };
+  });
 
   const replaceChildSessions = db.transaction((directory, parentSessionID, children) => {
     const normalizedDirectory = normalizeDirectory(directory);

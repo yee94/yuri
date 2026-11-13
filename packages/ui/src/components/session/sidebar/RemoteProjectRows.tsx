@@ -27,13 +27,13 @@ function DesktopRemoteProjectShell({ project, registry, label, collapsed, active
     openSidebarMenuKey={menu} setOpenSidebarMenuKey={setMenu}>{children}</SortableProjectItem>;
 }
 
-export function RemoteSummaryRow({ session, active, search, selected, pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, depth = 1, onSelect, onMultiSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
+export function RemoteSummaryRow({ session, active, search, selected, pending, pinDisabled = pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, depth = 1, onSelect, onMultiSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const title = session.title || t('sessions.sidebar.session.untitled');
   const renderItems = (Item: React.ElementType) => <>
     <Item onClick={onMultiSelect}>{t('remoteProjects.selectSession', { title })}</Item>
-    <Item disabled={pending} onClick={onPin}>{t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}</Item>
+    <Item disabled={pinDisabled} onClick={onPin}>{t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}</Item>
     <Item disabled={pending} onClick={onUnread}>{t(unread ? 'remoteProjects.markRead' : 'remoteProjects.markUnread')}</Item>
     <Item disabled={pending} onClick={onRename}>{t('sessions.sidebar.session.menu.rename')}</Item>
     <Item disabled={pending} onClick={onArchive}>{t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive')}</Item>
@@ -63,7 +63,7 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
       </SessionRowTitle>
     </SessionRowContent>
     <SessionRowActions visible={menuOpen}>
-    <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pending} onClick={onPin} aria-label={t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}><Icon name={pinned ? 'pushpin-2-fill' : 'pushpin-2'} className="size-3.5" /></Button>
+    <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pinDisabled} onClick={onPin} aria-label={t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}><Icon name={pinned ? 'pushpin-2-fill' : 'pushpin-2'} className="size-3.5" /></Button>
     <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pending} onClick={onArchive} aria-label={t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive')}><Icon name="archive" className="size-3.5" /></Button>
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-5 w-5" aria-label={t('remoteProjects.actions')}><Icon name="more-2" className="size-3.5" /></Button></DropdownMenuTrigger><DropdownMenuContent>
       {renderItems(DropdownMenuItem)}

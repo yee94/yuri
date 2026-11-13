@@ -129,8 +129,13 @@ local `MobileRowActionsSheet` is its existing local-menu adapter. Remote command
 never use local session callbacks. Action sheets mount on demand, not per idle row.
 
 The model opens raw session IDs through `useSessionNavigationStore`.
-Title, archive, pin, unread, folder and order writes use the captured registry
+Title, archive, unread, folder and directory-order writes use the captured registry
 entry; failed writes leave the confirmed snapshot intact and display the error.
+Remote pin/unpin requests use the same scoped registry path but terminate in the
+Hub's DB, not the Remote Host. Pins remain editable while the Host is offline.
+`pinnedSessionIds` is authoritative for row actions and leading-list membership;
+an old `session.time.pinned` must not restore a cleared pin. The mixed leading
+list's `__pinned__` order is also Hub-owned.
 Folder writes serialize per Host and read the full remote folder snapshot before
 changing a scope. Desktop sections reuse `SessionFolderItem` and its `parentId`
 tree; mobile follows its existing flat root-session/worktree presentation.

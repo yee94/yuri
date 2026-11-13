@@ -41,7 +41,8 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
     }).map((session) => session.id));
     const unseen = Object.fromEntries(Object.entries(snapshot?.unread?.sessions ?? {}).map(([id, value]) => [id, value.unreadCount]));
     const attention = listInProgressHomeSessions(sessions, data.pinnedIds, running, unseen);
-    // Pin membership is Host-owned; the display order lives with the connected server, so no Host order is read here.
+    // Pin membership and display order belong to the connected Hub; summaries
+    // project its host-partitioned pins, not the remote machine's pin settings.
     const pinnedRoots = derivePinnedSessions(sessions.filter((session) => !session.time?.archived
       && !(session as { parentID?: string | null }).parentID), data.pinnedIds);
     const pinnedSet = new Set(pinnedRoots.map((session) => session.id));

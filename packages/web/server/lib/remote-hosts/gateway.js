@@ -358,10 +358,8 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
           if (status?.type) service.updateStatus(session.id, status.type, status.changedAt || Date.now());
         }
       }
-      const previousPins = service.snapshot().pinnedSessionIds;
-      const pins = new Set(snapshot.pinnedSessionIds || []);
-      for (const pin of previousPins) if (!pins.has(pin)) service.clearPinned(pin);
-      for (const pin of pins) service.setPinned(pin);
+      // Pins belong to this Hub's existing host-partitioned index. Remote
+      // snapshots must not overwrite a user's pin or resurrect a cleared pin.
       const remote = await json(connection.host.id, '/api/projects', { signal: controller.signal }, { refresh: true });
       if (!Array.isArray(remote.projects) || !current(connection) || controller.signal.aborted) return;
       for (const reference of references) {
@@ -658,6 +656,18 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
         ...(!adapter ? { reason: 'pc_hub_required' } : {}) };
     },
     async connect(id) { const connection = await ensure(id); startStatus(connection); return hostView(connection.host); },
+    setSessionPinned(id, sessionId, pinned, instanceId) {
+      if (stopped) throw remoteFailure('host_unavailable', 404);
+      if (!store.projects(id).length) throw remoteFailure('project_not_found', 404);
+      if (instanceId !== undefined && instanceId !== store.instanceFor(id)) throw remoteFailure('remote_instance_mismatch', 409);
+      if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 512 || /[\u0000-\u001f]/.test(sessionId)) {
+        throw remoteFailure('validation_error', 400);
+      }
+      const service = indexFor(id);
+      if (pinned) service.setPinned(sessionId.trim());
+      else service.clearPinned(sessionId.trim());
+      emit(id, { type: 'yuri:session-index-changed', properties: { cause: 'change' } });
+    },
     summaries(id) {
       if (stopped) throw remoteFailure('host_unavailable', 404);
       const references = new Set(store.projects(id).map((p) => directoryKey(p.path)));

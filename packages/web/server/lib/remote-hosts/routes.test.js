@@ -20,6 +20,7 @@ import { createRemoteClientAuthRuntime } from '../client-auth/remote-clients.js'
 import { createGlobalUiEventBroadcaster } from '../event-stream/runtime.js';
 import { createRemoteHostStore } from './store.js';
 import { createRemoteHostGateway } from './gateway.js';
+import { createSessionIndexService } from '../session-index/service.js';
 import { registerRemoteHostRoutes } from './routes.js';
 import { registerTranscriptCacheRoutes } from '../transcript-cache/routes.js';
 import { registerFsRoutes } from '../fs/routes.js';
@@ -246,6 +247,67 @@ async function assertBrowserTcp(hub, route, remote) {
 }
 
 describe('Remote Host production HTTP contract', () => {
+  it('pins and unpins remote sessions in the Hub DB without remote mutations or refresh resurrection', async () => {
+    const { hub, remote } = await aggregate();
+    const remotePin = vi.fn((_req, res) => res.status(204).end());
+    remote.app.post('/api/yuri/session-index/session/:id/pin', remotePin);
+    remote.app.delete('/api/yuri/session-index/session/:id/pin', remotePin);
+    const session = { id: 'pin-session', directory: '/same/path', title: 'Pin target', time: { created: 1, updated: 2 } };
+    remote.setSummaries({ directories: [{ directory: '/same/path', hasMore: false, sessions: [session] }], pinnedSessionIds: [] });
+    await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' });
+    const abort = new AbortController();
+    const stream = await fetch(`${hub.url}/api/global/event`, { headers: hub.headers, signal: abort.signal });
+    const read = async () => (await hub.call('/api/hosts/remote-1/summaries')).json();
+    const persistedPins = () => {
+      const index = createSessionIndexService({ dbPath: path.join(hub.directory, 'session-index.sqlite'),
+        getRuntimeConfig: () => ({ apiBaseUrl: `hub:${hub.store.hubId}:remote-host:remote-1` }) });
+      try { return index.snapshot().pinnedSessionIds; } finally { index.close(); }
+    };
+    const refresh = async (snapshot) => {
+      const before = (await read()).lastSyncedAt;
+      remote.setSummaries(snapshot);
+      remote.emit({ type: 'yuri:session-index-changed', properties: { cause: 'change' } });
+      await wait(async () => expect((await read()).lastSyncedAt).toBeGreaterThan(before));
+    };
+    const pinPath = '/api/hosts/remote-1/api/yuri/session-index/session/pin-session/pin';
+    try {
+      await wait(async () => expect((await read()).directories[0]?.sessions[0]?.id).toBe('pin-session'));
+      expect((await hub.call(pinPath, 'POST')).status).toBe(204);
+      expect(remotePin.mock.calls.length).toBe(0);
+      expect((await read()).pinnedSessionIds).toEqual(['pin-session']);
+      expect(persistedPins()).toEqual(['pin-session']);
+      hub.store.saveProject('remote-2', { id: 'other-project', path: '/same/path' });
+      const otherPinPath = pinPath.replace('remote-1', 'remote-2');
+      expect((await hub.call(otherPinPath, 'POST')).status).toBe(204);
+      await refresh({ directories: [{ directory: '/same/path', sessions: [session] }], pinnedSessionIds: [] });
+      expect((await read()).pinnedSessionIds).toEqual(['pin-session']);
+      const Database = require('better-sqlite3');
+      const failureDb = new Database(path.join(hub.directory, 'session-index.sqlite'));
+      try {
+        failureDb.exec("CREATE TRIGGER reject_pin_delete BEFORE UPDATE OF pinned_at ON session_summary BEGIN SELECT RAISE(ABORT, 'injected storage failure'); END");
+        expect((await hub.call(pinPath, 'DELETE')).status).toBe(503);
+        expect((await read()).pinnedSessionIds).toEqual(['pin-session']);
+        expect(persistedPins()).toEqual(['pin-session']);
+      } finally {
+        failureDb.exec('DROP TRIGGER IF EXISTS reject_pin_delete');
+        failureDb.close();
+      }
+      expect((await hub.call(pinPath, 'DELETE')).status).toBe(204);
+      expect((await hub.call(pinPath, 'DELETE')).status).toBe(204);
+      expect((await read()).pinnedSessionIds).toEqual([]);
+      expect(persistedPins()).toEqual([]);
+      expect((await (await hub.call('/api/hosts/remote-2/summaries')).json()).pinnedSessionIds).toEqual(['pin-session']);
+      await refresh({ directories: [{ directory: '/same/path', sessions: [{ ...session, time: { ...session.time, pinned: 123 } }] }], pinnedSessionIds: ['pin-session'] });
+      const snapshot = await read();
+      expect(snapshot.pinnedSessionIds).toEqual([]);
+      expect(snapshot.directories[0].sessions[0].time.pinned).toBeUndefined();
+      expect(persistedPins()).toEqual([]);
+      expect(remotePin.mock.calls.length).toBe(0);
+      const mismatched = await fetch(`${hub.url}${pinPath}`, { method: 'POST', headers: { ...hub.headers, 'x-yuri-target-instance': 'other-instance' } });
+      expect(mismatched.status).toBe(409);
+      expect(persistedPins()).toEqual([]);
+    } finally { abort.abort(); await stream.body.cancel().catch(() => {}); }
+  });
   it('routes Browser SOCKS to the Remote Project Host with URL auth and real Origin checks', async () => {
     const { hub, remote } = await aggregate({ productionGuiNetwork: true, requireClientAuth: true, requestTimeoutMs: 5000 });
     await assertBrowserTcp(hub, '/api/hosts/remote-1/api/gui-network/ws', remote);

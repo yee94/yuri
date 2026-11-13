@@ -224,6 +224,14 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
   app.get('/api/hosts/:hostId/summaries', (req, res) => {
     try { res.json(gateway.summaries(req.params.hostId)); } catch (error) { report(res, error); }
   });
+  for (const method of ['post', 'delete']) {
+    app[method]('/api/hosts/:hostId/api/yuri/session-index/session/:id/pin', (req, res) => {
+      try {
+        gateway.setSessionPinned(req.params.hostId, req.params.id, method === 'post', req.get('x-yuri-target-instance') || undefined);
+        res.status(204).end();
+      } catch (error) { report(res, error); }
+    });
+  }
   app.post('/api/hosts/:hostId/connect', async (req, res) => {
     try { res.json({ host: await gateway.connect(req.params.hostId) }); } catch (error) { report(res, error); }
   });

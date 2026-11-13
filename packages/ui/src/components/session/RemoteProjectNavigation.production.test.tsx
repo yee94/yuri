@@ -20,6 +20,7 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
 import type { SessionFolder } from '@/stores/useSessionFoldersStore';
 import { toast } from '@/components/ui';
+import type { PinnedItem } from './sidebar/SidebarPinnedSessions';
 
 const mocks = vi.hoisted(() => ({ localDirectory: vi.fn(), localSelection: vi.fn(), events: new Set<(event: unknown) => void>(), dragContexts: new Map<string, (event: DragEndEvent) => void>() }));
 vi.mock('@dnd-kit/core', async (importOriginal) => {
@@ -36,6 +37,7 @@ vi.mock('@/lib/yuriEvents', () => ({ subscribeYuriEvents: (listener: (event: unk
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => <span /> }));
 vi.mock('@/components/gui-plugins/GuiPluginTitlebarItems', () => ({ GuiPluginTitlebarItems: () => null }));
+vi.mock('@/components/ui/MobileResizableSheet', () => ({ MobileResizableSheet: ({ open, title, children }: { open: boolean; title: React.ReactNode; children: React.ReactNode }) => open ? <div role="dialog">{title}{children}</div> : null }));
 vi.mock('@/components/session/sidebar/sortableItems', () => ({ SortableProjectItem: ({ children, projectLabel, projectIconSlot, onNewSession, onClose, onRenameStart, onToggle, isCollapsed, worktreeActionAvailable, onNewWorktreeSession }: { children: React.ReactNode; projectLabel: string; projectIconSlot?: React.ReactNode; onNewSession(): void; onClose(): void; onRenameStart(): void; onToggle(): void; isCollapsed: boolean; worktreeActionAvailable?: boolean; onNewWorktreeSession?(): void }) => <section><h2>{projectLabel}{projectIconSlot}</h2><button onClick={onNewSession}>new</button>{worktreeActionAvailable ? <button onClick={onNewWorktreeSession}>new-worktree</button> : null}<button onClick={onClose}>remove</button><button onClick={onRenameStart}>edit-project</button><button onClick={onToggle}>collapse</button>{!isCollapsed ? children : null}</section> }));
 vi.mock('./NewWorktreeDialog', () => ({ NewWorktreeDialog: ({ projectId }: { projectId: string }) => <div data-worktree-project={projectId} /> }));
 vi.mock('@/components/ui/dropdown-menu', () => ({
@@ -82,6 +84,75 @@ const drag = async (source: RemoteDragItem, target: RemoteDragItem) => {
     over: { id: remoteDragId(target), data: { current: { type: target.kind, folderId: target.id } }, rect: new DOMRect(), disabled: false } }));
   await flush(); await flush();
 };
+test.each([
+  { mobile: true, legacyPinned: false, offline: false },
+  { mobile: true, legacyPinned: true, offline: false },
+  { mobile: true, legacyPinned: true, offline: true },
+  { mobile: false, legacyPinned: true, offline: false },
+  { mobile: false, legacyPinned: true, offline: true },
+])('remote pin can be undone from the leading row and stays undone after remount (%j)', async ({ mobile, legacyPinned, offline }) => {
+  let pinned = true;
+  let failNext = true;
+  const methods: string[] = [];
+  const data = snapshot('a');
+  const fetch = vi.fn(async (path: string, init?: { method?: string }) => {
+    if (path.endsWith('/pin')) {
+      methods.push(init?.method ?? 'GET');
+      if (failNext) { failNext = false; return json({ error: 'injected pin write failure' }, 500); }
+      pinned = init?.method === 'POST';
+      return new Response(null, { status: 204 });
+    }
+    return json({ ...data, pinnedSessionIds: pinned ? ['same-id'] : [], directories: [{
+      ...data.directories[0], sessions: [{ ...data.directories[0].sessions[0],
+        time: { created: 1, updated: 2, ...(legacyPinned ? { pinned: 1 } : {}) },
+        metadata: { yuri: { sessionStatus: { type: 'idle' } } },
+      }],
+    }] });
+  });
+  const entry = registry(fetch);
+  const remoteProject = project('a');
+  if (offline) entry.applyCatalog({ supported: true, hubId: 'hub', projects: [remoteProject], hosts: [
+    { id: 'a', name: 'Remote', source: 'direct', state: 'offline' },
+  ] });
+  function Home() {
+    const [items, setItems] = React.useState<PinnedItem[]>([]);
+    const publish = React.useMemo(() => (_project: string, next: PinnedItem[]) => setItems(next), []);
+    return <><div data-leading-pins>{items.filter((item) => item.pinned).map((item) => <React.Fragment key={item.identity}>{item.content}</React.Fragment>)}</div>
+      <RemoteProjectSection project={remoteProject} registry={entry} mobile={mobile} onActivityItems={publish} /></>;
+  }
+  const rowSelector = mobile ? '.yuri-mobile-session-title' : '[data-session-title]';
+  const toggle = async (scope: Element, action: 'pin' | 'unpin') => {
+    if (mobile) {
+      await act(async () => scope.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.session.menu.label"]')!.click());
+      const dialog = document.querySelector('[role="dialog"]')!;
+      expect(dialog.textContent).not.toContain(`remoteProjects.${action === 'pin' ? 'unpin' : 'pin'}`);
+      await click(`remoteProjects.${action}`, dialog);
+    } else {
+      const button = scope.querySelector<HTMLButtonElement>(`[aria-label="remoteProjects.${action}"]`)!;
+      expect(button.disabled).toBe(false);
+      await act(async () => button.click());
+    }
+    await flush(); await flush();
+  };
+  const render = (key: string) => root.render(<QueryClientProvider client={queryClient}><Home key={key} /></QueryClientProvider>);
+  await act(async () => render('first'));
+  await flush(); await flush();
+  const leading = container.querySelector('[data-leading-pins]')!;
+  expect(leading.querySelector(rowSelector)?.textContent).toContain('Title a');
+  await toggle(leading, 'unpin');
+  expect(methods).toEqual(['DELETE']);
+  expect(leading.querySelector(rowSelector)).not.toBeNull();
+  expect(toast.error).toHaveBeenCalledWith('injected pin write failure');
+  await toggle(leading, 'unpin');
+  expect(methods).toEqual(['DELETE', 'DELETE']);
+  expect(leading.querySelector(rowSelector)).toBeNull();
+  await act(async () => render('second'));
+  await flush(); await flush();
+  expect(container.querySelector(`[data-leading-pins] ${rowSelector}`)).toBeNull();
+  await toggle(container, 'pin');
+  expect(methods).toEqual(['DELETE', 'DELETE', 'POST']);
+  expect(container.querySelector(`[data-leading-pins] ${rowSelector}`)?.textContent).toContain('Title a');
+});
 test.each([false, true])('remote project omits archives without dropping active nested-directory sessions (mobile=%s)', async (mobile) => {
   const original = snapshot('a');
   const directory = `${project('a').path}/nested`;

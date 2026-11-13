@@ -28,7 +28,7 @@ export function MobileRemoteProjectShell({ project, registry, label, collapsed, 
   </MobileProjectSurface>;
 }
 
-export function MobileRemoteSummaryRow({ session, active, search, pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, onSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
+export function MobileRemoteSummaryRow({ session, active, search, pending, pinDisabled = pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, onSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
   const { t } = useI18n();
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const title = session.title ?? t('mobile.sessions.untitled');
@@ -38,9 +38,9 @@ export function MobileRemoteSummaryRow({ session, active, search, pending, pinne
       subtitle: [secondaryMeta?.projectLabel, secondaryMeta?.branchLabel?.trim()].filter(Boolean).join(' · ') || undefined,
       activityLabel: activityTime ? formatSessionCompactDateLabel(activityTime) : undefined }} highlightQuery={search} subtitleSuffix={subtitleSuffix}
       indicator={status === 'busy' || status === 'retry' ? 'running' : unread ? 'completed-unread' : 'idle'}
-      onSelect={onSelect} onPin={() => { if (!pending) onPin(); }} onArchive={() => { if (!pending) onArchive(); }} onOpenActions={() => setActionsOpen(true)} />
+      onSelect={onSelect} onPin={() => { if (!pinDisabled) onPin(); }} onArchive={() => { if (!pending) onArchive(); }} onOpenActions={() => setActionsOpen(true)} />
     {actionsOpen ? <MobileActionSheet id={`remote-session-actions:${JSON.stringify([dragItem.directory, dragItem.id])}`} title={title} open onOpenChange={setActionsOpen} items={[
-      { id: 'pin', icon: 'pushpin', label: t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin'), onClick: onPin, disabled: pending },
+      { id: 'pin', icon: pinned ? 'unpin' : 'pushpin', label: t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin'), onClick: onPin, disabled: pinDisabled },
       { id: 'unread', icon: 'check', label: t(unread ? 'remoteProjects.markRead' : 'remoteProjects.markUnread'), onClick: onUnread, disabled: pending },
       { id: 'rename', icon: 'pencil-ai', label: t('sessions.sidebar.session.menu.rename'), onClick: onRename, disabled: pending },
       { id: 'archive', icon: 'archive', label: t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive'), onClick: onArchive, disabled: pending },

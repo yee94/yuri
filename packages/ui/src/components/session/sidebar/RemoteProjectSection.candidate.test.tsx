@@ -238,9 +238,9 @@ it('mobile remote projects reuse the floating project/session cards and keep man
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.session.menu.label"]')!.click());
     const offlineActions = [...container.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')];
     expect(offlineActions.length).toBeGreaterThan(0);
-    expect(offlineActions.every((button) => button.disabled)).toBe(true);
+    expect(offlineActions.filter((button) => !button.disabled).map((button) => button.textContent)).toEqual(['remoteProjects.unpin']);
     const callsBeforeDisabledClick = fetch.mock.calls.length;
-    await act(async () => offlineActions[0].click());
+    await act(async () => offlineActions.find((button) => button.disabled)!.click());
     expect(fetch).toHaveBeenCalledTimes(callsBeforeDisabledClick);
   } finally {
     await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear();

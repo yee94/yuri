@@ -69,6 +69,9 @@ development index without changing settings or authentication storage.
 Rows are partitioned by a runtime key derived from the desktop
 `apiBaseUrl` (Electron falls back to the local sidecar URL so the key stays
 stable between server listen and window activation).
+Pin/unpin updates the independent pin record and summary `pinned_at` in one
+transaction. A failed second write rolls both back; reopening cannot resurrect
+a partially cleared pin from legacy summary backfill.
 `service.js` exclusively owns the WAL database and stores at most the
 newest 20 root-session summaries per runtime and directory. It also retains the
 minimal session `model: { providerID, id, variant? }` reference (each string is
