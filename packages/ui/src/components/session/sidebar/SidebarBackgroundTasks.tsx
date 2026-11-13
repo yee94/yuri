@@ -118,7 +118,10 @@ function RuntimeBackgroundTasks({ compactWithRestart }: { compactWithRestart: bo
       if (useUpdateStore.getState().downloadError) throw new Error(useUpdateStore.getState().downloadError!);
     } });
   const operation = update.data?.operation;
-  if (operation && (isHostUpdateActive(operation) || operation.status === 'failed') && !((downloading || downloadError || (downloaded && isHostUpdateActive(operation))) && operation.version === (downloadVersion ?? updateVersion) && isDesktopLocalOriginActive())) tasks.push({
+  const snapshot = update.data;
+  const failedPlanGone = operation?.status === 'failed' && !!snapshot && !snapshot.checkError && snapshot.update !== undefined && snapshot.channel === operation.channel
+    && (snapshot.update?.version !== operation.version || snapshot.update.kind !== operation.kind);
+  if (operation && !failedPlanGone && (isHostUpdateActive(operation) || operation.status === 'failed') && !((downloading || downloadError || (downloaded && isHostUpdateActive(operation))) && operation.version === (downloadVersion ?? updateVersion) && isDesktopLocalOriginActive())) tasks.push({
     id: operation.id, label: t('backgroundTasks.download'), detail: `${t(operation.status === 'failed' ? 'backgroundTasks.downloadFailed'
       : operation.status === 'installing' ? 'updateDialog.status.installingUpdate' : operation.status === 'restarting' ? 'updateDialog.status.serverRestarting'
         : operation.status === 'checking' ? 'updateDialog.status.updating' : 'updateDialog.status.downloading')} · ${operation.version}`,
