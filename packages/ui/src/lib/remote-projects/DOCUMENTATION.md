@@ -190,6 +190,13 @@ client surfaces; ordinary web and VS Code return an explicit unsupported decisio
 
 ## Validation boundary
 
+`operation-errors` holds only transient presentation state per registry and Host,
+not authoritative connection state or persisted error history. Mounted active
+consumers publish independent error leases with their owning retry action; cleanup
+cannot erase another consumer's error. Shared machine labels and the Header reveal
+details through `RemoteHostErrorIndicator`, never a page-level banner. The channel
+adds no network requests, polling, draft-text subscriptions or catalog enumeration.
+
 `registry.test.ts` covers local-key compatibility, safe DTOs, same-path identities,
 request fidelity, Hub/host fencing, zero unused work and host event fanout counts.
 `sync/remote-session-state.native-capture.test.ts` replays a portable exact

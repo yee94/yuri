@@ -83,6 +83,14 @@ Desktop new drafts share `DraftComposerFoot` with the local draft view and omit
 the empty transcript viewport, so the welcome heading and composer stay centered.
 New-draft delivery uses a null session ID, not the editor's placeholder.
 Read-only checks guard mutation handlers as well as the visible controls.
+Remote draft, observation and catalog failures never insert transcript banners.
+Visible owners publish transient errors through the registry/Host-scoped
+`operation-errors` channel; Header and project machine labels display the shared
+`RemoteHostErrorIndicator` immediately to the right of the name. Hover or activation
+opens details and retry in an anchored popup. Recovery and owner departure remove
+only that owner's error, without clearing another view's failure. Draft retries
+rehydrate metadata/attachments rather than treating a transcript refresh as recovery.
+Remote context-overview failures use the same channel and retain their last snapshot.
 Model catalogs load on explicit picker demand, not on typing or opening a
 session. Existing remote sessions also observe the Host/Location-scoped Agent
 catalog for permission-control visibility, without opening a picker or enumerating

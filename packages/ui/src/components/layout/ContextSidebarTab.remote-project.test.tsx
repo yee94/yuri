@@ -5,6 +5,7 @@ import { ContextPanelContent } from './ContextSidebarTab';
 import { HostRuntimeContext, type HostRuntimeContextValue } from '@/contexts/hostRuntimeContext';
 import { locationKey } from '@/lib/remote-projects/location';
 import { useUIStore } from '@/stores/useUIStore';
+import { RemoteHostErrorIndicator } from '@/components/session/RemoteHostErrorIndicator';
 
 const fixture = vi.hoisted(() => ({
   hostId: 'host-a', t: (key: string) => key, local: vi.fn(), config: vi.fn(), summary: vi.fn(), demand: vi.fn(), refresh: vi.fn(),
@@ -40,7 +41,7 @@ const makeScope = (hostId: string): HostRuntimeContextValue => {
   const location = { hubId: 'https://hub.example', hostId, directory: '/workspace' };
   return { entry: { location, key: locationKey(location), sdk: () => ({}) }, registry: {} } as unknown as HostRuntimeContextValue;
 };
-const render = async (scope: HostRuntimeContextValue) => { await act(async () => root.render(<HostRuntimeContext.Provider value={scope}><ContextPanelContent /></HostRuntimeContext.Provider>)); };
+const render = async (scope: HostRuntimeContextValue) => { await act(async () => root.render(<HostRuntimeContext.Provider value={scope}><RemoteHostErrorIndicator registry={scope.registry} hostId={scope.entry.location.hostId!} /><ContextPanelContent /></HostRuntimeContext.Provider>)); };
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); vi.clearAllMocks(); fixture.hostId = 'host-a'; fixture.refresh.mockResolvedValue(undefined);
   useUIStore.setState({ showAssistantTps: false }); node = document.createElement('div'); document.body.append(node); root = createRoot(node);
@@ -64,9 +65,12 @@ it('keeps the complete real context statistics and expandable raw messages on ex
 it('retains visible remote context through failure/retry and isolates expanded state on same-ID cross-Host navigation', async () => {
   await render(makeScope('host-a'));
   await act(async () => fixture.onError?.(new Error('remote offline')));
-  expect(node.querySelector('[role="alert"]')?.textContent).toContain('remote offline');
+  expect(node.querySelector('[role="alert"]')).toBeNull();
+  expect(node.textContent).not.toContain('remote offline');
+  await act(async () => node.querySelector<HTMLElement>('[data-remote-host-error]')!.click());
+  expect(document.querySelector('[data-remote-host-error-popup]')?.textContent).toContain('remote offline');
   expect(node.textContent).toContain('REMOTE host-a');
-  await act(async () => node.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-remote-host-error-popup] button')!.click());
   expect(fixture.refresh).toHaveBeenCalled();
   expect(node.querySelector('[role="alert"]')).toBeNull();
   await act(async () => node.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useRemoteOperationError } from '@/lib/remote-projects/operation-errors';
 import { useQuery } from '@tanstack/react-query';
 import { useEvent } from '@reactuses/core';
 import { useHostRuntime, useRemoteSessionDemand } from '@/contexts/HostRuntimeProvider';
@@ -9,7 +10,6 @@ import { providerCatalogQueryOptions } from '@/queries/configCatalogQueries';
 import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { getTranscriptRepository, transcriptScope, refreshTranscriptFromAuthority, subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision } from '@/sync/transcript-repository-runtime';
-import { Button } from '@/components/ui/button';
 import type { Message, Part } from '@/lib/opencode/v2-types';
 import { WorkerHighlightedCode } from '@/components/code/WorkerHighlightedCode';
 
@@ -331,8 +331,10 @@ const RemoteContextPanelContent: React.FC<{ active: boolean }> = ({ active }) =>
     ? [{ info: transcript.messagesByID[id], parts: Array.from(transcript.partsByMessageID[id] ?? []) }]
     : []) ?? [], [transcript]);
   const failure = error ?? providerQuery.error?.message ?? summaries.error?.message;
+  useRemoteOperationError(host.registry, entry.location.hostId!, active ? failure : null, async () => {
+    await Promise.all([refresh(), providerQuery.refetch(), summaries.refetch()]).catch(report);
+  });
   return <div className="flex h-full min-h-0 flex-col" data-remote-context-location={entry.key}>
-    {failure ? <div role="alert" className="flex shrink-0 items-center gap-2 px-4 py-2 typography-meta text-status-error"><span className="min-w-0 flex-1">{failure}</span><Button size="xs" onClick={() => { void Promise.all([refresh(), providerQuery.refetch(), summaries.refetch()]).catch(report); }}>{t('chat.history.retry')}</Button></div> : null}
     {currentSessionId && !transcript && !failure ? <div role="status" className="px-4 py-2 typography-meta text-muted-foreground">{t('common.loading')}</div> : null}
     <div className="min-h-0 flex-1"><ContextPanelContentView currentSessionId={currentSessionId} sessions={sessions} sessionMessages={sessionMessages} providers={providers} /></div>
   </div>;

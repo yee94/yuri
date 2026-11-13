@@ -18,6 +18,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useSelectionStore } from '@/sync/selection-store';
 import { REMOTE_NEW_SESSION_DRAFT_ID } from '@/lib/remote-projects/location';
 import { HostRuntimeProvider } from '@/contexts/HostRuntimeProvider';
+import { RemoteHostIndicator } from '@/components/session/RemoteHostIndicator';
 
 const fixture = vi.hoisted(() => ({ registry: null as unknown as HostRuntimeRegistry, surface: null as ChatInputSurface | null }));
 vi.mock('@/queries/remoteProjectQueries', () => ({
@@ -109,6 +110,50 @@ vi.mock('./FormCard', () => ({ FormCard: () => null }));
 
 afterEach(() => { fixture.surface = null; vi.restoreAllMocks(); });
 
+test('draft failures stay beside the machine name, retry draft storage, and disappear on recovery or departure', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const location = { hubId: 'draft-error-hub', hostId: 'draft-error-host', directory: '/repo' };
+  const registry = new HostRuntimeRegistry(location.hubId, { transportIdentity: 'draft-error-test', isCurrent: () => true,
+    sdk: () => ({}) as OpenCodeClient, fetch: async () => Response.json({}),
+  });
+  registry.applyCatalog({ hubId: location.hubId, supported: true, projects: [], hosts: ['draft-error-host', 'other'].map((id) => ({ id, name: id, source: 'direct' as const, state: 'connected' as const })) });
+  const input = getRemoteInputStore(location).getState();
+  const hydrate = vi.spyOn(input, 'hydrateDraftMetadata').mockResolvedValue(false);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const node = document.createElement('div'); document.body.append(node); const root = createRoot(node);
+  const render = (chat = true) => <QueryClientProvider client={client}>
+    <RemoteHostIndicator registry={registry} hostId={location.hostId} showName />
+    <RemoteHostIndicator registry={registry} hostId="other" showName />
+    {chat ? <HostRuntimeProvider registry={registry} location={location}><RemoteChatContainer location={location} sessionId={null} /></HostRuntimeProvider> : null}
+  </QueryClientProvider>;
+  try {
+    await act(async () => root.render(render()));
+    expect(node.textContent).not.toContain('Remote draft storage unavailable');
+    const trigger = node.querySelector<HTMLElement>('[data-remote-host-error="draft-error-host"]');
+    expect(trigger).not.toBeNull();
+    expect(node.querySelector('[data-remote-host-error="other"]')).toBeNull();
+    await act(async () => trigger!.click());
+    expect(document.querySelector('[data-remote-host-error-popup]')?.textContent).toContain('Remote draft storage unavailable');
+    const retry = document.querySelector<HTMLButtonElement>('[data-remote-host-error-popup] button');
+    await act(async () => retry!.click());
+    expect(hydrate).toHaveBeenCalledTimes(2);
+    expect(node.querySelector('[data-remote-host-error]')).not.toBeNull();
+    hydrate.mockResolvedValue(true);
+    await act(async () => retry!.click());
+    expect(hydrate).toHaveBeenCalledTimes(3);
+    expect(node.querySelector('[data-remote-host-error]')).toBeNull();
+    expect(node.querySelector('[data-editor]')).not.toBeNull();
+    hydrate.mockResolvedValue(false);
+    await act(async () => root.render(render(false)));
+    await act(async () => root.render(render()));
+    expect(node.querySelector('[data-remote-host-error]')).not.toBeNull();
+    await act(async () => root.render(render(false)));
+    expect(node.querySelector('[data-remote-host-error]')).toBeNull();
+  } finally {
+    await act(async () => root.unmount()); client.clear(); registry.dispose(); node.remove();
+  }
+});
+
 test('draft model, agent and variant survive remount without crossing local, Host or directory boundaries', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const previous = useSelectionStore.getState();
@@ -184,14 +229,15 @@ test('production remote pane observes, paints and sends to its Host, never the l
   const element = document.createElement('div'); document.body.append(element);
   const root = createRoot(element);
   const previousUI = useUIStore.getState();
-  const render = (sessionId: string | null) => <QueryClientProvider client={client}><RemoteChatContainer location={location} sessionId={sessionId} /></QueryClientProvider>;
+  const render = (sessionId: string | null) => <QueryClientProvider client={client}><RemoteHostIndicator registry={registry} hostId={location.hostId} showName /><RemoteChatContainer location={location} sessionId={sessionId} /></QueryClientProvider>;
   try {
     await act(async () => root.render(render('same')));
-    await vi.waitFor(() => expect(element.querySelector('[role="alert"]')?.textContent).toContain('404'));
+    await vi.waitFor(() => expect(element.querySelector('[data-remote-host-error]')?.getAttribute('aria-label')).toContain('404'));
+    expect(element.querySelector('[role="alert"]')).toBeNull();
     bodyAvailable = true;
     await act(async () => getHostRuntimeServices(registry).demand.contentReady('remote', 'lease', 'same', 'channel', 'recovered'));
     await vi.waitFor(() => expect(element.textContent).toContain('Remote authority'));
-    await vi.waitFor(() => expect(element.querySelector('[role="alert"]')).toBeNull());
+    await vi.waitFor(() => expect(element.querySelector('[data-remote-host-error]')).toBeNull());
     const Viewport = React.memo(({ showPromptNavigator }: { showPromptNavigator: boolean }) => <div data-prompt-navigator={String(showPromptNavigator)} />);
     for (const [isMobile, promptNavigatorEnabled, visible] of [
       [true, true, false], [false, true, true], [false, false, false], [true, false, false],

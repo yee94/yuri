@@ -8,6 +8,8 @@ import { locationKey } from '@/lib/remote-projects/location';
 import { queryClient } from '@/lib/queryRuntime';
 import { SessionSwitcherDropdown } from '@/components/session/SessionSwitcherDropdown';
 import { toast } from '@/components/ui';
+import { useRemoteOperationError } from '@/lib/remote-projects/operation-errors';
+import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 
 const fixture = vi.hoisted(() => ({
   project: { id: 'remote-project', hostId: 'remote-host', hubId: 'https://hub.example', path: '/workspace', label: 'Project', remoteProjectId: 'host-project', remoteState: 'ok' },
@@ -109,6 +111,35 @@ it('shows the same Host identity in the real mobile Header', async () => {
   expect(node.textContent).toContain('Build machine');
   expect(node.textContent).not.toContain('LOCAL SECRET TITLE');
   expect(fixture.localRead).toHaveBeenCalledWith(null);
+});
+
+it.each([false, true])('keeps operational errors next to the real Header machine name without opening the session switcher (mobile=%s)', async (mobile) => {
+  fixture.mobile = mobile;
+  const location = { ...fixture.remote.location };
+  const entry = { location, key: locationKey(location), queryScope: ['header-errors', mobile], sdk: vi.fn() };
+  const registry = { hubId: location.hubId, resolve: () => entry } as unknown as HostRuntimeRegistry;
+  fixture.registry = registry;
+  const retry = vi.fn();
+  function FailureOwner({ message }: { message: string | null }) {
+    useRemoteOperationError(registry, location.hostId, message, retry);
+    return null;
+  }
+  const render = (message: string | null) => <><FailureOwner message={message} /><Header /></>;
+  await act(async () => root.render(render('Remote draft storage unavailable')));
+  const trigger = node.querySelector<HTMLElement>('[data-remote-host-error]');
+  expect(trigger).not.toBeNull();
+  expect(node.textContent).toContain('Build machine');
+  expect(node.textContent).not.toContain('Remote draft storage unavailable');
+  expect(trigger!.closest('[aria-label="sessions.switcher.openAria"]')).toBeNull();
+  expect(trigger!.closest('[data-remote-header-host]')?.textContent).toBe('Build machine');
+  expect(trigger!.previousElementSibling?.textContent).toBe('Build machine');
+  await act(async () => trigger!.click());
+  expect(document.querySelector('[data-remote-host-error-popup]')?.textContent).toContain('Remote draft storage unavailable');
+  expect(useUIStore.getState().isSessionDropdownOpen).toBe(false);
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-remote-host-error-popup] button')!.click());
+  expect(retry).toHaveBeenCalledOnce();
+  await act(async () => root.render(render(null)));
+  expect(node.querySelector('[data-remote-host-error]')).toBeNull();
 });
 
 it('does not mount Remote Header discovery for a local project across 50 unrelated parent renders', async () => {

@@ -72,6 +72,7 @@ import type { GitHubAuthStatus } from '@/lib/api/types';
 import type { SessionContextUsage } from '@/stores/types/sessionTypes';
 import { DesktopHostSwitcherDialog } from '@/components/desktop/DesktopHostSwitcher';
 import { DesktopCurrentHostButton } from '@/components/desktop/DesktopCurrentHostButton';
+import { RemoteHostErrorIndicator } from '@/components/session/RemoteHostErrorIndicator';
 import { OpenInAppButton } from '@/components/desktop/OpenInAppButton';
 import { ProjectActionsButton } from '@/components/layout/ProjectActionsButton';
 import { resolveServicesPanelIntent } from '@/components/layout/servicesPanelIntent';
@@ -1822,12 +1823,13 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
                   ? <RemoteHeaderSessionTitle key={locationKey(remoteSession.location)} entry={remoteRegistry.resolve(remoteSession.location)} sessionId={remoteSession.sessionId} fallback={currentSessionTitle} />
                   : currentSessionTitle}
               </span>
-              {isRemoteProject ? <span className="ml-2 inline-flex min-w-0 max-w-36 items-center gap-1 typography-meta text-muted-foreground" title={remoteHostName}>
-                <Icon name="computer" className="size-3 shrink-0" />
-                <span className="truncate">{remoteHostName}</span>
-              </span> : null}
             </button>
           </SessionSwitcherDropdown>
+          {isRemoteProject ? <span data-remote-header-host={activeProject?.hostId} className="inline-flex min-w-0 max-w-36 items-center gap-1 typography-meta text-muted-foreground" title={remoteHostName}>
+            <Icon name="computer" className="size-3 shrink-0" />
+            <span className="truncate">{remoteHostName}</span>
+            {remoteRegistry && activeProject?.hostId ? <RemoteHostErrorIndicator registry={remoteRegistry} hostId={activeProject.hostId} /> : null}
+          </span> : null}
         </div>
 
         {tabs.length > 0 && (
@@ -1905,7 +1907,10 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
 
       {(!isSessionSwitcherOpen || Boolean(onToggleLeftDrawer)) && (
         <>
-          {isRemoteProject ? <span className="max-w-28 shrink-0 truncate typography-meta text-muted-foreground" title={remoteHostName}>{remoteHostName}</span> : null}
+          {isRemoteProject ? <span data-remote-header-host={activeProject?.hostId} className="inline-flex max-w-28 shrink-0 items-center gap-1 typography-meta text-muted-foreground" title={remoteHostName}>
+            <span className="truncate">{remoteHostName}</span>
+            {remoteRegistry && activeProject?.hostId ? <RemoteHostErrorIndicator registry={remoteRegistry} hostId={activeProject.hostId} /> : null}
+          </span> : null}
           <div className="app-region-no-drag flex min-w-0 flex-1 items-center">
             <div className="flex min-w-0 flex-1 overflow-x-auto overflow-y-hidden scrollbar-hidden touch-pan-x overscroll-x-contain">
               <div className="flex w-max items-center gap-1 pr-1">

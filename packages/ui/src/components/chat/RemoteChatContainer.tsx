@@ -1,5 +1,5 @@
 import React from 'react';
-import { useEvent, useEventListener } from '@reactuses/core';
+import { useEvent, useEventListener, useMountedState } from '@reactuses/core';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { HostLocation } from '@/lib/remote-projects/location';
 import { locationKey, REMOTE_NEW_SESSION_DRAFT_ID } from '@/lib/remote-projects/location';
@@ -54,6 +54,7 @@ import { ComposerFoot, DraftComposerFoot } from './ComposerFoot';
 import type { ToolPopupContent } from './message/types';
 import { parseSlashCommandInvocation } from '@/composer/inline-visual';
 import { skillAttachmentsFromText } from '@/composer/skill-attachments';
+import { useRemoteOperationError } from '@/lib/remote-projects/operation-errors';
 
 type Props = { location: HostLocation; sessionId: string | null; active?: boolean; readOnly?: boolean; composerPresentation?: 'primary' | 'panel'; onNavigateSession?: (sessionId: string, directory: string) => void; viewport?: typeof import('./ChatContainer').ChatViewport };
 const EMPTY_INBOX: never[] = [];
@@ -88,11 +89,12 @@ function RemoteChatOwner(props: Props & { registry: HostRuntimeRegistry }) {
   React.useEffect(() => owner.retain(), [owner]);
   const state = owner.state;
   useRemoteSessionViewed(props.registry, state.entry, props.sessionId, props.active !== false);
-  return <RemoteChatContext.Provider value={state}><RemoteChatView {...props} state={state} /></RemoteChatContext.Provider>;
+  return <RemoteChatContext.Provider value={state}><RemoteChatView key={JSON.stringify([runtime.entry.queryScope, props.sessionId])} {...props} state={state} /></RemoteChatContext.Provider>;
 }
 
 function RemoteChatView({ location, sessionId, active = true, readOnly = false, composerPresentation = 'panel', onNavigateSession, viewport: Viewport, state }: Props & { state: ReturnType<typeof createRemoteSessionState> }) {
   const { t } = useI18n();
+  const isMounted = useMountedState();
   const entry = state.entry;
   const useInputStore = React.useMemo(() => getRemoteInputStore(location), [location]);
   const remoteNavigation = useSessionNavigationStore((store) => store.remoteSession);
@@ -105,6 +107,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   const runtimeGeneration = getRuntimeGeneration();
   const [error, setError] = React.useState<string | null>(null);
   const [observationError, setObservationError] = React.useState<string | null>(null);
+  const [draftError, setDraftError] = React.useState<string | null>(null);
   const report = useEvent((error: unknown) => setError(error instanceof Error ? error.message : String(error)));
   React.useEffect(() => {
     setObservationError(null);
@@ -195,19 +198,36 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   useInputStore((store) => store.draftAttachmentViews[draftID]);
   const attachments = useInputStore.getState().getDraftAttachmentViews(draftKey);
   const attachmentAdapter = React.useMemo(() => createDraftAttachmentResourceAdapter(draftKey, () => useInputStore.getState()), [draftKey, useInputStore]);
+  const hydrateDraft = useEvent(async (isCancelled: () => boolean) => {
+    const ready = await useInputStore.getState().hydrateDraftMetadata(draftKey.transportIdentity);
+    if (!ready) throw new Error('Remote draft storage unavailable');
+    if (isCancelled()) return;
+    await useInputStore.getState().hydrateDraftAttachments(draftKey);
+    if (isCancelled()) return;
+    if (!sessionId && draftOptions?.syntheticParts) await seedRemoteDraftSyntheticParts(location, draftOptions.syntheticParts);
+    if (isCancelled()) return;
+    if (!sessionId && draftOptions?.initialPrompt && !useInputStore.getState().getDraft(draftKey)?.text) requestRemoteComposerInput(location, sessionId, { text: draftOptions.initialPrompt, mode: 'replace' });
+  });
   React.useEffect(() => {
     let cancelled = false;
-    void useInputStore.getState().hydrateDraftMetadata(draftKey.transportIdentity).then(async (ready) => {
-      if (!ready) throw new Error('Remote draft storage unavailable');
-      if (!cancelled) {
-        await useInputStore.getState().hydrateDraftAttachments(draftKey);
-        if (cancelled) return;
-        if (!sessionId && draftOptions?.syntheticParts) await seedRemoteDraftSyntheticParts(location, draftOptions.syntheticParts);
-        if (!sessionId && draftOptions?.initialPrompt && !useInputStore.getState().getDraft(draftKey)?.text) requestRemoteComposerInput(location, sessionId, { text: draftOptions.initialPrompt, mode: 'replace' });
-      }
-    }).catch(report);
+    void hydrateDraft(() => cancelled).then(() => { if (!cancelled) setDraftError(null); }).catch((error: unknown) => {
+      if (!cancelled) setDraftError(error instanceof Error ? error.message : String(error));
+    });
     return () => { cancelled = true; };
-  }, [useInputStore, draftKey, report, draftOptions?.initialPrompt, draftOptions?.syntheticParts, location, sessionId]);
+  }, [useInputStore, draftKey, hydrateDraft, draftOptions?.initialPrompt, draftOptions?.syntheticParts, location, sessionId]);
+  const registry = useHostRuntime()!.registry;
+  useRemoteOperationError(registry, location.hostId!, active ? draftError : null, async () => {
+    try { await hydrateDraft(() => !isMounted()); if (isMounted()) setDraftError(null); }
+    catch (error) { if (isMounted()) setDraftError(error instanceof Error ? error.message : String(error)); }
+  });
+  useRemoteOperationError(registry, location.hostId!, active ? error ?? observationError : null, async () => {
+    if (!sessionId) return;
+    await Promise.all([state.repository.refreshFromAuthority(state.scope(sessionId)), state.refreshMetadata(sessionId)])
+      .then(() => { setError(null); setObservationError(null); }).catch(report);
+  });
+  useRemoteOperationError(registry, location.hostId!, active && (catalogDemand || modelPickerOpen) ? providersQuery.error?.message ?? agentsQuery.error?.message : null, async () => {
+    await Promise.all([providersQuery.refetch(), agentsQuery.refetch()]);
+  });
   const pending = useRemotePendingComposer((store) => store.entries[remotePendingComposerKey(location, sessionId)]);
   const inlineKey = state.sessionKey(sessionId ?? 'draft');
   const inlineDrafts = useInlineCommentDraftStore((store) => store.drafts[inlineKey] ?? EMPTY_INLINE);
@@ -524,11 +544,6 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     showAssistantStatus={busy || snapshot.permissions.length > 0} />;
   return <SessionSurfaceContext.Provider value={sessionSurface}>
     <div className="relative flex h-full min-h-0 flex-col bg-background" data-remote-chat={locationKey(location)}>
-      {(catalogDemand || modelPickerOpen) && (providersQuery.error || agentsQuery.error) ? <div role="alert" className="px-3 py-2 typography-meta text-[var(--status-error)]">
-        {String(providersQuery.error?.message ?? agentsQuery.error?.message)}
-        <Button size="xs" onClick={() => { void Promise.all([providersQuery.refetch(), agentsQuery.refetch()]); }}>{t('chat.history.retry')}</Button>
-      </div> : null}
-      {error || observationError ? <div role="alert" className="px-3 py-2 typography-meta text-[var(--status-error)]">{error ?? observationError}<Button size="xs" onClick={() => { if (sessionId) void Promise.all([state.repository.refreshFromAuthority(state.scope(sessionId)), state.refreshMetadata(sessionId)]).then(() => { setError(null); setObservationError(null); }).catch(report); }}>{t('chat.history.retry')}</Button></div> : null}
       {sessionId || isMobile ? <TranscriptSearch messages={messages} enabled={active && !expanded} canOpen={() => !document.querySelector('[role="dialog"]')} onNavigate={follow.releaseAutoFollow}>
       {Viewport ? <Viewport currentSessionId={sessionId ?? 'remote-new-session'} virtualizerKey={surface.surfaceID}
         timelineHistoryAnchorToken={anchorToken} isDesktopExpandedInput={expanded} isMobile={isMobile} stickyUserHeader={stickyUserHeader}
