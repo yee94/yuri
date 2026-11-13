@@ -364,6 +364,11 @@ ancestor selectors. Global search therefore retains its live header and styling;
 returning to a conversation restores the ordinary mirror. This is a shared web
 bundle change; physical Android/iOS keyboard validation is still required.
 
+Head stylesheet mutations invalidate the mirror's CSS cache even when stylesheet
+and rule counts are unchanged. Theme replacements must send the new token values
+together with the root classes on both Android and iOS, with or without an engaged
+keyboard; header-only updates continue to omit unchanged CSS.
+
 `YuriNativeHeader.setImeSync` gates the native lift on both platforms. A focus
 transfer to an ordinary input releases the lift immediately, without waiting for
 another keyboard notification. A plain blur retains the owner through native

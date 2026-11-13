@@ -5,18 +5,18 @@
 <title>{{t:meta.title}}</title><meta name="description" content="{{attr:meta.desc}}">
 <meta name="theme-color" content="#0a0a09"><meta name="color-scheme" content="dark">
 <meta property="og:title" content="{{attr:meta.title}}"><meta property="og:description" content="{{attr:meta.desc}}">
-<meta property="og:image" content="{{base}}assets/shots/workspace-diff.webp">
+<meta property="og:image" content="{{base}}assets/shots/remote-projects.webp">
 <link rel="icon" href="{{base}}assets/brand/icon-512.webp">
 <link rel="alternate" hreflang="zh-CN" href="{{base}}"><link rel="alternate" hreflang="en" href="{{base}}en/">
-<link rel="stylesheet" href="{{base}}assets/vendor/devices.css"><link rel="stylesheet" href="{{base}}assets/site.css">
+<link rel="stylesheet" href="{{base}}assets/site.css">
 </head>
 <body>
 {{icons}}
 <a class="skip" href="#connect">{{t:page.skip}}</a>
 <header class="nav"><div class="nav-row wrap">
   <a class="brand" href="#top" aria-label="Yuri"><img src="{{base}}assets/brand/icon-512.webp" alt="" width="40" height="40"><img class="nav-wordmark" src="{{base}}assets/brand/yuri-wordmark-white.svg" alt="" width="64" height="30"></a>
-  <nav aria-label="{{attr:page.sections}}"><a href="#connect">{{t:page.connect}}</a><a href="#assistant">{{t:nav.assistant}}</a><a href="#mobile">{{t:page.mobile}}</a><a href="#customize">{{t:nav.themes}}</a></nav>
-   <a class="nav-docs" href="{{docsHref}}">{{t:nav.docs}}</a><a class="language" href="{{switchHref}}" aria-label="{{attr:nav.lang}}">{{t:nav.langShort}}</a><a class="nav-github" href="https://github.com/yee94/yuri">{{icon:github}} GitHub</a>
+  <nav aria-label="{{attr:page.sections}}"><a href="#connect">{{t:page.connect}}</a><a href="#projects">{{t:projects.nav}}</a><a href="#assistant">{{t:nav.assistant}}</a><a href="#mobile">{{t:page.mobile}}</a><a href="#customize">{{t:nav.themes}}</a></nav>
+  <a class="nav-docs" href="{{docsHref}}">{{t:nav.docs}}</a><a class="language" href="{{switchHref}}" aria-label="{{attr:nav.lang}}">{{t:nav.langShort}}</a><a class="nav-github" href="https://github.com/yee94/yuri">{{icon:github}} GitHub</a>
 </div></header>
 <main id="top">
   <section class="hero" aria-labelledby="hero-title">
@@ -24,23 +24,105 @@
     <div class="hero-copy wrap">
       <h1 id="hero-title"><span class="wordmark"><img class="hero-wordmark" src="{{base}}assets/brand/yuri-wordmark-white.svg" alt="Yuri" width="320" height="150"></span><span class="tagline">{{t:hero.tagline}}</span></h1>
       <p class="hero-description">{{t:hero.sub}}</p>
-      <div class="actions"><a class="button" href="#downloads" data-download-primary><svg class="icon" aria-hidden="true"><use data-download-icon href="#icon-download"/></svg><span data-download-label>{{t:download.choose}}</span></a><a class="text-link" href="#connect">{{t:hero.more}} <span aria-hidden="true">↓</span></a></div>
+      <div class="actions"><a class="button" href="#downloads" data-download-primary><svg class="icon" aria-hidden="true"><use data-download-icon href="#icon-download"/></svg><span data-download-label>{{t:download.choose}}</span></a><a class="text-link" href="#projects">{{t:hero.more}} <span aria-hidden="true">↓</span></a></div>
       <p class="hero-release"><span data-release-version>{{release}}</span> · <a href="#downloads">{{t:download.all}}</a></p>
     </div>
-    <div class="hero-bottom wrap"><p>Desktop / iOS / Android / Web / VS Code</p><a href="#connect">{{t:hero.scroll}} <span aria-hidden="true">↓</span></a></div>
+    <div class="hero-bottom wrap"><p>macOS · Windows · Linux · iOS · Android · Apple Watch · Web · VS Code</p><a href="#connect">{{t:hero.scroll}} <span aria-hidden="true">↓</span></a></div>
   </section>
 
   <section id="connect" class="connection" aria-labelledby="connect-title">
     <div class="connection-stage" data-switcher data-loading="{{attr:preview.loading}}" data-error="{{attr:preview.error}}">
       <img class="sync-art stage-art" src="{{base}}assets/art/sync.webp" alt="" width="1672" height="941" loading="lazy">
-      <header class="connection-heading wrap"><p class="section-label">{{t:page.connect}}</p><h2 id="connect-title">{{words:connect.title}}</h2><p class="description">{{t:page.connectSub}}</p><div class="theme-choices" role="group" aria-label="{{attr:stage.views}}"><button type="button" data-choice="diff" aria-pressed="true">{{t:stage.diff}}</button><button type="button" data-choice="preview" aria-pressed="false">{{t:stage.preview}}</button></div><p class="preview-status" role="status" hidden></p></header>
+      <header class="connection-heading wrap">
+        <p class="section-label">{{t:page.connect}}</p>
+        <h2 id="connect-title">{{words:connect.title}}</h2>
+        <p class="description">{{t:page.connectSub}}</p>
+        <div class="theme-choices" role="group" aria-label="{{attr:stage.views}}">
+          <button type="button" data-choice="diff" aria-pressed="true">{{t:stage.diff}}</button>
+          <button type="button" data-choice="preview" aria-pressed="false">{{t:stage.preview}}</button>
+        </div>
+        <p class="preview-status" role="status" hidden></p>
+      </header>
       <div class="connection-visual wrap">
         <svg class="connection-lines" viewBox="0 0 1200 600" preserveAspectRatio="none" aria-hidden="true"><path d="M20 170 C180 170 120 340 380 340 S800 570 1110 250 M20 190 C180 190 120 360 380 360 S800 590 1110 270"/><path class="signal" d="M20 170 C180 170 120 340 380 340 S800 570 1110 250"/></svg>
         <div class="hardware-pair">
           <figure class="sketch-laptop"><div class="laptop-display"><img data-panel="diff" src="{{img:workspace-diff}}" alt="{{attr:stage.alt}}" width="3348" height="1936" loading="lazy"><img data-panel="preview" hidden src="{{img:workspace-preview}}" alt="{{attr:stage.previewAlt}}" width="3348" height="1936" loading="lazy"></div><div class="laptop-base" aria-hidden="true"></div></figure>
-          <figure class="sketch-phone"><div class="sketch-phone-screen"><img src="{{img:m-home}}" alt="{{attr:mobile.alt}}" width="390" height="844" loading="lazy"></div></figure>
+          <figure class="phone stage-phone">{{device:start}}
+            <img src="{{img:m-home}}" alt="{{attr:mobile.alt}}" width="1170" height="2532" loading="lazy">
+          {{device:end}}</figure>
         </div>
       </div>
+    </div>
+
+    <div class="platform-deck wrap" aria-label="{{attr:surfaces.aria}}">
+      <aside class="watch-showcase" aria-label="{{attr:watch.aria}}">
+        <div class="watch-hardware">
+          <div class="watch-strap watch-strap-top" aria-hidden="true"></div>
+          <div class="watch-chassis">
+            <span class="watch-crown" aria-hidden="true"></span>
+            <span class="watch-side-btn" aria-hidden="true"></span>
+            <div class="watch-oled">
+              <div class="watch-status">
+                <span class="watch-brand-pill"><img src="{{base}}assets/brand/icon-512.webp" alt="" width="20" height="20"><b>Yuri</b></span>
+                <time>09:41</time>
+              </div>
+              <div class="watch-alert-card">
+                <span class="watch-host-tag"><i aria-hidden="true"></i>Dev Server</span>
+                <strong class="watch-alert-title">{{t:watch.title}}</strong>
+                <p class="watch-alert-body">{{t:watch.body}}</p>
+              </div>
+              <div class="watch-actions" aria-hidden="true">
+                <span class="watch-act-primary">{{t:watch.actionApprove}}</span>
+                <span class="watch-act-secondary">{{t:watch.actionView}}</span>
+              </div>
+            </div>
+          </div>
+          <div class="watch-strap watch-strap-bottom" aria-hidden="true"></div>
+        </div>
+        <div class="watch-caption">
+          <div class="surface-icons" aria-hidden="true">{{icon:watch}}</div>
+          <h3>{{t:surfaces.watch.t}}</h3>
+          <p>{{t:surfaces.watch.d}}</p>
+        </div>
+      </aside>
+
+      <div class="surface-matrix">
+        <article class="surface-item">
+          <div class="surface-icons" aria-hidden="true">{{icon:apple}}{{icon:windows}}{{icon:linux}}</div>
+          <div><h3>{{t:surfaces.desktop.t}}</h3><p>{{t:surfaces.desktop.d}}</p></div>
+        </article>
+        <article class="surface-item">
+          <div class="surface-icons" aria-hidden="true">{{icon:apple}}{{icon:android}}</div>
+          <div><h3>{{t:surfaces.mobile.t}}</h3><p>{{t:surfaces.mobile.d}}</p></div>
+        </article>
+        <article class="surface-item">
+          <div class="surface-icons" aria-hidden="true">{{icon:globe}}{{icon:code}}</div>
+          <div><h3>{{t:surfaces.web.t}}</h3><p>{{t:surfaces.web.d}}</p></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="projects" class="projects-section" aria-labelledby="projects-title">
+    <div class="wrap">
+      <div class="projects-intro">
+        <header class="projects-copy">
+          <p class="section-label">{{t:projects.label}}</p>
+          <h2 id="projects-title">{{t:projects.heading}}</h2>
+          <p class="description">{{t:projects.sub}}</p>
+          <dl class="projects-points">
+            <div><dt>{{t:projects.p1.t}}</dt><dd>{{t:projects.p1.d}}</dd></div>
+            <div><dt>{{t:projects.p2.t}}</dt><dd>{{t:projects.p2.d}}</dd></div>
+            <div><dt>{{t:projects.p3.t}}</dt><dd>{{t:projects.p3.d}}</dd></div>
+          </dl>
+        </header>
+        <figure class="projects-sidebar-focus">
+          <div class="frame projects-crop"><img src="{{img:remote-projects-sidebar}}" alt="{{attr:projects.sidebarAlt}}" width="520" height="760" loading="lazy"></div>
+        </figure>
+      </div>
+      <figure class="projects-figure">
+        <div class="frame projects-shot"><img src="{{img:remote-projects}}" alt="{{attr:projects.alt}}" width="2880" height="1800" loading="lazy"></div>
+      </figure>
     </div>
   </section>
 
@@ -48,22 +130,134 @@
     <img class="tunnel-art stage-art" src="{{base}}assets/art/tunnel.webp" alt="" width="1672" height="941" loading="lazy">
     <div class="routes-content wrap" data-switcher data-loading="{{attr:preview.loading}}" data-error="{{attr:preview.error}}">
       <div class="routes-copy"><h2 id="routes-title">{{t:connect.routes}}</h2><div class="route-choices" role="group" aria-label="{{attr:connect.routes}}">
-        <button type="button" data-choice="direct" aria-pressed="true"><span>{{t:page.lan}}</span><span class="choice-arrow" aria-hidden="true">↗</span></button><p>{{t:page.lanSub}}</p>
+        <button type="button" data-choice="ssh" aria-pressed="true"><span>SSH</span><span class="choice-arrow" aria-hidden="true">↗</span></button><p>{{t:page.sshSub}}</p>
+        <button type="button" data-choice="direct" aria-pressed="false"><span>{{t:page.lan}}</span><span class="choice-arrow" aria-hidden="true">↗</span></button><p>{{t:page.lanSub}}</p>
         <button type="button" data-choice="relay" aria-pressed="false"><span>{{t:page.relay}}</span><span class="choice-arrow" aria-hidden="true">↗</span></button><p>{{t:page.relaySub}}</p>
-        <button type="button" data-choice="ssh" aria-pressed="false"><span>SSH</span><span class="choice-arrow" aria-hidden="true">↗</span></button><p>{{t:page.sshSub}}</p>
       </div></div>
-      <div class="route-screen"><figure class="frame"><img data-panel="direct" src="{{img:add-device}}" alt="{{attr:connect.directAlt}}" width="1440" height="900" loading="lazy"><img data-panel="relay" hidden src="{{img:settings-remote}}" alt="{{attr:remote.alt}}" width="1440" height="900" loading="lazy"><img data-panel="ssh" hidden src="{{img:ssh}}" alt="{{attr:connect.sshAlt}}" width="1440" height="900" loading="lazy"></figure><p class="preview-status" role="status" hidden></p><p class="fine">{{t:connect.boundary}}</p></div>
+      <div class="route-screen"><figure class="frame"><img data-panel="ssh" src="{{img:ssh}}" alt="{{attr:connect.sshAlt}}" width="1440" height="900" loading="lazy"><img data-panel="direct" hidden src="{{img:add-device}}" alt="{{attr:connect.directAlt}}" width="1440" height="900" loading="lazy"><img data-panel="relay" hidden src="{{img:settings-remote}}" alt="{{attr:remote.alt}}" width="1440" height="900" loading="lazy"></figure><p class="preview-status" role="status" hidden></p></div>
     </div>
   </section>
 
   <section id="assistant" class="assistant-section" aria-labelledby="assistant-title">
-    <div class="assistant-intro wrap">
-      <img class="assistant-art stage-art" src="{{base}}assets/art/assistant.webp" alt="" width="1536" height="1024" loading="lazy">
-      <header><p class="section-label">{{t:nav.assistant}}</p><h2 id="assistant-title">{{t:assistant.heading}}</h2><p class="description">{{t:assistant.sub}}</p></header>
-    </div>
-    <div class="assistant-evidence wrap">
-      <figure class="frame assistant-screen"><img src="{{img:assistant}}" alt="{{attr:assistant.alt}}" width="1440" height="900" loading="lazy"></figure>
-      <div class="assistant-notes"><p>{{t:assistant.parallel}}</p><p>{{t:assistant.memory}}</p></div>
+    <div class="wrap">
+      <header class="assistant-header">
+        <div>
+          <p class="section-label">{{t:nav.assistant}}</p>
+          <h2 id="assistant-title">{{t:assistant.heading}}</h2>
+          <p class="description">{{t:assistant.sub}}</p>
+        </div>
+        <div class="channel-strip" aria-label="{{attr:assistant.channelsAria}}">
+          <p class="channel-strip-label">{{t:assistant.channelsLabel}}</p>
+          <ul class="channel-badges">
+            <li><img src="{{base}}assets/channels/wechat.svg" alt="" width="20" height="17"><span>{{t:channel.wechat}}</span></li>
+            <li><img src="{{base}}assets/channels/wecom.svg" alt="" width="20" height="17"><span>{{t:channel.wecom}}</span></li>
+            <li><img src="{{base}}assets/channels/feishu.svg" alt="" width="18" height="18"><span>{{t:channel.feishu}}</span></li>
+            <li><img src="{{base}}assets/channels/dingtalk.svg" alt="" width="19" height="19"><span>{{t:channel.dingtalk}}</span></li>
+          </ul>
+        </div>
+      </header>
+
+      <div class="assistant-playground" data-switcher data-loading="{{attr:preview.loading}}" data-error="{{attr:preview.error}}">
+        <div class="assistant-catalog">
+          <div class="assistant-contact-list" role="group" aria-label="{{attr:assistant.pickLabel}}">
+            <button type="button" class="assistant-contact" data-choice="release" aria-pressed="true">
+              <img class="bot-face" src="{{base}}assets/avatars/bot-release.svg" alt="" width="44" height="44">
+              <span class="contact-meta">
+                <span class="contact-top"><strong>{{t:bot.release.name}}</strong><time>09:42</time></span>
+                <span class="contact-preview">{{t:bot.release.preview}}</span>
+                <span class="contact-channel"><img src="{{base}}assets/channels/feishu.svg" alt="" width="13" height="13">{{t:bot.release.channel}}</span>
+              </span>
+            </button>
+            <button type="button" class="assistant-contact" data-choice="oncall" aria-pressed="false">
+              <img class="bot-face" src="{{base}}assets/avatars/bot-oncall.svg" alt="" width="44" height="44">
+              <span class="contact-meta">
+                <span class="contact-top"><strong>{{t:bot.oncall.name}}</strong><time>11:18</time></span>
+                <span class="contact-preview">{{t:bot.oncall.preview}}</span>
+                <span class="contact-channel"><img src="{{base}}assets/channels/wecom.svg" alt="" width="14" height="12">{{t:bot.oncall.channel}}</span>
+              </span>
+            </button>
+            <button type="button" class="assistant-contact" data-choice="digest" aria-pressed="false">
+              <img class="bot-face" src="{{base}}assets/avatars/bot-research.svg" alt="" width="44" height="44">
+              <span class="contact-meta">
+                <span class="contact-top"><strong>{{t:bot.digest.name}}</strong><time>08:30</time></span>
+                <span class="contact-preview">{{t:bot.digest.preview}}</span>
+                <span class="contact-channel"><img src="{{base}}assets/channels/wechat.svg" alt="" width="15" height="13">{{t:bot.digest.channel}}</span>
+              </span>
+            </button>
+          </div>
+          <p class="preview-status" role="status" hidden></p>
+        </div>
+
+        <div class="assistant-stage">
+          <div class="assistant-thread" data-panel="release">
+            <header class="thread-identity">
+              <img class="bot-face" src="{{base}}assets/avatars/bot-release.svg" alt="" width="52" height="52">
+              <span class="thread-name-pill">{{t:bot.release.name}} · <img src="{{base}}assets/channels/feishu.svg" alt="" width="13" height="13">{{t:channel.feishu}}</span>
+            </header>
+            <div class="thread-stream">
+              <div class="bubble bubble-out bubble-mint"><span>{{t:bot.release.user}}</span><time>09:40</time></div>
+              <div class="incoming-group">
+                <img class="group-avatar" src="{{base}}assets/avatars/bot-release.svg" alt="" width="26" height="26">
+                <div class="incoming-items">
+                  <div class="bubble bubble-in"><span>{{t:bot.release.reply}}</span><time>09:41</time></div>
+                  <div class="contact-card">
+                    <div class="contact-card-head"><span>{{t:card.session}}</span><span class="card-status card-status-ok"><i></i>{{t:card.done}}</span></div>
+                    <strong>{{t:bot.release.cardTitle}}</strong>
+                    <p class="contact-card-meta"><span>api-gateway · Dev Server</span><span>fix/token-refresh-lock</span><span class="diff-stat"><em>+60</em><b>−10</b></span></p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="assistant-thread" data-panel="oncall" hidden>
+            <header class="thread-identity">
+              <img class="bot-face" src="{{base}}assets/avatars/bot-oncall.svg" alt="" width="52" height="52">
+              <span class="thread-name-pill">{{t:bot.oncall.name}} · <img src="{{base}}assets/channels/wecom.svg" alt="" width="14" height="12">{{t:channel.wecom}}</span>
+            </header>
+            <div class="thread-stream">
+              <div class="bubble bubble-out bubble-orange"><span>{{t:bot.oncall.user}}</span><time>11:15</time></div>
+              <div class="incoming-group">
+                <img class="group-avatar" src="{{base}}assets/avatars/bot-oncall.svg" alt="" width="26" height="26">
+                <div class="incoming-items">
+                  <div class="bubble bubble-in"><span>{{t:bot.oncall.reply}}</span><time>11:18</time></div>
+                  <div class="contact-card">
+                    <div class="contact-card-head"><span>{{t:card.session}}</span><span class="card-status card-status-busy"><i></i>{{t:card.running}}</span></div>
+                    <strong>{{t:bot.oncall.cardTitle}}</strong>
+                    <p class="contact-card-meta"><span>training-pipeline · GPU Box</span><span>eval/batch-oom</span></p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="assistant-thread" data-panel="digest" hidden>
+            <header class="thread-identity">
+              <img class="bot-face" src="{{base}}assets/avatars/bot-research.svg" alt="" width="52" height="52">
+              <span class="thread-name-pill">{{t:bot.digest.name}} · <img src="{{base}}assets/channels/wechat.svg" alt="" width="15" height="13">{{t:channel.wechat}}</span>
+            </header>
+            <div class="thread-stream">
+              <div class="bubble bubble-out bubble-iris"><span>{{t:bot.digest.user}}</span><time>08:29</time></div>
+              <div class="incoming-group">
+                <img class="group-avatar" src="{{base}}assets/avatars/bot-research.svg" alt="" width="26" height="26">
+                <div class="incoming-items">
+                  <div class="bubble bubble-in"><span>{{t:bot.digest.reply}}</span><time>08:30</time></div>
+                  <div class="contact-card">
+                    <div class="contact-card-head"><span>{{t:card.schedule}}</span><span class="card-arrow" aria-hidden="true">›</span></div>
+                    <strong>{{t:bot.digest.cardTitle}}</strong>
+                    <p class="contact-card-schedule"><span>{{t:bot.digest.cadence}}</span><b>09:00</b></p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="assistant-composer-bar" aria-hidden="true">
+            <span class="composer-placeholder">{{t:assistant.composer}}</span>
+            <span class="composer-send">↑</span>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -71,21 +265,31 @@
     <div class="mobile-layout wrap" data-switcher data-loading="{{attr:preview.loading}}" data-error="{{attr:preview.error}}">
       <header class="mobile-heading"><p class="section-label">{{t:page.mobile}}</p><h2 id="mobile-title">{{t:mobile.heading}}</h2><p class="description">{{t:mobile.sub}}</p></header>
       <div class="mobile-device-stage"><div class="mobile-orbit" aria-hidden="true"></div><figure class="phone mobile-phone">{{device:start}}
-        <img data-panel="assistants" src="{{img:m-assistants}}" alt="{{attr:mobile.assistantsAlt}}" width="390" height="844" loading="lazy">
-        <img data-panel="swipe" hidden src="{{img:m-swipe}}" alt="{{attr:mobile.m3.t}}" width="390" height="844" loading="lazy">
-        <img data-panel="voice" hidden src="{{img:m-asr-send}}" alt="{{attr:mobile.m4.t}}" width="390" height="844" loading="lazy">
-        <img data-panel="schedule" hidden src="{{img:m-schedule}}" alt="{{attr:mobile.m6.t}}" width="390" height="844" loading="lazy">
+        <img data-panel="voice" src="{{img:m-asr-send}}" alt="{{attr:mobile.m4.t}}" width="1170" height="2532" loading="lazy">
+        <img data-panel="assistants" hidden src="{{img:m-assistants}}" alt="{{attr:mobile.assistantsAlt}}" width="1170" height="2532" loading="lazy">
+        <img data-panel="swipe" hidden src="{{img:m-swipe}}" alt="{{attr:mobile.m3.t}}" width="1170" height="2532" loading="lazy">
+        <img data-panel="schedule" hidden src="{{img:m-schedule}}" alt="{{attr:mobile.m6.t}}" width="1170" height="2532" loading="lazy">
       {{device:end}}</figure></div>
-      <div class="mobile-controls"><div class="mobile-choices" role="group" aria-label="{{attr:mobile.scenarios}}">
-        <button type="button" data-choice="assistants" aria-pressed="true">{{t:nav.assistant}}</button><button type="button" data-choice="swipe" aria-pressed="false">{{t:mobile.m3.t}}</button><button type="button" data-choice="voice" aria-pressed="false">{{t:mobile.m4.t}}</button><button type="button" data-choice="schedule" aria-pressed="false">{{t:mobile.m6.t}}</button>
-      </div><p class="preview-status" role="status" hidden></p><div class="mobile-caption" aria-live="polite"><p data-panel="assistants">{{t:mobile.assistantsDesc}}</p><p data-panel="swipe" hidden>{{t:mobile.m3.d}}</p><p data-panel="voice" hidden>{{t:mobile.m4.d}}</p><p data-panel="schedule" hidden>{{t:mobile.m6.d}}</p></div><p class="fine native-note">{{t:page.native}}</p></div>
+      <div class="mobile-controls">
+        <div class="mobile-choices" role="group" aria-label="{{attr:mobile.scenarios}}">
+          <button type="button" data-choice="voice" aria-pressed="true">{{t:mobile.m4.t}}</button>
+          <button type="button" data-choice="assistants" aria-pressed="false">{{t:nav.assistant}}</button>
+          <button type="button" data-choice="swipe" aria-pressed="false">{{t:mobile.m3.t}}</button>
+          <button type="button" data-choice="schedule" aria-pressed="false">{{t:mobile.m6.t}}</button>
+        </div>
+        <p class="preview-status" role="status" hidden></p>
+        <div class="mobile-caption" aria-live="polite">
+          <p data-panel="voice">{{t:mobile.m4.d}}</p>
+          <p data-panel="assistants" hidden>{{t:mobile.assistantsDesc}}</p>
+          <p data-panel="swipe" hidden>{{t:mobile.m3.d}}</p>
+          <p data-panel="schedule" hidden>{{t:mobile.m6.d}}</p>
+        </div>
+        <div class="mobile-voice-meta">
+          <span class="voice-meta-head">{{icon:mic}}<strong>{{t:voice.compactTitle}}</strong></span>
+          <p>{{t:voice.compactSub}}</p>
+        </div>
+      </div>
     </div>
-  </section>
-
-  <section class="voice-section" aria-labelledby="voice-title">
-    <img class="voice-art stage-art" src="{{base}}assets/art/voice.webp" alt="" width="1774" height="887" loading="lazy">
-    <header class="voice-heading wrap"><p class="section-label">{{t:nav.voice}}</p><h2 id="voice-title">{{t:voice.heading}}</h2><p class="description">{{t:voice.sub}}</p></header>
-    <figure class="voice-closeup wrap"><div class="frame"><img src="{{img:asr-desk-close}}" alt="{{attr:voice.altDesk}}" width="1970" height="674" loading="lazy"></div><figcaption>{{t:page.voiceKeys}}</figcaption></figure>
   </section>
 
   <section id="customize" class="preferences-section wrap" aria-labelledby="themes-title">
@@ -107,11 +311,11 @@
       <a href="{{download:android}}" data-platform="android">{{icon:android}}<span><b>Android</b><small>APK</small></span>{{icon:download}}</a>
       <a href="{{download:ios}}" data-platform="ios">{{icon:apple}}<span><b>iOS / iPadOS</b><small>TestFlight</small></span><span aria-hidden="true">↗</span></a>
     </div>
-    <p class="download-note">{{t:download.arch}}</p><p data-no-downloads hidden>{{t:download.unavailable}}</p>
+    <p data-no-downloads hidden>{{t:download.unavailable}}</p>
     <a class="text-link" href="https://github.com/yee94/yuri/releases">{{t:download.releases}} ↗</a><a class="text-link" href="https://github.com/yee94/yuri#run-from-source">{{t:cta.secondary}} ↗</a>
   </section>
 </main>
-<footer class="wrap"><div class="footer-row"><a class="brand" href="#top"><img class="nav-wordmark" src="{{base}}assets/brand/yuri-wordmark-white.svg" alt="Yuri" width="64" height="30"></a><span>{{t:footer.license}} / {{t:footer.built}}</span><a href="{{switchHref}}">{{t:nav.lang}}</a></div><div class="footer-notes"><p>{{t:page.disclosure}}</p><p>{{t:page.deviceCredit}} <a href="https://github.com/picturepan2/devices.css">Devices.css</a> / MIT</p></div></footer>
+<footer class="wrap"><div class="footer-row"><a class="brand" href="#top"><img class="nav-wordmark" src="{{base}}assets/brand/yuri-wordmark-white.svg" alt="Yuri" width="64" height="30"></a><span>{{t:footer.license}} · {{t:footer.built}}</span><a href="{{switchHref}}">{{t:nav.lang}}</a></div></footer>
 <script src="{{base}}assets/site.js" defer></script>
 <script type="module" src="{{base}}assets/downloads.js"></script>
 </body></html>

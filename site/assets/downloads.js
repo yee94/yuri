@@ -2,26 +2,28 @@ const releaseEndpoint = 'https://api.github.com/repos/yee94/yuri/releases?per_pa
 
 // Verified public release: also consumed at build time for the no-JavaScript HTML.
 export const snapshot = /* release-snapshot:start */ Object.freeze({
-  "version": "0.1.1",
+  "version": "0.3.1",
   "prerelease": false,
   "targets": {
-    "mac": "https://github.com/yee94/yuri/releases/download/v0.1.1/Yuri-0.1.1-mac-arm64.dmg",
-    "windows": "https://github.com/yee94/yuri/releases/download/v0.1.1/Yuri-0.1.1-win-x64.exe",
-    "linux": "https://github.com/yee94/yuri/releases/download/v0.1.1/Yuri-0.1.1-linux-x86_64.AppImage",
-    "linuxArm": "https://github.com/yee94/yuri/releases/download/v0.1.1/Yuri-0.1.1-linux-arm64.AppImage",
-    "android": "https://github.com/yee94/yuri/releases/download/v0.1.1/app-release.apk",
+    "mac": "https://github.com/yee94/yuri/releases/download/v0.3.1/Yuri-0.3.1-mac-arm64.dmg",
+    "windows": "https://github.com/yee94/yuri/releases/download/v0.3.1/Yuri-0.3.1-win-x64.exe",
+    "linux": "https://github.com/yee94/yuri/releases/download/v0.3.1/Yuri-0.3.1-linux-x86_64.AppImage",
+    "linuxArm": "https://github.com/yee94/yuri/releases/download/v0.3.1/Yuri-0.3.1-linux-arm64.AppImage",
+    "android": "https://github.com/yee94/yuri/releases/download/v0.3.1/app-release.apk",
     "ios": "https://testflight.apple.com/join/pN5SSHeg"
   }
 }) /* release-snapshot:end */;
 
-/** Select one complete release; absent assets are null, never borrowed from another version. */
+/**
+ * Select one complete stable release; absent assets are null, never borrowed
+ * from another version. Betas and prereleases are never offered for download.
+ */
 export function resolveRelease(releases) {
   if (!Array.isArray(releases)) throw new TypeError('Expected a release array');
   const candidates = releases.filter((release) => release && !release.draft
-    && typeof release.tag_name === 'string' && /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release.tag_name)
-    && typeof release.prerelease === 'boolean' && Array.isArray(release.assets));
+    && typeof release.tag_name === 'string' && /^v\d+\.\d+\.\d+$/.test(release.tag_name)
+    && release.prerelease === false && Array.isArray(release.assets));
   const published = (release) => Date.parse(release.published_at || release.created_at) || 0;
-  const isBeta = (release) => release.prerelease || release.tag_name.includes('-');
   candidates.sort((a, b) => published(b) - published(a)
     || b.tag_name.localeCompare(a.tag_name, 'en', { numeric: true }));
   const release = candidates[0];
@@ -50,7 +52,7 @@ export function resolveRelease(releases) {
       // Malformed asset metadata is unavailable, not a reason to synthesize a URL.
     }
   }
-  return { version, prerelease: isBeta(release), targets };
+  return { version, prerelease: false, targets };
 }
 
 /** Return a target key, or null when the OS/CPU cannot safely select an installer. */

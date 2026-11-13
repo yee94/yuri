@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { CSSVariableGenerator } from '@/lib/theme/cssGenerator';
+import { getDefaultTheme } from '@/lib/theme/themes';
 
 const native = vi.hoisted(() => ({
-  update: vi.fn(async (_payload: { seq: number; visible: boolean; html?: string }) => {}),
+  update: vi.fn(async (_payload: { seq: number; visible: boolean; html?: string; css?: string; rootClass?: string }) => {}),
   listeners: new Map<string, (event: { seq?: number; path?: string }) => void>(),
 }));
 vi.mock('@capacitor/core', () => ({
@@ -51,8 +53,64 @@ afterEach(() => {
   stop?.();
   stop = undefined;
   host.remove();
+  document.getElementById('opencode-theme-variables')?.remove();
+  document.documentElement.classList.remove('light', 'dark');
+  document.documentElement.removeAttribute('data-theme');
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+test.each([false, true])('refreshes mirror theme CSS without restarting (keyboard engaged: %s)', async (engaged) => {
+  host.innerHTML = '<header class="yuri-mobile-detail-navigation"><button>Back</button></header>';
+  const generator = new CSSVariableGenerator();
+  generator.apply(getDefaultTheme(false));
+  stop = startNativeImeHeader();
+  await flushFrame();
+  if (engaged) void (window as HeaderWindow).__yuriNativeHeader!(true);
+  let mirrorCss = native.update.mock.calls.at(-1)![0].css!;
+  expect(mirrorCss).toContain('--background:');
+  const ruleCount = document.querySelector<HTMLStyleElement>('#opencode-theme-variables')!.sheet!.cssRules.length;
+
+  for (const dark of [true, false]) {
+    const previousUpdates = native.update.mock.calls.length;
+    generator.apply(getDefaultTheme(dark));
+    expect(document.querySelector<HTMLStyleElement>('#opencode-theme-variables')!.sheet!.cssRules.length).toBe(ruleCount);
+    await flushFrame();
+    expect(native.update.mock.calls.length).toBeGreaterThan(previousUpdates);
+    const payload = native.update.mock.calls.at(-1)![0];
+    if (payload.css !== undefined) mirrorCss = payload.css;
+    expect(payload.rootClass?.split(' ')).toContain(dark ? 'dark' : 'light');
+    const background = getDefaultTheme(dark).colors.surface.background;
+    expect(mirrorCss.includes(`--background: ${background} !important;`)).toBe(true);
+  }
+});
+
+test('refreshes CSS for a same-variant theme change and keeps header-only updates CSS-free', async () => {
+  host.innerHTML = '<header class="yuri-mobile-detail-navigation"><button>Back</button></header>';
+  const generator = new CSSVariableGenerator();
+  const theme = getDefaultTheme(true);
+  generator.apply(theme);
+  stop = startNativeImeHeader();
+  await flushFrame();
+  const originalCss = native.update.mock.calls.at(-1)![0].css;
+  const originalClass = document.documentElement.className;
+  const updated = structuredClone(theme);
+  updated.colors.surface.background = getDefaultTheme(false).colors.surface.background;
+  generator.apply(updated);
+  await flushFrame();
+  expect(document.documentElement.className).toBe(originalClass);
+  const payload = native.update.mock.calls.at(-1)![0];
+  expect(payload.css).toBeDefined();
+  expect(payload.css).not.toBe(originalCss);
+  expect(payload.css?.includes(`--background: ${updated.colors.surface.background} !important;`)).toBe(true);
+
+  native.update.mockClear();
+  for (let i = 0; i < 50; i++) {
+    host.querySelector('button')!.textContent = `Back ${i}`;
+    await flushFrame();
+  }
+  expect(native.update).toHaveBeenCalledTimes(50);
+  expect(native.update.mock.calls.every(([update]) => update.css === undefined)).toBe(true);
 });
 
 test.each(['input', 'textarea', 'select', '[contenteditable]'])('keeps a header containing %s in the live page during IME motion', async (control) => {

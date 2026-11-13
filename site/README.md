@@ -23,20 +23,30 @@ and off-white primary buttons (`#eeede8`). Cursor Dark applies to product
 screenshots, not the website palette. The theme showcase starts with Cursor and
 only lists registered palettes. Both languages reuse the
 current sanitized screenshot set described in `docs/references/screenshots/README.md`.
+The Remote Projects chapter pairs a sidebar close-up with a full desktop capture
+from the real Yuri app (both localized for Chinese and English with sanitized project
+and session data).
 
-The sequence moves from overview to mechanism to usage and details:
+The sequence moves from overview to cross-machine workflow to details:
 
-1. Full-bleed portrait, Yuri wordmark, existing tagline, and one capability sentence.
-2. A connection panorama: the device illustration recedes as real desktop and
-   phone screenshots advance. The desktop switches between the shared code-review
-   and interactive-preview covers, using the existing accessible screenshot selector.
-   On wide, tall viewports only, one 160svh section has
-   a sticky stage. There is no wheel interception, snap, or scroll hijacking.
-3. A tunnel-backed connection selector distinguishes LAN, encrypted relay, and
-   desktop SSH, with real configuration screenshots and explicit runtime boundaries.
-4. Assistant artwork leads into the real contact conversation and parallel-work notes.
-5. A phone-centered scene offers assistant, swipe, voice, and schedule screenshots.
-6. A full-width waveform leads into a desktop composer close-up.
+1. Full-bleed portrait, Yuri wordmark, practical capability headline, and download CTA.
+2. All-platform workspace panorama: desktop diff/preview switcher paired with a
+   brushed black-titanium phone shell, followed by a responsive `.platform-deck`
+   combining an enlarged titanium Apple Watch APNs alert showcase with the desktop
+   (macOS/Windows/Linux), mobile (iOS/iPadOS/Android), and Web/VS Code coverage matrix.
+   On wide, tall viewports only, subtle scroll-driven progress scales the hardware
+   stage. There is no wheel interception, snap, or scroll hijacking.
+3. Cross-machine Remote Projects: three concrete workflow points alongside a sidebar
+   close-up (`remote-projects-sidebar.webp`), followed by the full desktop session
+   capture (`remote-projects.webp`) showing remote execution and Git diff stats.
+4. A tunnel-backed connection selector distinguishes desktop SSH, LAN QR pairing,
+   and encrypted relay, with real configuration screenshots and explicit runtime boundaries.
+5. Interactive Assistants & IM channels: official WeChat, WeCom, Feishu, and DingTalk
+   channel badges plus a live contact switcher built with Yuri's procedural Bot avatars,
+   masked Telegram Web K line-art wallpaper (`assets/wallpaper/`), identity-tinted
+   bubbles, and session/schedule receipt cards.
+6. A phone-centered Mobile & Voice scene leads with hold-to-talk dictation alongside
+   assistant, swipe, and schedule screenshots, with a compact desktop/mobile ASR callout.
 7. Clickable theme previews, an expandable schedule screenshot, and source-run links.
 
 Mobile has its own natural-flow composition: no sticky scenes, smaller bounded
@@ -55,27 +65,25 @@ flow; connection artwork stays behind the device stage rather than its copy.
 
 ## Device and interaction contracts
 
-The connection panorama uses a custom CSS laptop and overlapping phone, with
-real screenshots inside. Device labels and the local illustration footnote are
-omitted; the page footer retains the illustration disclosure.
-The dedicated mobile feature scene uses the iPhone 14 Pro black subset of
-[Devices.css](https://github.com/picturepan2/devices.css), under MIT. Its original
-geometry remains in `assets/vendor/devices.css`, alongside the license. Build-time
-device macros expand its markup. CSS includes exact width/428 fallback scales for
-every responsive phone size; one ResizeObserver updates scale on resize, never on
-scroll. Screenshots fit inside the screen below the illustrative status bar.
+The connection panorama and the dedicated mobile feature scene share a custom
+brushed black-titanium phone shell (`.ti-phone`, expanded at build time via
+`{{device:start}}` / `{{device:end}}` in `build.mjs`), paired with a custom CSS
+laptop and a responsive titanium Apple Watch alert chassis (`.watch-showcase`).
+All phone captures are 3× Retina (`1170×2532`) WebP assets rendered edge-to-edge
+beneath an overlaid Dynamic Island status bar using CSS container queries (`cqw`)
+with zero JavaScript resize observers.
 
 Selectors are semantic button groups with `aria-pressed`, visible focus, and arrow,
 Home, and End keyboard support. Loading previews retain the last decoded image;
 failed loads show translated retry guidance, and stale requests cannot replace a
 newer selection. Mobile captions use a polite live region. Reduced
-motion disables the sticky transition and smooth scrolling without removing any
+motion disables scroll-progress transitions and smooth scrolling without removing any
 content. Long English text uses normal document flow, not fixed text boxes.
 
 Scroll performance budget: at most one requestAnimationFrame per scroll frame,
 one bounded progress calculation, and one CSS-variable write only when progress
-changes. Geometry is read on setup/resize, not per scroll. The phone observer is
-independent. Outside the scene, clamped unchanged progress causes no style writes;
+changes. Geometry is read on setup/resize, not per scroll.
+Outside the scene, clamped unchanged progress causes no style writes;
 mobile and reduced-motion modes have no scroll listener. No timer, continuous
 animation loop, or per-scroll screenshot switching is used.
 
@@ -86,9 +94,10 @@ are defined in `src/icons.mjs` (Simple Icons GitHub/Apple/Android paths, CC0-1.0
 `assets/downloads.js` exports a verified release snapshot for static HTML and
 refreshes the catalog from public GitHub release assets in the browser. It uses
 the same installer source as the auto-updater, not the stale repository update
-manifest or OTA web bundles. The most recently published installer release wins,
-including prereleases, which are explicitly marked Beta. A later stable publication
-replaces the beta. HTTP failures preserve the snapshot.
+manifest or OTA web bundles. Only the newest published **stable** release is
+offered: prereleases, drafts and `mobile-*/v*` OTA tags are skipped, so visitors
+never download a beta. A stable publication replaces its predecessor immediately.
+HTTP failures preserve the snapshot.
 No missing installer URL is synthesized. iOS uses the configured public TestFlight
 link from the update service; availability is controlled by App Store Connect.
 

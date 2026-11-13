@@ -266,7 +266,11 @@ export function startNativeImeHeader(): () => void {
   observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
   const rootObserver = new MutationObserver(schedule);
   rootObserver.observe(root, { attributes: true, attributeFilter: ['class', 'style'] });
-  const headObserver = new MutationObserver(schedule);
+  const headObserver = new MutationObserver(() => {
+    // Theme replacement changes token values without changing stylesheet/rule counts.
+    lastCss = '';
+    schedule();
+  });
   headObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
   window.addEventListener('resize', schedule);
   schedule();
