@@ -15,6 +15,7 @@ import { locationSessionKey } from '@/lib/remote-projects/location';
 import type { PinnedItem } from './SidebarPinnedSessions';
 import { MobileRemoteSummaryRow } from './RemoteProjectMobileViews';
 import { RemoteProjectIcon } from './RemoteProjectResources';
+import { RemoteHostIndicator } from '../RemoteHostIndicator';
 import { RemoteSessionGroups } from './RemoteSessionGroups';
 import { RemoteMobileSessionGroups } from './RemoteMobileSessionGroups';
 import { toast } from '@/components/ui';
@@ -48,12 +49,14 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
       const original = sessionsById.get(session.id)!;
       const directory = session.directory || project.path;
       const identity = locationSessionKey({ hubId: registry.hubId, hostId: project.hostId, directory }, session.id);
-      const rowProps = model.sessionProps(original, directory);
+      const secondaryMeta = { projectLabel: model.projectProps.label };
+      const rowProps = { ...model.sessionProps(original, directory), secondaryMeta,
+        subtitleSuffix: <RemoteHostIndicator registry={registry} hostId={project.hostId} remoteState={project.remoteState} compactName isolateLongPress /> };
       // The pinned list sorts by identity (the key stored in the connected server's `__pinned__` order).
       const dragProps: RemoteSummaryRowProps = pinnedSet.has(session.id) ? { ...rowProps, dragItem: { directory, id: identity } } : rowProps;
       return { node: { session: { ...session, id: identity }, children: [], worktree: null }, projectId: project.id, groupDirectory: directory,
         identity, remoteSessionId: session.id, pinned: pinnedSet.has(session.id),
-        secondaryMeta: { projectLabel: model.projectProps.label },
+        secondaryMeta,
         content: mobile ? <MobileRemoteSummaryRow {...rowProps} />
           : <RemoteSummaryRow {...dragProps} depth={0} /> };
     }));

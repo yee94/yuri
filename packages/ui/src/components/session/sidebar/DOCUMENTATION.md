@@ -79,6 +79,14 @@ host's leaf subscription, and token events do not invalidate structural lists.
 
 - `RemoteProjectSection` composes the Host adapters and editors. It does not
   fetch summaries or implement remote writes in JSX callbacks.
+  Its leading pinned/attention rows pass `secondaryMeta` into the remote row
+  adapters as well as the list item. Mobile renders it through the shared
+  `MobileSessionRow` subtitle; desktop retains project/branch secondary text.
+  A custom `content` row must not discard the owning project's label.
+  The subtitle ends with the existing compact `RemoteHostIndicator` (computer
+  icon and Host name), preserving SSH-name shortening, ellipsis, full-name
+  tooltip and isolated touch long-press. Project text keeps priority up to 60%
+  of the subtitle row, matching remote project/session identity presentation.
 - `hooks/useRemoteProjectSectionData` owns summary/search/page Queries, ownership
   projection, pin/manual ordering and refresh. It does not render either platform.
 - `hooks/useRemoteProjectSectionModel` owns selection/editor state and commands:

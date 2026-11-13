@@ -127,9 +127,6 @@
   --yuri-mobile-session-row-height: calc(2.875rem * var(--padding-scale, 1));
   --yuri-mobile-session-actions-width: 7rem;
   --yuri-mobile-worktree-action-width: 3.5rem;
-  --yuri-mobile-session-action-width: calc(
-    var(--yuri-mobile-session-actions-width) / 2
-  );
   /* The root dock is a primary Liquid Glass navigation layer: let it follow
      the phone's lower screen curve rather than reading as a small control
      floating high above it. The larger slots also keep the direct-touch
@@ -1254,6 +1251,9 @@ button.yuri-mobile-worktree-label-trigger:active,
 }
 
 .yuri-mobile-session-actions {
+  --yuri-mobile-session-action-width: calc(
+    var(--yuri-mobile-session-actions-width) / 2
+  );
   width: var(--yuri-mobile-session-actions-width);
   overflow: hidden;
   border-start-end-radius: var(--yuri-mobile-session-radius-start-end);
