@@ -258,7 +258,8 @@ export class HostRuntimeRegistry {
       && (previous.available === false || host.available === false);
     const legacyConnectionChanged = !host.scopeGeneration && previous && (previous.state !== host.state
       || previous.available !== host.available || previous.lastConnectedAt !== host.lastConnectedAt || previous.generation !== host.generation);
-    const authorityChanged = previous?.instanceId && host.instanceId !== previous.instanceId;
+    // First admission replaces the entry too; its Query work cannot reuse the unpinned owner's flight.
+    const authorityChanged = previous && host.instanceId !== previous.instanceId;
     if (scopeChanged || unavailableChanged || legacyConnectionChanged || authorityChanged) {
       this.hostGenerations.set(host.id, (this.hostGenerations.get(host.id) ?? 0) + 1);
     }

@@ -94,6 +94,14 @@ an entry with the same logical scope. A directory picker must not wait for live
 `connected`: before project references exist, its short requests create no status
 stream or persistent connection. No foreground lease or keepalive is added.
 
+The first authenticated `instanceId` pin is an authority transition even when
+`scopeGeneration` is unchanged. It advances the client request-scope revision,
+just like replacement of an already-known instance. Its new entry/repository must
+not share in-flight Query work with the disposed unpinned owner; otherwise a cold
+connection can stay empty until navigation remounts it. Durable Location/draft
+identity is unchanged, and later connection/phase-only events with the same pin
+keep their entry and Query scope stable.
+
 Optional `preparationPhase` is a live presentation field, not a new connection
 state or logical scope revision. Parsing admits only known phases on connecting
 Hosts; phase-only events notify that Host's subscribers without replacing its

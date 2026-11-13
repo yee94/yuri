@@ -14,6 +14,28 @@ const makeRegistry = () => {
 };
 
 describe('Host Runtime Registry production boundary', () => {
+  it('isolates first authenticated authority from pending unpinned Query work while preserving durable identity', async () => {
+    const { registry, fetch } = makeRegistry();
+    const row = { ...host('a', 'connecting'), scopeGeneration: 'scope-a', generation: 'wire-a' };
+    registry.applyCatalog({ hubId: 'hub-a', supported: true, projects: [], hosts: [row] });
+    const entry = registry.resolve({ hubId: 'hub-a', hostId: 'a', directory: '/same' });
+    let finish!: (response: Response) => void;
+    fetch.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = entry.fetch('/api/session/same/message');
+    const rejected = expect(pending).rejects.toThrow('connection changed');
+    registry.ingest({ type: 'yuri:host-status', properties: { hubId: 'hub-a', hostId: 'a', host: { ...row, state: 'connected', instanceId: 'instance-a' } } });
+    const authenticated = registry.resolve(entry.location);
+    finish(Response.json({ data: [] }));
+    await rejected;
+    expect(authenticated).not.toBe(entry);
+    expect(authenticated.queryScope).not.toEqual(entry.queryScope);
+    expect(authenticated.cachePartition).toBe(entry.cachePartition);
+    expect(authenticated.key).toBe(entry.key);
+    const stable = authenticated.queryScope;
+    registry.ingest({ type: 'yuri:host-status', properties: { hubId: 'hub-a', hostId: 'a', host: { ...row, state: 'connected', instanceId: 'instance-a', lastConnectedAt: 2 } } });
+    expect(registry.resolve(authenticated.location).queryScope).toBe(stable);
+  });
+
   it('admits safe preparation phases without replacing scope and only notifies the matching Host', () => {
     const { registry } = makeRegistry();
     const row = { ...host('a', 'connecting'), scopeGeneration: 'scope-a', generation: 'wire-a' };

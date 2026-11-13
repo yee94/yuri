@@ -26,6 +26,11 @@ import { announceSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import './message/TextSelectionMenu';
 import { nativeIosComposerSession } from '@/lib/native-ios-composer-session';
 import * as autocomplete from '@/lib/composer-autocomplete';
+import { useRemoteMobileSession } from '@/apps/remoteMobileSession';
+import { RemoteMobileSessionBoundary } from '@/apps/remoteMobileBoundary';
+import { MobileChatScreen } from '@/mobile/chat/MobileChatScreen';
+import { getTranscriptRepository, transcriptScope } from '@/sync/transcript-repository-runtime';
+import { queryClient } from '@/lib/queryRuntime';
 
 const fixture = vi.hoisted(() => ({ registry: null as unknown as HostRuntimeRegistry, wire: false, providerReads: 0, agentReads: 0, modelEnumerations: 0, native: false,
   nativePresent: vi.fn(async (_state: Record<string, unknown>) => {}), nativeUpdate: vi.fn(async (_state: Record<string, unknown>) => {}), nativeHide: vi.fn(async () => {}), nativeDismiss: vi.fn(async () => {}),
@@ -45,7 +50,7 @@ vi.mock('@/lib/native-ios-composer', async (original) => ({
     },
   }),
 }));
-vi.mock('@/queries/remoteProjectQueries', async (original) => ({ ...await original<typeof import('@/queries/remoteProjectQueries')>(), useRemoteHostCatalog: () => ({ data: { supported: true, hubId: 'hub' } }), getHostRuntimeRegistry: () => fixture.registry, supportsRemoteProjects: () => true }));
+vi.mock('@/queries/remoteProjectQueries', async (original) => ({ ...await original<typeof import('@/queries/remoteProjectQueries')>(), useRemoteHostCatalog: () => ({ data: { supported: true, hubId: 'hub' } }), useRemoteProjectRuntime: () => ({ registry: fixture.registry }), getHostRuntimeRegistry: () => fixture.registry, supportsRemoteProjects: () => true }));
 vi.mock('@/lib/yuriEvents', () => ({ subscribeYuriEvents: () => () => {} }));
 vi.mock('@/sync/use-sync', () => ({ useSync: () => ({ ensureSessionRenderable: async () => undefined }) }));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo', useEffectiveLocationKey: () => 'remote-location' }));
@@ -129,6 +134,76 @@ function wireHarness(createdID = 'created', mentions = false, permissionEffect?:
   return { location, requests, registry, failModel: () => { failModel = true; }, restoreModel: () => { failModel = false; },
     close: () => { registry.dispose(); vi.unstubAllGlobals(); setRuntimeUrlResolver(previous); } };
 }
+
+test.each([
+  { pinned: false, strict: false }, { pinned: true, strict: false },
+  { pinned: false, strict: true }, { pinned: true, strict: true },
+])('cold mobile connection renders synchronized messages and clears its hint without leaving the conversation ($pinned, strict=$strict)', async ({ pinned, strict }) => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  queryClient.clear();
+  fixture.wire = true;
+  const wire = wireHarness();
+  const previousProjects = useProjectsStore.getState();
+  const project = { id: 'cold-remote', path: '/repo', hubId: 'hub', hostId: 'host', label: 'Remote' };
+  useProjectsStore.setState({ projects: [project], activeProjectId: project.id });
+  useSessionNavigationStore.getState().openRemoteSession(project, wire.location, 'same');
+  useUIStore.setState({ isMobile: true });
+  const host = { id: 'host', name: 'Host', source: 'ssh' as const, state: 'connecting' as const, scopeGeneration: 'cold-scope', generation: 'cold-wire', ...(pinned ? { instanceId: 'remote-instance' } : {}) };
+  wire.registry.applyCatalog({ hubId: 'hub', supported: true, projects: [], hosts: [host] });
+  let ready!: () => void;
+  const gate = new Promise<void>((resolve) => { ready = resolve; });
+  const network = vi.mocked(globalThis.fetch);
+  const normal = network.getMockImplementation()!;
+  let transcriptReads = 0;
+  network.mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/subscriptions')) await gate;
+    if (path.endsWith('/session/same/message')) {
+      await gate;
+      transcriptReads++;
+      return Response.json({ data: [
+        { id: 'msg_02_cold_assistant', sessionID: 'same', type: 'assistant', parentID: 'msg_01_cold_user', content: [{ type: 'text', text: 'Cold remote reply' }], finish: 'stop', time: { created: 2, completed: 3 } },
+        { id: 'msg_01_cold_user', sessionID: 'same', type: 'user', text: 'Cold remote transcript', time: { created: 1 } },
+      ] });
+    }
+    return normal(input, init);
+  });
+  function ReproViewport({ renderedMessages }: React.ComponentProps<NonNullable<Parameters<typeof RemoteChatContainer>[0]['viewport']>>) {
+    return <div data-cold-transcript>{renderedMessages.map((message) => message.parts.map((part) => 'text' in part ? part.text : '').join('')).join('')}</div>;
+  }
+  const Viewport = React.memo<typeof ReproViewport>(ReproViewport);
+  function Phone() {
+    const scope = useRemoteMobileSession();
+    return <RemoteMobileSessionBoundary scope={scope}><MobileChatScreen sessionId="same" directory="/repo" onBack={() => {}} onOpenMenu={() => {}}>
+      <RemoteChatContainer location={wire.location} sessionId="same" composerPresentation="primary" viewport={Viewport} />
+    </MobileChatScreen></RemoteMobileSessionBoundary>;
+  }
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const node = document.createElement('div'); document.body.append(node); const root = createRoot(node);
+  try {
+    const runtime = { runtime: { isWeb: false, isDesktop: false, isVSCode: false, isMobile: true, platform: 'android' } } as unknown as RuntimeAPIs;
+    const phone = <QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}><Phone /></RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>;
+    await act(async () => root.render(strict ? <React.StrictMode>{phone}</React.StrictMode> : phone));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect(node.querySelector('[data-cold-transcript]')?.textContent).not.toContain('Cold remote transcript');
+    await act(async () => {
+      wire.registry.ingest({ type: 'yuri:host-status', properties: { hubId: 'hub', hostId: 'host', host: { ...host, state: 'connected', instanceId: 'remote-instance' } } });
+      ready();
+    });
+    await vi.waitFor(() => expect(node.querySelector('[data-cold-transcript]')?.textContent).toContain('Cold remote transcript'), { timeout: 1500 });
+    expect(node.querySelector('[data-cold-transcript]')?.textContent).toContain('Cold remote reply');
+    expect(transcriptReads).toBeGreaterThan(0);
+    const repository = getTranscriptRepository(wire.location);
+    const transcript = transcriptScope(wire.location, 'same');
+    expect(repository?.getHydrationState?.(transcript).p0Satisfied).toBe(true);
+    expect(repository?.getRequestState?.(transcript).status).toBe('ready');
+    await vi.waitFor(() => expect(node.querySelector('.yuri-mobile-detail-subtitle')?.textContent ?? '').not.toMatch(/syncing|同步消息/i), { timeout: 1500 });
+  } finally {
+    ready(); await act(async () => root.unmount()); useProjectsStore.setState(previousProjects); useUIStore.setState({ isMobile: false });
+    client.clear(); queryClient.clear(); wire.close(); node.remove();
+  }
+}, 10_000);
 
 test('foreground remote primary claims the real native bridge while panel and background cannot', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

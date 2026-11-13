@@ -12,6 +12,10 @@ and durable commits. Physical wire `generation`, connection state and
 opening/closing a zero-reference short HTTP connection must not cancel its own
 bootstrap or rebuild Model/files/git consumers. Actual scope revocation still
 replaces their captured entry; wire generations independently reject stale events.
+First admission of an authenticated instance identity also replaces the unpinned
+entry and advances its Query scope. A replacement remote repository cannot reuse
+the disposed predecessor's pending transcript/metadata Query functions; stable
+durable keys still retain the same Host/Location drafts and cached content.
 Creating state performs no network/subscription/timer work. `observe(sessionID,
 onError)` seeds the transcript and retains the shared content lease; multiple
 views of the same session share one listener and lease until the last leaves.
