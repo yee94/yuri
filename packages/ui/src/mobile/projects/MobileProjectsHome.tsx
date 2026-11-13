@@ -734,9 +734,16 @@ export function MobileProjectGroups({ project, renderSessions, onToggleWorktree,
   project: MobileProjectHomeItem;
   renderSessions(worktree: MobileWorktreeGroup): React.ReactNode;
 } & Pick<MobileProjectsHomeProps, 'onToggleWorktree' | 'onNewWorktreeSession' | 'onOpenWorktreeActions' | 'onDeleteWorktree'>) {
+  const { t } = useI18n();
   const main = project.worktrees.find((entry) => entry.kind === 'main')
     ?? (project.worktrees.length === 1 && !project.worktrees[0]?.kind ? project.worktrees[0] : undefined);
+  const linkedWorktrees = project.worktrees.filter((entry) => entry !== main);
   return <div className="yuri-mobile-project-groups" role="group" aria-label={project.name}>
+    {(!main || main.sessions.length === 0) && linkedWorktrees.length === 0 ? (
+      <p className="px-3 py-3 typography-small text-muted-foreground">
+        {t('mobile.sessions.empty.noSessionsTitle')}
+      </p>
+    ) : null}
     {/* Main workspace sessions flow directly below the project header. */}
     {main && main.sessions.length > 0 ? <div className="yuri-mobile-labeled-surface-group">{renderSessions(main)}</div> : null}
     {/* Every linked worktree gets an independent label + session card. */}

@@ -149,6 +149,63 @@ describe('MobileProjectsHome session row isolation', () => {
 });
 
 describe('MobileProjectsHome workspace groups', () => {
+  test.each([
+    { name: 'no workspaces', worktrees: [] },
+    { name: 'empty main workspace', worktrees: [{
+      id: 'main',
+      name: 'Main workspace',
+      path: '/code/empty',
+      kind: 'main' as const,
+      sessionCount: 0,
+      sessions: [],
+    }] },
+  ])('expanded empty projects show an empty-state message instead of a blank padded group ($name)', ({ worktrees }) => {
+    const html = renderToString(
+      <I18nProvider>
+        <MobileProjectsHome
+          {...props}
+          pinnedSessions={[]}
+          projects={[{ ...projects[0], name: 'Empty project', sessionCount: 0, worktrees }]}
+        />
+      </I18nProvider>,
+    );
+    const host = document.createElement('div');
+    host.innerHTML = html;
+
+    expect(host.querySelector('.yuri-mobile-project-groups')?.textContent).toBe('No sessions yet');
+  });
+
+  test('collapsed empty projects do not reserve a content area or show an empty-state message', () => {
+    const html = renderToString(
+      <I18nProvider>
+        <MobileProjectsHome
+          {...props}
+          pinnedSessions={[]}
+          projects={[{ ...projects[0], expanded: false, sessionCount: 0, worktrees: [] }]}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).not.toContain('yuri-mobile-project-groups');
+    expect(html).not.toContain('No sessions yet');
+  });
+
+  test('projects with linked worktrees keep their groups without a project empty-state message', () => {
+    const html = renderToString(
+      <I18nProvider>
+        <MobileProjectsHome
+          {...props}
+          pinnedSessions={[]}
+          projects={[{ ...projects[0], worktrees: [projects[0].worktrees[1]] }]}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain('Feature branch');
+    expect(html).toContain('Feature session');
+    expect(html).not.toContain('No sessions yet');
+  });
+
   test('renders one global pinned project card before projects', () => {
     const html = renderToString(
       <I18nProvider>
