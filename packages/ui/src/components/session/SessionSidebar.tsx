@@ -85,7 +85,7 @@ import {
   type SessionFocusScope,
 } from '@/stores/useSessionFocusStore';
 import { type SessionGroup, type SessionNode } from './sidebar/types';
-import { derivePinnedSessions, listInProgressHomeSessions, resolveTopSectionSecondaryMeta, PINNED_SESSION_ORDER_SCOPE } from './sidebar/pinnedSessions';
+import { derivePinnedSessions, listInProgressHomeSessions, rankByManualOrder, resolveTopSectionSecondaryMeta, PINNED_SESSION_ORDER_SCOPE } from './sidebar/pinnedSessions';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
 import {
   compareSessionsByPinnedAndTime,
@@ -1622,7 +1622,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     if (editingId) return;
     void reorderSessions(
       PINNED_SESSION_ORDER_SCOPE,
-      pinnedSessions.map((session) => session.id),
+      pinnedItems.map((item) => item.node.session.id),
       activeSessionId,
       overSessionId,
       {},
@@ -1642,7 +1642,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     );
   }, [hasSessionSearchQuery, pinnedSessionIds, runningSessionIds, sessions, unseenBySession]);
 
-  const { pinnedItems, inProgressItems } = React.useMemo(() => {
+  const { pinnedItems: localPinnedItems, inProgressItems } = React.useMemo(() => {
     const toItem = (session: Session) => {
       const existing = sessionSidebarMetaById.get(session.id);
       const sessionDirectory = normalizePath(
@@ -1718,10 +1718,17 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     worktreeMetadata,
   ]);
 
+  const remoteTopItems = React.useMemo(
+    () => remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []),
+    [remoteProjects, remoteActivityItems]);
+  const pinnedItems = React.useMemo(
+    () => rankByManualOrder([...localPinnedItems, ...remoteTopItems.filter((item) => item.pinned)],
+      (item) => item.node.session.id, sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]),
+    [localPinnedItems, remoteTopItems, sessionOrderByScope]);
   const displayInProgressItems = React.useMemo(() => [...inProgressItems,
-    ...remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []),
+    ...remoteTopItems.filter((item) => !item.pinned),
   ].sort((a, b) => getSessionActivityUpdatedAt(b.node.session) - getSessionActivityUpdatedAt(a.node.session)),
-  [inProgressItems, remoteProjects, remoteActivityItems]);
+  [inProgressItems, remoteTopItems]);
 
   const sectionsForSidebarRender = React.useMemo(() => {
     return sectionsForRender.map((section) => ({

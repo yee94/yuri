@@ -3,7 +3,7 @@ import type { Session } from '@/lib/opencode/v2-types';
 import { useEvent } from '@reactuses/core';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { buildSessionActivitySnapshot } from '@/components/session/sidebar/sessionSortableOrder';
-import { PINNED_SESSION_ORDER_SCOPE } from '@/components/session/sidebar/pinnedSessions';
+import { PINNED_SESSION_ORDER_SCOPE, rankByManualOrder } from '@/components/session/sidebar/pinnedSessions';
 
 import { Icon } from '@/components/icon/Icon';
 import { NewWorktreeDialog } from '@/components/session/NewWorktreeDialog';
@@ -134,12 +134,18 @@ export function MobileProjectsHomeContainer({
   const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
   const remoteNavigation = useRemoteProjectNavigation();
   const remoteProjects = React.useMemo(() => projects.filter((project) => project.hostId).map(parseRemoteProject), [projects]);
+  const remoteTopItems = React.useMemo(() => remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []).map((item) => ({
+    pinned: Boolean(item.pinned), time: getSessionActivityUpdatedAt(item.node.session),
+    session: { id: item.identity!, title: item.node.session.title || '', content: item.content },
+  })), [remoteProjects, remoteActivityItems]);
+  const pinnedOrder = useSessionFoldersStore((state) => state.sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]);
+  const pinnedSessions = React.useMemo(() => rankByManualOrder(
+    [...model.pinnedSessions, ...remoteTopItems.filter((entry) => entry.pinned).map((entry) => entry.session)], (session) => session.id, pinnedOrder),
+  [model.pinnedSessions, remoteTopItems, pinnedOrder]);
   const inProgressSessions = React.useMemo(() => [
     ...model.inProgressSessions.map((session) => ({ session, time: model.sessionById.get(session.id) ? getSessionActivityUpdatedAt(model.sessionById.get(session.id)!) : 0 })),
-    ...remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []).map((item) => ({
-      session: { id: item.identity!, title: item.node.session.title || '', content: item.content }, time: getSessionActivityUpdatedAt(item.node.session),
-    })),
-  ].sort((a, b) => b.time - a.time).map((entry) => entry.session), [model.inProgressSessions, model.sessionById, remoteProjects, remoteActivityItems]);
+    ...remoteTopItems.filter((entry) => !entry.pinned),
+  ].sort((a, b) => b.time - a.time).map((entry) => entry.session), [model.inProgressSessions, model.sessionById, remoteTopItems]);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
   const removeProject = useProjectsStore((state) => state.removeProject);
   const sync = useSync();
@@ -629,7 +635,7 @@ export function MobileProjectsHomeContainer({
         remoteError={remoteNavigation.catalog.error?.message}
         className={className}
         projects={model.projects}
-        pinnedSessions={model.pinnedSessions}
+        pinnedSessions={pinnedSessions}
         inProgressSessions={inProgressSessions}
         onAddProject={onAddProject}
         onNewSession={handleNewSession}

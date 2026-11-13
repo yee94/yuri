@@ -2,6 +2,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { SessionBusyIndicator } from '../SessionBusyIndicator';
@@ -30,7 +31,18 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const title = session.title || t('sessions.sidebar.session.untitled');
-  return <DraggableSessionRow sessionId={session.id} sessionDirectory={dragItem.directory} sessionTitle={title}>
+  const renderItems = (Item: React.ElementType) => <>
+    <Item onClick={onMultiSelect}>{t('remoteProjects.selectSession', { title })}</Item>
+    <Item disabled={pending} onClick={onPin}>{t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}</Item>
+    <Item disabled={pending} onClick={onUnread}>{t(unread ? 'remoteProjects.markRead' : 'remoteProjects.markUnread')}</Item>
+    <Item disabled={pending} onClick={onRename}>{t('sessions.sidebar.session.menu.rename')}</Item>
+    <Item disabled={pending} onClick={onArchive}>{t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive')}</Item>
+    <Item disabled={pending} onClick={() => onFolder(null)}>{t('remoteProjects.removeFolder')}</Item>
+    {folders.map((folder) => <Item key={folder.id} disabled={pending} onClick={() => onFolder(folder.id)}>{folder.name}</Item>)}
+    <Item disabled={pending} onClick={onDelete} className="text-destructive focus:text-destructive">{t('sessions.sidebar.dialogs.deleteSession.titleAction')}</Item>
+  </>;
+  return <DraggableSessionRow sessionId={dragItem.id} sessionDirectory={dragItem.directory} sessionTitle={title}>
+    <ContextMenu><ContextMenuTrigger>
     <SessionRowLayout data-remote-session={session.id} data-session-row={session.id} data-session-scope={dragItem.directory} active={active} selected={selected}>
     <SessionRowContent depth={depth}>
       <SessionRowTitle title={title} onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey) onMultiSelect(); else onSelect(); }} onDoubleClick={onRename}
@@ -47,15 +59,8 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
     <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pending} onClick={onPin} aria-label={t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}><Icon name={pinned ? 'pushpin-2-fill' : 'pushpin-2'} className="size-3.5" /></Button>
     <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pending} onClick={onArchive} aria-label={t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive')}><Icon name="archive" className="size-3.5" /></Button>
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-5 w-5" aria-label={t('remoteProjects.actions')}><Icon name="more-2" className="size-3.5" /></Button></DropdownMenuTrigger><DropdownMenuContent>
-      <DropdownMenuItem onClick={onMultiSelect}>{t('remoteProjects.selectSession', { title })}</DropdownMenuItem>
-      <DropdownMenuItem disabled={pending} onClick={onPin}>{t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}</DropdownMenuItem>
-      <DropdownMenuItem disabled={pending} onClick={onUnread}>{t(unread ? 'remoteProjects.markRead' : 'remoteProjects.markUnread')}</DropdownMenuItem>
-      <DropdownMenuItem disabled={pending} onClick={onRename}>{t('sessions.sidebar.session.menu.rename')}</DropdownMenuItem>
-      <DropdownMenuItem disabled={pending} onClick={onArchive}>{t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive')}</DropdownMenuItem>
-      <DropdownMenuItem disabled={pending} onClick={() => onFolder(null)}>{t('remoteProjects.removeFolder')}</DropdownMenuItem>
-      {folders.map((folder) => <DropdownMenuItem key={folder.id} disabled={pending} onClick={() => onFolder(folder.id)}>{folder.name}</DropdownMenuItem>)}
-      <DropdownMenuItem disabled={pending} onClick={onDelete} className="text-destructive focus:text-destructive">{t('sessions.sidebar.dialogs.deleteSession.titleAction')}</DropdownMenuItem>
+      {renderItems(DropdownMenuItem)}
     </DropdownMenuContent></DropdownMenu>
     </SessionRowActions>
-  </SessionRowLayout></DraggableSessionRow>;
+  </SessionRowLayout></ContextMenuTrigger><ContextMenuContent className="min-w-[180px]">{renderItems(ContextMenuItem)}</ContextMenuContent></ContextMenu></DraggableSessionRow>;
 }

@@ -22,6 +22,8 @@ export type PinnedItem = {
     branchLabel?: string | null;
   } | null;
   content?: React.ReactNode;
+  /** Remote items published for the top section: true = pinned list, otherwise in-progress. */
+  pinned?: boolean;
   identity?: string;
   remoteSessionId?: string;
 };

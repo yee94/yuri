@@ -113,6 +113,21 @@ test('remote running and unread sessions join the shared leading list and disapp
   expect(activity.mock.lastCall?.[1]).toEqual([]);
 });
 
+test('remote pinned sessions are published for the shared pinned list, not the in-progress list', async () => {
+  const value = snapshot('a');
+  const base = value.directories[0].sessions[0];
+  const data = { ...value, pinnedSessionIds: ['pin-a', 'pin-b'], unread: { revision: 1, sessions: {} }, directories: [{ ...value.directories[0], sessions: [
+    { ...base, id: 'pin-a', title: 'pin-a', time: { created: 1, updated: 1 }, metadata: { yuri: { sessionStatus: { type: 'idle' } } } },
+    { ...base, id: 'pin-b', title: 'pin-b', time: { created: 2, updated: 2 }, metadata: { yuri: { sessionStatus: { type: 'busy' } } } },
+    { ...base, id: 'plain', title: 'plain', time: { created: 3, updated: 3 }, metadata: { yuri: { sessionStatus: { type: 'idle' } } } },
+  ] }] };
+  const activity = vi.fn();
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={registry(async () => json(data))} onActivityItems={activity} /></QueryClientProvider>));
+  await flush(); await flush();
+  const items = activity.mock.lastCall?.[1] as Array<{ remoteSessionId: string; pinned: boolean }>;
+  expect(items.map((item) => [item.remoteSessionId, item.pinned])).toEqual([['pin-b', true], ['pin-a', true]]);
+});
+
 function folderFixture() {
   const value = snapshot('a');
   const session = (id: string, created: number, updated: number) => ({ ...value.directories[0].sessions[0], id, title: id, time: { created, updated } });

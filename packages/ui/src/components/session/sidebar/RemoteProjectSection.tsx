@@ -9,7 +9,8 @@ import { NewWorktreeDialog } from '../NewWorktreeDialog';
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { useRemoteProjectSectionModel, type RemoteProjectSectionOptions } from './hooks/useRemoteProjectSectionModel';
 import { RemoteProjectShell, RemoteSummaryRow } from './RemoteProjectRows';
-import { listInProgressHomeSessions } from './pinnedSessions';
+import { derivePinnedSessions, listInProgressHomeSessions } from './pinnedSessions';
+import type { RemoteSummaryRowProps } from './remoteProjectPresentation';
 import { locationSessionKey } from '@/lib/remote-projects/location';
 import type { PinnedItem } from './SidebarPinnedSessions';
 import { MobileRemoteSummaryRow } from './RemoteProjectMobileViews';
@@ -39,15 +40,22 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
     }).map((session) => session.id));
     const unseen = Object.fromEntries(Object.entries(snapshot?.unread?.sessions ?? {}).map(([id, value]) => [id, value.unreadCount]));
     const attention = listInProgressHomeSessions(sessions, data.pinnedIds, running, unseen);
-    props.onActivityItems(project.id, attention.map((session) => {
+    // Pin membership is Host-owned; the display order lives with the connected server, so no Host order is read here.
+    const pinnedRoots = derivePinnedSessions(sessions.filter((session) => !session.time?.archived
+      && !(session as { parentID?: string | null }).parentID), data.pinnedIds);
+    const pinnedSet = new Set(pinnedRoots.map((session) => session.id));
+    props.onActivityItems(project.id, [...pinnedRoots, ...attention].map((session) => {
       const original = sessionsById.get(session.id)!;
       const directory = session.directory || project.path;
       const identity = locationSessionKey({ hubId: registry.hubId, hostId: project.hostId, directory }, session.id);
+      const rowProps = model.sessionProps(original, directory);
+      // The pinned list sorts by identity (the key stored in the connected server's `__pinned__` order).
+      const dragProps: RemoteSummaryRowProps = pinnedSet.has(session.id) ? { ...rowProps, dragItem: { directory, id: identity } } : rowProps;
       return { node: { session: { ...session, id: identity }, children: [], worktree: null }, projectId: project.id, groupDirectory: directory,
-        identity, remoteSessionId: session.id,
+        identity, remoteSessionId: session.id, pinned: pinnedSet.has(session.id),
         secondaryMeta: { projectLabel: model.projectProps.label },
-        content: mobile ? <MobileRemoteSummaryRow {...model.sessionProps(original, directory)} />
-          : <RemoteSummaryRow {...model.sessionProps(original, directory)} depth={0} /> };
+        content: mobile ? <MobileRemoteSummaryRow {...rowProps} />
+          : <RemoteSummaryRow {...dragProps} depth={0} /> };
     }));
   });
   React.useLayoutEffect(() => { publishActivity(); }, [publishActivity, data.rows, data.pinnedIds, snapshot, online, pending, model.selectedSession, project, registry, props.onActivityItems, mobile]);

@@ -24,6 +24,12 @@ export const derivePinnedSessions = (
       || getSessionCreatedAt(b) - getSessionCreatedAt(a));
 };
 
+/** Stable re-rank by the connected server's `__pinned__` order; ids without a saved position keep their relative order at the end. */
+export const rankByManualOrder = <T>(items: readonly T[], getId: (item: T) => string, manualOrder: readonly string[] = []): T[] => {
+  const rank = new Map(manualOrder.map((id, index) => [id, index]));
+  return [...items].sort((a, b) => (rank.get(getId(a)) ?? manualOrder.length) - (rank.get(getId(b)) ?? manualOrder.length));
+};
+
 const getSessionParentId = (session: Session): string | null =>
   (session as Session & { parentID?: string | null }).parentID ?? null;
 

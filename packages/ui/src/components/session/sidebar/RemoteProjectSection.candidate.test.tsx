@@ -154,6 +154,36 @@ it('mounted production sidebar refreshes the archived global WS index tip withou
   }
 });
 
+it('desktop remote session rows open the context menu on right click and pin through it', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  queryClient.clear(); queryClient.setDefaultOptions({ queries: { retry: false } });
+  useProjectsStore.setState({ projects: [project], activeProjectId: null, hubProjectLayout: null });
+  let pinned = false;
+  const fetch = vi.fn(async (path: string) => {
+    if (path.endsWith('/summaries')) return Response.json({ hubId, hostId, stale: false, pinnedSessionIds: pinned ? ['ctx-session'] : [], directories: [{ directory: project.path,
+      sessions: [{ id: 'ctx-session', title: 'Context menu session', time: { created: 1, updated: 2 } }], hasMore: false }] });
+    if (path.includes('/session/ctx-session/pin')) { pinned = true; return Response.json({}); }
+    throw new Error(`Unexpected remote request: ${path}`);
+  });
+  const registry = new HostRuntimeRegistry(hubId, { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
+    sdk: () => { throw new Error('Rows must not read transcripts'); } });
+  registry.applyCatalog({ supported: true, hubId, hosts: [host], projects: [project] });
+  const container = document.createElement('div'); document.body.append(container); const root = createRoot(container);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project} registry={registry} mobile={false} reorderEnabled={false} /></QueryClientProvider>));
+    await vi.waitFor(() => expect(container.querySelector('[data-remote-session="ctx-session"]')).not.toBeNull());
+    const row = container.querySelector<HTMLElement>('[data-remote-session="ctx-session"]')!;
+    await act(async () => { row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10, button: 2 })); });
+    await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull());
+    const pin = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')].find((item) => item.textContent === 'remoteProjects.pin')!;
+    expect(pin).toBeDefined();
+    await act(async () => pin.click());
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([path]) => path.includes('/session/ctx-session/pin'))).toBe(true));
+  } finally {
+    await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear();
+  }
+});
+
 it('mobile remote projects reuse the floating project/session cards and keep management in action sheets', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   queryClient.clear(); queryClient.setDefaultOptions({ queries: { retry: false } });
