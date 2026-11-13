@@ -491,7 +491,7 @@ const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
                                     </span>
                                   ) : null}
                                 </div>
-                                <span className="shrink-0 whitespace-nowrap typography-ui-label tabular-nums text-foreground">
+                                <span className="min-w-0 max-w-[55%] shrink-0 break-words text-right typography-ui-label tabular-nums text-foreground">
                                   {metricLabel === '-' ? '' : metricLabel}
                                 </span>
                               </div>
@@ -2177,7 +2177,7 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
                                             </span>
                                           ) : null}
                                         </div>
-                                        <span className="shrink-0 whitespace-nowrap typography-ui-label text-foreground tabular-nums">
+                                        <span className="min-w-0 max-w-[55%] shrink-0 break-words text-right typography-ui-label text-foreground tabular-nums">
                                           {metricLabel === '-' ? '' : metricLabel}
                                         </span>
                                       </div>
