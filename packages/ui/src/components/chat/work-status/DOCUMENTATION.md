@@ -14,7 +14,9 @@ Project metadata is matched by Hub/Host; worktrees, Git and child titles/status
 come from captured Host APIs. Child live-status events refresh only the scoped
 status snapshot, never child messages. Ready/reconnect demand refreshes the
 visible status resources. Failed queries retain their last successful rows and
-expose a retry action. Only the GUI-plugin slot is excluded for remote projects.
+expose a retry action. GUI widgets still come from the Hub's window-level inventory;
+the slot injects the displayed remote session and captured Host scope without
+loading remote GUI code or changing the window's primary session/client.
 Status membership shares `remoteSessionActiveQueryOptions` with chat and uses
 the captured Host's real v2 `session.active`, not the disabled legacy status stub.
 Unknown/unsupported responses fail visibly rather than inventing idle children.
@@ -22,7 +24,8 @@ Hidden/inactive columns release their observers; token events do not refetch
 status, worktrees or child catalogs. `WorkStatus.remote.test.tsx` mounts the real
 ChatView/Panel/Compact/Todos under the real Host provider and registry, including
 same-path/ID Host isolation, live child status, empty todos, late responses,
-shared lease counts and 50-parent-update/100-token request guards. This is mounted
+real GUI widget mounting/cleanup, shared lease counts and
+50-parent-update/100-token request and plugin-remount guards. This is mounted
 client evidence, not native/Relay network acceptance.
 
 A short column beside the transcript. It is not a card and not a context-panel

@@ -244,6 +244,14 @@ React 将撤销/恢复合并成一次提交时留下已经清空的旧容器。
 每次 mount 的 session/directory 来自显示该列的调用者，与窗口主会话分离；
 project/worktree 使用内置行相同的归属解析。props 包含只读的 session、directory、
 runtimeId、project、worktree、git、placement、active、signal。
+Remote Project 仍使用当前窗口 inventory 的 GUI 代码、options 与插件 context，
+不加载远端 GUI、不改变 `ctx.sessions.current()`、`ctx.client` 或 screen/file。
+调用者额外传入捕获的 Host scope；远端 `runtimeId`、session.key 与 server.id
+包含 Hub/Host/Location/授权 scope revision，session.id 与 directory 保留原值，
+session.location 携带 Hub/Host 及已知 instanceId。授权 scope 替换即撤销旧挂载，
+同名会话/目录不能串用。远端引用的 server.client 明确 unsupported，不拿 Hub
+client 冒充远端 client；需要 Runmark 等独立服务数据的 widget 使用自身 options
+和注入的 session.id。此插槽仅提供只读远端身份与摘要，不新增远端 SDK/文件通道或 native 权限。
 Git 未知和缺失行数为 null，非仓库为独立状态；共享 Git store 没有向插槽提供
 refresh error，失败后保留最后快照，ready 不代表本次刷新成功。
 作用域变化、隐藏、撤销、插件停用/失败/替换及 host 销毁先终止 mount signal，

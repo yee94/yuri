@@ -11,6 +11,11 @@ updates go to the existing Solid signals. Reordering preserves foreign DOM.
 Hidden popup exit animation can retain the built-in rows, but plugin mounts are
 released as soon as the column becomes inactive. Remote/Relay desktop windows
 use the same path; mobile and VS Code do not have this placement.
+Remote Projects also mount the current window's widgets, passing their captured
+Host scope alongside the raw session ID/cwd. A Host scope replacement remounts
+even when ID and cwd are unchanged. The host creates a remote identity reference,
+not a Hub-backed remote client; capability details belong to
+`lib/gui-plugins/DOCUMENTATION.md#工作状态栏插槽`.
 
 `GuiPluginTitlebarItems` consumes official global `TitlebarItem` contributions.
 Web/desktop renders them as full-width icon-and-label navigation rows below Bots,

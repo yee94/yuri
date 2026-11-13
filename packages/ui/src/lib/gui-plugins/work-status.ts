@@ -1,5 +1,6 @@
 import { batch, createSignal, untrack, type JSX } from 'solid-js';
 import type { MountedSession } from '@opencode/plugin/gui';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 
 export const GUI_WORK_STATUS_REGISTRY = 'yuri.work-status';
 
@@ -17,6 +18,7 @@ type GitSummary = Readonly<{
 export type GuiWorkStatusInput = Readonly<{
     sessionId: string | null;
     directory: string | null;
+    scope?: Pick<HostRuntimeEntry, 'location' | 'queryScope'>;
     project: Project | null;
     worktree: Worktree | null;
     git: GitSummary;
@@ -80,7 +82,7 @@ export function createWorkStatusState(input: GuiWorkStatusInput, session: Mounte
     });
     return {
         props,
-        matches: (next: GuiWorkStatusInput) => next.sessionId === input.sessionId && next.directory === input.directory,
+        matches: (next: GuiWorkStatusInput) => next.sessionId === input.sessionId && next.directory === input.directory && next.scope === input.scope,
         update(next: GuiWorkStatusInput) {
             if (controller.signal.aborted) return;
             batch(() => {

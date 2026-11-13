@@ -26,7 +26,7 @@ Web desktop and Electron render the widgets in both inline and popup modes, incl
 | --- | --- |
 | `session` | Official `MountedSession` reference for **this displayed conversation**, or `undefined` before a draft has a session/directory. Yuri supports `id`, `key`, `directory`, `server`, `tab`, `pending`, `visit`, `location` on this reference; unsupported SDK members reject as elsewhere. |
 | `directory` | Actual displayed working directory, or `null` while unresolved. Never replaced with another selected project's directory. |
-| `runtimeId` | Current host transport identity. Treat as opaque scope information, not a URL or durable cross-transport key. |
+| `runtimeId` | Opaque execution scope identity; Remote Projects include Hub/Host/Location and the captured authorization revision. Not a URL or durable cross-transport key. |
 | `project` | Reactive `{ id?: string, name: string, directory: string } \| null`. Same project/worktree resolution as the built-in rows; a directory fallback can have no project ID. |
 | `worktree` | Reactive `{ name: string, directory: string } \| null`. Explicit attached/discovered worktree, when known. |
 | `git` | Reactive read-only summary described below, shared with the built-in Git rows. |
@@ -51,9 +51,11 @@ interface GitSummary {
 
 Theme, locale, plugin options and authenticated client remain on `usePlugin()` / setup `ctx`. `ctx.sessions.current()` still describes the window's primary selection; use the injected session for widget-scoped requests. Existing navigation APIs retain their support boundaries: for example, file navigation for an explicitly different session can be rejected. Do not silently retarget it to the primary conversation.
 
+Remote Projects use the current window's GUI inventory and options, not remote GUI code. Their injected `session.id`/`directory` are raw remote values; `session.key` and `session.server.id` are scoped identities, and `session.location` includes Hub/Host and the authenticated instance ID when known. The remote reference is read-only: `session.server.client` is explicitly unsupported, while `ctx.client` and screen/file still belong to the window. Widgets querying their own external service can use their configured endpoint plus the injected session ID. No remote SDK, filesystem or native capability is added by mounting the widget.
+
 ## Lifecycle and updates
 
-Changing project/Git metadata or placement updates the existing Solid view; unrelated session/layout/stream updates do not rebuild the widget catalog or remount its DOM. Changing the displayed session ID, directory or host creates a new mount and aborts the previous one. Multiple visible instances have independent props and signals.
+Changing project/Git metadata or placement updates the existing Solid view; unrelated session/layout/stream updates do not rebuild the widget catalog or remount its DOM. Changing the displayed session ID, directory, host or captured authorization scope creates a new mount and aborts the previous one. Multiple visible instances have independent props and signals.
 
 Use `onCleanup` for listeners and timers, or bind DOM listeners/requests to `props.signal`. Ignore completed asynchronous work after that signal aborts. Registration and rendering exceptions use the existing plugin failure path: affected content disappears, diagnostics remain in plugin settings, and unrelated plugins stay usable. Arbitrary plugin JavaScript still runs on the window's main thread; keep expensive work out of setup/render and stop view-owned work on cleanup.
 

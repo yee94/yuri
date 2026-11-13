@@ -9,6 +9,11 @@ import { queryClient } from '@/lib/queryRuntime';
 import { getRemoteChatOwner } from '@/sync/remote-chat-context';
 import { ChatView } from '@/components/views/ChatView';
 import { dict } from '@/lib/i18n/messages/en';
+import { GuiPluginHost } from '@/lib/gui-plugins/host';
+import { GuiPluginHostContext } from '@/lib/gui-plugins/react';
+import type { GuiWorkStatusProps } from '@/lib/gui-plugins/work-status';
+import type { OpenCodeClient as GuiClient } from '@yuriai/opencode-gui-client';
+import type { FilesAPI } from '@/lib/api/types';
 
 const fixture = vi.hoisted(() => ({
   selection: null as null | { projectId: string; sessionId: string; location: { hubId: string; hostId: string; directory: string } },
@@ -44,7 +49,6 @@ vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: (select: (state: 
 }) }));
 vi.mock('@/sync/sync-context', () => ({ useDirectorySync: fixture.localReads, useSessionLatestTodos: fixture.localReads, useDirectoryStore: fixture.localReads }));
 vi.mock('@/stores/useTodosPersistStore', () => ({ useTodosPersistStore: fixture.localReads }));
-vi.mock('@/components/gui-plugins/GuiPluginWorkStatus', () => ({ GuiPluginWorkStatus: () => { fixture.plugins(); return null; } }));
 vi.mock('@/stores/useUIStore', async (original) => ({ ...await original<typeof import('@/stores/useUIStore')>(),
   useUIStore: (select: (state: unknown) => unknown) => select(fixture.ui),
 }));
@@ -59,6 +63,9 @@ let failChildren: boolean;
 let childBusy: boolean;
 let todos: unknown[];
 let deferredTrees: { promise: Promise<Response>; resolve: (response: Response) => void } | undefined;
+let guiHost: GuiPluginHost;
+let pluginProps: GuiWorkStatusProps[];
+let pluginCleanups: ReturnType<typeof vi.fn>;
 const directory = 'C:\\trees\\topic';
 const location = (hostId: string) => ({ hubId: 'hub', hostId, directory });
 const json = (body: unknown) => Response.json(body);
@@ -66,7 +73,9 @@ const flush = async () => { await act(async () => { await new Promise((resolve) 
 const render = async (hostId = 'a', tick = 0, active = true) => {
   fixture.selection = { projectId: `project-${hostId}`, sessionId: 'same', location: location(hostId) };
   await act(async () => root.render(<QueryClientProvider client={queryClient}><div data-tick={tick}>
-    <HostRuntimeProvider key={hostId} registry={registry} location={location(hostId)}><ChatView active={active} /></HostRuntimeProvider>
+    <GuiPluginHostContext.Provider value={guiHost}>
+      <HostRuntimeProvider key={hostId} registry={registry} location={location(hostId)}><ChatView active={active} /></HostRuntimeProvider>
+    </GuiPluginHostContext.Provider>
   </div></QueryClientProvider>));
   await flush();
 };
@@ -113,9 +122,23 @@ beforeEach(() => {
     } }) as unknown as ReturnType<HostRuntimeEntry['service']>,
   });
   registry.applyCatalog({ hubId: 'hub', supported: true, projects: [], hosts: ['a', 'b'].map((id) => ({ id, name: id, source: 'direct', state: 'connected', generation: 'wire' })) });
+  pluginProps = []; pluginCleanups = vi.fn();
+  Reflect.set(globalThis, '__remoteWorkStatusProbe', { render(props: GuiWorkStatusProps) { pluginProps.push(props); fixture.plugins(); }, cleanup: pluginCleanups });
+  guiHost = new GuiPluginHost({ client: {} as GuiClient, files: {} as FilesAPI, queryClient,
+    transport: 'hub-transport', storage: localStorage, locale: 'en', mode: 'dark', narrow: false });
+  guiHost.setSession({ id: 'HUB-retained', directory: 'C:\\HUB' });
+  guiHost.install('local-runmark', { revision: '1', options: { marker: 'Hub options' }, code: `
+    const G=require('@opencode/plugin/gui'), S=require('solid-js'), probe=globalThis.__remoteWorkStatusProbe;
+    module.exports=G.Plugin.define({setup(ctx){ctx.add(G.Registry.define('yuri.work-status'),{id:'session',render(props){
+      probe.render(props); S.onCleanup(probe.cleanup);
+      const node=document.createElement('span');
+      S.createEffect(()=>{node.textContent=['Runmark',props.session.id,props.project.name,props.git.branch,props.placement,ctx.options.marker].join('|')});
+      return node;
+    }})}});
+  ` });
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear(); vi.restoreAllMocks(); });
+afterEach(async () => { await act(async () => root.unmount()); guiHost.dispose(); Reflect.deleteProperty(globalThis, '__remoteWorkStatusProbe'); container.remove(); registry.dispose(); queryClient.clear(); vi.restoreAllMocks(); });
 
 it('mounts all five built-in capabilities, uses raw Host APIs and Location-keyed actions, and shares chat demand', async () => {
   const owner = getRemoteChatOwner(registry, registry.resolve(location('a')));
@@ -140,13 +163,22 @@ it('mounts all five built-in capabilities, uses raw Host APIs and Location-keyed
     await act(async () => child!.click());
     expect(fixture.ui.openContextPanelTab).toHaveBeenCalledWith(registry.resolve(location('a')).key,
       { mode: 'chat', dedupeKey: 'session:child', label: 'Child a', readOnly: true });
-    expect(fixture.localReads).not.toHaveBeenCalled(); expect(fixture.plugins).not.toHaveBeenCalled();
+    expect(fixture.localReads).not.toHaveBeenCalled(); expect(fixture.plugins).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('Runmark|same|Project a|branch-a|inline|Hub options');
+    expect(pluginProps[0].session?.id).toBe('same');
+    expect(pluginProps[0].session?.directory).toBe(directory);
+    expect(pluginProps[0].session?.location).toMatchObject(location('a'));
+    expect(pluginProps[0].session?.server.id).not.toBe('hub-transport');
+    expect(pluginProps[0].runtimeId).toBe(pluginProps[0].session?.server.id);
+    expect(() => pluginProps[0].session?.server.client).toThrow(/Unsupported GUI host API/);
+    expect(guiHost.getSnapshot().sessionKey).toContain('HUB-retained');
     expect(calls.every((call) => call.hostId === 'a')).toBe(true);
     expect(calls.filter((call) => call.path.endsWith('/subscriptions'))).toHaveLength(1);
     expect(fixture.subscribeEvents).toHaveBeenCalledTimes(1);
     const counts = [calls.length, listReads.length, statusReads.length];
     for (let tick = 1; tick <= 50; tick++) await render('a', tick);
     expect([calls.length, listReads.length, statusReads.length]).toEqual(counts);
+    expect(fixture.plugins).toHaveBeenCalledTimes(1); expect(pluginCleanups).not.toHaveBeenCalled();
     await act(async () => {
       for (let token = 0; token < 100; token++) registry.ingest({ type: 'yuri:host-event', properties: {
         hubId: 'hub', hostId: 'a', generation: 'wire', directory,
@@ -154,12 +186,15 @@ it('mounts all five built-in capabilities, uses raw Host APIs and Location-keyed
       } });
     });
     expect([calls.length, listReads.length, statusReads.length]).toEqual(counts);
+    expect(fixture.plugins).toHaveBeenCalledTimes(1);
     expect(calls.filter((call) => /worktrees|status|check|message$/.test(call.path)).every((call) => call.directory === directory)).toBe(true);
   } finally { releaseChat(); releaseOwner(); }
 });
 
 it('isolates same-ID and same-path Hosts, preserves children on refresh failure, and clears authoritative empty todos', async () => {
   await render('a');
+  const first = pluginProps[0];
+  expect(first).toBeDefined();
   expect(container.textContent).toContain('Project a');
   failChildren = true;
   await act(async () => queryClient.invalidateQueries({ predicate: (query) => query.queryKey.includes('same') }));
@@ -168,9 +203,16 @@ it('isolates same-ID and same-path Hosts, preserves children on refresh failure,
   expect(container.querySelector('[role="status"]')).not.toBeNull();
   failChildren = false;
   await render('b');
+  expect(first.signal.aborted).toBe(true);
+  expect(pluginCleanups).toHaveBeenCalledTimes(1);
+  expect(pluginProps[1].session?.key).not.toBe(first.session?.key);
+  expect(pluginProps[1].session?.server.id).not.toBe(first.session?.server.id);
+  expect(pluginProps[1].session?.location).toMatchObject(location('b'));
+  expect(container.textContent).toContain('Runmark|same|Project b|branch-b|inline|Hub options');
   expect(container.textContent).toContain('Project b'); expect(container.textContent).toContain('branch-b');
   expect(container.textContent).not.toContain('Project a'); expect(container.textContent).not.toContain('branch-a');
   expect(fixture.localReads).not.toHaveBeenCalled();
+  expect(fixture.plugins).toHaveBeenCalledTimes(2);
   childBusy = false;
   const messageReads = calls.filter((call) => call.path.endsWith('/message')).length;
   await act(async () => registry.ingest({ type: 'yuri:host-event', properties: { hubId: 'hub', hostId: 'b', generation: 'wire', directory,
@@ -191,6 +233,26 @@ it('does not start work-status reads or leases for an inactive remote conversati
   expect(container.querySelector('aside')).toBeNull();
   expect(calls).toEqual([]); expect(listReads).toEqual([]); expect(statusReads).toEqual([]);
   expect(fixture.localReads).not.toHaveBeenCalled();
+  expect(fixture.plugins).not.toHaveBeenCalled();
+});
+
+it('mounts remote widgets in the popup and cancels them immediately while hidden built-in rows exit', async () => {
+  vi.mocked(window.matchMedia).mockImplementation((media) => Object.assign(new EventTarget(), {
+    media, matches: false, onchange: null, addListener: vi.fn(), removeListener: vi.fn(),
+  }) as MediaQueryList);
+  fixture.ui.workStatusOverlayOpen = true;
+  await render();
+  expect(container.textContent).toContain('Runmark|same|Project a|branch-a|popover|Hub options');
+  const mounted = pluginProps[0];
+  expect(mounted.placement).toBe('popover');
+  fixture.ui.workStatusOverlayOpen = false;
+  await render();
+  expect(mounted.signal.aborted).toBe(true);
+  expect(mounted.active).toBe(false);
+  expect(pluginCleanups).toHaveBeenCalledTimes(1);
+  expect(container.querySelector('[data-gui-work-status]')).toBeNull();
+  expect(Array.from(container.querySelectorAll('aside[aria-hidden="true"]'))
+    .some((panel) => panel.textContent?.includes('Project a'))).toBe(true);
 });
 
 it('rejects a late old-Host worktree result and releases visible work when inactive', async () => {
@@ -202,6 +264,8 @@ it('rejects a late old-Host worktree result and releases visible work when inact
   await act(async () => resolvers.resolve(json([{ head: 'h', name: 'LATE A TREE', branch: 'late', path: directory }])));
   expect(container.textContent).toContain('topic-b'); expect(container.textContent).not.toContain('LATE A TREE');
   await render('b', 0, false);
+  expect(pluginProps.every((props) => props.signal.aborted)).toBe(true);
+  expect(pluginCleanups).toHaveBeenCalledTimes(pluginProps.length);
   expect(container.querySelector('aside')).toBeNull();
   expect(calls.filter((call) => call.path.endsWith('/subscriptions') && call.method === 'POST')).toHaveLength(2);
   expect(calls.filter((call) => call.path.includes('/subscriptions/') && call.method === 'DELETE')).toHaveLength(2);

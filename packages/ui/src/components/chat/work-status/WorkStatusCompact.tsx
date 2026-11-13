@@ -84,6 +84,8 @@ const WorkStatusCompactContent: React.FC<Props & {
 }> = ({ sessionId, directory, active = true, placement = 'inline', project, worktree, subagents, remoteTodos, stateKey }) => {
   const { t } = useI18n();
   const { git } = useProjectRuntimeAPIs();
+  const host = useHostRuntime();
+  const scope = host?.entry.location.hostId ? host.entry : undefined;
   const ensureStatus = useGitStore((state) => state.ensureStatus);
   const gitStatus = useGitStatus(directory);
   const gitLoading = useGitLoadingStatus(directory);
@@ -150,11 +152,11 @@ const WorkStatusCompactContent: React.FC<Props & {
     };
   }, [gitState, gitLoading, hasGitSnapshot, branch, changed, hasDiffStats, additions, deletions]);
   const pluginInput = React.useMemo<GuiWorkStatusInput>(() => ({
-    sessionId, directory, placement,
+    sessionId, directory, placement, scope,
     project: projectPath && projectLabel ? { id: project?.id, name: projectLabel, directory: projectPath } : null,
     worktree: worktree ? { name: worktree.name?.trim() || basename(worktree.path), directory: worktree.path } : null,
     git: gitSummary,
-  }), [sessionId, directory, placement, projectPath, projectLabel, project?.id, worktree, gitSummary]);
+  }), [sessionId, directory, placement, scope, projectPath, projectLabel, project?.id, worktree, gitSummary]);
 
   const branchCopyKey = branch ? `branch:${branch}` : '';
   const worktreeCopyKey = worktree?.path ? `worktree:${worktree.path}` : '';
@@ -238,7 +240,7 @@ const WorkStatusCompactContent: React.FC<Props & {
         </Button>
       ) : null}
 
-      {active && !stateKey ? <GuiPluginWorkStatus input={pluginInput} /> : null}
+      {active ? <GuiPluginWorkStatus input={pluginInput} /> : null}
 
       <WorkStatusTodos sessionId={sessionId} directory={directory} remote={remoteTodos} />
 

@@ -141,11 +141,17 @@ export class GuiPluginHost {
         if (snapshot === this.snapshot) this.publish();
     }
 
-    private sessionReference(session: { id: string; directory: string }): Gui.MountedSession {
-        const server = partial<Gui.ServerRef>('session.server', { id: this.options.transport, name: this.options.transport, client: this.options.client });
+    private sessionReference(session: { id: string; directory: string }, scope?: GuiWorkStatusInput['scope']): Gui.MountedSession {
+        const runtimeId = scope ? JSON.stringify(scope.queryScope) : this.options.transport;
+        // Remote widgets get an identity reference, never the Hub client disguised as a remote client.
+        const server = partial<Gui.ServerRef>('session.server', {
+            id: runtimeId, name: scope?.location.hostId ?? this.options.transport,
+            ...(!scope ? { client: this.options.client } : {}),
+        });
         return Object.freeze(partial<Gui.MountedSession>('session', {
-            id: session.id, directory: session.directory, key: `${this.options.transport}\n${session.id}`, tab: session.id,
-            server, pending: false, visit: {}, location: { directory: session.directory },
+            id: session.id, directory: session.directory,
+            key: scope ? JSON.stringify([runtimeId, session.id]) : `${this.options.transport}\n${session.id}`, tab: session.id,
+            server, pending: false, visit: {}, location: scope ? Object.freeze({ ...scope.location }) : { directory: session.directory },
         }));
     }
 
@@ -712,8 +718,8 @@ export class GuiPluginHost {
     mountWorkStatus(entry: GuiWorkStatusEntry, element: HTMLElement, input: GuiWorkStatusInput): GuiWorkStatusMount {
         const instance = this.instances.get(entry.pluginId);
         if (!instance || !this.workStatus.contains(entry) || this.ended) return { update() {}, dispose() {} };
-        const session = input.sessionId && input.directory ? this.sessionReference({ id: input.sessionId, directory: input.directory }) : undefined;
-        const state = createWorkStatusState(input, session, this.options.transport);
+        const session = input.sessionId && input.directory ? this.sessionReference({ id: input.sessionId, directory: input.directory }, input.scope) : undefined;
+        const state = createWorkStatusState(input, session, input.scope ? JSON.stringify(input.scope.queryScope) : this.options.transport);
         let unmount = () => {};
         let unsubscribe = () => {};
         const dispose = this.own(instance, () => {
