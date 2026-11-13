@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { ProviderLogo } from './ProviderLogo';
 
 describe('provider logo contrast', () => {
-    it.each(['cursor', 'codex', 'zcode', 'workbuddy'])(
+    it.each(['cursor', 'codex', 'zcode', 'workbuddy', 'qoder', 'trae'])(
         'paints the %s quota mark as a foreground mask',
         (brand) => {
             const container = document.createElement('div');

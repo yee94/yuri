@@ -395,7 +395,6 @@ function LocalMobileContextProgressButton({
   const savedSessionModel = useSelectionStore(savedSessionModelSelector);
   const quotaResults = useQuotaStore((state) => state.results);
   const loadQuotaSettings = useQuotaStore((state) => state.loadSettings);
-  const fetchAllQuotas = useQuotaStore((state) => state.fetchAllQuotas);
   const isQuotaLoading = useQuotaStore((state) => state.isLoading);
   const quotaDisplayMode = useQuotaStore((state) => state.displayMode);
   const dropdownProviderIds = useQuotaStore((state) => state.dropdownProviderIds);
@@ -430,13 +429,9 @@ function LocalMobileContextProgressButton({
   }, [dropdownProviderIds]);
 
   React.useEffect(() => {
-    if (!open || isQuotaLoading) return;
-    const missingEnabledProvider = dropdownProviderIds.some((providerId) => (
-      !quotaResults.some((result) => result?.providerId === providerId)
-    ));
-    if (!missingEnabledProvider) return;
-    void fetchAllQuotas();
-  }, [dropdownProviderIds, fetchAllQuotas, isQuotaLoading, open, quotaResults]);
+    if (!open || useQuotaStore.getState().isLoading) return;
+    void useQuotaStore.getState().fetchAllQuotas();
+  }, [open]);
 
   const latestMessageModel = React.useMemo(
     () => getLatestUserMessageModel(activeSessionMessages),

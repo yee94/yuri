@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { DiffView } from '@/components/views/DiffView';
 import { FilesView } from '@/components/views/FilesView';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
-import { openExternalUrl } from '@/lib/url';
+import { isLoopbackHttpUrl, openExternalUrl } from '@/lib/url';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
@@ -1425,6 +1425,16 @@ const isElectronBrowserRuntime = (): boolean => {
   return typeof window !== 'undefined' && Boolean(window.__YURI_ELECTRON__);
 };
 
+const BROWSER_PREVIEW_STEP_TIMEOUT_MS = 15_000;
+
+const withBrowserPreviewTimeout = <T,>(promise: Promise<T>, step: string): Promise<T> => new Promise<T>((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error(`${step} timed out`)), BROWSER_PREVIEW_STEP_TIMEOUT_MS);
+  promise.then(
+    (value) => { clearTimeout(timer); resolve(value); },
+    (error) => { clearTimeout(timer); reject(error); },
+  );
+});
+
 const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID }) => {
   const host = useHostRuntime();
   const entry = host?.entry;
@@ -1560,7 +1570,8 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(entry?.location.hostId ? { 'x-opencode-directory': entry.location.directory } : {}) },
           credentials: 'include',
-          body: JSON.stringify({ url: loadedUrl, allowExternal: true }),
+          body: JSON.stringify({ url: loadedUrl, ...(isLoopbackHttpUrl(loadedUrl) ? {} : { allowExternal: true }) }),
+          signal: AbortSignal.timeout(BROWSER_PREVIEW_STEP_TIMEOUT_MS),
         });
 
         if (!response.ok) {
@@ -1620,11 +1631,18 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
 
     let cancelled = false;
     setUrlAuthReadyKey('');
-    void refreshRuntimeUrlAuthToken(getRuntimeApiBaseUrl())
+    const failStep = (message: string) => {
+      if (cancelled) return;
+      setProxyState({ status: 'error', message });
+      setIsLoading(false);
+    };
+    void withBrowserPreviewTimeout(refreshRuntimeUrlAuthToken(getRuntimeApiBaseUrl()), 'url auth')
       .then((token) => {
-        if (!cancelled && token) setUrlAuthReadyKey(proxyUrlAuthKey);
+        if (cancelled) return;
+        if (token) setUrlAuthReadyKey(proxyUrlAuthKey);
+        else failStep('url auth unavailable');
       })
-      .catch(() => {});
+      .catch((error) => failStep(error instanceof Error ? error.message : String(error)));
 
     return () => {
       cancelled = true;
@@ -1660,13 +1678,20 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
     }
     let cancelled = false;
     setPreviewGatewayOrigin('');
-    void ensurePreviewGatewayOrigin()
+    const failGateway = (message: string) => {
+      if (cancelled) return;
+      setPreviewGatewayOrigin('');
+      if (!proxyUrlAuthKey) return;
+      setProxyState({ status: 'error', message });
+      setIsLoading(false);
+    };
+    void withBrowserPreviewTimeout(ensurePreviewGatewayOrigin(), 'preview gateway')
       .then((origin) => {
-        if (!cancelled && origin) setPreviewGatewayOrigin(origin);
+        if (cancelled) return;
+        if (origin) setPreviewGatewayOrigin(origin);
+        else failGateway('preview gateway unavailable');
       })
-      .catch(() => {
-        if (!cancelled) setPreviewGatewayOrigin('');
-      });
+      .catch((error) => failGateway(error instanceof Error ? error.message : String(error)));
     return () => {
       cancelled = true;
     };
@@ -1970,7 +1995,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
               </div>
             ) : null}
           </div>
-        ) : proxyState.status === 'error' && entry?.location.hostId ? (
+        ) : proxyState.status === 'error' ? (
           <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center typography-meta text-muted-foreground">
             <span>{t('contextPanel.preview.proxyError')}</span>
             <span>{proxyState.message}</span>

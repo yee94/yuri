@@ -117,6 +117,14 @@ it('keeps the browser controls but never mounts Electron webview or falls back t
   expect(fixture.localFetch).not.toHaveBeenCalled();
 });
 
+it('registers loopback browser URLs without allowExternal so the Host accepts them', async () => {
+  const scope = host('host-a');
+  useUIStore.getState().openContextBrowser(scope.entry.key, 'http://localhost:5180/');
+  await render(scope);
+  const registration = fixture.fetch.mock.calls.find(([path]) => path === '/api/preview/targets');
+  expect(JSON.parse(registration?.[1].body)).toEqual({ url: 'http://localhost:5180/' });
+});
+
 it('routes the actual child session surface by raw Host location and isolates same-path panel selection', async () => {
   const a = host('host-a'), b = host('host-b');
   useUIStore.getState().openContextPanelTab(a.entry.key, { mode: 'chat', dedupeKey: 'session:same-session', readOnly: true });

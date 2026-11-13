@@ -1,5 +1,6 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useI18n } from '@/lib/i18n';
 import { formatDuration } from '@/lib/formatDuration';
 import { MorphOrb } from './MorphOrb';
@@ -32,6 +33,7 @@ export function WorkingPlaceholder({
   isTurnSettled = false,
 }: WorkingPlaceholderProps) {
   const { locale, t } = useI18n();
+  const reducedMotion = useReducedMotion();
   const [displayedText, setDisplayedText] = React.useState<string | null>(null);
   const [displayedPermission, setDisplayedPermission] = React.useState<boolean>(false);
   const displayedTextRef = React.useRef(displayedText);
@@ -271,9 +273,18 @@ export function WorkingPlaceholder({
         <span className={`inline-flex flex-none items-center justify-center ${isMobile ? 'h-5 w-4' : 'h-6 w-3.5'}`}>
           <MorphOrb isMobile={isMobile} />
         </span>
-        <span className="animate-text-shimmer min-w-0 truncate whitespace-nowrap">
-          {label}
-        </span>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={label}
+            className="animate-text-shimmer min-w-0 truncate whitespace-nowrap"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reducedMotion ? 0 : 0.15, ease: 'easeInOut' }}
+          >
+            {label}
+          </motion.span>
+        </AnimatePresence>
         {elapsed ? (
           <span className="typography-meta shrink-0 font-light text-muted-foreground/70 tabular-nums" aria-hidden="true">
             {elapsed}

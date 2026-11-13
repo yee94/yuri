@@ -12,6 +12,7 @@ describe('provider brand logos', () => {
     it.each([
         ['cursor', 'cursor'], ['grok', 'xai'], ['codex', 'openai'],
         ['zcode', 'zai-coding-plan'], ['workbuddy', 'workbuddy'], ['opencode-go', 'opencode'],
+        ['qoder', 'qoder'], ['qoder-cn', 'qoder'], ['trae', 'trae'],
         ['Grok (SuperGrok)', 'xai'], ['custom-cursor', 'cursor'],
     ])('resolves Magpie %s to the %s brand asset', (provider, asset) => {
         const html = renderToStaticMarkup(<Logo id={`magpie:gateway:${encodeURIComponent(provider)}`} />);
@@ -28,6 +29,7 @@ describe('provider brand logos', () => {
 
     it.each([
         ['magpie-workbuddy', 'workbuddy'], ['magpie-codex', 'openai'], ['magpie-cursor', 'cursor'],
+        ['magpie-qoder', 'qoder'], ['magpie-trae', 'trae'],
         ['magpie/group/workbuddy', 'workbuddy'], ['MAGPIE-GROUP', 'magpie'], ['magpie-auto', 'magpie'],
         ['remote-magpie', 'magpie'],
     ])('prefers a specific brand before Magpie for %s', (provider, asset) => {

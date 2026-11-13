@@ -11,6 +11,15 @@ vi.mock('@/lib/i18n', () => ({
   }),
 }));
 
+vi.mock('motion/react', () => ({
+  AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
+  motion: {
+    span: ({ initial: _i, animate: _a, exit: _e, transition: _t, ...rest }: Record<string, unknown>) =>
+      React.createElement('span', rest),
+  },
+  useReducedMotion: () => true,
+}));
+
 vi.mock('./MorphOrb', () => ({
   MorphOrb: () => React.createElement('span', { 'data-testid': 'orb' }),
 }));
