@@ -98,15 +98,22 @@ describe('native projects authority', () => {
     expect(controller.retainedSessions().map(row => row.id)).toEqual(['head', 'child']);
     controller.dispose(); expect(controller.retainedSessions()).toEqual([]);
   });
-  it('keeps initial readiness unknown on failed/partial index and resolves pinned metadata from the owning Host', async () => {
+  it('keeps a partial index readable: failed directories retain prior rows without failing the page or readiness, and pinned metadata resolves from the owning Host', async () => {
     app.sessions.set([{ id: 'pin', title: 'Cold seed', directory: '/repo', updated: 1 }]);
     const controller = module.createProjectsController(), normal = handle;
     handle = path => path === '/api/yuri/session-index' ? { available: true, directories: [], pinnedSessionIds: ['pin'], sync: { failedDirectories: ['/failed'] } }
       : path === '/api/yuri/session-index/session/pin' ? { session: { ...row('pin'), title: 'Host title', time: { created: 123, updated: 200 }, metadata: { yuri: { titleRefresh: { activityUpdatedAt: 300 } } } } } : normal(path);
     await controller.refresh();
-    expect(controller.catalogReady()).toBe(false); expect(controller.error()).toContain('failed directories');
+    // Web adopts an authoritative partial snapshot as ready; a failed directory is a display gap, not a page error.
+    expect(controller.catalogReady()).toBe(true); expect(controller.error()).toBe('');
     expect(controller.retainedSessions()[0]).toMatchObject({ id: 'pin', title: 'Host title', created: 123, activity: 300 });
     expect(request.mock.calls.filter(([path]) => path === '/api/yuri/session-index/session/pin')).toHaveLength(1);
+  });
+  it('still surfaces a real index failure that is not a per-directory gap', async () => {
+    const controller = module.createProjectsController(), normal = handle;
+    handle = path => path === '/api/yuri/session-index' ? { available: false, directories: [] } : normal(path);
+    await controller.refresh();
+    expect(controller.catalogReady()).toBe(false); expect(controller.error()).toContain('Session index unavailable');
   });
   it('distinguishes an initial read failure from an authoritative successful empty retained catalog', async () => {
     const controller = module.createProjectsController(), normal = handle;

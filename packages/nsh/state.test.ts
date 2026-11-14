@@ -1680,6 +1680,37 @@ describe('native chat authority and lifecycle', () => {
     expect(chat.messages()[1]).toMatchObject({ id: 'new', text: 'a'.repeat(100) + 'b', reasoning: 'think', tools: [{ id: 'call_z', state: { status: 'completed', output: 'OK' } }] });
     expect(chat.busy()).toBe(true);
   });
+  it('publishes merged deltas in one 32ms frame and never replays intermediate text', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await flush();
+    emit('session.execution.started', { sessionID: 's' }); harness.call.mockClear();
+    emit('session.text.started', { sessionID: 's', assistantMessageID: 'frame', ordinal: 0 });
+    for (let count = 0; count < 8; count++) emit('session.text.delta', { sessionID: 's', assistantMessageID: 'frame', ordinal: 0, delta: 'x' });
+    expect(chat.messages().find(message => message.id === 'frame')).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(31);
+    expect(chat.messages().find(message => message.id === 'frame')).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(chat.messages().find(message => message.id === 'frame')?.text).toBe('x'.repeat(8));
+    expect(requests()).toHaveLength(0);
+    emit('session.text.delta', { sessionID: 's', assistantMessageID: 'frame', ordinal: 0, delta: 'y' });
+    await vi.advanceTimersByTimeAsync(32);
+    expect(chat.messages().find(message => message.id === 'frame')?.text).toBe('x'.repeat(8) + 'y');
+    expect(requests()).toHaveLength(0);
+  });
+  it('keeps content compensation for a busy turn whose live stream never became ready', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await flush();
+    emit('session.execution.started', { sessionID: 's' }); harness.call.mockClear();
+    await vi.advanceTimersByTimeAsync(4100);
+    expect(requests().filter(input => input.path.includes('/message?')).length).toBeGreaterThan(0);
+  });
+  it('refreshes terminal turn authority immediately when the live stream never became ready', async () => {
+    const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await flush();
+    emit('session.execution.started', { sessionID: 's' });
+    const normal = handle;
+    handle = (path, method, body) => path.includes('/message?') ? { data: [{ id: 'answer', type: 'assistant', content: [{ type: 'text', text: 'done' }] }] } : normal(path, method, body);
+    emit('session.execution.succeeded', { sessionID: 's' });
+    await flush(); await vi.advanceTimersByTimeAsync(0); await flush();
+    expect(chat.messages().some(message => message.id === 'answer')).toBe(true);
+  });
   it('protects live native content from stale GET completion and repairs it on terminal authority', async () => {
     const state = await import('./state'); await state.loadConnections(); const chat = state.createChat(target); await flush();
     emit('server.connected', {}); await vi.advanceTimersByTimeAsync(120);

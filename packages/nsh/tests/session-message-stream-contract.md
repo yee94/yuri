@@ -5,7 +5,7 @@
 ## 主装配端口
 
 - `runtime.ts` 导出 `NativeMessageStreamTransport = 'auto' | 'ws' | 'sse'`。
-- `createChat` option：`messageStreamTransport?: () => NativeMessageStreamTransport | null`。已装配 getter 返回 `nativeAppearance.current()?.messageStreamTransport ?? null`。null 仅不启动流，独立初始历史 GET 和 safety poll 仍运行；省略 option 的历史调用保持 SSE。确认空 Host settings 的 auto 默认由现有 canonical root 解析，不由 Chat 猜测。Chat 本地仅对 primitive mode 发布变化，50 次无关 appearance 更新不重开流、不新增 GET。
+- `createChat` option：`messageStreamTransport?: () => NativeMessageStreamTransport | null`。已装配 getter 在 canonical appearance 快照存在时返回其 `messageStreamTransport`，快照尚未加载或加载失败时返回 `auto`（未知外观不等于关闭会话流）。null 仅不启动流，独立初始历史 GET 和 safety poll 仍运行；省略 option 的历史调用保持 SSE。确认空 Host settings 的 auto 默认由现有 canonical root 解析，不由 Chat 猜测。Chat 本地仅对 primitive mode 发布变化，50 次无关 appearance 更新不重开流、不新增 GET。
 - 不新增 capability：沿用 `runtime.stream` / `runtime.stop`。global envelope 完全不变。Chat start 严格收 `{path,key:'chat',expectedHost,ownerID,mode}`；stop 严格收 `{key:'chat',expectedHost,ownerID}`。
 - Native Chat 事件为 `runtime.event` 的 `{key:'chat',expectedHost,ownerID,data}` 或 `{...,type:'reconnected'}`；断线发同票据 `runtime.disconnected`。data 是保留 payload/directory 的 JSON，不把 transport eventId 伪造成 domain event.id。
 - `main.swift` 无需挂第二个 bridge 或 lifecycle owner。controller Task 就在原 `streams['chat']` registry；现有 `setForeground`、`stop`、`retireResources` 负责取消和 fence。
@@ -29,7 +29,7 @@ WS 固定 Yuri Host `/api/global/event/ws`，握手 query 仅可带真实 `lastE
 
 ## 本轮三个 P2 修复与回归
 
-- Relay session 子流唯一使用 `NativeSocketInbox.sessionStream()`：单消息仍限 1 MiB，排队最多 4096 条，完整消息和未完成 fragments 合计限 8 MiB。其它 socket 的两条消息、1 MiB 总预算默认不变。消费者暂停时先接收与 Host 上限一致的 2048 条合成 replay 和 ready，再通过真实 mailbox/controller 按原顺序消费并逐项核验 ordinal；count/bytes 两类 overflow 都明确失败、断开并在显式 WS 下重连，不静默丢帧、不假回 SSE。最初 red 为第三条消息触发生产 mailbox `limit`。
+- Relay 的 auto 模式与 Web 一致走 SSE（`SessionMessageStream.swift` 的 `!transport.relay`）；仅显式 WS 时 relay session 子流使用 `NativeSocketInbox.sessionStream()`：单消息仍限 1 MiB，排队最多 4096 条，完整消息和未完成 fragments 合计限 8 MiB。其它 socket 的两条消息、1 MiB 总预算默认不变。消费者暂停时先接收与 Host 上限一致的 2048 条合成 replay 和 ready，再通过真实 mailbox/controller 按原顺序消费并逐项核验 ordinal；count/bytes 两类 overflow 都明确失败、断开并在显式 WS 下重连，不静默丢帧、不假回 SSE。最初 red 为第三条消息触发生产 mailbox `limit`。
 - Chat 对 global/chat 一律先验证非空、格式正确且与 operation lane 相同的 `expectedHost`，再分流；global 不需要 chat ownerID。A→B→A 回归保留三个真实 start 的签发票据，旧 global status、ready、Goal 和缺失/畸形 scope 都不能作用于当前 Chat；同 scope global 无 ownerID 仍可工作。Goal/Bot 正例 fixture 显式创建 global start 后保存其票据，不在 emit 时补当前 scope。最初 red 为旧 global idle 将当前 busy 清空。
 - session Relay mint 独立保留真正 Host HTTP response 的 `Date` 与 body `expiresAt`。`tunnel-host.js` 的响应头循环只剥 framing/hop-by-hop 字段，Date 跨 tunnel 原样进入 Swift；pure dispatcher 回归用 synthetic fetch 验证实际 wire header/body。HTTP Date 秒精度按上界 `Date + 1s` 求保守 remaining TTL，再从本机请求开始的 monotonic 时钟计时，包含整个请求/Relay 延迟；open 和 carrier 建立后的 WsOpen 发送前都复核 monotonic deadline。没有 Host Date、已过期或不确定剩余时间均拒绝，不拿手机 Date 或盲固定 TTL 兜底。最初 red 为 fresh 2020 Host receipt 被当前手机 wall clock 拒绝；green 覆盖正负 100 年偏差、0/500/999ms、真实 expiry 边界和耗尽 TTL 的延迟。
 

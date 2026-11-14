@@ -189,7 +189,7 @@
 - `.scratch/nsh/root-partial-live-check.py` 在旧完整 App 上实际红灯：`incompleteCatalogError:true`，而项目、marker 和四个 Tab 已存在。真实 Host 证据 `root-partial-host-before.json`：HTTP 200、available=true、43 目录，42 个未标失败；sync completed=1/total=2、failedCount=1，主目录失败但保存5条，工作树未失败并保存5条。没有操作用户 Host 以制造故障。
 - 原因：根 reader 在全目录完整性检查处直接抛错，尚未采用成功目录；连接状态又把所有域成功当作可达条件。通知恢复把 `notification_catalog_incomplete` 错误展示为设置读取失败。修改前的实际 root/notification 回归 **3 failed / 40 passed**（`root-partial-red-tests.log`）。
 - `session-catalog.ts` 只负责一次 root snapshot 的逐目录采用，不建 HTTP reader/轮询/全局状态。成功目录可更新和清空；失败、pending 或全局部分状态下未证明完成的目录保留 prior，冷启动可用 index 保存行作 display seed。分页 head 只保留既有边界后的 tail；全局完成数不足却未说明失败目录时，不能清空未知目录。重复/无目录身份的 wire 仍失败，不把无效数据伪装成成功。
-- 根 receipt 增加可选 `sessionIssues`；局部结果不再作为全根加载异常抛出，但 sessions 域保持 failed/unknown、complete=false。其它已成功域可证明 Host 可达，`online` 不成为完整性凭证。Projects 给出十语局部提示及显式重试，继续用既有 root/page readers。
+- 根 receipt 增加可选 `sessionIssues`；局部结果不再作为全根加载异常抛出，但 sessions 域保持 failed/unknown、complete=false。其它已成功域可证明 Host 可达，`online` 不成为完整性凭证。Projects 只把 `sessionIssues` 用于项目头 `+` 与保留 prior 行，不再展示页面级局部提示或重试（与 Web 手机端一致）；真实整体失败仍走原 refresh。
 - 通知只对明确的 `notification_catalog_incomplete` 保持 waitingReady；settings 成功状态不被误报为失败。peek/claim、完整 receipt、Host/authorization/lease/generation 和严格 resolver 校验全部保留。原 live admission 队列保留待处理事件；既有根收到完整 receipt 或显式 recover 时重试，消费去重不变。没有新增通知发送、OS 权限操作或安全门豁免。
 
 #### 真实完整 App / 持续失败时的可用性
@@ -219,7 +219,7 @@
 
 - Web 原先用超过固定20条推断客户端已翻页。真实 Host 的 head 仅5条，客户端读到12条后，新 head 刷新会退回5条；失败目录的空 snapshot 也能抹掉 prior。`window-web-red.log` 两项实际红灯。Native 相反：已加载12条后，即使新 head 明确 `hasMore:false`、只有5条，仍保留旧尾页；`window-native-red.log` 实际红灯。
 - Web 改用成功 load-more 后的显式 `loadedMore`，保留较深/已终结的客户端分页与 head 边界以后的 tail。完整成功 head 仍可替换和清空。没有用“比 head 多”替代原20条猜测：中途冷缓存 ghost 回归确实失败，最终显式 marker 已让该回归通过（`window-web-regression.log` 为中间失败日志，不是最终结果）。Native bucket 只在新 index `hasMore:true` 时保留尾页；完整 head 清除旧 tail/cursor，失败保留分支不放宽。
-- Web `incomplete` 元数据区分 failed/pending，保留 prior 行与终结分页；项目 `+` 同时反映远端余页和目录未完成。Native summary 也接收原根 `sessionIssues`，客户端末页不等于失败目录已恢复。两端复用同一本地化局部提示；Web 显式重试只调用既有 Query GET，不另起 sync job、轮询或 reader。
+- Web `incomplete` 元数据区分 failed/pending，保留 prior 行与终结分页；项目 `+` 同时反映远端余页和目录未完成。Native summary 也接收原根 `sessionIssues`，客户端末页不等于失败目录已恢复。两端都不在首页显示局部失败提示：Web 的 `catalogIncomplete` 保留在模型层但未接入容器，Native 同样不展示；`+` 是唯一可见呈现。
 - 追加边界：失败/pending 路径不在 `directories` 行内也必须发布元数据；明确 completed 后清标记，但缺行不当作空目录。`window-absent-metadata-red.log` 两项红灯后修复；最终87项包含其恢复测试。GET失败保 prior、旧 runtime 响应隔离、成功空目录、冷缓存 ghost、2000会话/301 pending目录的操作数与引用保持均包含在最终 Web 回归中。未据此宣称输入时延或帧率已实测通过。
 
 #### 同 Host、同 ID 集合的 H/W/S 实测

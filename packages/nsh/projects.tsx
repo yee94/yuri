@@ -5,7 +5,7 @@ import { Icon } from './Icon';
 import { t } from './i18n';
 import { activeFrom, eventBusy, eventSessionID, list, messagesFrom, nameOf, projectsFrom, record, runtimeEventFrom, sessionDisplayMetadata, text, unwrap, type ChatTarget, type Project, type Session } from './model';
 import { query, sessionPath } from './runtime';
-import { app, captureHostRequest, createSession, epoch, refresh as refreshCatalog, run } from './state';
+import { app, captureHostRequest, createSession, epoch } from './state';
 import { createPageOperations } from './page-operations';
 import { createProjectsDeletes } from './projects-delete';
 import { projectsAttention, projectsInProgress } from './projects-attention';
@@ -422,7 +422,8 @@ export function createProjectsController(activeOrOptions: (() => boolean) | { de
     if (!valid() || revision !== catalogRevision) return;
     const pinFailure = pinResults.find(result => result.status === 'rejected');
     if (pinFailure?.status === 'rejected') throw pinFailure.reason;
-    if (failed.size) throw new Error('Session index has failed directories');
+    // A failed directory keeps its prior rows and only widens the project '+' marker; it never
+    // turns an authoritative read into a page error. Web adopts the same partial snapshot.
     catalogReady.set(true);
   }
   async function refresh() {
@@ -826,7 +827,7 @@ function ArchiveUndo(props: { controller: Controller; onOpenArchivedSessions?: (
     <Text class="text-sm text-foreground">{batch().phase === 'failed' ? t('sessions.sidebar.session.delete.error') : batch().rows.length === 1 ? t('sessions.sidebar.session.delete.success') : t('sessions.sidebar.bulkActions.deletedPlural', { count: batch().rows.length })}</Text>
     <If when={batch().phase === 'failed'}><Text class="text-sm text-destructive">{batch().error}</Text></If>
     <Button testID={`projects-delete-${batch().phase}-${batch().id}`} class={quiet} disabled={batch().phase === 'committing'} onPress={() => { if (batch().phase === 'undo') props.controller.undoDelete(batch().id); else if (batch().phase === 'failed') void props.controller.retryDelete(batch().id); }}><Text class="text-foreground">{t(batch().phase === 'undo' ? 'sessions.sidebar.undo' : batch().phase === 'failed' ? 'layout.browserProvider.retry' : 'common.loading')}</Text></Button>
-  </View>}</Each><Each of={props.controller.archiveFailures()}>{row => <Button class={action} disabled={props.controller.pending().includes(row().id)} onPress={() => { void props.controller.mutate(row(), 'archive'); }}><Text class="text-foreground">{t('sessions.sidebar.bulkActions.archive')} · {row().title} · {t('layout.browserProvider.retry')}</Text></Button>}</Each><If when={props.controller.undoRows().length > 0}><View class="flex-row items-center gap-2 bg-secondary rounded-2xl px-3 py-2">
+  </View>}</Each><Each of={props.controller.archiveFailures()}>{row => <Button class={action} disabled={props.controller.pending().includes(row().id)} onPress={() => { void props.controller.mutate(row(), 'archive'); }}><Text class="text-foreground">{t('sessions.sidebar.bulkActions.archive')} · {row().title.trim() || t('mobile.sessions.untitled')} · {t('layout.browserProvider.retry')}</Text></Button>}</Each><If when={props.controller.undoRows().length > 0}><View class="flex-row items-center gap-2 bg-secondary rounded-2xl px-3 py-2">
     <Text class="flex-1 text-sm text-foreground">{t('sessions.sidebar.session.archive.success')}</Text>
     <Button class={quiet} disabled={props.controller.pending().includes('undo-archive')} onPress={() => { void props.controller.undoArchive(); }}><Text class="text-foreground">{t('sessions.sidebar.undo')}</Text></Button>
     <If when={props.onOpenArchivedSessions}><Button class={quiet} onPress={() => props.onOpenArchivedSessions?.()}><Text class="text-foreground">{t('settings.yuri.archivedSessions.actions.view')}</Text></Button></If>
@@ -856,7 +857,7 @@ function ProjectsSessionGroup(props: { controller: Controller; scope: string; ro
   const capturedScope = props.scope;
   const geometry: ProjectsSessionGeometry = new Map();
   const overlay = signal<ProjectsSessionDragProjection | null>(null), draggedID = signal<string | null>(null), shifts = signal<ReadonlyMap<string, number>>(new Map());
-  const draggedTitle = computed(() => props.rows().find(row => row.id === draggedID())?.title ?? '');
+  const draggedTitle = computed(() => props.rows().find(row => row.id === draggedID())?.title.trim() || t('mobile.sessions.untitled'));
   const lastID = computed(() => props.rows().at(-1)?.id);
   const ids = () => props.rows().map(row => row.id);
   const current = () => props.scope === capturedScope && props.controller.current() && !props.controller.pending().includes(`order:${capturedScope}`);
@@ -893,9 +894,9 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
   async function menu() {
     props.drag?.cancel();
     const started = epoch();
-    const result = await AlertDialog.show({ title: props.row.title, presentation: 'actionSheet', actions: [
+    const result = await AlertDialog.show({ title: props.row.title.trim() || t('mobile.sessions.untitled'), presentation: 'actionSheet', actions: [
       { id: 'rename', label: t('sessions.sidebar.session.menu.rename') }, { id: 'pin', label: pinLabel() },
-      ...(props.controller.running().includes(props.row.id) ? [{ id: 'stop', label: t('mobile.sessions.stopSessionAria', { title: props.row.title }) }] : []),
+      ...(props.controller.running().includes(props.row.id) ? [{ id: 'stop', label: t('mobile.sessions.stopSessionAria', { title: props.row.title.trim() || t('mobile.sessions.untitled') }) }] : []),
       ...(!props.controller.running().includes(props.row.id) ? [{ id: 'sync', label: t('sessions.sidebar.session.menu.refreshTranscript') }] : []),
       { id: 'archive', label: t('sessions.sidebar.bulkActions.archive'), role: 'destructive' },
       { id: 'delete', label: t('sessions.sidebar.dialogs.deleteSession.titleAction'), role: 'destructive' },
@@ -907,7 +908,7 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
     if (result.action === 'stop') void props.controller.mutate(props.row, 'stop');
     if (result.action === 'sync') void props.controller.syncMessages(props.row);
     if (result.action === 'delete') {
-      const confirmed = await AlertDialog.show({ title: t('sessions.sidebar.dialogs.deleteSession.title'), description: t('sessions.sidebar.dialogs.deleteSession.single', { sessionTitle: props.row.title }), actions: [{ id: 'delete', label: t('sessions.sidebar.dialogs.deleteSession.titleAction'), role: 'destructive' }, { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' }] });
+      const confirmed = await AlertDialog.show({ title: t('sessions.sidebar.dialogs.deleteSession.title'), description: t('sessions.sidebar.dialogs.deleteSession.single', { sessionTitle: props.row.title.trim() || t('mobile.sessions.untitled') }), actions: [{ id: 'delete', label: t('sessions.sidebar.dialogs.deleteSession.titleAction'), role: 'destructive' }, { id: 'cancel', label: t('gitView.common.cancel'), role: 'cancel' }] });
       if (confirmed.action === 'delete' && props.controller.current() && started === epoch()) void props.controller.mutate(props.row, 'delete');
     }
   }
@@ -926,7 +927,7 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
         if (swiped) { swiped = false; return; } if (offset()) { offset.set(0); return; } props.controller.markViewed(props.row.id); props.onOpen({ kind: 'session', ...props.row });
       }}>
         <ProjectsSessionIndicator indicator={indicator()} sessionID={props.row.id} />
-        <View class="flex-1 gap-0.5" style={{ gap: 2 * nativeDensity().scale }}><View class="flex-row items-center gap-1.5" style={{ gap: 6 * nativeDensity().scale }}><Text class={props.home ? 'flex-1 text-foreground font-medium' : `text-sm font-medium ${props.controller.attention().currentSessionID === props.row.id ? 'text-primary' : 'text-foreground'}`} style={{ numberOfLines: 1, ...(props.home ? geometry.sessionTitle : {}) }}>{props.row.title || t('mobile.sessions.untitled')}</Text><If when={props.row.changes}><Text class="text-muted-foreground" style={props.home ? geometry.sessionMeta : { fontSize: 12 }}>{props.row.changes}</Text></If></View><If when={props.subtitle}><Text class="text-muted-foreground" style={{ numberOfLines: 1, ...(props.home ? geometry.sessionMeta : { fontSize: 12 }) }}>{props.subtitle}</Text></If></View>
+        <View class="flex-1 gap-0.5" style={{ gap: 2 * nativeDensity().scale }}><View class="flex-row items-center gap-1.5" style={{ gap: 6 * nativeDensity().scale }}><Text class={props.home ? 'flex-1 text-foreground font-medium' : `text-sm font-medium ${props.controller.attention().currentSessionID === props.row.id ? 'text-primary' : 'text-foreground'}`} style={{ numberOfLines: 1, ...(props.home ? geometry.sessionTitle : {}) }}>{props.row.title.trim() || t('mobile.sessions.untitled')}</Text><If when={props.row.changes}><Text class="text-muted-foreground" style={props.home ? geometry.sessionMeta : { fontSize: 12 }}>{props.row.changes}</Text></If></View><If when={props.subtitle}><Text class="text-muted-foreground" style={{ numberOfLines: 1, ...(props.home ? geometry.sessionMeta : { fontSize: 12 }) }}>{props.subtitle}</Text></If></View>
         <Text class="text-muted-foreground" style={props.home ? geometry.sessionMeta : { fontSize: 12 }}>{relative(props.row.updated)}</Text>
       </Button>
       </View>
@@ -1044,10 +1045,6 @@ export function ProjectsHome(props: ProjectsHomeProps) {
         <Button testID="projects-open-search" class="w-10 h-10 rounded-full items-center justify-center" style={projectHomeSurface} accessibilityLabel={t('mobile.sessions.searchAria')} onPress={() => { if (props.onOpenSearch) props.onOpenSearch(); else { searching.set(true); void controller.search(term()); } }}><Icon name="search" size={18} /></Button>
         <Button testID="projects-open-menu" class="w-10 h-10 rounded-full items-center justify-center" style={projectHomeSurface} accessibilityLabel={t('mobile.projects.menu.label')} onPress={() => { void addMenu(); }}><Icon name="add" size={20} /></Button>
       </View>
-       <If when={!!app.notificationCatalog().sessionIssues}><View testID="projects-catalog-partial" class="px-2 gap-2">
-         <Text class="text-sm text-muted-foreground">{t('mobile.sessions.catalogPartial')}</Text>
-         <Button testID="projects-catalog-retry" class={action} disabled={app.loading() || controller.loading() || !controller.current()} onPress={() => { if (controller.current()) void run(async () => { await refreshCatalog(); if (controller.current()) await controller.refresh(); }); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button>
-       </View></If>
        <If when={controller.error()}><View><Text class="text-sm text-destructive px-2">{controller.error()}</Text><Button class={quiet} onPress={() => { void controller.refresh(); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></View></If>
       <If when={controller.notice()}><Text class="text-sm text-muted-foreground px-2">{controller.notice()}</Text></If>
        <If when={controller.deleteBatches().length > 0 || controller.archiveFailures().length > 0 || controller.undoRows().length > 0}><ArchiveUndo controller={controller} onOpenArchivedSessions={props.onOpenArchivedSessions} /></If>

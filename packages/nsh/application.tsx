@@ -1390,7 +1390,12 @@ function ChatOwner(props: ChatProps & { frameOwned?: boolean; writerGrant?: () =
   });
   const footerState = signal(footer.snapshot());
   cleanup(footer.dispose);
-  const chat = createChat(props.target, { ...(platform.desktop && app.connection() ? { draftAuthorityKey: props.handoff?.receipt.draftAuthorityKey ?? desktopGitDraftAuthority(app.connection()!) } : {}), contactOptimistic: desktopContact, writerGrant: props.writerGrant, writerUnknown: props.writerUnknown, recoveryReadOperation: recoveryReads?.operation, deviceChatPreferences, messageStreamTransport: () => nativeAppearance.current()?.messageStreamTransport ?? null, followUpBehavior: () => nativeAppearance.current()?.followUpBehavior ?? null, beforeHistoryPresentationFlush: footer.beforeHistoryPresentationFlush });
+  // Canonical appearance is still unknown until its Host snapshot lands (and it can
+  // fail to load at all). Unknown must not read as "live stream disabled": that turns
+  // the chat into 4s polling until appearance arrives. Only a loaded snapshot may
+  // report the deliberate `null` (invalid transport setting).
+  const chatStreamTransport = () => { const appearance = nativeAppearance.current(); return appearance ? appearance.messageStreamTransport : 'auto'; };
+  const chat = createChat(props.target, { ...(platform.desktop && app.connection() ? { draftAuthorityKey: props.handoff?.receipt.draftAuthorityKey ?? desktopGitDraftAuthority(app.connection()!) } : {}), contactOptimistic: desktopContact, writerGrant: props.writerGrant, writerUnknown: props.writerUnknown, recoveryReadOperation: recoveryReads?.operation, deviceChatPreferences, messageStreamTransport: chatStreamTransport, followUpBehavior: () => nativeAppearance.current()?.followUpBehavior ?? null, beforeHistoryPresentationFlush: footer.beforeHistoryPresentationFlush });
   props.onChat?.(chat);
   effect(() => {
     current(); nav.routes(); lifecycle();

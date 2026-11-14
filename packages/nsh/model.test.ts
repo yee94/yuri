@@ -11,7 +11,7 @@ describe('native protocol projections', () => {
     ] }] });
     expect(rows).toEqual([
       { id: 's', title: 'Live title', directory: '/repo', updated: 4, parentID: undefined, model: 'provider/model', summary: { additions: 8, files: 2 } },
-      { id: 'unknown', title: 'unknown', directory: '/repo', updated: 3, parentID: undefined },
+      { id: 'unknown', title: '', directory: '/repo', updated: 3, parentID: undefined },
     ]);
     expect(rows[0]?.summary).not.toBe(summary);
     summary.additions = 999; expect(rows[0]?.summary?.additions).toBe(8);

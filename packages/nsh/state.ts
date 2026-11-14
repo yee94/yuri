@@ -1981,7 +1981,7 @@ export function createChat(target: ChatTarget, dependencies: { readOnly?: boolea
     if (target.kind === 'session' && goalCore.event(event.directory || event.key !== 'chat' ? event : { ...event, directory: target.directory })) return;
     const relevant = target.kind === 'assistant'
       ? text(event.body.assistantID) === target.id || event.type === 'yuri:assistants-changed'
-      : eventSessionID(event) === target.id && (!event.directory || event.directory === target.directory);
+      : eventSessionID(event) === target.id;
     if (!relevant) return;
     if (event.id) {
       if (seenEvents.has(event.id)) return;
@@ -2084,7 +2084,12 @@ export function createChat(target: ChatTarget, dependencies: { readOnly?: boolea
     else if (event.type.includes('permission')) schedule(['permissions']);
     else if (event.type.includes('form')) schedule(['forms']);
     else if (event.type === 'yuri:assistants-changed') schedule(['messages', 'status']);
-    else if (target.kind === 'session' && (event.type.startsWith('session.execution.') && event.type !== 'session.execution.started' || event.type === 'session.idle' || event.type === 'session.error')) schedule(['messages', 'inbox']);
+    else if (target.kind === 'session' && (event.type.startsWith('session.execution.') && event.type !== 'session.execution.started' || event.type === 'session.idle' || event.type === 'session.error')) {
+      // Terminal authority must not wait on a live stream that never became
+      // ready; the debounced scheduler is a no-op until that first ready.
+      if (nativeStreamReady && !streamDisconnected) schedule(['messages', 'inbox']);
+      else void load(false, ['messages', 'inbox', 'status'], operationLane);
+    }
     else if (target.kind === 'session' && (event.type.startsWith('yuri:session-') || event.type === 'session.execution.started' || event.type === 'session.retry.scheduled' || event.type === 'session.instructions.updated' || event.type === 'session.metadata.updated' || event.type === 'session.status' || event.type === 'session.usage.updated')) return;
     else schedule(['messages']);
   });
@@ -2155,13 +2160,23 @@ export function createChat(target: ChatTarget, dependencies: { readOnly?: boolea
           if (!streamLeaseAlive) void port.stop({ key: ownedStreamKey, expectedHost: scope }).catch(() => {});
         }).catch(() => { if (streamLeaseAlive && laneForeground(lane)) { streamDisconnected = true; displayStreamError.set('chat_display_stream_unavailable'); streamState.set('disconnected'); } });
       } else if (readOnly) { streamDisconnected = true; displayStreamError.set('chat_display_stream_unavailable'); streamState.set('disconnected'); }
-      else if (mode !== null) void native('runtime.stream', { path: `/api/event?${query(target.directory)}`, key: 'chat', ownerID, mode, ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => { if (laneCurrent(lane) && streamOwnerID === ownerID) fail(failure); });
+      else if (mode !== null) void native('runtime.stream', { path: `/api/event?${query(target.directory)}`, key: 'chat', ownerID, mode, ...(lane.scope ? { expectedHost: lane.scope } : {}) }).catch(failure => {
+        if (laneCurrent(lane) && streamOwnerID === ownerID) {
+          // A rejected start is a dead live stream, not a pending one: let the
+          // bounded content compensation take over instead of polling status only.
+          streamDisconnected = true; streamState.set('disconnected'); fail(failure);
+        }
+      });
     }
     const interval = setInterval(() => {
       if (!laneForeground(lane)) return;
       // Live deltas own running text. Safety polls keep status/blocking authority without
       // racing token contents; disconnected/idle reads still recover missed output.
-      void load(false, target.kind === 'session' && busy() && !streamDisconnected ? ['status', 'inbox', 'permissions', 'forms'] : allChatDomains, lane);
+      // "Live" means the chat stream actually reached ready: a stream that was never
+      // admitted (start rejection, missing event route, relay SSE refused) must keep
+      // content compensation running instead of polling status only.
+      const live = nativeStreamReady && !streamDisconnected;
+      void load(false, target.kind === 'session' && busy() && live ? ['status', 'inbox', 'permissions', 'forms'] : allChatDomains, lane);
     }, 4000);
     return () => {
       streamLeaseAlive = false;
