@@ -648,7 +648,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
             <p className="mt-2 max-w-xs typography-ui leading-6 text-muted-foreground/80">{t('assistants.contact.empty')}</p>
           </div>
         ) : (
-          <div ref={contentRef} className="relative mx-auto flex w-full flex-col pb-12" data-assistant-contact-content="">
+          <div ref={contentRef} className="relative mx-auto flex w-full flex-col pb-28" data-assistant-contact-content="">
             {contactQuery.isPending ? <p role="status" className="py-3 text-center typography-micro text-muted-foreground">{t('common.loading')}</p> : null}
             {contactQuery.hasPreviousPage || contactQuery.hasMessageGap ? <div className="mb-3 flex flex-col items-center gap-1" data-assistant-contact-pagination="" aria-busy={contactQuery.isFetchingPreviousPage || contactQuery.isFillingMessageGap}>
               {contactQuery.previousPageError ? <p role="alert" className="typography-micro text-[var(--status-error)]">{t('chat.history.loadOlderFailed')}</p> : null}
@@ -819,7 +819,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                 </div>
               </div>
             })}
-            <div className="pointer-events-none absolute bottom-1 left-[var(--contact-avatar-gutter)] flex h-10 items-center" data-assistant-contact-status-slot="">
+            <div className="pointer-events-none absolute bottom-12 left-[var(--contact-avatar-gutter)] flex h-9 items-end" data-assistant-contact-status-slot="">
               {!sending && sendFlight?.scope !== entryScope && (processing || serverWorking) ? (
                 <motion.div
                   role="status"
