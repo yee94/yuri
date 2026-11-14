@@ -5,7 +5,7 @@ import { Icon } from './Icon';
 import { t } from './i18n';
 import { activeFrom, eventBusy, eventSessionID, list, messagesFrom, nameOf, projectsFrom, record, runtimeEventFrom, text, unwrap, type ChatTarget, type Project, type Session } from './model';
 import { query, sessionPath } from './runtime';
-import { app, captureHostRequest, createSession, epoch, refresh as refreshCatalog, run } from './state';
+import { app, captureHostRequest, createSession, epoch } from './state';
 import { createPageOperations } from './page-operations';
 import { createProjectsDeletes } from './projects-delete';
 import { projectsAttention, projectsInProgress } from './projects-attention';
@@ -999,10 +999,6 @@ export function ProjectsHome(props: ProjectsHomeProps) {
         <Button testID="projects-open-search" class="w-10 h-10 rounded-full items-center justify-center" style={projectHomeSurface} accessibilityLabel={t('mobile.sessions.searchAria')} onPress={() => { if (props.onOpenSearch) props.onOpenSearch(); else { searching.set(true); void controller.search(term()); } }}><Icon name="search" size={18} /></Button>
         <Button testID="projects-open-menu" class="w-10 h-10 rounded-full items-center justify-center" style={projectHomeSurface} accessibilityLabel={t('mobile.projects.menu.label')} onPress={() => { void addMenu(); }}><Icon name="add" size={20} /></Button>
       </View>
-       <If when={!!app.notificationCatalog().sessionIssues}><View testID="projects-catalog-partial" class="px-2 gap-2">
-         <Text class="text-sm text-muted-foreground">{t('mobile.sessions.catalogPartial')}</Text>
-         <Button testID="projects-catalog-retry" class={action} disabled={app.loading() || controller.loading() || !controller.current()} onPress={() => { if (controller.current()) void run(async () => { await refreshCatalog(); if (controller.current()) await controller.refresh(); }); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button>
-       </View></If>
        <If when={controller.error()}><View><Text class="text-sm text-destructive px-2">{controller.error()}</Text><Button class={quiet} onPress={() => { void controller.refresh(); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></View></If>
       <If when={controller.notice()}><Text class="text-sm text-muted-foreground px-2">{controller.notice()}</Text></If>
        <If when={controller.deleteBatches().length > 0 || controller.archiveFailures().length > 0 || controller.undoRows().length > 0}><ArchiveUndo controller={controller} onOpenArchivedSessions={props.onOpenArchivedSessions} /></If>

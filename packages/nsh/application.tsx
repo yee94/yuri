@@ -1016,7 +1016,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   });
   const footerState = signal(footer.snapshot());
   cleanup(footer.dispose);
-  const chat = createChat(props.target, { deviceChatPreferences, messageStreamTransport: () => nativeAppearance.current()?.messageStreamTransport ?? null, followUpBehavior: () => nativeAppearance.current()?.followUpBehavior ?? null, beforeHistoryPresentationFlush: footer.beforeHistoryPresentationFlush });
+  const chat = createChat(props.target, { deviceChatPreferences, messageStreamTransport: () => nativeAppearance.current()?.messageStreamTransport ?? 'auto', followUpBehavior: () => nativeAppearance.current()?.followUpBehavior ?? null, beforeHistoryPresentationFlush: footer.beforeHistoryPresentationFlush });
   effect(() => {
     current(); nav.routes(); lifecycle();
     untracked(footer.syncActivity);

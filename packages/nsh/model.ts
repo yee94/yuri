@@ -43,7 +43,7 @@ export function sessionsFrom(snapshot: unknown): Session[] {
   const value = record(snapshot);
   if (value.available !== true || !Array.isArray(value.directories)) throw new Error('Session index unavailable');
   return list(value.directories).flatMap(d => list(d.sessions).map(s => ({
-    id: text(s.id), title: text(s.title) || text(s.id), directory: text(d.directory),
+    id: text(s.id), title: text(s.title), directory: text(d.directory),
     updated: Number(record(s.time).updated) || 0, parentID: text(s.parentID) || undefined,
   }))).filter(s => !s.parentID).sort((a, b) => b.updated - a.updated);
 }
