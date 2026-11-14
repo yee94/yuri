@@ -62,7 +62,7 @@ function createOwner(source: ChangesSource, current: () => boolean) {
     actionRevision.set(actionRevision() + 1);
     // Clear only the exact draft whose commit was acknowledged on this lane,
     // before any follow-up sync/status await can suspend the presentation.
-    if (committing && committing.lane === assigned && valid() && actions.state().committed && message() === committing.message) { message.set(''); generation.clear(); }
+    if (committing && committing.lane === assigned && valid() && actions.state().committed && message() === committing.message) { message.set(''); generation?.clear(); }
   });
   const draft = { state: () => ({ message: message(), highlights: generationHighlights() }), revision: () => messageRevision, replace(next: string, highlights: string[]) { messageRevision++; message.set(next); generationHighlights.set(highlights); } };
   const generation = source.kind === 'workspace' ? createChangesGeneration(reader, async (path, method = 'GET', body) => {

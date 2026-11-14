@@ -1,4 +1,4 @@
-import type { Message, Part } from '@/lib/opencode/v2-types';
+import type { Message, Part } from '../../lib/opencode/v2-types';
 
 type TokenBreakdown = {
     input?: number;

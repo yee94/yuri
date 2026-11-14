@@ -1,4 +1,4 @@
-import type { Theme } from '@/types/theme';
+import type { Theme } from '../types/theme';
 
 const getNested = (value: unknown, path: string[]): unknown =>
   path.reduce<unknown>((acc, key) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[key] : undefined), value);

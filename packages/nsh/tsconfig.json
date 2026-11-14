@@ -3,6 +3,7 @@
   "compilerOptions": {
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
+    "types": ["node"],
     "paths": {
       "nsh": ["./.nsh/types/nsh/index.d.ts"],
       "nsh/*": ["./.nsh/types/nsh/*.d.ts"],

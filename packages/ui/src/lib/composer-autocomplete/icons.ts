@@ -1,4 +1,4 @@
-import type { IconName } from '@/components/icon/icons';
+import type { IconName } from '../../components/icon/icons';
 
 export type SlashCommandIconInput = {
   name: string;

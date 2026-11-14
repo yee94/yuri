@@ -8,7 +8,7 @@
  * First paint: limit=20, order=desc. Older history uses the response cursor.
  */
 
-import type { FilePart, Message, Part, ToolPart } from '@/lib/opencode/v2-types'
+import type { FilePart, Message, Part, ToolPart } from '../lib/opencode/v2-types'
 
 import { projectionToolOutput, projectionToolTime } from './session-tool-content'
 import type { SessionCompactionStatus } from './session-compaction'

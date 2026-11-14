@@ -1,4 +1,4 @@
-import type { GitStatus } from '@/lib/api/types';
+import type { GitStatus } from '../../../lib/api/types';
 
 export const TREE_INDENT_PX = 14;
 

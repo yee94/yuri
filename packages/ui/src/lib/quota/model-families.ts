@@ -1,4 +1,4 @@
-import type { QuotaProviderId } from '@/types';
+import type { QuotaProviderId } from '../../types/index';
 
 export interface ModelFamily {
   id: string;

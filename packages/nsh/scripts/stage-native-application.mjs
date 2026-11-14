@@ -12,7 +12,7 @@ const artwork = /\.(svg|png|jpe?g|gif|webp|avif|ico)$/i;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const native = specifier => /^nsh(?:\/|$)/.test(specifier);
 const packageName = specifier => specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
-const machinePath = /(?:\/(?:Users|home|private|var\/folders)\/|(?:^|[\s"'`])[A-Za-z]:[\\/]|file:\/\/\/)/;
+const machinePath = /(?:\/(?:Users|home|private|var\/folders)\/|(?:^|[\s"'`])[A-Za-z]:[\\/]|file:\/\/\/(?=[^\s"'`]))/;
 
 function inside(root, file) {
   const relative = path.relative(root, file);

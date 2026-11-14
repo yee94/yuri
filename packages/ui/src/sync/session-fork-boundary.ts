@@ -1,4 +1,4 @@
-import type { OpenCodeClient, SessionMessageInfo } from '@/lib/opencode/v2-types'
+import type { OpenCodeClient, SessionMessageInfo } from '../lib/opencode/v2-types'
 
 type Row = { id: string; type: string; finish?: string; status?: string }
 const input = (row: Row) => row.type === 'user' || row.type === 'shell'

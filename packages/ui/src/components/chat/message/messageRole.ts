@@ -1,4 +1,4 @@
-import type { Message } from '@/lib/opencode/v2-types';
+import type { Message } from '../../../lib/opencode/v2-types';
 
 export interface MessageRoleInfo {
     role: string;

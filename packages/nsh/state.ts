@@ -2264,7 +2264,7 @@ export function createChat(target: ChatTarget, dependencies: { readOnly?: boolea
     void prepared.finally(() => { if (writerPreparation === prepared) writerPreparation = undefined; });
     return prepared;
   }
-  return { writerRetirement, canReleaseWriter, prepareWriterRetirement, cancelWriterRetirement, stageContext, context: () => durable.context(), clearContext, draftAuthorityKey: dependencies.draftAuthorityKey, displayStreamError, sessionIdentity,
+  return { writerRetirement, canReleaseWriter, prepareWriterRetirement, cancelWriterRetirement, stageContext, context: () => durable.context(), clearContext, draftRevision: durable.draftRevision, draftAuthorityKey: dependencies.draftAuthorityKey, displayStreamError, sessionIdentity,
     composerRevision: durable.revision, compareAndSetDraftText, admitLocalMagic, admitLocalCompact, dispatchLocalMagicHandoff, compactionBarrier: () => compactionBarrier(),
     retryDisplayStream: () => { if (readOnly && foreground()) displayStreamRevision.set(displayStreamRevision() + 1); },
     contactReadPosition, contactOptimistic, retryContactMessage,

@@ -49,7 +49,7 @@
     },
     "packages/electron": {
       "name": "@yuriai/electron",
-      "version": "0.2.32",
+      "version": "0.3.2-beta.14",
       "dependencies": {
         "@yuriai/web": "workspace:*",
         "electron-context-menu": "^4.1.2",
@@ -64,7 +64,7 @@
     },
     "packages/mobile": {
       "name": "@yuriai/mobile",
-      "version": "0.2.32",
+      "version": "0.3.2-beta.14",
       "dependencies": {
         "@aparajita/capacitor-secure-storage": "^8.0.0",
         "@capacitor-mlkit/barcode-scanning": "^8.1.0",
@@ -84,9 +84,13 @@
         "typescript": "~5.9.0",
       },
     },
+    "packages/nsh": {
+      "name": "@yuriai/nsh",
+      "version": "0.1.0",
+    },
     "packages/relay-server": {
       "name": "@yuriai/relay-server",
-      "version": "0.2.32",
+      "version": "0.3.2-beta.14",
       "bin": {
         "yuri-relay": "./bin/yuri-relay.js",
         "yuri-push-relay": "./bin/yuri-push-relay.js",
@@ -97,7 +101,7 @@
     },
     "packages/ui": {
       "name": "@yuriai/ui",
-      "version": "0.2.32",
+      "version": "0.3.2-beta.14",
       "dependencies": {
         "@aparajita/capacitor-secure-storage": "^8.0.0",
         "@base-ui/react": "^1.4.0",
@@ -217,7 +221,7 @@
     },
     "packages/vscode": {
       "name": "yuri",
-      "version": "0.2.32",
+      "version": "0.3.2-beta.14",
       "dependencies": {
         "@opencode/client": "^2.0.23",
         "@opencode/schema": "^2.0.23",
@@ -244,7 +248,7 @@
     },
     "packages/web": {
       "name": "@yuriai/web",
-      "version": "0.2.32",
+      "version": "0.3.2-beta.14",
       "bin": {
         "yuri": "./bin/cli.js",
       },
@@ -1780,6 +1784,8 @@
     "@yuriai/electron": ["@yuriai/electron@workspace:packages/electron"],
 
     "@yuriai/mobile": ["@yuriai/mobile@workspace:packages/mobile"],
+
+    "@yuriai/nsh": ["@yuriai/nsh@workspace:packages/nsh"],
 
     "@yuriai/opencode-gui-client": ["@opencode/client@2.2.0", "", { "dependencies": { "@opencode/protocol": "2.2.0", "@opencode/schema": "2.2.0" }, "peerDependencies": { "effect": "4.0.1", "solid-js": ">=1.9.0" }, "optionalPeers": ["effect", "solid-js"] }, "sha512-gus2XLaUcGh3ERH+OnOqEO6K379cS9DFNPOgWr8OTM2VM+zn8b4Qe+dgfyysTayv1BpMMlILsRG4eKlDSuyYWQ=="],
 

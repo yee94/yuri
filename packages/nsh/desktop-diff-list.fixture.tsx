@@ -48,12 +48,12 @@ function Fixture() {
       const own = captured(); readers++;
       const enabled = () => active() && current() && source() === own && lifecycle() === 'active';
       const request = bindRequest({ hostID: 'synthetic', lease: 'lease-a' });
-      const reader = createChangesReader(own, (path, method, body) => {
+      const reader = createChangesReader(own, path => {
         if (host.params.many) {
           const url = new URL(path, 'https://fixture.invalid');
           if (url.pathname === '/api/git/diff') demand.push({ path, visible: visible.includes(JSON.stringify([url.searchParams.get('staged') === 'true' ? 'staged' : 'working', url.searchParams.get('path')])), current: enabled() });
         }
-        return request(path, method, body);
+        return request(path);
       }, enabled, () => revision.set(revision() + 1));
       cleanup(() => { disposed++; reader.cancel(); });
       return <NativeDesktopDiffList reader={reader} source={own} scope={scope()} snapshot={own.kind === 'workspace' ? snapshot : undefined} refreshRevision={refreshRevision()} active={active()} current={enabled}

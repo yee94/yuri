@@ -1,4 +1,4 @@
-import type { Theme } from '@/types/theme';
+import type { Theme } from '../../types/theme';
 
 const BASE_TEXT_FLOOR = { light: '#212121', dark: '#DEDEDE' } as const;
 

@@ -1,5 +1,5 @@
-import type { IconName } from '@/components/icon/icons';
-import type { I18nKey } from '@/lib/i18n/messages/en';
+import type { IconName } from '../components/icon/icons';
+import type { I18nKey } from '../lib/i18n/messages/en';
 
 export type MobileSessionMenuItemId =
   | 'rename'

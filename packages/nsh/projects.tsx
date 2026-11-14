@@ -250,7 +250,7 @@ export function createProjectsController(activeOrOptions: (() => boolean) | { de
       // Read the shared Host rank before writing so unloaded/hidden ranks are retained.
       await loadOrder(); if (!valid()) return;
       const sourceRows = Array.isArray(sourceRowsOrVisible) && sourceRowsOrVisible.some(item => typeof item !== 'string') ? sourceRowsOrVisible as ProjectSession[] : undefined;
-      const visibleIDs = !sourceRows && Array.isArray(sourceRowsOrVisible) ? sourceRowsOrVisible as readonly string[] : undefined;
+      const visibleIDs = !sourceRows && Array.isArray(sourceRowsOrVisible) ? sourceRowsOrVisible as unknown as readonly string[] : undefined;
       const rows = sourceRows ? orderedProjectSessions(sourceRows, scopeKey, order(), pins()) : scopeKey === '__pinned__' ? orderedProjectSessions(sessions().filter(row => pins().includes(row.id)), scopeKey, order(), pins()) : byDirectory().get(scopeKey) ?? [];
       const visible = visibleIDs ? new Set(visibleIDs) : undefined;
       const known = new Set(rows.map(row => row.id));

@@ -238,9 +238,9 @@ export function createTranscriptActions(options: TranscriptActionOptions) {
     let acquired = false;
     try {
       options.onPending?.(true); acquired = true;
-      await sessionWork();
+      await sessionWork(history);
     } finally { sessionLocks.delete(lock); if (acquired) options.onPending?.(false); }
-    async function sessionWork() {
+    async function sessionWork(history: NativeSessionHistoryAdapter) {
       if (history.receipt()) throw new Error('Session history result is pending or unknown; do not replay');
       await idle();
       await history.refresh(); assertCurrent();

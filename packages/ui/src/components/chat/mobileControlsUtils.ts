@@ -1,4 +1,4 @@
-import type { Agent } from '@/lib/opencode/v2-types';
+import type { Agent } from '../../lib/opencode/v2-types';
 import { getProviderModelDisplayName, type DisplayProvider } from '../../lib/modelDisplay';
 
 export type MobileControlsPanel = 'model' | 'agent' | 'variant' | null;

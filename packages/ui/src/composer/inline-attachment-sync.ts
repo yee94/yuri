@@ -4,7 +4,7 @@
  * does not hand-sync textarea text after removeAttachment.
  */
 import { stripComposerTriggerIconSlot } from './inline-visual';
-import type { DraftComposerReference, DraftMention } from '@/sync/input-draft-types';
+import type { DraftComposerReference, DraftMention } from '../sync/input-draft-types';
 
 export interface CitationRange {
     start: number;

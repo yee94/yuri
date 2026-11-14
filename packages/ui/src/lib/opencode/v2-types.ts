@@ -38,6 +38,7 @@ import type {
   SessionMessagesResponse,
   SessionRevert,
   SessionStatus,
+  SessionSwitchModelInput,
   SkillInfo,
   TokenUsageInfo,
 } from "@opencode/client";
@@ -72,6 +73,7 @@ export type {
   SessionMessagesResponse,
   SessionRevert,
   SessionStatus,
+  SessionSwitchModelInput,
   SkillInfo,
   TokenUsageInfo,
 };

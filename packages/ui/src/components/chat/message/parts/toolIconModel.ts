@@ -1,4 +1,4 @@
-import type { IconName } from '@/components/icon/icons';
+import type { IconName } from '../../../icon/icons';
 
 /** Platform-neutral artwork choice; renderers own the native image / SVG node. */
 export function toolIconSpec(toolName: string): { name: IconName; size: number; todo?: boolean } {

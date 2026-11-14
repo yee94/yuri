@@ -1,4 +1,4 @@
-import type { Theme } from '@/types/theme';
+import type { Theme } from '../../../types/theme';
 import { presetThemes } from './presets';
 import { withPrColors } from './prColors';
 import flexokiLightRaw from './flexoki-light.json';

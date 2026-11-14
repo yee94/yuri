@@ -1,4 +1,4 @@
-import type { AssistantContactMessage } from '@/queries/assistantDTO'
+import type { AssistantContactMessage } from '../../queries/assistantDTO'
 
 const sameLocalDay = (left: Date, right: Date) => (
   left.getFullYear() === right.getFullYear()

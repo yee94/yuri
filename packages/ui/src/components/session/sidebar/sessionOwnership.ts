@@ -1,4 +1,4 @@
-import type { Session } from '@/lib/opencode/v2-types';
+import type { Session } from '../../../lib/opencode/v2-types';
 import { normalizePath } from '../../../lib/pathNormalization';
 
 type Project = {

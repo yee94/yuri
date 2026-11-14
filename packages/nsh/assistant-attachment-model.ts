@@ -40,7 +40,7 @@ export function assistantAttachmentDescriptor(value: unknown, assistantID?: stri
 }
 
 /** The message writer sends only the server-owned reference, never a GET URL or local bytes. */
-export function assistantAttachmentFilePart(file: { uri: string; mime: string; contact?: AssistantAttachmentDescriptor }, assistantID: string) {
+export function assistantAttachmentFilePart(file: { uri?: string; mime: string; contact?: AssistantAttachmentDescriptor }, assistantID: string) {
   const contact = assistantAttachmentDescriptor(file.contact, assistantID);
   if (file.uri !== assistantAttachmentURI(assistantID, contact.attachmentID) || file.mime !== contact.mime) throw new Error('attachment_invalid_receipt');
   const { assistantID: _owner, ...part } = contact;

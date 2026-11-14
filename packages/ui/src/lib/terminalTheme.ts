@@ -1,5 +1,5 @@
 import type { Ghostty } from 'ghostty-web';
-import type { Theme } from '@/types/theme';
+import type { Theme } from '../types/theme';
 
 export interface TerminalTheme {
   background: string;

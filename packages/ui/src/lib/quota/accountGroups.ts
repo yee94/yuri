@@ -1,4 +1,4 @@
-import type { UsageWindow } from '@/types/quota';
+import type { UsageWindow } from '../../types/quota';
 
 type AccountRef = { name: string };
 

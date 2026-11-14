@@ -1,7 +1,7 @@
 import { runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
 
 /** Intent only; native admission requires the originating owner's receipt. */
-type ResourceWebPreviewIntent =
+export type ResourceWebPreviewIntent =
   | { kind: 'html'; directory: string; path: string }
   | { kind: 'loopback'; url: string };
 

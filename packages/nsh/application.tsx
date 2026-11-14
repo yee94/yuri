@@ -2090,12 +2090,12 @@ function ChatOwner(props: ChatProps & { frameOwned?: boolean; writerGrant?: () =
         inverted
         onScrollDragStart={event => { listHistoryEvents().onScrollDragStart(event); historyScroll.onScrollDragStart(event); if (!platform.desktop) chrome.begin(event); }}
         onScroll={event => { listHistoryEvents().onScroll(event); historyScroll.onScroll(event); contactReadSnapshot?.scroll(event); if (!platform.desktop) chrome.scroll(event); }}
-        onScrollDragEnd={event => { listHistoryEvents().onScrollDragEnd(event); chrome.release(event); }}
-        onScrollEnd={() => { listHistoryEvents().onScrollEnd(); historyScroll.onScrollEnd(); chrome.end(); }}
+        onScrollDragEnd={() => { listHistoryEvents().onScrollDragEnd(); chrome.release(); }}
+        onScrollEnd={event => { listHistoryEvents().onScrollEnd(event); historyScroll.onScrollEnd(); chrome.end(); }}
         viewabilityConfig={{ itemVisibleThreshold: .01 }} onViewableItemsChange={info => {
           if (!platform.desktop || !historyReadCurrent()) return;
           let topIndex = -1, topTurnID: string | undefined;
-          for (const item of info.viewableItems) if (item.isViewable && item.item.turn && item.index > topIndex) { topIndex = item.index; topTurnID = item.item.turn.turnId; }
+          for (const item of info.viewableItems) { const row = item.item as unknown as NativeBodyRow; if (item.isViewable && row.turn && item.index > topIndex) { topIndex = item.index; topTurnID = row.turn.turnId; } }
           if (topTurnID) readingTurnID = topTurnID;
         }}
         onMomentumEnd={() => { listHistoryEvents().onMomentumEnd(); chrome.end(); }}
@@ -2766,6 +2766,7 @@ function DesktopScheduleHome() {
 }
 
 function MobileHome() {
+  const tabBarHeight = signal(0);
   return (
     <NavPage
       title="Yuri"

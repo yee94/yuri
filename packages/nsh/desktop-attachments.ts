@@ -2,7 +2,7 @@ import type { Attachment } from './model';
 import { assistantAttachmentDescriptor, assistantAttachmentURI, desktopAttachmentTarget, type AssistantAttachmentDescriptor, type DesktopAttachmentTarget } from './assistant-attachment-model';
 import { runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
 
-export type DesktopAttachment = Attachment & { contact?: AssistantAttachmentDescriptor };
+export type DesktopAttachment = Attachment & { uri: string; contact?: AssistantAttachmentDescriptor };
 export type DesktopAttachmentResult = {
   requestID: string;
   state: 'ready' | 'cancelled' | 'failed' | 'unknown' | 'retired' | 'pending';
@@ -15,7 +15,7 @@ type Native = (name: string, body: Record<string, unknown>) => Promise<unknown>;
 type DraftOwner = { current(): boolean; read(): Attachment[]; write(files: Attachment[]): void | boolean };
 const states = new Set(['ready', 'cancelled', 'failed', 'unknown', 'retired', 'pending']);
 const wireLimit = 64 * 1024;
-const identity = (file: Attachment) => file.uri;
+const identity = (file: DesktopAttachment) => file.uri;
 const signature = (file: DesktopAttachment) => JSON.stringify([file.name, file.mime, file.contact]);
 const terminal = (state: DesktopAttachmentResult['state']) => state === 'ready' || state === 'cancelled' || state === 'retired';
 function boundedMetadata(files: Attachment[]) {

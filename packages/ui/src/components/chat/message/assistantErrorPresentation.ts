@@ -1,4 +1,4 @@
-import type { IconName } from '@/components/icon/icons';
+import type { IconName } from '../../icon/icons';
 import type { I18nKey } from '../../../lib/i18n/messages/en';
 import { isLikelyProviderAuthFailure } from '../../../lib/messages/providerAuthError';
 

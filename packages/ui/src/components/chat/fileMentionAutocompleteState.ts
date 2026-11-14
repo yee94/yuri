@@ -1,4 +1,4 @@
-import type { Session } from '@/lib/opencode/v2-types';
+import type { Session } from '../../lib/opencode/v2-types';
 import fuzzysort from 'fuzzysort';
 import { scoreMentionTitle, scoreSessionMentionId } from '../../lib/composer-autocomplete/mention-rank';
 import type { ProjectFileSearchHit } from '../../lib/search/projectFileSearchTypes';

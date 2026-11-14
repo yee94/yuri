@@ -1,9 +1,9 @@
-import type { Part } from '@/lib/opencode/v2-types';
-import type { MessageRecord } from '@/lib/messageCompletion';
+import type { Part } from '../../../../lib/opencode/v2-types';
+import type { MessageRecord } from '../../../../lib/messageCompletion';
 
 import { readTaskTagSessionIdFromOutput } from './taskSessionIdParser';
 
-export { parseSubagentNotification, type SubagentNotification, type SubagentNotificationState } from '@/lib/opencode/subagent-notification';
+export { parseSubagentNotification, type SubagentNotification, type SubagentNotificationState } from '../../../../lib/opencode/subagent-notification';
 
 const asTaskAgentSource = (value: unknown): Record<string, unknown> | undefined => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {

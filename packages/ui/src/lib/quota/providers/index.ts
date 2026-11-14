@@ -1,5 +1,5 @@
-import type { QuotaProviderId } from '@/types';
-import type { ProviderResult } from '@/types';
+import type { QuotaProviderId } from '../../../types/index';
+import type { ProviderResult } from '../../../types/index';
 
 export interface QuotaProviderMeta {
   id: QuotaProviderId;

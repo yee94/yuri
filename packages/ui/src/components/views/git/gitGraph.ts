@@ -1,4 +1,4 @@
-import type { GitLogEntry } from '@/lib/api/types';
+import type { GitLogEntry } from '../../../lib/api/types';
 
 type LaneColor = string;
 

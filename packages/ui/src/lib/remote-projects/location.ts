@@ -1,4 +1,4 @@
-import { normalizeDirectoryKey } from '@/lib/pathNormalization';
+import { normalizeDirectoryKey } from '../pathNormalization';
 
 /** Identity is never a filesystem path. Keep directory unchanged at the API boundary. */
 export interface HostLocation {

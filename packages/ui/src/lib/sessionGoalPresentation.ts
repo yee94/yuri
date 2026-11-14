@@ -1,4 +1,4 @@
-import type { SessionGoalStatus } from '@/lib/opencode/goal';
+import type { SessionGoalStatus } from './opencode/goal';
 
 // Shared presentation mapping for the goal status across chat, sidebar and
 // mobile surfaces. Colors are theme tokens; labels resolve through i18n at

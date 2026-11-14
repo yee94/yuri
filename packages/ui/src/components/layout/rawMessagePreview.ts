@@ -1,4 +1,4 @@
-import type { Part } from '@/lib/opencode/v2-types';
+import type { Part } from '../../lib/opencode/v2-types';
 import type { DisplayTimePreference as TimeFormatPreference } from '../../lib/time-format-core';
 
 /**

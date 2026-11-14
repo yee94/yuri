@@ -51,7 +51,7 @@ await mkdir(localBrand, { recursive: true });
 for (const name of ['yuri-b-mark-black.svg', 'yuri-b-mark-white.svg', 'yuri-wordmark-black.svg', 'yuri-wordmark-white.svg']) {
   await cp(path.join(workspaceRoot, 'assets/brand/yuri', name), path.join(localBrand, name));
 }
-const sourceStage = await stageNativeApplication({ root: path.join(output, `native-source-${randomUUID()}`), workspaceRoot, entry: 'packages/nsh/app/App.tsx', config: 'packages/nsh/app' });
+const sourceStage = await stageNativeApplication({ root: path.join(output, `native-source-${randomUUID()}`), workspaceRoot });
 try {
   run(nsh, ['build', sourceStage.entry, '--release', '--out', bundle], false, sourceStage.cwd);
   const assetEvidence = await validateNativeApplicationBundle(bundle, sourceStage.manifest);

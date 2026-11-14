@@ -1,4 +1,4 @@
-import type { Theme } from '@/types/theme';
+import type { Theme } from '../../../types/theme';
 
 const DEFAULT_MERGED_DARK = '#8957e5';
 const DEFAULT_MERGED_LIGHT = '#8250df';

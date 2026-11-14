@@ -1,4 +1,4 @@
-import type { IconName } from "@/components/icon/icons";
+import type { IconName } from "../components/icon/icons";
 import type { I18nKey } from "./i18n/messages/en";
 
 // A draft starter is a reference to an existing command or skill, pinned to the

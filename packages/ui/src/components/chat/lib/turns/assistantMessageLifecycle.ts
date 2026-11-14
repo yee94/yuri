@@ -1,4 +1,4 @@
-import type { Part } from '@/lib/opencode/v2-types';
+import type { Part } from '../../../../lib/opencode/v2-types';
 import { hasVisibleText } from '../../message/partUtils';
 
 /**

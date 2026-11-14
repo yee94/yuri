@@ -254,7 +254,7 @@ function Feedback(props: { state: EditorState }) {
   );
 }
 
-function modelCatalog(state: EditorState, initial: Row, includeAgent = true) {
+function modelCatalog(state: Pick<EditorState, 'request' | 'current'> & { interactive?: EditorState['interactive'] }, initial: Row, includeAgent = true) {
   const request = state.request;
   const providers = signal<Row[]>([]),
     agents = signal<Row[]>([]),
@@ -333,7 +333,9 @@ function modelCatalog(state: EditorState, initial: Row, includeAgent = true) {
     variant.set("");
   }
   return {
-    current: state.interactive,
+    // Desktop owners gate admission with `admitted()`; the catalog's own
+    // `current` gate is only consumed by the mobile picker.
+    current: state.interactive as EditorState['interactive'],
     request,
     providers,
     agents,
@@ -763,7 +765,8 @@ export type TaskEditorProps = {
 };
 export function TaskEditor(props: TaskEditorProps) {
   const desktop = props.presentation === 'desktop' ? createTaskEditorOwner(() => props.active !== false, () => props.interactive !== false, props.onDone) : null;
-  const state = desktop ?? editorState(props.onDone, `task:${text(props.item?.projectId)}:${text(record(props.item?.task).id) || 'new'}`, () => props.active !== false),
+  const localState = desktop ? null : editorState(props.onDone, `task:${text(props.item?.projectId)}:${text(record(props.item?.task).id) || 'new'}`, () => props.active !== false);
+  const state = desktop ?? localState!,
     request = state.request,
     task = record(props.item?.task),
     schedule = record(task.schedule),
@@ -815,7 +818,8 @@ export function TaskEditor(props: TaskEditorProps) {
     providerID: c.providerID(), modelID: c.modelID(), agent: c.agent(), variant: c.variant(),
   });
   const desktopNavigation = desktop?.navigation(snapshot, () => props.onClose?.());
-  const navigation = desktopNavigation ?? editorNavigation(state, props.onDone, snapshot);
+  const localNavigation = desktop ? null : editorNavigation(localState!, props.onDone, snapshot);
+  const navigation = desktopNavigation ?? localNavigation!;
   if (desktopNavigation) {
     props.onNavigation?.(desktopNavigation.cancel); props.onWindowGuard?.(desktopNavigation.windowGuard);
     cleanup(() => { props.onNavigation?.(null); props.onWindowGuard?.(null); });
@@ -855,7 +859,7 @@ export function TaskEditor(props: TaskEditorProps) {
     taskEditorDirectory(projectID(), creationContext, app.projects());
   const base = () =>
     `/api/projects/${encodeURIComponent(projectID())}/scheduled-tasks`;
-  const disabled = () => desktop ? state.busy() || state.committed() || !desktop.admitted() || desktop.unknown() : !state.interactive() || state.restoring() || state.busy() || state.committed() || state.uncertain();
+  const disabled = () => desktop ? state.busy() || state.committed() || !desktop.admitted() || desktop.unknown() : !localState!.interactive() || localState!.restoring() || state.busy() || state.committed() || localState!.uncertain();
   const weekdayItems = () => { const days = [
     t("sessions.scheduledTasks.dialog.schedule.weekdayShort.sun"),
     t("sessions.scheduledTasks.dialog.schedule.weekdayShort.mon"),
@@ -870,7 +874,7 @@ export function TaskEditor(props: TaskEditorProps) {
     effect(() => { const available = desktop.current(), value = catalogDirectory(); untracked(() => { if (available && value) void c.load(value); }); });
   }
   const draftSnapshot = () => ({ projectID: projectID(), name: name(), prompt: prompt(), enabled: enabled(), goalEnabled: goalEnabled(), kind: kind(), timezone: timezone(), times: times(), time: time(), date: date(), cron: cron(), weekdays: weekdays(), providerID: c.providerID(), modelID: c.modelID(), agent: c.agent(), variant: c.variant() });
-  if (!desktop) void state.initialize((value, operation, ack) => {
+  if (!desktop) void localState!.initialize((value, operation, ack) => {
     for (const [key, field] of Object.entries({ projectID, name, prompt, kind, timezone, time, date, cron, providerID: c.providerID, modelID: c.modelID, agent: c.agent, variant: c.variant })) {
       if (typeof value[key] !== 'string') throw new Error('invalid-feature-draft'); field.set(value[key]);
     }
@@ -878,10 +882,10 @@ export function TaskEditor(props: TaskEditorProps) {
     enabled.set(value.enabled); goalEnabled.set(value.goalEnabled); times.set(value.times as string[]); weekdays.set(value.weekdays as number[]);
     if (operation.resourceID) taskID.set(operation.resourceID);
     if (operation.action === 'run' || operation.action === 'toggle') {
-      state.setCompletion(finishAction);
+      localState!.setCompletion(finishAction);
       if (record(ack?.task).id === operation.resourceID) {
         taskAuthority.set(record(ack?.task));
-        if (operation.action === 'toggle') { enabled.set(record(ack?.task).enabled === true); navigation.accept({ enabled: enabled() }); }
+        if (operation.action === 'toggle') { enabled.set(record(ack?.task).enabled === true); localNavigation!.accept({ enabled: enabled() }); }
       }
     }
   }, recoverOperation, () => { if (directory()) void c.load(directory()); void loadCalendarPreferences(); }, props.syncPendingDescription).catch(() => {});
@@ -971,7 +975,7 @@ export function TaskEditor(props: TaskEditorProps) {
     if (!deleted) taskID.set(text(record(response.task).id));
     if (!deleted) savedTask.set(record(response.task));
     if (desktop) state.committed.set(true);
-    else await state.confirm(response);
+    else await localState!.confirm(response);
     state.notice.set(
       t(
         deleted
@@ -993,10 +997,10 @@ export function TaskEditor(props: TaskEditorProps) {
     if (desktop && state.current() && !deleted) { state.committed.set(false); desktopNavigation?.pristine(); }
   }
   async function save() {
-    if (!desktop && state.restoring()) return;
-    if (!desktop && state.uncertain()) { await state.perform(state.recover); return; }
+    if (!desktop && localState!.restoring()) return;
+    if (!desktop && localState!.uncertain()) { await state.perform(localState!.recover); return; }
     await state.perform(async () => {
-      if (!desktop) state.setCompletion(props.onDone);
+      if (!desktop) localState!.setCompletion(props.onDone);
       if (!projectID())
         throw new Error(
           t("sessions.scheduledTasks.dialog.error.chooseProjectFirst"),
@@ -1032,15 +1036,15 @@ export function TaskEditor(props: TaskEditorProps) {
       if (!desktop) {
         const capturedBase = base();
         const operation: FeatureOperation = { action: 'save', method: taskID() ? 'PATCH' : 'PUT', path: capturedBase, resourceID: value.id, body: { task: value } };
-        await state.beginWrite(() => recoverOperation(operation), operation, draftSnapshot());
+        await localState!.beginWrite(() => recoverOperation(operation), operation, draftSnapshot());
       }
-      await saved(record(await (desktop ? state.request : state.writeRequest)(base(), taskID() ? 'PATCH' : 'PUT', { task: value })));
+      await saved(record(await (desktop ? state.request : localState!.writeRequest)(base(), taskID() ? 'PATCH' : 'PUT', { task: value })));
     });
   }
   async function remove() {
-    if (!desktop && (state.restoring() || state.uncertain())) return;
+    if (!desktop && (localState!.restoring() || localState!.uncertain())) return;
     await state.perform(async () => {
-      if (!desktop) state.setCompletion(props.onDone);
+      if (!desktop) localState!.setCompletion(props.onDone);
       if (
         !(await confirmDelete(
           t("settings.common.actions.delete"),
@@ -1054,10 +1058,10 @@ export function TaskEditor(props: TaskEditorProps) {
       if (!desktop) {
         const capturedBase = base(), expectedID = taskID();
         const operation: FeatureOperation = { action: 'delete', method: 'DELETE', path: `${capturedBase}/${encodeURIComponent(expectedID)}`, resourceID: expectedID };
-        await state.beginWrite(() => recoverOperation(operation), operation, draftSnapshot());
+        await localState!.beginWrite(() => recoverOperation(operation), operation, draftSnapshot());
       }
       await saved(
-        record(await (desktop ? state.request : state.writeRequest)(`${base()}/${encodeURIComponent(taskID())}`, 'DELETE')),
+        record(await (desktop ? state.request : localState!.writeRequest)(`${base()}/${encodeURIComponent(taskID())}`, 'DELETE')),
         true,
       );
     });
@@ -1113,8 +1117,8 @@ export function TaskEditor(props: TaskEditorProps) {
   async function acceptAction(live: Row, action: 'run' | 'toggle', response: Row = { task: live }) {
     state.assertCurrent(); noteScheduledCatalogWrite();
     taskAuthority.set(live);
-    if (action === 'toggle') { enabled.set(live.enabled === true); navigation.accept({ enabled: enabled() }); }
-    await state.confirm(response);
+    if (action === 'toggle') { enabled.set(live.enabled === true); localNavigation!.accept({ enabled: enabled() }); }
+    await localState!.confirm(response);
     state.notice.set(t(action === 'run' ? 'sessions.scheduledTasks.dialog.toast.started' : 'sessions.scheduledTasks.dialog.toast.saved'));
     if (response.schedulerSynced === false) { state.notice.set(`${state.notice()}\n${props.syncPendingDescription ?? t('sessions.scheduledTasks.dialog.status.error')}`); await refresh(); return; }
     await state.finish();
@@ -1122,14 +1126,14 @@ export function TaskEditor(props: TaskEditorProps) {
   async function taskAction(action: 'run' | 'toggle') {
     if (desktop || disabled() || props.active === false || !taskID()) return;
     await state.perform(async () => {
-      state.setCompletion(finishAction);
+      localState!.setCompletion(finishAction);
       const capturedBase = base(), snapshot = record(await request(capturedBase)); state.assertCurrent();
       const live = completeEditorRows(snapshot, 'tasks').find(item => item.id === taskID());
       if (!live) throw new Error(t('sessions.scheduledTasks.dialog.empty.noTasks'));
       if (action === 'run' && (live.enabled !== true || record(live.state).lastStatus === 'running')) throw new Error(t('sessions.scheduledTasks.dialog.toast.runFailed'));
       const operation: FeatureOperation = { action, method: action === 'run' ? 'POST' : 'PATCH', path: action === 'run' ? `${capturedBase}/${encodeURIComponent(taskID())}/run` : capturedBase, resourceID: taskID(), body: action === 'toggle' ? { task: { id: taskID(), enabled: !live.enabled } } : { lastRunAt: record(live.state).lastRunAt ?? 0 } };
-      await state.beginWrite(() => recoverOperation(operation), operation, draftSnapshot());
-      const response = record(await state.writeRequest(operation.path, operation.method, action === 'toggle' ? operation.body : undefined)); state.assertCurrent();
+      await localState!.beginWrite(() => recoverOperation(operation), operation, draftSnapshot());
+      const response = record(await localState!.writeRequest(operation.path, operation.method, action === 'toggle' ? operation.body : undefined)); state.assertCurrent();
       const updated = record(response.task);
       if (response.ok === false || response.failed === true || response.partial === true || updated.id !== taskID() || action === 'run' && response.ok !== true || action === 'toggle' && updated.enabled !== record(operation.body?.task).enabled) throw new Error(t('sessions.scheduledTasks.dialog.toast.updateFailed'));
       await acceptAction(updated, action, response);
@@ -1164,7 +1168,7 @@ export function TaskEditor(props: TaskEditorProps) {
       popOnBack={!navigation.blocked()}
       popOnSwipe={!navigation.blocked()}
       onBackPress={navigation.back}
-      headerRight={<View class="flex-row gap-2 items-center" style={nativeDensity().forms.inline}><If when={!!taskID()}><Button testID="features-task-more" class="min-h-11 min-w-11 items-center justify-center" disabled={disabled()} accessibilityLabel={t('sessions.scheduledTasks.dialog.actions.moreAria', { taskName: name() })} onPress={() => { void menu(); }}><Icon name="more" size={20} /></Button></If><Button testID="features-task-save" class={action} style={nativeDensity().forms.action} disabled={state.restoring() || state.busy() || state.committed()} accessibilityLabel={t(state.uncertain() ? 'chat.questionDelegate.refreshStatus' : "sessions.scheduledTasks.editor.actions.save")} onPress={() => { void save(); }}><Text class="text-foreground">{t(state.busy() ? "sessions.scheduledTasks.editor.actions.saving" : state.uncertain() ? 'chat.questionDelegate.refreshStatus' : "sessions.scheduledTasks.editor.actions.save")}</Text></Button></View>}
+      headerRight={<View class="flex-row gap-2 items-center" style={nativeDensity().forms.inline}><If when={!!taskID()}><Button testID="features-task-more" class="min-h-11 min-w-11 items-center justify-center" disabled={disabled()} accessibilityLabel={t('sessions.scheduledTasks.dialog.actions.moreAria', { taskName: name() })} onPress={() => { void menu(); }}><Icon name="more" size={20} /></Button></If><Button testID="features-task-save" class={action} style={nativeDensity().forms.action} disabled={localState!.restoring() || state.busy() || state.committed()} accessibilityLabel={t(localState!.uncertain() ? 'chat.questionDelegate.refreshStatus' : "sessions.scheduledTasks.editor.actions.save")} onPress={() => { void save(); }}><Text class="text-foreground">{t(state.busy() ? "sessions.scheduledTasks.editor.actions.saving" : localState!.uncertain() ? 'chat.questionDelegate.refreshStatus' : "sessions.scheduledTasks.editor.actions.save")}</Text></Button></View>}
       title={t(
         props.item
           ? "sessions.scheduledTasks.editor.title.edit"
@@ -1450,7 +1454,7 @@ export function TaskEditor(props: TaskEditorProps) {
             )}
           </Text>
         </Button>
-        <Feedback state={state} />
+        <Feedback state={localState!} />
         <If when={!state.committed()}>
           <Button
             testID="features-task-cancel"
@@ -1470,7 +1474,7 @@ export function TaskEditor(props: TaskEditorProps) {
           <Button
             class={action}
             style={nativeDensity().forms.action}
-            disabled={state.busy() || state.uncertain()}
+            disabled={state.busy() || localState!.uncertain()}
             onPress={() => {
               void remove();
             }}

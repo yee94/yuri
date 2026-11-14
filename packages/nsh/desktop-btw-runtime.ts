@@ -1,4 +1,4 @@
-import type { SessionSwitchModelInput } from '@opencode/client';
+import type { SessionSwitchModelInput } from '../ui/src/lib/opencode/v2-types';
 import { normalizeDirectoryKey } from '../ui/src/lib/pathNormalization';
 import { sameRuntimeScope, runtimeScopeFrom, type RuntimeScope } from './runtime-scope';
 import { createDesktopHttpClient, DesktopHttpError, type DesktopHttpGrant, type DesktopHttpResponse } from './desktop-http-core';

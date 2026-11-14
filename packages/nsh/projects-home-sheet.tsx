@@ -20,14 +20,16 @@ export function ProjectsHomeSheet(props: {
   onClosed: () => void;
   navigation: ProjectsNavigation;
 }) {
-  const open = signal(true), guard = signal<ProjectSettingsNavigation>({ blocked: false, back: () => {} });
+  /** Only `blocked`/`back` are read here; the rest is published by the owned page. */
+  const idleNavigation = (blocked = false): ProjectSettingsNavigation => ({ blocked, pending: false, dirty: false, nestedPickerOpen: false, pickerCoverage: 'explicit-only', requestLeave: async () => true, back: () => {} });
+  const open = signal(true), guard = signal<ProjectSettingsNavigation>(idleNavigation());
   const generation = epoch(), hostID = app.connection()?.id;
   const current = () => props.active !== false && generation === epoch() && hostID === app.connection()?.id;
   let afterClose: (() => void) | undefined;
   effect(() => { if (!current()) untracked(() => { afterClose = undefined; open.set(false); }); });
   const close = (next?: () => void) => { if (!open()) return; afterClose = current() ? next : undefined; open.set(false); };
   const requestClose = () => { if (guard().blocked) guard().back(); else close(); };
-  const replace = (intent: ProjectHomeSheetIntent) => { if (current() && open() && !guard().blocked) { guard.set({ blocked: false, back: () => {} }); props.onReplace(intent); } };
+  const replace = (intent: ProjectHomeSheetIntent) => { if (current() && open() && !guard().blocked) { guard.set(idleNavigation()); props.onReplace(intent); } };
   const title = () => props.intent.kind === 'edit' ? t('projectEditDialog.title') : props.intent.kind === 'directory' ? t('directoryExplorerDialog.title') : t(props.intent.kind === 'new-worktree' ? 'session.newWorktree.title' : 'mobile.projectEdit.worktreesTitle');
   return <NativeSheet testID="projects-home-options-sheet" open={open()} detents={[.72, .98]} initialDetent={props.intent.kind === 'new-worktree' ? 0 : 1}
     viewportDetents={props.intent.kind === 'new-worktree'} popupStyle={props.intent.kind === 'new-worktree' ? { height: windowSize().height * .72, paddingTop: 32 * nativeDensity().scale } : undefined}
@@ -45,10 +47,10 @@ export function ProjectsHomeSheet(props: {
       if (target.kind === 'edit') return <SettingsProjects page="projects" entity={target.project.id} directory={target.project.path}
         onNavigation={onNavigation} onBack={() => close()} onOpen={() => {}} onConnect={() => {}} />;
       return <NavStack state={navigation} class="flex-1">{() => target.kind === 'directory'
-        ? <ProjectDirectoryPage headerVisible={false} onPendingChange={pending => onNavigation({ blocked: pending, back: () => {} })}
+        ? <ProjectDirectoryPage headerVisible={false} onPendingChange={pending => onNavigation(idleNavigation(pending))}
           onAdded={(project, options) => { if (options.openDraft) close(() => props.navigation.onNewSession?.(project)); }} />
         : <ProjectDetail {...props.navigation} project={target.project} initialCreateWorktree={target.kind === 'new-worktree'} sheet
-          onSheetClose={() => close()} onPendingChange={pending => onNavigation({ blocked: pending, back: () => {} })}
+          onSheetClose={() => close()} onPendingChange={pending => onNavigation(idleNavigation(pending))}
           onEditProject={project => replace({ kind: 'edit', project })}
           onOpenChat={value => close(() => props.navigation.onOpenChat(value))}
           onOpenFiles={directory => close(() => props.navigation.onOpenFiles(directory))}

@@ -1,4 +1,4 @@
-import type { HostProbeResult } from '@/lib/desktopHosts';
+import type { HostProbeResult } from '../../lib/desktopHosts';
 
 export type HostRowDisplayStatus = HostProbeResult['status'] | 'checking' | null;
 

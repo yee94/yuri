@@ -1,4 +1,4 @@
-import type { SessionContextUsage } from '@/stores/types/sessionTypes';
+import type { SessionContextUsage } from '../stores/types/sessionTypes';
 
 /**
  * Shared backward token-baseline scan for context-usage surfaces.

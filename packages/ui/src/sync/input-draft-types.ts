@@ -1,5 +1,5 @@
-import { countUnicodeCodePoints } from "@/lib/unicodeMetrics"
-import { locationSessionKey, type HostLocation } from "@/lib/remote-projects/location"
+import { countUnicodeCodePoints } from "../lib/unicodeMetrics"
+import { locationSessionKey, type HostLocation } from "../lib/remote-projects/location"
 
 export type DraftOwner =
   | { kind: "session"; ownerID: string }

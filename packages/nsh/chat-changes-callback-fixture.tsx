@@ -3,7 +3,7 @@ import { Button } from 'nsh/base';
 import { app, captureHostRequest } from './state';
 import { createChangesReader } from './chat-changes-model';
 import { createChangesDraft } from './chat-changes-generation';
-import { NativeChangesSheet } from './chat-changes';
+import { NativeChangesSheet, type NativeChangesOwner } from './chat-changes';
 import { language } from './i18n';
 
 /** Isolated mock-only Sheet. Does not bootstrap connections or use root Chat state. */
@@ -15,6 +15,6 @@ function FixtureContent() {
   const state = () => { revision(); return reader.state(); };
   const owner = { reader, state, snapshot: computed(() => state().snapshot), draft: createChangesDraft() };
   void reader.refresh();
-  return <View class="flex-1 bg-background"><Button testID="changes-fixture-reopen" onPress={() => open.set(true)}><Text>Reopen mock Changes</Text></Button><NativeChangesSheet source={reader.source} owner={owner} open={open()} active onClose={() => open.set(false)} generationContext={{ sessionID: 'fixture-session' }} /></View>;
+  return <View class="flex-1 bg-background"><Button testID="changes-fixture-reopen" onPress={() => open.set(true)}><Text>Reopen mock Changes</Text></Button><NativeChangesSheet source={reader.source} owner={owner as unknown as NativeChangesOwner} open={open()} active onClose={() => open.set(false)} generationContext={{ sessionID: 'fixture-session' }} /></View>;
 }
 mount(FixtureContent);

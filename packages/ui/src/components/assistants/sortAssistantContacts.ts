@@ -1,4 +1,4 @@
-import type { AssistantDTO } from '@/queries/assistantDTO';
+import type { AssistantDTO } from '../../queries/assistantDTO';
 
 /** Newest visible message first; read state and configuration never rank contacts. */
 export function sortAssistantContacts<T extends Pick<AssistantDTO, 'latestMessagePreview'> & { unreadCount?: number }>(contacts: readonly T[]): T[] {

@@ -1,5 +1,5 @@
-import type { WorktreeMetadata } from '@/types/worktree';
-import type { SessionWorktreeAttachment } from '@/stores/types/sessionTypes';
+import type { WorktreeMetadata } from '../types/worktree';
+import type { SessionWorktreeAttachment } from '../stores/types/sessionTypes';
 
 type ResolveSessionWorktreeStateInput = {
   sessionDirectory: string | null;

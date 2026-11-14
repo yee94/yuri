@@ -1,4 +1,4 @@
-import type { Theme } from '@/types/theme';
+import type { Theme } from '../../../types/theme';
 import { withPrColors } from './prColors';
 
 // import amoled_dark_Raw from './amoled-dark.json';

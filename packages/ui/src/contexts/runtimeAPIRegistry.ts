@@ -1,4 +1,4 @@
-import type { RuntimeAPIs } from '@/lib/api/types';
+import type { RuntimeAPIs } from '../lib/api/types';
 
 let registeredRuntimeAPIs: RuntimeAPIs | null = null;
 

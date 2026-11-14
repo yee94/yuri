@@ -1,4 +1,4 @@
-import type { Message, Part } from '@/lib/opencode/v2-types';
+import type { Message, Part } from '../lib/opencode/v2-types';
 
 export type AssistantSource = 'composer' | 'ios-share' | 'android-share';
 export type AssistantMode = 'continuous' | 'stateless';

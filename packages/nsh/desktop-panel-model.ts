@@ -128,7 +128,7 @@ export function normalizeDesktopPanelIntent(scope: DesktopPanelStoredScope, inte
     if (intent.url === '') return { kind: 'browser', url: '' };
     const address = desktopBrowserAddress(intent.url);
     if (address.kind === 'html') throw new Error('desktop_panel_invalid_browser');
-    const url = address.url.replace(/^(https?):\/\/([^/?#]+)(.*)$/i, (_, scheme: string, authority: string, suffix: string) => {
+    const url = address.url.replace(/^(https?):\/\/([^/?#]+)(.*)$/i, (_: string, scheme: string, authority: string, suffix: string) => {
       const protocol = scheme.toLowerCase(), host = authority.toLowerCase().replace(protocol === 'https' ? /:443$/ : /:80$/, '');
       return protocol + '://' + host + (!suffix || /^[?#]/.test(suffix) ? '/' + suffix : suffix);
     });

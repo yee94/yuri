@@ -1,6 +1,6 @@
-import type { useI18n } from '@/lib/i18n'
-import type { ScheduledTask } from '@/lib/scheduledTasksApi'
-import type { AssistantContactScheduleCardPart } from '@/queries/assistantDTO'
+import type { useI18n } from '../../lib/i18n/index'
+import type { ScheduledTask } from '../../lib/scheduledTasksApi'
+import type { AssistantContactScheduleCardPart } from '../../queries/assistantDTO'
 
 type Translate = ReturnType<typeof useI18n>['t']
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value))
