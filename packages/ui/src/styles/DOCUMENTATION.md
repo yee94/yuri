@@ -18,6 +18,13 @@ CPU and animation-progress checks are required separately.
 
 ## Control selection
 
+Model picker sheets opt out of keyboard geometry through
+`.yuri-keyboard-inset-none`, which locally resets `--yuri-keyboard-inset` to zero.
+Both the overlay bottom and the descendant `.pwa-overlay-panel` max-height must
+use that local value. Overriding only `bottom` still shrinks the bottom-anchored
+sheet and moves its search field downward. On Capacitor iOS and Android, the
+keyboard covers the list without adding padding or changing sheet geometry.
+
 Mobile floating glass buttons keep their material shadow while focused. The global
 focus shadow reset excludes `yuri-mobile-floating-action`; only `:active` supplies
 pointer press feedback, without hover brightening that can stick after a touch.

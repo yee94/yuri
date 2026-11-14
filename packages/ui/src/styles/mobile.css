@@ -3947,7 +3947,7 @@ button.yuri-mobile-schedule-assistant::before {
    keyboard overlays the lower part of the list, so the sheet, search field and
    layout stay still while the keyboard opens and closes. */
 :root.yuri-capacitor-app .yuri-keyboard-inset-surface.yuri-keyboard-inset-none {
-  bottom: 0;
+  --yuri-keyboard-inset: 0px;
 }
 
 /* Motion owns scrim opacity through rAF and WAAPI. Keep the native keyboard anchor
