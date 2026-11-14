@@ -1,0 +1,31 @@
+{
+  "name": "Yuri",
+  "id": "com.yee94.yuri.nsh",
+  "version": "0.1.0",
+  "build": 1,
+  "appearance": "system",
+  "theme": "theme.json",
+  "web": {
+    "host": "./dev/host.js"
+  },
+  "capabilities": {
+    "clipboard": true,
+    "network": { "http": [{ "host": "avatars.githubusercontent.com", "methods": ["GET"], "schemes": ["https"], "port": 443, "pathPrefixes": ["/u/"] }] },
+    "openUrl": { "schemes": ["https", "http", "mailto"] },
+    "host": [
+      "connection.list",
+      "connection.select",
+      "connection.remove",
+      "connection.connect",
+      "camera.scan",
+      "runtime.request",
+      "runtime.stream",
+      "runtime.stop",
+      "runtime.pickAttachment",
+      "runtime.cancelAttachment",
+      "runtime.reconcileAttachment",
+      "runtime.acknowledgeAttachment",
+      "runtime.pendingAttachments"
+    ]
+  }
+}
