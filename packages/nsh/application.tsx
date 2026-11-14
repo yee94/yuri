@@ -1555,7 +1555,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
               } else chat.setDraftText(e.value);
               referenceKeyboard.refresh();
             }}
-            placeholder={t(inputMode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')}
+            placeholder={t(!recording() && ['inactive', 'session-authority-unknown'].includes(chat.sendAdmission()) ? 'mobile.connect.connecting' : inputMode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')}
           />
           <View class="min-h-10 flex-row gap-2 items-center" style={{ ...nativeDensity().chat.actions, gap: 8 * nativeDensity().scale }}>
             <If when={props.target.kind === "session"}>

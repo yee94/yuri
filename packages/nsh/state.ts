@@ -351,10 +351,20 @@ export function runtimeLifecycle() {
     untracked(() => {
       if (!active) { if (runtimeReady() || !reconnectPending) retireRuntimeAuthority('suspend'); return; }
       if (!runtimeReady()) {
-        const resume = async () => { await loadConnections(); resumeChatOperations(); };
+        const resume = async () => {
+          await loadConnections(); resumeChatOperations();
+          // A superseded read returns without adopting; never leave the runtime fenced.
+          if (!runtimeReady() && lifecycle() === 'active') setTimeout(() => { if (!runtimeReady() && lifecycle() === 'active') void run(resume, { retry: resume, current: () => true }); }, 300);
+        };
         void run(resume, { retry: resume, current: () => true });
       }
     });
+  });
+  // Chat lanes suspended by a background retirement rebuild whenever the runtime
+  // becomes ready again, regardless of which load adopted the connection.
+  effect(() => {
+    const ready = runtimeReady(), active = lifecycle() === 'active';
+    if (ready && active) untracked(() => { resumeChatOperations(); });
   });
   effect(() => {
     const active = lifecycle() === 'active';
