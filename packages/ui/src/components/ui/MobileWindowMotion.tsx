@@ -64,6 +64,8 @@ interface MobileWindowMotionProps {
   children: React.ReactNode;
   className?: string;
   scrimClassName?: string;
+  /** False keeps the sheet anchored to the screen bottom; the keyboard overlays it instead of lifting it. */
+  keyboardInset?: boolean;
   surfaceClassName?: string;
   surfaceElementRef?: React.Ref<HTMLDivElement>;
   dismissGesture?: boolean | MobileWindowMotionDismissGestureConfig;
@@ -73,7 +75,7 @@ interface MobileWindowMotionProps {
 }
 
 export const MobileWindowMotion: React.FC<MobileWindowMotionProps> = ({
-  id, open, onOpenChange, keepMounted = false, presentation = 'sheet', edge = 'bottom', children, className, scrimClassName, surfaceClassName, surfaceElementRef, dismissGesture = false, onExitComplete, onPreviewChange, ariaLabel,
+  id, open, onOpenChange, keepMounted = false, presentation = 'sheet', edge = 'bottom', children, className, scrimClassName, keyboardInset = true, surfaceClassName, surfaceElementRef, dismissGesture = false, onExitComplete, onPreviewChange, ariaLabel,
 }) => {
   const overlayRootRef = React.useRef<HTMLElement | null>(null);
   const scrimRef = React.useRef<HTMLDivElement | null>(null);
@@ -382,7 +384,7 @@ export const MobileWindowMotion: React.FC<MobileWindowMotionProps> = ({
   const content = (
     <div
       ref={scrimRef}
-      className={cn('yuri-mobile-window-motion yuri-keyboard-inset-surface fixed inset-0 z-[60] flex flex-col bg-[rgb(0_0_0_/_0.45)]', motionActive && 'yuri-mobile-window-motion-active', !active && !isPreview && 'pointer-events-none invisible', scrimClassName, className)}
+      className={cn('yuri-mobile-window-motion yuri-keyboard-inset-surface fixed inset-0 z-[60] flex flex-col bg-[rgb(0_0_0_/_0.45)]', motionActive && 'yuri-mobile-window-motion-active', !keyboardInset && 'yuri-keyboard-inset-none', !active && !isPreview && 'pointer-events-none invisible', scrimClassName, className)}
       data-mobile-overlay-active={String(active)}
       role={isPreview ? undefined : 'dialog'} aria-label={isPreview ? undefined : ariaLabel}
       aria-modal={active && isTop ? 'true' : undefined} aria-hidden={isPreview || !active || !isTop || undefined} inert={isPreview || !active || !isTop || undefined}

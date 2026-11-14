@@ -137,6 +137,7 @@ export const MobileModelPickerPanel: React.FC<MobileModelPickerPanelProps> = ({
             closeAriaLabel={t('mobile.surface.closeAria')}
             resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
             bodyClassName="px-2"
+            keyboardInset={false}
         >
             <MobileModelPickerPanelBody
                 query={query}

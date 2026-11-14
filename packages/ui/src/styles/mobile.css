@@ -3943,6 +3943,13 @@ button.yuri-mobile-schedule-assistant::before {
   transition: opacity 0.2s ease-out;
 }
 
+/* Sheets with a top-pinned search field opt out of the keyboard lift: the
+   keyboard overlays the lower part of the list, so the sheet, search field and
+   layout stay still while the keyboard opens and closes. */
+:root.yuri-capacitor-app .yuri-keyboard-inset-surface.yuri-keyboard-inset-none {
+  bottom: 0;
+}
+
 /* Motion owns scrim opacity through rAF and WAAPI. Keep the native keyboard anchor
    transition scoped to this surface and suspend it during window movement. */
 :root.yuri-capacitor-app .yuri-keyboard-inset-surface.yuri-mobile-window-motion {

@@ -25,6 +25,7 @@ type MobileResizableSheetProps = {
   resizeAriaLabel: string;
   initiallyExpanded?: boolean;
   fitContent?: boolean;
+  keyboardInset?: boolean;
   bodyClassName?: string;
   className?: string;
   children: React.ReactNode;
@@ -56,6 +57,7 @@ export const MobileResizableSheet: React.FC<MobileResizableSheetProps> = ({
   resizeAriaLabel,
   initiallyExpanded = false,
   fitContent = false,
+  keyboardInset,
   bodyClassName,
   className,
   children,
@@ -75,6 +77,7 @@ export const MobileResizableSheet: React.FC<MobileResizableSheetProps> = ({
       <MobileWindowMotion
         id={id}
         className={className}
+        keyboardInset={keyboardInset}
         open={open}
         onOpenChange={onOpenChange}
         presentation="sheet"
