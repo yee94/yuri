@@ -1,4 +1,4 @@
-import { Text, View, type GestureResponderEvent } from 'nsh';
+import { PanResponder, Text, View, signal, type GestureResponderEvent } from 'nsh';
 import { Button } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, radius } from '../core/theme';
@@ -29,6 +29,108 @@ const rowButton = {
   paddingVertical: 6,
 } as const;
 
+const WORKTREE_ACTION = 50; // Web `--yuri-mobile-worktree-action-width` (3.125rem)
+const WORKTREE_OPEN = 24;
+
+/** Web `MobileWorktreeGroupLabel`: label row with the new-session / delete swipe rail. */
+function WorktreeHeader(props: {
+  group: () => WorktreeGroup;
+  highlight: () => string;
+  onToggle: () => void;
+  onOpenActions: () => void;
+  onNewSession: () => void;
+  onDelete: () => void;
+}) {
+  const offset = signal(0);
+  let start = 0;
+  const pan = PanResponder.create({
+    onMoveShouldSetPanResponder: (_, state) =>
+      Math.abs(state.dx) > 10 && Math.abs(state.dx) > Math.abs(state.dy),
+    onPanResponderGrant: () => {
+      start = offset();
+    },
+    onPanResponderMove: (_, state) =>
+      offset.set(Math.max(-WORKTREE_ACTION * 2, Math.min(0, start + state.dx))),
+    onPanResponderRelease: () => offset.set(offset() < -WORKTREE_OPEN ? -WORKTREE_ACTION * 2 : 0),
+    onPanResponderTerminate: () => offset.set(start),
+  });
+  const close = () => offset.set(0);
+  return (
+    <View style={{ overflow: 'hidden' }}>
+      <If when={offset() < 0}>
+        <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: WORKTREE_ACTION * 2, flexDirection: 'row' }}>
+          <Button
+            onPress={() => {
+              close();
+              props.onNewSession();
+            }}
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: colors.muted() }}
+          >
+            <Icon name="add" size={18} />
+            <Text style={{ fontSize: fontSize.sessionMeta, fontWeight: '500', color: colors.foreground(), numberOfLines: 1 }}>
+              {t('sessions.sidebar.project.actions.newSession')}
+            </Text>
+          </Button>
+          <Button
+            onPress={() => {
+              close();
+              props.onDelete();
+            }}
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: alpha(colors.destructive(), 0.12) }}
+          >
+            <Icon name="delete-bin" size={18} color={() => colors.destructive()} />
+            <Text style={{ fontSize: fontSize.sessionMeta, fontWeight: '500', color: colors.destructive(), numberOfLines: 1 }}>
+              {t('mobile.projectEdit.deleteWorktreeTitle')}
+            </Text>
+          </Button>
+        </View>
+      </If>
+      <View {...pan.panHandlers} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, transform: [{ translateX: offset() }] }}>
+        <View
+          testID={`worktree-${props.group().id}`}
+          role="button"
+          onPress={() => {
+            if (offset() !== 0) {
+              close();
+              return;
+            }
+            props.onToggle();
+          }}
+          onLongPress={() => props.onOpenActions()}
+          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.06) }}
+          style={{ ...rowButton, borderRadius: radius.inset }}
+        >
+          <Icon name="git-branch" size={14} tone="muted" />
+          <Highlighted
+            value={() => props.group().name}
+            query={props.highlight}
+            style={{
+              flexShrink: 1,
+              fontSize: fontSize.sessionGroupTitle,
+              lineHeight: 16,
+              fontWeight: '600',
+              color: colors.foreground(),
+              numberOfLines: 1,
+            }}
+          />
+          <Text style={{ fontSize: fontSize.sessionGroupMeta, lineHeight: 14, color: colors.mutedForeground() }}>
+            {sessionCountLabel(props.group().sessionCount)}
+          </Text>
+          <Icon name="arrow-down-s" size={14} tone="muted" />
+        </View>
+        <Button
+          onPress={() => props.onOpenActions()}
+          accessibilityLabel={t('agentManager.detail.actions.worktreeActionsAria')}
+          style={{ width: 36, height: 36, marginRight: 6, alignItems: 'center', justifyContent: 'center' }}
+          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 12 }}
+        >
+          <Icon name="more-2" size={14} tone="muted" />
+        </Button>
+      </View>
+    </View>
+  );
+}
+
 /** One project's floating surface: header, main workspace and its linked worktrees. */
 export function ProjectSurface(props: {
   project: () => ProjectItem;
@@ -37,6 +139,8 @@ export function ProjectSurface(props: {
   onOpenActions: () => void;
   onToggleWorktree: (group: WorktreeGroup) => void;
   onOpenWorktreeActions: (group: WorktreeGroup) => void;
+  onNewWorktreeSession: (group: WorktreeGroup) => void;
+  onDeleteWorktree: (group: WorktreeGroup) => void;
   onSelect: (node: Node) => void;
   onPin: (node: Node) => void;
   onArchive: (node: Node) => void;
@@ -89,7 +193,12 @@ export function ProjectSurface(props: {
         />
         <If when={props.project().expanded}>
           <View style={groupsBox}>
-            <If when={props.project().worktrees.every((entry) => entry.sessions.length === 0)}>
+            <If
+              when={
+                (props.project().worktrees.find((entry) => entry.kind === 'main')?.sessions.length ?? 0) === 0 &&
+                props.project().worktrees.filter((entry) => entry.kind === 'worktree').length === 0
+              }
+            >
               <Text style={{ fontSize: fontSize.sessionMeta, color: colors.mutedForeground(), paddingHorizontal: 4, paddingVertical: 10 }}>
                 {t('mobile.sessions.empty.noSessionsTitle')}
               </Text>
@@ -101,7 +210,7 @@ export function ProjectSurface(props: {
                     <SessionGroup
                       scope={main().path}
                       nodes={() => main().sessions}
-                      canReorder={() => !props.project().remote}
+                      canReorder={() => !props.project().remote && !props.highlight().trim()}
                       highlight={props.highlight}
                       onSelect={props.onSelect}
                       onPin={props.onPin}
@@ -115,47 +224,19 @@ export function ProjectSurface(props: {
             <Each of={props.project().worktrees.filter((entry) => entry.kind === 'worktree')} key={(entry) => entry.id}>
               {(tree) => (
                 <View style={groupBox}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 42, paddingRight: 4 }}>
-                    <View
-                      testID={`worktree-${tree().id}`}
-                      role="button"
-                      onPress={() => props.onToggleWorktree(tree())}
-                      onLongPress={() => props.onOpenWorktreeActions(tree())}
-                      activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.06) }}
-                      style={rowButton}
-                    >
-                      <Icon name="git-branch" size={14} tone="muted" />
-                      <Highlighted
-                        value={() => tree().name}
-                        query={props.highlight}
-                        style={{
-                          flexShrink: 1,
-                          fontSize: fontSize.sessionGroupTitle,
-                          lineHeight: 16,
-                          fontWeight: '600',
-                          color: colors.foreground(),
-                          numberOfLines: 1,
-                        }}
-                      />
-                      <Text style={{ fontSize: fontSize.sessionGroupMeta, lineHeight: 14, color: colors.mutedForeground() }}>
-                        {sessionCountLabel(tree().sessionCount)}
-                      </Text>
-                      <Icon name={() => (tree().expanded ? 'arrow-down-s' : 'arrow-right-s')} size={14} tone="muted" />
-                    </View>
-                    <Button
-                      onPress={() => props.onOpenWorktreeActions(tree())}
-                      accessibilityLabel={t('agentManager.detail.actions.worktreeActionsAria')}
-                      style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}
-                      activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 12 }}
-                    >
-                      <Icon name="more-2" size={14} tone="muted" />
-                    </Button>
-                  </View>
+                  <WorktreeHeader
+                    group={tree}
+                    highlight={props.highlight}
+                    onToggle={() => props.onToggleWorktree(tree())}
+                    onOpenActions={() => props.onOpenWorktreeActions(tree())}
+                    onNewSession={() => props.onNewWorktreeSession(tree())}
+                    onDelete={() => props.onDeleteWorktree(tree())}
+                  />
                   <If when={tree().expanded && tree().sessions.length > 0}>
                     <SessionGroup
                       scope={tree().path}
                       nodes={() => tree().sessions}
-                      canReorder={() => !props.project().remote}
+                      canReorder={() => !props.project().remote && !props.highlight().trim()}
                       highlight={props.highlight}
                       onSelect={props.onSelect}
                       onPin={props.onPin}

@@ -1,4 +1,5 @@
 import { request, record, textOf } from '../core/host';
+import { remotePath } from '../core/remote';
 import { t, type I18nKey } from '../core/i18n';
 
 /** One rate-limit window as Web's metadata panel lists it. */
@@ -50,10 +51,11 @@ function rowOf(key: string, label: string, window: unknown): UsageRow {
 }
 
 /** `/api/config/settings` + `/api/quota/<provider>` — the same reads Web's panel makes. */
-export async function readUsage(directory: string): Promise<UsageSnapshot> {
+export async function readUsage(directory: string, hostId: string | null = null): Promise<UsageSnapshot> {
+  const scoped = (path: string) => (hostId ? remotePath(hostId, path) : path);
   let settings: Record<string, unknown> = {};
   try {
-    settings = record(await request('/api/config/settings'));
+    settings = record(await request(scoped('/api/config/settings')));
   } catch {
     // Defaults below match Web's unconfigured quota settings.
   }
@@ -63,7 +65,7 @@ export async function readUsage(directory: string): Promise<UsageSnapshot> {
     : ['claude', 'codex', 'cursor', 'github-copilot', 'google'];
   const selected = record(settings.usageSelectedModels);
   const results = await Promise.allSettled(
-    configured.map((providerId) => request(`/api/quota/${encodeURIComponent(providerId)}?${directory ? `directory=${encodeURIComponent(directory)}` : ''}`)),
+    configured.map((providerId) => request(scoped(`/api/quota/${encodeURIComponent(providerId)}?${directory ? `directory=${encodeURIComponent(directory)}` : ''}`))),
   );
   const groups: UsageGroup[] = [];
   results.forEach((result, index) => {

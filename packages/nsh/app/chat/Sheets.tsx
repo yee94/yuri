@@ -1,9 +1,9 @@
 import { Scroll, Text, View, effect, signal, untracked, windowSize } from 'nsh';
-import { Button, Input, Sheet } from 'nsh/base';
+import { Button, Input } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, radius, statusColor } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { Spinner, alpha } from '../core/ui';
+import { alpha, NativeSheet, Spinner } from '../core/ui';
 import { getProviderModelDisplayName } from '../../../ui/src/lib/modelDisplay';
 import { readUsage, type UsageSnapshot } from './usage';
 import {
@@ -68,8 +68,8 @@ function Tabs(props: { value: () => 'model' | 'agent'; onChange: (tab: 'model' |
   );
   return (
     <View style={{ flexDirection: 'row', gap: 4, padding: 3, borderRadius: 12, backgroundColor: alpha(colors.muted(), 0.6) }}>
-      {item('model', t('chat.modelControls.selectModel'))}
-      {item('agent', t('chat.chatInput.actions.modelAgentSettings'))}
+      {item('model', t('chat.modelControls.model'))}
+      {item('agent', t('chat.modelControls.selectAgent'))}
     </View>
   );
 }
@@ -232,7 +232,7 @@ export function PickerSheet(props: {
     return props.catalog().agents().filter((agent) => !value || `${textOf(agent.name)} ${textOf(agent.description)}`.toLowerCase().includes(value));
   };
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -256,7 +256,11 @@ export function PickerSheet(props: {
             testID={props.tab() === 'model' ? 'model-search' : 'agent-search'}
             value={query()}
             onChange={(event) => query.set(event.value)}
-            placeholder={t('chat.chatInput.placeholder.chatCompact')}
+            placeholder={
+              props.tab() === 'model'
+                ? t('chat.modelControls.searchProvidersOrModels')
+                : t('chat.modelControls.selectAgent')
+            }
             autoCapitalize="none"
             autoCorrect={false}
             style={field}
@@ -346,7 +350,7 @@ export function PickerSheet(props: {
           </If>
         </Scroll>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }
 
@@ -406,7 +410,7 @@ export function ContextSheet(props: {
     untracked(() => {
       usageLoading.set(true);
       usageError.set('');
-      void readUsage(props.conversation.directory())
+      void readUsage(props.conversation.directory(), props.conversation.hostId)
         .then((value) => usage.set(value))
         .catch((error) => usageError.set(error instanceof Error ? error.message : String(error)))
         .finally(() => usageLoading.set(false));
@@ -414,7 +418,7 @@ export function ContextSheet(props: {
   });
 
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -490,7 +494,7 @@ export function ContextSheet(props: {
           </Each>
         </Scroll>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }
 

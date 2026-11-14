@@ -1,14 +1,14 @@
 import { PanResponder, Text, View, signal } from 'nsh';
 import { Button } from 'nsh/base';
 import { t } from '../core/i18n';
-import { colors, radius } from '../core/theme';
+import { colors } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { Spinner, alpha, fontSize } from '../core/ui';
+import { Surface, alpha, fontSize } from '../core/ui';
 import { assistantPreviewText, assistantTitle, type Assistant } from './data';
-import { AssistantAvatar, AssistantUnread } from './Avatar';
+import { AssistantUnread, AssistantWorkingAvatar } from './Avatar';
 
-const RAIL_WIDTH = 132;
-const RAIL_OPEN = 40;
+const RAIL_WIDTH = 112; // Web `--yuri-mobile-session-actions-width` outside a project shell
+const RAIL_OPEN = 39; // Web snaps open past 35% of the rail
 
 /** Web `MobileAssistantCard`: avatar, name, last message, unread badge and a left swipe rail. */
 export function AssistantCard(props: {
@@ -16,6 +16,7 @@ export function AssistantCard(props: {
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onMenu: () => void;
 }) {
   const offset = signal(0);
   let start = 0;
@@ -47,7 +48,7 @@ export function AssistantCard(props: {
   };
 
   return (
-    <View style={{ overflow: 'hidden', borderRadius: radius.surface }}>
+    <Surface style={{ overflow: 'hidden', borderRadius: 24 }}>
       <If when={offset() < 0}>
         <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: RAIL_WIDTH, flexDirection: 'row' }}>
           <Button
@@ -55,63 +56,84 @@ export function AssistantCard(props: {
               close();
               props.onEdit();
             }}
-            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: colors.muted() }}
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: colors.muted() }}
           >
-            <Icon name="edit" size={17} />
-            <Text style={{ fontSize: fontSize.sessionMeta, color: colors.foreground() }}>{t('assistants.menu.edit')}</Text>
+            <Icon name="edit" size={18} />
+            <Text style={{ fontSize: fontSize.sessionMeta, fontWeight: '500', color: colors.foreground(), numberOfLines: 1 }}>
+              {t('assistants.menu.edit')}
+            </Text>
           </Button>
           <Button
             onPress={() => {
               close();
               props.onDelete();
             }}
-            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: alpha(colors.destructive(), 0.12) }}
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: alpha(colors.destructive(), 0.12) }}
           >
-            <Icon name="delete-bin" size={17} color={() => colors.destructive()} />
-            <Text style={{ fontSize: fontSize.sessionMeta, color: colors.destructive() }}>{t('assistants.settings.delete')}</Text>
+            <Icon name="delete-bin" size={18} color={() => colors.destructive()} />
+            <Text style={{ fontSize: fontSize.sessionMeta, fontWeight: '500', color: colors.destructive(), numberOfLines: 1 }}>
+              {t('assistants.settings.delete')}
+            </Text>
           </Button>
         </View>
       </If>
 
-      <View
-        {...pan.panHandlers}
-        testID={`assistant-${row().id}`}
-        role="button"
-        onPressDown={() => {
-          swiped = false;
-        }}
-        onPress={select}
-        activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.06) }}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-          minHeight: 76,
-          padding: 16,
-          borderRadius: radius.surface,
-          backgroundColor: alpha(colors.card(), 0.88),
-          backdropFilter: 'blur(22px) saturate(1.35)',
-          transform: [{ translateX: offset() }],
-        }}
-      >
-        <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-          <AssistantAvatar seed={row().avatarSeed ?? row().id} size={44} label={assistantTitle(row())} />
-          <If when={row().working}>
-            <View style={{ position: 'absolute', right: -4, bottom: -4, backgroundColor: colors.background(), borderRadius: 7, padding: 1 }}>
-              <Spinner size={12} />
-            </View>
-          </If>
+      <View {...pan.panHandlers} style={{ transform: [{ translateX: offset() }] }}>
+        <View
+          testID={`assistant-${row().id}`}
+          role="button"
+          onPressDown={() => {
+            swiped = false;
+          }}
+          onPress={select}
+          onLongPress={() => {
+            close();
+            props.onMenu();
+          }}
+          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.06) }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            minHeight: 76,
+            padding: 16,
+            borderRadius: 24,
+          }}
+        >
+          <AssistantWorkingAvatar
+            seed={row().avatarSeed ?? row().id}
+            size={44}
+            label={assistantTitle(row())}
+            working={row().working}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text
+              style={{
+                fontSize: 15,
+                lineHeight: 24,
+                fontWeight: '600',
+                letterSpacing: -0.3,
+                color: colors.foreground(),
+                numberOfLines: 1,
+              }}
+            >
+              {assistantTitle(row())}
+            </Text>
+            <Text
+              style={{
+                marginTop: 4,
+                fontSize: 12,
+                lineHeight: 16,
+                color: colors.mutedForeground(),
+                numberOfLines: 1,
+              }}
+            >
+              {assistantPreviewText(row())}
+            </Text>
+          </View>
+          <AssistantUnread count={row().unreadCount} />
         </View>
-        <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <Text style={{ fontSize: 15, lineHeight: 24, fontWeight: '600', color: colors.foreground(), numberOfLines: 1 }}>
-            {assistantTitle(row())}
-          </Text>
-          <Text style={{ fontSize: 12, color: colors.mutedForeground(), numberOfLines: 1 }}>
-            {assistantPreviewText(row())}
-          </Text>
-        </View>
-        <AssistantUnread count={row().unreadCount} />
       </View>
-    </View>
+    </Surface>
   );
 }

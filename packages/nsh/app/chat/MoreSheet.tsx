@@ -1,8 +1,8 @@
 import { Text, View, signal } from 'nsh';
-import { AlertDialog, Sheet } from 'nsh/base';
+import { AlertDialog } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, radius } from '../core/theme';
-import { ActionRow, alpha } from '../core/ui';
+import { ActionRow, alpha, NativeSheet } from '../core/ui';
 import { compactSession, type Conversation } from './store';
 
 const sheetPopup = { backgroundColor: colors.background(), borderTopLeftRadius: 26, borderTopRightRadius: 26 } as const;
@@ -48,7 +48,7 @@ export function MoreSheet(props: {
   };
 
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -106,6 +106,6 @@ export function MoreSheet(props: {
           />
         </View>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

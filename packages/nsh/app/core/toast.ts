@@ -6,6 +6,9 @@ export type Toast = {
   message: string;
   actionLabel?: string;
   onAction?: () => void;
+  /** Web's second toast action (`View archived sessions`). */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
 };
 
 const DEFAULT_TIMEOUT = 5000; // Web `SESSION_DELETE_UNDO_MS`
@@ -28,10 +31,22 @@ export function showToast(input: {
   message: string;
   actionLabel?: string;
   onAction?: () => void;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
   timeout?: number;
 }): string {
   const id = `toast-${Date.now().toString(36)}-${(serial += 1)}`;
-  items.set([...items(), { id, message: input.message, actionLabel: input.actionLabel, onAction: input.onAction }]);
+  items.set([
+    ...items(),
+    {
+      id,
+      message: input.message,
+      actionLabel: input.actionLabel,
+      onAction: input.onAction,
+      secondaryLabel: input.secondaryLabel,
+      onSecondary: input.onSecondary,
+    },
+  ]);
   const timeout = input.timeout ?? DEFAULT_TIMEOUT;
   if (timeout > 0) timers.set(id, setTimeout(() => drop(id), timeout));
   return id;

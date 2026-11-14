@@ -1,5 +1,5 @@
 import { signal } from 'nsh';
-import { list, record, request, textOf } from './host';
+import { list, record, request, textOf, type Row } from './host';
 import type { Project, Session } from './store';
 
 /**
@@ -83,11 +83,63 @@ export const remoteProjectFor = (projectId: string): RemoteProject | undefined =
 /** One session identity in the phone list: host and session, never a bare remote id. */
 export const remoteSessionKey = (hostId: string, sessionID: string) => `${hostId}::${sessionID}`;
 
+/** The Host's own session id behind a phone row key (`<hostId>::<sessionID>`). */
+export const remoteSessionIDFrom = (hostId: string, key: string) =>
+  key.startsWith(`${hostId}::`) ? key.slice(hostId.length + 2) : key;
+
 export const remotePath = (hostId: string, path: string) =>
   `/api/hosts/${encodeURIComponent(hostId)}${path}`;
 
 const remoteRequest = <T = unknown>(hostId: string, path: string, method = 'GET', body?: unknown) =>
   request<T>(remotePath(hostId, path), method, body);
+
+export { remoteRequest };
+
+/**
+ * One `yuri:host-event` frame from the Hub's global channel (Web
+ * `HostRuntimeRegistry.ingest`): the upstream event keeps its own payload, and
+ * the Hub adds the machine, directory and Hub identity.
+ */
+export type RemoteHostEvent = { hostId: string; directory: string; type: string; body: Row };
+
+export function remoteHostEventFrom(payload: unknown): RemoteHostEvent | null {
+  const value = record(payload);
+  if (value.key !== 'global' || typeof value.data !== 'string') return null;
+  let envelope: Row;
+  try {
+    envelope = record(JSON.parse(value.data));
+  } catch {
+    return null;
+  }
+  if (textOf(envelope.type) !== 'yuri:host-event') return null;
+  const properties = record(envelope.properties);
+  const hostId = textOf(properties.hostId);
+  if (!hostId) return null;
+  const hubId = textOf(properties.hubId);
+  if (hubId && remoteHubId() && hubId !== remoteHubId()) return null;
+  const event = record(properties.payload);
+  const type = textOf(event.type).replace(/\.\d+$/, '');
+  if (!type) return null;
+  const data = event.data;
+  const body =
+    data && typeof data === 'object' && !Array.isArray(data)
+      ? record(data)
+      : Object.keys(record(event.properties)).length
+        ? record(event.properties)
+        : event;
+  return { hostId, directory: normalize(textOf(properties.directory)), type, body };
+}
+
+/** Visible remote content is a Host lease, not an inferred fetch (Web `HostContentDemand`). */
+export async function remoteSubscribe(hostId: string, directory: string, sessionID: string): Promise<string> {
+  const value = record(await remoteRequest(hostId, '/subscriptions', 'POST', { directory, sessionId: sessionID }));
+  return textOf(value.id);
+}
+
+export async function remoteUnsubscribe(hostId: string, id: string): Promise<void> {
+  if (!id) return;
+  await remoteRequest(hostId, `/subscriptions/${encodeURIComponent(id)}`, 'DELETE');
+}
 
 const normalize = (value?: string | null) => (value ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
 
@@ -127,6 +179,7 @@ function parseProject(row: Record<string, unknown>): RemoteProject | null {
     path,
     label: textOf(row.label) || textOf(row.name) || path.split('/').filter(Boolean).pop() || path,
     addedAt: number(row.addedAt),
+    ...(number(row.lastOpenedAt) ? { lastOpenedAt: number(row.lastOpenedAt) } : {}),
     remoteProjectId: textOf(row.remoteProjectId),
     remoteState: remoteState === 'remote-removed' || remoteState === 'host-unavailable' ? remoteState : 'ok',
     ...(textOf(row.icon) ? { icon: textOf(row.icon) } : {}),
@@ -583,13 +636,22 @@ export function remoteOrder(hostId: string): { byScope: Record<string, string[]>
 /** Mirrors Web `sessionNodeComparator`: saved order first, new or advanced rows float up. */
 export function remoteSessionOrder(hostId: string, directory: string, rows: Session[]): Session[] {
   const snapshot = snapshots()[hostId];
-  if (!snapshot) return [...rows].sort((a, b) => b.activity - a.activity);
+  // Web `compareSessionsByPinnedAndTime`: pins first (newest first), then activity.
+  const pinnedIds = new Set(snapshot?.pinned ?? []);
+  const fallback = (left: Session, right: Session) => {
+    const leftPinned = pinnedIds.has(left.id);
+    const rightPinned = pinnedIds.has(right.id);
+    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+    if (leftPinned) return right.created - left.created;
+    return right.activity - left.activity;
+  };
+  if (!snapshot) return [...rows].sort(fallback);
   const scope = normalize(directory);
   const savedOrder = snapshot.order[scope];
   const savedActivity = snapshot.orderActivity[scope];
   const activity: Record<string, number> = {};
   for (const row of rows) activity[row.id] = row.activity;
-  if (!savedOrder?.length || !savedActivity) return [...rows].sort((a, b) => b.activity - a.activity);
+  if (!savedOrder?.length || !savedActivity) return [...rows].sort(fallback);
   const members = new Set(rows.map((row) => row.id));
   const ordered = new Set(savedOrder);
   const base = [...savedOrder.filter((id) => members.has(id)), ...rows.map((row) => row.id).filter((id) => !ordered.has(id))];
@@ -604,7 +666,15 @@ export function remoteSessionOrder(hostId: string, directory: string, rows: Sess
     ? [...bumped.sort((left, right) => (activity[right] ?? 0) - (activity[left] ?? 0)), ...stable]
     : base;
   const rank = new Map(ids.map((id, index) => [id, index]));
-  return [...rows].sort((a, b) => (rank.get(a.id) ?? ids.length) - (rank.get(b.id) ?? ids.length));
+  return [...rows].sort((a, b) => {
+    const left = rank.get(a.id);
+    const right = rank.get(b.id);
+    if (left === undefined && right === undefined) return fallback(a, b);
+    if (left === undefined) return 1;
+    if (right === undefined) return -1;
+    if (left !== right) return left - right;
+    return fallback(a, b);
+  });
 }
 
 export async function remoteSaveSessionOrder(hostId: string, scope: string, order: string[], activity: Record<string, number>): Promise<void> {

@@ -80,7 +80,7 @@ async function installedPackage(specifier, importer) {
  * root/cwd/entry are invocation paths, never serialized into the manifest.
  * Caller owns cleanup and invokes NSH with cwd, entry and its own output path.
  */
-export async function stageNativeApplication({ root, workspaceRoot = repository, bun = 'bun', entry = defaultEntry }) {
+export async function stageNativeApplication({ root, workspaceRoot = repository, bun = 'bun', entry = defaultEntry, config = 'packages/nsh' }) {
   root = path.resolve(root);
   workspaceRoot = await realpath(workspaceRoot);
   if (!entry.startsWith('packages/') || path.isAbsolute(entry) || entry.split(/[\\/]/).includes('..')) throw new Error('Invalid native staging entry');
@@ -150,7 +150,7 @@ export async function stageNativeApplication({ root, workspaceRoot = repository,
       for (const dependency of Object.keys(metadata.dependencies ?? {})) pendingPackages.push(await installedPackage(dependency, path.join(directory, 'package.json')));
     }
     for (const file of ['nsh.json', 'theme.json']) {
-      const relative = `packages/nsh/${file}`, bytes = await readFile(path.join(workspaceRoot, relative));
+      const relative = path.join(config, file), bytes = await readFile(path.join(workspaceRoot, relative));
       await writeFile(path.join(project, file), bytes);
       sourceFiles[relative] = { bytes: bytes.length, sha256: digest(bytes) };
     }

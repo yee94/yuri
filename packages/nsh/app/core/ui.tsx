@@ -1,5 +1,5 @@
-import { Text, View } from 'nsh';
-import { AlertDialog, Button, Sheet } from 'nsh/base';
+import { Text, View, cleanup, computed, effect, platform, signal } from 'nsh';
+import { AlertDialog, Button, Dialog, Sheet, type SheetProps } from 'nsh/base';
 import { Icon, type IconName } from './Icon';
 import { t } from './i18n';
 import { colors, radius } from './theme';
@@ -271,6 +271,107 @@ export async function actionMenu(options: {
 
 export type Choice<T extends string> = { value: T; label: string; description?: string };
 
+/** The sheets that are open, last on top. */
+type SheetEntry = { id: number; props: SheetProps };
+
+const sheets = signal<readonly SheetEntry[]>([]);
+const closing = new Map<number, ReturnType<typeof setTimeout>>();
+let nextSheet = 1;
+
+function removeSheet(entry: SheetEntry) {
+  closing.delete(entry.id);
+  if (!sheets().includes(entry)) return;
+  sheets.set(sheets().filter((one) => one !== entry));
+}
+
+/** A sheet closing waits one turn: a sheet opened in the same turn takes its
+ * place in the same dialog, so UIKit never hears a dismissal and a
+ * presentation at once (it drops the one asked for while the other goes). */
+function setSheet(entry: SheetEntry, open: boolean) {
+  const pending = closing.get(entry.id);
+  if (open) {
+    if (pending !== undefined) clearTimeout(pending);
+    closing.delete(entry.id);
+    if (!sheets().includes(entry)) sheets.set([...sheets(), entry]);
+    return;
+  }
+  if (pending !== undefined || !sheets().includes(entry)) return;
+  closing.set(
+    entry.id,
+    setTimeout(() => removeSheet(entry), 0),
+  );
+}
+
+const topSheet = (): SheetEntry | null => {
+  const open = sheets();
+  return open.length ? open[open.length - 1]! : null;
+};
+
+/** Whether any sheet is open: one swapping for another keeps this true, so
+ * the dialog node stays (a new node would dismiss and present at once). */
+const sheetOpen = computed(() => !!topSheet());
+
+/** The system sheet's content frame: it takes the keyboard's height, and the
+ * popup keeps the app's background under the content. */
+const SHEET_STYLE: StyleProp<ViewStyle> = { paddingBottom: 'env(keyboard-inset-height)' };
+const SHEET_GRABBER: StyleProp<ViewStyle> = {
+  width: 44,
+  height: 6,
+  borderRadius: 3,
+  backgroundColor: alpha(colors.mutedForeground(), 0.35),
+};
+const sheetBackground = computed(() => colors.background());
+
+/** The one `Dialog` every sheet shares (iOS). UIKit drops a presentation
+ * asked for while another controller is still going away, and reports no
+ * completion for an app-driven close: a sheet opened as one closes swaps
+ * this dialog's content instead of presenting over it.
+ *
+ * Nothing here may follow the open sheets: reading which one is on top would
+ * make the dialog node new for every swap (a dismissal and a presentation at
+ * once, which UIKit drops). */
+export function SheetHost() {
+  return (
+    <Dialog
+      open={sheetOpen()}
+      presentation="pageSheet"
+      animation="slide"
+      closeOnSwipe
+      closeOnBackdropPress
+      closeOnEscape
+      onCancel={() => topSheet()?.props.onCancel?.()}
+      onOpen={() => topSheet()?.props.onOpen?.()}
+      onOpenChange={(event) => {
+        const entry = topSheet();
+        if (!entry) return;
+        setSheet(entry, false);
+        entry.props.onOpenChange?.(event);
+      }}
+      style={[SHEET_STYLE, { backgroundColor: sheetBackground() }]}
+    >
+      <If when={!!topSheet()}>
+        {/* The sheet swipes but UIKit shows no handle of its own (Web draws one too). */}
+        <View style={{ alignItems: 'center', paddingTop: 6, paddingBottom: 2 }}>
+          <View style={SHEET_GRABBER} />
+        </View>
+        {topSheet()!.props.children}
+      </If>
+    </Dialog>
+  );
+}
+
+/** A bottom sheet: on iOS it joins the shared `SheetHost` (which draws the
+ * system sheet's frame); elsewhere it is the in-window `Sheet`, with the
+ * sheet's own popup and backdrop styles. */
+export function NativeSheet(props: SheetProps) {
+  if (platform.os !== 'ios') return <Sheet {...props} />;
+  const entry: SheetEntry = { id: nextSheet++, props };
+  const wanted = () => !!(props.open ?? props.defaultOpen);
+  effect(() => setSheet(entry, wanted()));
+  cleanup(() => setSheet(entry, false));
+  return null;
+}
+
 /** A choice list in the system's sheet presentation (Web's mobile picker). */
 export function ChoiceSheet<T extends string>(props: {
   open: () => boolean;
@@ -282,7 +383,7 @@ export function ChoiceSheet<T extends string>(props: {
 }) {
   const selected = () => props.value?.() ?? null;
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -353,7 +454,7 @@ export function ChoiceSheet<T extends string>(props: {
           <Text style={{ fontSize: 16, color: colors.foreground() }}>{t('gitView.common.cancel')}</Text>
         </Button>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }
 

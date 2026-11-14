@@ -6,12 +6,14 @@ import { alpha, fontSize } from '../core/ui';
 import type { JSX } from 'nsh';
 
 /** Web `MobileSettingsGroup`: a quiet label over one grouped card. */
-export function Group(props: { label: string; children?: JSX.Element }) {
+export function Group(props: { label?: string; children?: JSX.Element }) {
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ paddingHorizontal: 8, fontSize: 12, lineHeight: 16, color: colors.mutedForeground() }}>
-        {props.label}
-      </Text>
+      <If when={!!props.label}>
+        <Text style={{ paddingHorizontal: 8, fontSize: 12, lineHeight: 16, color: colors.mutedForeground() }}>
+          {props.label ?? ''}
+        </Text>
+      </If>
       <View
         style={{
           borderRadius: radius.inset,
@@ -34,7 +36,7 @@ const read = <T,>(value: Readable<T> | undefined): T | undefined =>
 
 /** Web `MobileSettingsRow`: the label on the leading edge, its value trailing. */
 export function Row(props: {
-  label: Readable<string>;
+  label?: Readable<string>;
   value?: Readable<string>;
   description?: Readable<string>;
   icon?: Readable<IconName>;
@@ -65,9 +67,11 @@ export function Row(props: {
         <Icon name={read(props.icon) ?? 'folder'} size={17} tone="muted" />
       </If>
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <Text style={{ fontSize: fontSize.label, color: colors.foreground(), numberOfLines: 1 }}>{read(props.label) ?? ''}</Text>
+        <If when={!!read(props.label)}>
+          <Text style={{ fontSize: 13, lineHeight: 22, color: colors.foreground(), numberOfLines: 1 }}>{read(props.label) ?? ''}</Text>
+        </If>
         <If when={!!read(props.description)}>
-          <Text style={{ fontSize: fontSize.entityMeta, color: colors.mutedForeground(), numberOfLines: 2 }}>
+          <Text style={{ fontSize: 12, lineHeight: 16, color: colors.mutedForeground(), numberOfLines: 3 }}>
             {read(props.description) ?? ''}
           </Text>
         </If>

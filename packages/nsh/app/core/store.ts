@@ -33,6 +33,7 @@ export type Project = {
   label: string;
   path: string;
   addedAt: number;
+  lastOpenedAt?: number;
   /** Web project identity fields (`PROJECT_ICONS` / `PROJECT_COLORS` keys). */
   icon?: string;
   color?: string;
@@ -97,8 +98,12 @@ const state = {
   pagination: signal<Map<string, Pagination>>(new Map()),
   hidden: signal<ReadonlySet<string>>(new Set()),
   projectOrder: signal<string[]>([]),
+  /** Web `useSessionDisplayStore.projectSortOrder`; the home only drags in `manual`. */
+  projectSortOrder: signal<ProjectSortOrder>('manual'),
   repos: signal<ReadonlySet<string>>(new Set()),
 };
+
+export type ProjectSortOrder = 'manual' | 'a-z' | 'z-a' | 'date-added' | 'recent';
 
 export const connection = () => state.connection();
 export const connections = () => state.connections();
@@ -124,6 +129,7 @@ export const paginationFor = (path: string) =>
 /** A row hidden by an undo window (`deleteSessionWithUndo`) stays where Undo can bring it back. */
 export const isSessionHidden = (id: string) => state.hidden().has(id);
 export const projectOrderIds = () => state.projectOrder();
+export const projectSortOrder = () => state.projectSortOrder();
 /** Web `useGitStore` repository check: only a git project offers worktree actions. */
 export const isRepository = (path: string) => state.repos().has(normalizePath(path));
 
@@ -142,6 +148,26 @@ export const run = (error: unknown) => {
   state.error.set(error instanceof Error ? error.message : String(error));
 };
 export const clearError = () => state.error.set('');
+
+const sameRow = (left: Session, right: Session): boolean =>
+  left.title === right.title &&
+  left.directory === right.directory &&
+  left.updated === right.updated &&
+  left.activity === right.activity &&
+  left.created === right.created &&
+  left.pinned === right.pinned &&
+  left.archived === right.archived &&
+  left.parentID === right.parentID &&
+  left.hasChildren === right.hasChildren &&
+  left.changes === right.changes &&
+  left.share === right.share &&
+  left.remoteStatus === right.remoteStatus;
+
+/** Keeps the previous object for a row whose display fields did not change (stable list identity). */
+function reuseRow(previous: ReadonlyMap<string, Session>, row: Session): Session {
+  const known = previous.get(row.id);
+  return known && sameRow(known, row) ? known : row;
+}
 
 function sessionFrom(row: Record<string, unknown>, directory: string): Session | null {
   const time = record(row.time);
@@ -196,14 +222,16 @@ function adoptIndex(payload: unknown) {
       failed.add(directory);
       continue;
     }
+    const knownById = new Map((previous.get(directory) ?? []).map((row) => [row.id, row]));
     const rows = raw
       .map((row) => sessionFrom(record(row), directory))
       .filter((row): row is Session => !!row)
+      .map((row) => reuseRow(knownById, row))
       .sort((a, b) => b.activity - a.activity);
     for (const row of rows) if (row.pinned) pinned.add(row.id);
     const known = !failed.has(directory) && !pending.has(directory) && (!incomplete || completed.has(directory));
     if (!known) {
-      const retained = new Map((previous.get(directory) ?? []).map((row) => [row.id, row]));
+      const retained = new Map(knownById);
       for (const row of rows) retained.set(row.id, row);
       next.set(directory, [...retained.values()]);
       continue;
@@ -214,7 +242,13 @@ function adoptIndex(payload: unknown) {
       item.hasMore === true
         ? (previous.get(directory) ?? []).filter((row) => !ids.has(row.id) && (!rows.length || row.updated < boundary))
         : [];
-    next.set(directory, [...rows, ...tail].sort((a, b) => b.activity - a.activity));
+    const merged = [...rows, ...tail].sort((a, b) => b.activity - a.activity);
+    const before = previous.get(directory);
+    const same =
+      before !== undefined &&
+      before.length === merged.length &&
+      before.every((row, index) => row === merged[index]);
+    next.set(directory, same ? before : merged);
   }
   const complete = !incomplete && !failed.size && !pending.size;
   if (!complete) {
@@ -227,6 +261,7 @@ function adoptIndex(payload: unknown) {
     state.pinned.set(pinned);
     state.issues.set(complete ? null : { failed: [...failed], pending: [...pending] });
   });
+  scheduleCacheWrite();
 }
 
 function adoptProjects(payload: unknown) {
@@ -239,6 +274,7 @@ function adoptProjects(payload: unknown) {
       path: normalizePath(textOf(row.path)),
       label: projectLabel(textOf(row.path), textOf(row.label) || textOf(row.name)),
       addedAt: Number(row.addedAt) || 0,
+      ...(Number(row.lastOpenedAt) ? { lastOpenedAt: Number(row.lastOpenedAt) } : {}),
       ...(textOf(row.icon) ? { icon: textOf(row.icon) } : {}),
       ...(textOf(row.color) ? { color: textOf(row.color) } : {}),
       ...(textOf(row.iconBackground) ? { iconBackground: textOf(row.iconBackground) } : {}),
@@ -247,6 +283,11 @@ function adoptProjects(payload: unknown) {
   state.projects.set(projects);
   const active = textOf(value.activeProjectId);
   if (active) state.activeProjectId.set(active);
+  const order = textOf(value.projectSortOrder);
+  if (order === 'manual' || order === 'a-z' || order === 'z-a' || order === 'date-added' || order === 'recent') {
+    state.projectSortOrder.set(order);
+  }
+  scheduleCacheWrite();
 }
 
 function adoptUnread(payload: unknown) {
@@ -291,6 +332,7 @@ function adoptWorktrees(projectPath: string, payload: unknown) {
   const next = new Map(state.worktrees());
   next.set(path, rows);
   state.worktrees.set(next);
+  scheduleCacheWrite();
 }
 
 function adoptActive(payload: unknown) {
@@ -302,6 +344,143 @@ function adoptActive(payload: unknown) {
   }
   for (const id of running) if (!next.has(id)) next.set(id, { type: 'busy' });
   state.status.set(next);
+}
+
+// --- SWR cache: the last catalog paints before the refresh lands ---
+
+const CACHE_KEY = 'catalog:cache-v1';
+
+type CatalogCache = {
+  version: 1;
+  connectionId: string;
+  projects: Project[];
+  activeProjectId: string | null;
+  pinned: string[];
+  sessions: Array<[string, Session[]]>;
+  worktrees: Array<[string, Worktree[]]>;
+  repos: string[];
+};
+
+let cacheLoaded: string | null = null;
+let cacheTimer: ReturnType<typeof setTimeout> | undefined;
+/** Counts network catalog adoptions, so a slow cache read cannot overwrite fresh rows. */
+let catalogAdopted = 0;
+
+function scheduleCacheWrite() {
+  const id = state.connection()?.id;
+  if (!id) return;
+  if (cacheTimer !== undefined) clearTimeout(cacheTimer);
+  cacheTimer = setTimeout(() => {
+    cacheTimer = undefined;
+    const connectionId = state.connection()?.id;
+    if (!connectionId) return;
+    const payload: CatalogCache = {
+      version: 1,
+      connectionId,
+      projects: state.projects(),
+      activeProjectId: state.activeProjectId(),
+      pinned: [...state.pinned()],
+      sessions: [...state.sessions().entries()],
+      worktrees: [...state.worktrees().entries()],
+      repos: [...state.repos()],
+    };
+    void Storage.setItem(CACHE_KEY, JSON.stringify(payload)).catch(() => undefined);
+  }, 500);
+}
+
+/**
+ * A refresh that beat the cache read leaves the fresh catalog in place; cached rows
+ * only fill directories this refresh did not cover (a partial or failed index).
+ */
+function mergeLateCache(parsed: CatalogCache) {
+  if (!state.issues() || !Array.isArray(parsed.sessions)) return;
+  const sessions = state.sessions();
+  const known = new Set<string>();
+  const remember = (path: string | undefined) => {
+    const normalized = normalizePath(path);
+    if (normalized) known.add(normalized);
+  };
+  for (const project of state.projects()) remember(project.path);
+  for (const project of Array.isArray(parsed.projects) ? parsed.projects : []) remember(project.path);
+  for (const [path, rows] of state.worktrees()) {
+    remember(path);
+    for (const worktree of rows) remember(worktree.path);
+  }
+  for (const entry of Array.isArray(parsed.worktrees) ? parsed.worktrees : []) {
+    if (!Array.isArray(entry)) continue;
+    remember(entry[0]);
+    if (Array.isArray(entry[1])) for (const worktree of entry[1]) remember(worktree?.path);
+  }
+  const missing = parsed.sessions.filter(
+    (entry) => Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1]) && known.has(entry[0]) && !sessions.has(entry[0]),
+  );
+  if (!missing.length) return;
+  batch(() => {
+    const next = new Map(sessions);
+    for (const [directory, rows] of missing) next.set(directory, rows);
+    state.sessions.set(next);
+    if (Array.isArray(parsed.pinned)) {
+      const pinned = new Set(state.pinned());
+      for (const knownId of parsed.pinned) pinned.add(knownId);
+      state.pinned.set(pinned);
+    }
+    if (Array.isArray(parsed.worktrees)) {
+      const worktrees = new Map(state.worktrees());
+      for (const entry of parsed.worktrees) {
+        if (Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1]) && !worktrees.has(entry[0])) {
+          worktrees.set(entry[0], entry[1]);
+        }
+      }
+      state.worktrees.set(worktrees);
+    }
+    if (!state.projects().length && Array.isArray(parsed.projects)) state.projects.set(parsed.projects);
+  });
+  scheduleCacheWrite();
+}
+
+/** Adopts the previous session; the network refresh merges into it instead of clearing it. */
+async function loadCachedCatalog(): Promise<void> {
+  const id = state.connection()?.id;
+  if (!id || cacheLoaded === id) return;
+  cacheLoaded = id;
+  const stamp = catalogAdopted;
+  let parsed: CatalogCache | null = null;
+  try {
+    const raw = await Storage.getItem(CACHE_KEY);
+    parsed = raw ? (JSON.parse(raw) as CatalogCache) : null;
+  } catch {
+    parsed = null;
+  }
+  if (!parsed || parsed.version !== 1 || parsed.connectionId !== id || state.connection()?.id !== id) return;
+  // The refresh already landed: cached rows only fill what the index did not report.
+  if (catalogAdopted !== stamp) {
+    mergeLateCache(parsed);
+    return;
+  }
+  batch(() => {
+    if (Array.isArray(parsed!.projects)) state.projects.set(parsed!.projects);
+    if (parsed!.activeProjectId) state.activeProjectId.set(parsed!.activeProjectId);
+    if (Array.isArray(parsed!.pinned)) state.pinned.set(new Set(parsed!.pinned));
+    if (Array.isArray(parsed!.sessions)) {
+      const sessions = new Map<string, Session[]>();
+      for (const entry of parsed!.sessions) {
+        if (Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1])) {
+          sessions.set(entry[0], entry[1]);
+        }
+      }
+      if (sessions.size) state.sessions.set(sessions);
+    }
+    if (Array.isArray(parsed!.worktrees)) {
+      const worktrees = new Map<string, Worktree[]>();
+      for (const entry of parsed!.worktrees) {
+        if (Array.isArray(entry) && typeof entry[0] === 'string' && Array.isArray(entry[1])) {
+          worktrees.set(entry[0], entry[1]);
+        }
+      }
+      if (worktrees.size) state.worktrees.set(worktrees);
+    }
+    if (Array.isArray(parsed!.repos)) state.repos.set(new Set(parsed!.repos));
+  });
 }
 
 function setStatus(id: string, type: 'busy' | 'retry' | 'idle') {
@@ -361,17 +540,33 @@ export async function refreshCatalog(): Promise<void> {
   if (refreshFlight) return refreshFlight;
   state.loading.set(true);
   const flight = (async () => {
+    // The cache paints as soon as Storage answers, without delaying the refresh;
+    // a cache read that loses the race is dropped rather than overwriting fresh rows.
+    void loadCachedCatalog();
     const results = await Promise.allSettled([
-      request('/api/config/settings').then(adoptProjects),
-      request('/api/yuri/session-index').then(adoptIndex),
-      request('/api/yuri/session-unread').then(adoptUnread),
-      request('/api/session-folders/order').then(adoptOrder),
-      request('/api/session/active').then(adoptActive),
+      request('/api/config/settings'),
+      request('/api/yuri/session-index'),
+      request('/api/yuri/session-unread'),
+      request('/api/session-folders/order'),
+      request('/api/session/active'),
       refreshRemoteProjects(),
     ]);
-    const failed = results.find((result) => result.status === 'rejected');
+    const adopt = [adoptProjects, adoptIndex, adoptUnread, adoptOrder, adoptActive, () => undefined];
+    let failed = false;
+    for (const [index, result] of results.entries()) {
+      if (result.status !== 'fulfilled') {
+        failed = true;
+        continue;
+      }
+      try {
+        adopt[index]?.(result.value);
+      } catch {
+        failed = true;
+      }
+    }
+    catalogAdopted += 1;
     state.online.set(results.some((result) => result.status === 'fulfilled'));
-    state.error.set(failed?.status === 'rejected' ? errorMessage(failed.reason) : '');
+    state.error.set(failed ? errorMessage(results.find((result) => result.status === 'rejected')?.reason) || '' : '');
     const directories = [...state.sessions().keys()];
     const pathsOfProjects = state.projects().map((project) => project.path);
     await Promise.all(
@@ -387,6 +582,7 @@ export async function refreshCatalog(): Promise<void> {
           if (check.isGitRepository === true) next.add(normalizePath(path));
           else next.delete(normalizePath(path));
           state.repos.set(next);
+          scheduleCacheWrite();
         } catch {
           // A failed check leaves the previous answer.
         }
@@ -490,6 +686,7 @@ function handleEvent(event: RuntimeEvent) {
 let stopStream: (() => void) | undefined;
 
 function enter(snapshot: ConnectionSnapshot) {
+  cacheLoaded = null;
   batch(() => {
     state.connections.set(snapshot.connections);
     state.scope.set(snapshot.runtimeScope);
@@ -557,6 +754,7 @@ function updateSessions(mutate: (rows: Map<string, Session[]>) => void) {
   for (const [directory, rows] of next) next.set(directory, [...rows]);
   mutate(next);
   state.sessions.set(next);
+  scheduleCacheWrite();
 }
 
 export async function togglePin(id: string) {
@@ -602,10 +800,7 @@ export async function archiveSession(id: string, archived = true) {
     });
     updateSessions((rows) => {
       const list = rows.get(session.directory) ?? [];
-      rows.set(
-        session.directory,
-        archived ? list.filter((row) => row.id !== id) : list.map((row) => (row.id === id ? { ...row, archived: false } : row)),
-      );
+      rows.set(session.directory, list.map((row) => (row.id === id ? { ...row, archived } : row)));
     });
     if (archived) {
       const next = new Set(state.pinned());
@@ -788,6 +983,7 @@ function projectFromRow(row: Record<string, unknown>): Project {
     path: normalizePath(textOf(row.path)),
     label: projectLabel(textOf(row.path), textOf(row.label) || textOf(row.name)),
     addedAt: Number(row.addedAt) || 0,
+    ...(Number(row.lastOpenedAt) ? { lastOpenedAt: Number(row.lastOpenedAt) } : {}),
     ...(textOf(row.icon) ? { icon: textOf(row.icon) } : {}),
     ...(textOf(row.color) ? { color: textOf(row.color) } : {}),
     ...(textOf(row.iconBackground) ? { iconBackground: textOf(row.iconBackground) } : {}),
@@ -879,32 +1075,58 @@ export async function unarchiveSession(id: string, known?: Session) {
   });
 }
 
-/** Archives one root row and offers Web's undo toast; Undo restores it in place. */
-export async function archiveSessionWithUndo(id: string) {
-  const row = sessionById(id);
-  if (!row) return;
-  try {
-    await request(`/api/yuri/sessions/${encodeURIComponent(id)}/archive`, 'PUT', {
-      archivedAt: Date.now(),
-      directory: row.directory,
-    });
-    updateSessions((rows) => {
-      const list = rows.get(row.directory) ?? [];
-      rows.set(row.directory, list.filter((entry) => entry.id !== id));
-    });
-    const pinned = new Set(state.pinned());
-    pinned.delete(id);
-    state.pinned.set(pinned);
-    const toast = showToast({
-      message: t('sessions.sidebar.session.archive.success'),
-      actionLabel: t('sessions.sidebar.undo'),
-      onAction: () => {
-        void unarchiveSession(id, row).catch(run);
-        dismissToast(toast);
-      },
-    });
-  } catch (error) {
-    run(error);
+/** Archives a whole session tree and offers Web's undo toast (`archiveSessions` + `sessionMutationUndo`). */
+export async function archiveSessionWithUndo(id: string, options: { onViewArchived?: () => void } = {}) {
+  const targets = sessionsUnder(id);
+  if (!targets.length) return;
+  const archived: Session[] = [];
+  for (const row of targets) {
+    try {
+      await request(`/api/yuri/sessions/${encodeURIComponent(row.id)}/archive`, 'PUT', {
+        archivedAt: Date.now(),
+        directory: row.directory,
+      });
+      archived.push(row);
+    } catch {
+      // One row that cannot be archived must not block the rest of its tree.
+    }
+  }
+  if (!archived.length) {
+    showToast({ message: t('sessions.sidebar.bulkActions.failedArchiveSingle', { count: targets.length }) });
+    return;
+  }
+  const ids = new Set(archived.map((row) => row.id));
+  updateSessions((rows) => {
+    for (const [directory, list] of rows) {
+      if (!list.some((row) => ids.has(row.id))) continue;
+      rows.set(directory, list.map((row) => (ids.has(row.id) ? { ...row, archived: true } : row)));
+    }
+  });
+  const pinned = new Set(state.pinned());
+  for (const row of archived) pinned.delete(row.id);
+  state.pinned.set(pinned);
+  const toast = showToast({
+    message:
+      archived.length === 1
+        ? t('sessions.sidebar.session.archive.success')
+        : t('sessions.sidebar.bulkActions.archivedPlural', { count: archived.length }),
+    actionLabel: t('sessions.sidebar.undo'),
+    onAction: () => {
+      void Promise.allSettled(archived.map((row) => unarchiveSession(row.id, row)));
+      dismissToast(toast);
+    },
+    ...(options.onViewArchived
+      ? {
+          secondaryLabel: t('settings.yuri.archivedSessions.actions.view'),
+          onSecondary: () => {
+            options.onViewArchived?.();
+            dismissToast(toast);
+          },
+        }
+      : {}),
+  });
+  if (archived.length < targets.length) {
+    showToast({ message: t('sessions.sidebar.bulkActions.failedArchivePlural', { count: targets.length - archived.length }) });
   }
 }
 

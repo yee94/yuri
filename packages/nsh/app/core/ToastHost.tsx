@@ -43,6 +43,21 @@ export function ToastHost(props: { inset?: number }) {
             <Text style={{ flex: 1, fontSize: 13, color: colors.background(), numberOfLines: 2 }}>
               {toast().message}
             </Text>
+            <If when={!!toast().secondaryLabel}>
+              <Button
+                testID={`toast-secondary-${toast().id}`}
+                onPress={() => {
+                  toast().onSecondary?.();
+                  dismissToast(toast().id);
+                }}
+                style={{ minHeight: 36, paddingHorizontal: 10, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}
+                activeStyle={{ backgroundColor: alpha(colors.background(), 0.14) }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '600', color: alpha(colors.background(), 0.82), numberOfLines: 1 }}>
+                  {toast().secondaryLabel ?? ''}
+                </Text>
+              </Button>
+            </If>
             <If when={!!toast().actionLabel}>
               <Button
                 testID={`toast-action-${toast().id}`}

@@ -2,6 +2,7 @@ import { Storage, batch, signal, untracked, type Signal } from 'nsh';
 import {
   currentScope,
   list,
+  onHostRuntimeEvent,
   query,
   record,
   request,
@@ -12,8 +13,17 @@ import {
   type RuntimeEvent,
   type Row,
 } from '../core/host';
+import {
+  hostAvailable,
+  hostFor,
+  remoteHostEventFrom,
+  remotePath,
+  remoteSubscribe,
+  remoteUnsubscribe,
+  refreshRemoteProjects,
+} from '../core/remote';
 import { refreshCatalog } from '../core/store';
-import { openSession } from '../shell/nav';
+import { openSession, type RemoteSessionTarget } from '../shell/nav';
 import { scanContextTokenBaseline } from '../../../ui/src/sync/context-token-baseline';
 import { resolveNativeForkBoundary } from '../../../ui/src/sync/session-fork-boundary';
 import { acknowledgeAttachments, attachmentFiles, reconcileAttachments } from './attachments';
@@ -55,6 +65,9 @@ export type Conversation = {
   directory: Signal<string>;
   sessionID: Signal<string | null>;
   title: Signal<string>;
+  /** The machine this session lives on; `null` for a local session. */
+  remote: RemoteSessionTarget | null;
+  hostId: string | null;
   messages: Signal<MessageEntry[]>;
   rows: Signal<RowGroup[]>;
   selection: Signal<Selection>;
@@ -87,7 +100,13 @@ const conversations = new Map<string, Conversation>();
 let ownerCounter = 0;
 let activeOwner: { id: string; stop: () => void } | null = null;
 
-export function conversationFor(input: { key: string; directory: string; sessionID: string | null; title?: string }): Conversation {
+export function conversationFor(input: {
+  key: string;
+  directory: string;
+  sessionID: string | null;
+  title?: string;
+  remote?: RemoteSessionTarget | null;
+}): Conversation {
   const existing = conversations.get(input.key);
   if (existing) return existing;
   const conversation: Conversation = {
@@ -95,6 +114,8 @@ export function conversationFor(input: { key: string; directory: string; session
     directory: signal(input.directory),
     sessionID: signal<string | null>(input.sessionID),
     title: signal(input.title ?? ''),
+    remote: input.remote ?? null,
+    hostId: input.remote?.hostId ?? null,
     messages: signal<MessageEntry[]>([]),
     rows: signal<RowGroup[]>([]),
     selection: signal<Selection>({ providerID: '', modelID: '' }),
@@ -127,6 +148,34 @@ export function conversationFor(input: { key: string; directory: string; session
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** One session's request stays on its own machine: the local connection or the Host proxy. */
+function scopedRequest<T = unknown>(
+  hostId: string | null,
+  path: string,
+  method = 'GET',
+  body?: unknown,
+): Promise<T> {
+  return hostId ? request<T>(remotePath(hostId, path), method, body) : request<T>(path, method, body);
+}
+
+function ask<T = unknown>(conversation: Conversation, path: string, method = 'GET', body?: unknown): Promise<T> {
+  return scopedRequest<T>(conversation.hostId, path, method, body);
+}
+
+/** A sheet or composer read for this session's own machine (local or Host proxy). */
+export const sessionRequest = ask;
+
+const sameDirectory = (left: string, right: string) =>
+  (left || '').replace(/\\/g, '/').replace(/\/+$/, '') === (right || '').replace(/\\/g, '/').replace(/\/+$/, '');
+
+function assertRemoteAvailable(conversation: Conversation): void {
+  if (!conversation.hostId) return;
+  // Web remote-session-state refuses to send through an unavailable Host.
+  if (!hostAvailable(conversation.hostId)) {
+    throw new Error(`Remote Host is ${hostFor(conversation.hostId)?.state ?? 'unavailable'}`);
+  }
+}
 
 const same = (left: unknown, right: unknown) => {
   try {
@@ -267,7 +316,7 @@ export async function loadMessages(conversation: Conversation, older = false): P
     const suffix = older
       ? `&limit=20&order=desc&cursor=${encodeURIComponent(conversation.cursor ?? '')}`
       : '&limit=20&order=desc';
-    const payload = await request(`${sessionPath(id, 'message')}?${query(conversation.directory())}${suffix}`);
+    const payload = await ask(conversation, `${sessionPath(id, 'message')}?${query(conversation.directory())}${suffix}`);
     mergePage(conversation, messagesFrom(payload), older);
     conversation.error.set('');
   } catch (error) {
@@ -281,7 +330,7 @@ export async function loadMessages(conversation: Conversation, older = false): P
 
 async function readSelection(conversation: Conversation, id: string) {
   try {
-    const value = record(unwrap(await request(`/api/session/${encodeURIComponent(id)}?${query(conversation.directory())}`)));
+    const value = record(unwrap(await ask(conversation, `/api/session/${encodeURIComponent(id)}?${query(conversation.directory())}`)));
     const model = record(value.model);
     const providerID = textOf(model.providerID);
     const modelID = textOf(model.id) || textOf(model.modelID);
@@ -306,7 +355,7 @@ export async function readBlocking(conversation: Conversation): Promise<void> {
   if (!id) return;
   const read = async (path: string): Promise<Row[]> => {
     try {
-      const value = unwrap(await request(path));
+      const value = unwrap(await ask(conversation, path));
       return Array.isArray(value) ? list(value) : [];
     } catch {
       return [];
@@ -325,7 +374,7 @@ export async function readInbox(conversation: Conversation): Promise<void> {
   const id = conversation.sessionID();
   if (!id) return;
   try {
-    const value = unwrap(await request(`${sessionPath(id, 'inbox')}?${query(conversation.directory())}`));
+    const value = unwrap(await ask(conversation, `${sessionPath(id, 'inbox')}?${query(conversation.directory())}`));
     conversation.inbox.set(Array.isArray(value) ? list(value) : []);
   } catch {
     // A failed inbox read keeps the previous queue.
@@ -337,7 +386,7 @@ export async function replyPermission(conversation: Conversation, requestID: str
   if (!id) return;
   conversation.permissions.set(conversation.permissions().filter((row) => textOf(row.id) !== requestID));
   try {
-    await request(`${sessionPath(id, `permission/${encodeURIComponent(requestID)}/reply`)}?${query(conversation.directory())}`, 'POST', { decision });
+    await ask(conversation, `${sessionPath(id, `permission/${encodeURIComponent(requestID)}/reply`)}?${query(conversation.directory())}`, 'POST', { decision });
   } catch (error) {
     conversation.error.set(errorText(error));
   } finally {
@@ -357,7 +406,7 @@ export async function replyForm(conversation: Conversation, form: Row, answers: 
   try {
     const fields = Array.isArray(form.fields) ? form.fields : [];
     const answer = fields.length ? answersToFormAnswer(answers, fields as never) : {};
-    await request(`${sessionPath(id, `form/${encodeURIComponent(formID)}/reply`)}?${query(conversation.directory())}`, 'POST', { answer });
+    await ask(conversation, `${sessionPath(id, `form/${encodeURIComponent(formID)}/reply`)}?${query(conversation.directory())}`, 'POST', { answer });
   } catch (error) {
     conversation.error.set(errorText(error));
   } finally {
@@ -370,7 +419,7 @@ export async function cancelForm(conversation: Conversation, formID: string): Pr
   if (!id || !formID) return;
   conversation.forms.set(conversation.forms().filter((row) => textOf(row.id) !== formID));
   try {
-    await request(`${sessionPath(id, `form/${encodeURIComponent(formID)}/cancel`)}?${query(conversation.directory())}`, 'POST', {});
+    await ask(conversation, `${sessionPath(id, `form/${encodeURIComponent(formID)}/cancel`)}?${query(conversation.directory())}`, 'POST', {});
   } catch (error) {
     conversation.error.set(errorText(error));
   } finally {
@@ -384,7 +433,7 @@ export async function steerInbox(conversation: Conversation, inboxID: string): P
   conversation.busyItem.set(inboxID);
   try {
     const row = conversation.inbox().find((entry) => textOf(entry.id) === inboxID);
-    await request(`${sessionPath(id, `inbox/${encodeURIComponent(inboxID)}`)}?${query(conversation.directory())}`, 'PATCH', { delivery: 'steer' });
+    await ask(conversation, `${sessionPath(id, `inbox/${encodeURIComponent(inboxID)}`)}?${query(conversation.directory())}`, 'PATCH', { delivery: 'steer' });
     conversation.inbox.set(conversation.inbox().filter((entry) => textOf(entry.id) !== inboxID));
     const text = textOf(record(row?.payload).text) || textOf(row?.text);
     if (row && text) addUserMessage(conversation, inboxID, text);
@@ -400,7 +449,7 @@ export async function cancelInbox(conversation: Conversation, inboxID: string): 
   if (!id || conversation.busyItem()) return;
   conversation.busyItem.set(inboxID);
   try {
-    await request(`${sessionPath(id, `inbox/${encodeURIComponent(inboxID)}`)}?${query(conversation.directory())}`, 'DELETE');
+    await ask(conversation, `${sessionPath(id, `inbox/${encodeURIComponent(inboxID)}`)}?${query(conversation.directory())}`, 'DELETE');
     conversation.inbox.set(conversation.inbox().filter((row) => textOf(row.id) !== inboxID));
   } catch (error) {
     conversation.error.set(errorText(error));
@@ -412,7 +461,7 @@ export async function cancelInbox(conversation: Conversation, inboxID: string): 
 const submissionID = () => `msg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
 
 async function createSession(conversation: Conversation): Promise<string> {
-  const value = record(unwrap(await request('/api/session', 'POST', { location: { directory: conversation.directory() } })));
+  const value = record(unwrap(await ask(conversation, '/api/session', 'POST', { location: { directory: conversation.directory() } })));
   const id = textOf(value.id);
   if (!id) throw new Error('Server returned no session ID');
   const title = textOf(value.title);
@@ -425,12 +474,12 @@ export async function applySelection(conversation: Conversation, id: string): Pr
   const calls: Promise<unknown>[] = [];
   if (selection.modelID && selection.providerID) {
     calls.push(
-      request(`${sessionPath(id, 'model')}?${query(conversation.directory())}`, 'POST', {
+      ask(conversation, `${sessionPath(id, 'model')}?${query(conversation.directory())}`, 'POST', {
         model: { providerID: selection.providerID, id: selection.modelID, ...(selection.variant ? { variant: selection.variant } : {}) },
       }),
     );
   }
-  if (selection.agent) calls.push(request(`${sessionPath(id, 'agent')}?${query(conversation.directory())}`, 'POST', { agent: selection.agent }));
+  if (selection.agent) calls.push(ask(conversation, `${sessionPath(id, 'agent')}?${query(conversation.directory())}`, 'POST', { agent: selection.agent }));
   await Promise.all(calls.map((call) => call.catch(() => undefined)));
 }
 
@@ -447,6 +496,7 @@ export async function send(conversation: Conversation): Promise<boolean> {
   const optimisticID = submissionID();
   let queued = false;
   try {
+    assertRemoteAvailable(conversation);
     let id = conversation.sessionID();
     if (!id) {
       id = await createSession(conversation);
@@ -462,14 +512,14 @@ export async function send(conversation: Conversation): Promise<boolean> {
     const delivery = queued ? 'queue' : 'steer';
     if (command) {
       const args = text.replace(`/${command.value}`, '').trim();
-      await request(`${sessionPath(id, 'command')}?${query(conversation.directory())}`, 'POST', {
+      await ask(conversation, `${sessionPath(id, 'command')}?${query(conversation.directory())}`, 'POST', {
         name: command.value,
         text: args,
         delivery,
         ...(files.length ? { files } : {}),
       });
     } else {
-      await request(`${sessionPath(id, 'prompt')}?${query(conversation.directory())}`, 'POST', {
+      await ask(conversation, `${sessionPath(id, 'prompt')}?${query(conversation.directory())}`, 'POST', {
         id: optimisticID,
         text,
         delivery,
@@ -480,7 +530,8 @@ export async function send(conversation: Conversation): Promise<boolean> {
     if (!queued) conversation.busy.set(true);
     conversation.atLatest.set(true);
     if (queued) void readInbox(conversation);
-    void refreshCatalog();
+    if (conversation.hostId) void refreshRemoteProjects();
+    else void refreshCatalog();
     return true;
   } catch (error) {
     const entry = conversation.entries.get(optimisticID);
@@ -494,7 +545,7 @@ export async function send(conversation: Conversation): Promise<boolean> {
 }
 
 function rekey(conversation: Conversation, id: string) {
-  const next = `session:${id}`;
+  const next = conversation.hostId ? `remote:${conversation.hostId}:session:${id}` : `session:${id}`;
   if (conversation.key === next) return;
   const previous = conversation.key;
   conversations.delete(previous);
@@ -523,7 +574,7 @@ export async function retrySend(conversation: Conversation): Promise<void> {
     conversation.messages.set(conversation.messages().filter((row) => row.id !== failed!.id));
     conversation.entries.delete(failed.id);
     addUserMessage(conversation, next, text);
-    await request(`${sessionPath(id, 'prompt')}?${query(conversation.directory())}`, 'POST', {
+    await ask(conversation, `${sessionPath(id, 'prompt')}?${query(conversation.directory())}`, 'POST', {
       id: next,
       text,
       delivery: conversation.busy() ? 'queue' : 'steer',
@@ -550,7 +601,7 @@ export async function retryMessage(conversation: Conversation, entry: MessageEnt
     conversation.entries.delete(entry.id);
     const replacement = addUserMessage(conversation, next, text);
     void replacement;
-    await request(`${sessionPath(id, 'prompt')}?${query(conversation.directory())}`, 'POST', {
+    await ask(conversation, `${sessionPath(id, 'prompt')}?${query(conversation.directory())}`, 'POST', {
       id: next,
       text,
       delivery: conversation.busy() ? 'queue' : 'steer',
@@ -569,7 +620,7 @@ export async function stop(conversation: Conversation): Promise<void> {
   const id = conversation.sessionID();
   if (!id) return;
   try {
-    await request(`${sessionPath(id, 'interrupt')}?${query(conversation.directory())}`, 'POST', {});
+    await ask(conversation, `${sessionPath(id, 'interrupt')}?${query(conversation.directory())}`, 'POST', {});
     conversation.busy.set(false);
     conversation.retry.set(null);
     void loadMessages(conversation);
@@ -626,7 +677,7 @@ export async function revertToMessage(conversation: Conversation, messageID: str
   const id = conversation.sessionID();
   if (!id) return;
   if (conversation.busy()) throw new Error('busy');
-  await request(`${sessionPath(id, 'revert/stage')}?${query(conversation.directory())}`, 'POST', { messageID, files: true });
+  await ask(conversation, `${sessionPath(id, 'revert/stage')}?${query(conversation.directory())}`, 'POST', { messageID, files: true });
   await loadMessages(conversation);
 }
 
@@ -636,7 +687,8 @@ async function forkRows(conversation: Conversation, id: string): Promise<{ id: s
   let cursor = '';
   for (let page = 0; page < 10; page += 1) {
     const payload = record(
-      await request(
+      await ask(
+        conversation,
         `${sessionPath(id, 'message')}?${query(conversation.directory())}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : '&order=desc'}`,
       ),
     );
@@ -661,26 +713,34 @@ export async function forkFromMessage(conversation: Conversation, messageID: str
   if (!id) return;
   const before = resolveNativeForkBoundary(await forkRows(conversation, id), messageID, conversation.busy());
   const value = record(
-    unwrap(await request(`${sessionPath(id, 'fork')}?${query(conversation.directory())}`, 'POST', before ? { before } : {})),
+    unwrap(await ask(conversation, `${sessionPath(id, 'fork')}?${query(conversation.directory())}`, 'POST', before ? { before } : {})),
   );
   const forked = textOf(value.id);
   if (!forked) throw new Error('Invalid fork acknowledgement');
   const directory = textOf(record(value.location).directory) || textOf(value.directory) || conversation.directory();
-  openSession({ id: forked, title: textOf(value.title) || conversation.title(), directory });
+  openSession({
+    id: forked,
+    title: textOf(value.title) || conversation.title(),
+    directory,
+    ...(conversation.remote ? { remote: conversation.remote } : {}),
+  });
 }
 
 export async function compactSession(conversation: Conversation): Promise<void> {
   const id = conversation.sessionID();
   if (!id || conversation.busy()) return;
   const submission = submissionID();
-  await request(`${sessionPath(id, 'compact')}?${query(conversation.directory())}`, 'POST', { id: submission, delivery: 'steer' });
+  await ask(conversation, `${sessionPath(id, 'compact')}?${query(conversation.directory())}`, 'POST', { id: submission, delivery: 'steer' });
   conversation.busy.set(true);
 }
 
 /** Child (subagent/task) sessions of this session, newest first. */
-export async function loadChildSessions(directory: string, sessionID: string): Promise<Row[]> {
+export async function loadChildSessions(directory: string, sessionID: string, hostId: string | null = null): Promise<Row[]> {
   const payload = record(
-    await request(`/api/session?${query(directory)}&parentID=${encodeURIComponent(sessionID)}&limit=50`),
+    await scopedRequest(
+      hostId,
+      `/api/session?${query(directory)}&parentID=${encodeURIComponent(sessionID)}&limit=50`,
+    ),
   );
   if (!Array.isArray(payload.data)) throw new Error('Invalid child session list');
   return list(payload.data);
@@ -873,8 +933,98 @@ function handleEvent(conversation: Conversation, event: RuntimeEvent) {
   }
 }
 
+/**
+ * Remote: the visible pane holds a Host content lease (Web `HostContentDemand`),
+ * and the Hub forwards that machine's `/api/event` frames as `yuri:host-event`
+ * on the global channel. Filters, refreshes and teardown match Web
+ * `sync/remote-session-state.ts`.
+ */
+function attachRemoteSession(conversation: Conversation, id: string): () => void {
+  const hostId = conversation.hostId!;
+  const directory = conversation.directory();
+  ownerCounter += 1;
+  const owner = `nsh-chat-${Date.now().toString(36)}-${ownerCounter}`;
+  conversation.owner = owner;
+  conversation.stream.set('connecting');
+  let lease = '';
+  let generation = '';
+  let released = false;
+
+  const refresh = () => {
+    if (released) return;
+    void loadMessages(conversation);
+    void readSelection(conversation, id);
+    void readBlocking(conversation);
+    void readInbox(conversation);
+  };
+
+  const acquire = async () => {
+    const next = await remoteSubscribe(hostId, directory, id);
+    if (released) {
+      await remoteUnsubscribe(hostId, next).catch(() => undefined);
+      return;
+    }
+    lease = next;
+    conversation.stream.set('live');
+  };
+
+  const off = onHostRuntimeEvent((raw) => {
+    if (released) return;
+    const envelope = record(raw);
+    if (envelope.key === 'global' && (envelope.type === 'reconnected' || envelope.type === 'server.connected')) {
+      if (!lease) void acquire().catch(() => conversation.stream.set('disconnected'));
+      refresh();
+      return;
+    }
+    const event = remoteHostEventFrom(raw);
+    if (!event || event.hostId !== hostId) return;
+    if (event.directory && !sameDirectory(event.directory, directory)) return;
+    if (event.type === 'yuri:content-ready') {
+      const sessionID = textOf(event.body.sessionId);
+      if (sessionID && sessionID !== id) return;
+      const next = textOf(event.body.readyGeneration);
+      if (next && next === generation) return;
+      generation = next || generation;
+      conversation.stream.set('live');
+      refresh();
+      return;
+    }
+    conversation.stream.set('live');
+    handleEvent(conversation, { key: 'chat', type: event.type, body: event.body, directory: event.directory });
+  });
+
+  if (!hostAvailable(hostId)) conversation.stream.set('disconnected');
+  else void acquire().catch(() => conversation.stream.set('disconnected'));
+  refresh();
+  void reconcileAttachments(conversation);
+  const timer = setInterval(() => {
+    if (released || conversation.owner !== owner) return;
+    void readBlocking(conversation);
+    if (conversation.stream() !== 'live') {
+      if (!lease) void acquire().catch(() => undefined);
+      void loadMessages(conversation);
+      void readInbox(conversation);
+    }
+  }, 6000);
+  const stop = () => {
+    released = true;
+    clearInterval(timer);
+    off();
+    if (lease) void remoteUnsubscribe(hostId, lease).catch(() => undefined);
+    lease = '';
+    conversation.stream.set('connecting');
+    if (activeOwner?.id === owner) activeOwner = null;
+  };
+  // One visible transcript owns the Host lease, as one chat stream does locally
+  // (the Hub caps Host content subscriptions).
+  activeOwner?.stop();
+  activeOwner = { id: owner, stop };
+  return stop;
+}
+
 /** Subscribes one session's live stream; returns the teardown. */
 export function attachSession(conversation: Conversation, id: string): () => void {
+  if (conversation.hostId) return attachRemoteSession(conversation, id);
   ownerCounter += 1;
   const owner = `nsh-chat-${Date.now().toString(36)}-${ownerCounter}`;
   conversation.owner = owner;
@@ -976,7 +1126,7 @@ export async function moveDraft(conversation: Conversation, directory: string): 
   if (conversation.sessionID()) return;
   const previous = conversation.key;
   conversation.directory.set(directory);
-  conversation.key = `draft:${directory}`;
+  conversation.key = conversation.hostId ? `remote:${conversation.hostId}:draft:${directory}` : `draft:${directory}`;
   if (previous !== conversation.key) {
     conversations.delete(previous);
     conversations.set(conversation.key, conversation);
@@ -988,10 +1138,13 @@ export async function moveDraft(conversation: Conversation, directory: string): 
 /* Catalogs: providers, agents, commands, files, preferences. */
 
 export type Catalog = {
+  /** The machine whose providers, agents and commands these are. */
+  hostId: string | null;
   providers: Signal<Row[]>;
   agents: Signal<Row[]>;
   preferences: Signal<Row>;
   commands: Signal<Row[]>;
+  skills: Signal<Row[]>;
   loading: Signal<boolean>;
   error: Signal<string>;
   loaded: boolean;
@@ -999,24 +1152,27 @@ export type Catalog = {
 
 const catalogs = new Map<string, Catalog>();
 
-export function catalogFor(directory: string): Catalog {
-  const existing = catalogs.get(directory);
+export function catalogFor(directory: string, hostId: string | null = null): Catalog {
+  const key = `${hostId ?? 'local'}::${directory}`;
+  const existing = catalogs.get(key);
   if (existing) return existing;
   const catalog: Catalog = {
+    hostId,
     providers: signal<Row[]>([]),
     agents: signal<Row[]>([]),
     preferences: signal<Row>({}),
     commands: signal<Row[]>([]),
+    skills: signal<Row[]>([]),
     loading: signal(false),
     error: signal(''),
     loaded: false,
   };
-  catalogs.set(directory, catalog);
+  catalogs.set(key, catalog);
   return catalog;
 }
 
-export async function loadCatalog(directory: string): Promise<Catalog> {
-  const catalog = catalogFor(directory);
+export async function loadCatalog(directory: string, hostId: string | null = null): Promise<Catalog> {
+  const catalog = catalogFor(directory, hostId);
   if (catalog.loading()) return catalog;
   if (catalog.loaded && catalog.providers().length) return catalog;
   catalog.loading.set(true);
@@ -1030,12 +1186,12 @@ export async function loadCatalog(directory: string): Promise<Catalog> {
   };
   await Promise.all([
     settle(async () => {
-      const body = record(await request(`/api/config/catalog/providers?${query(directory)}`));
+      const body = record(await scopedRequest(hostId, `/api/config/catalog/providers?${query(directory)}`));
       if (!Array.isArray(body.providers)) throw new Error('Invalid model catalog');
       catalog.providers.set(list(body.providers));
     }),
     settle(async () => {
-      const value = unwrap(await request(`/api/agent?location%5Bdirectory%5D=${encodeURIComponent(directory)}`));
+      const value = unwrap(await scopedRequest(hostId, `/api/agent?location%5Bdirectory%5D=${encodeURIComponent(directory)}`));
       if (!Array.isArray(value)) throw new Error('Invalid agent catalog');
       catalog.agents.set(
         list(value).filter((agent) => {
@@ -1045,12 +1201,16 @@ export async function loadCatalog(directory: string): Promise<Catalog> {
       );
     }),
     settle(async () => {
-      const value = unwrap(await request('/api/config/settings'));
+      const value = unwrap(await scopedRequest(hostId, '/api/config/settings'));
       catalog.preferences.set(record(value));
     }),
     settle(async () => {
-      const value = unwrap(await request(`/api/command?location%5Bdirectory%5D=${encodeURIComponent(directory)}`));
+      const value = unwrap(await scopedRequest(hostId, `/api/command?location%5Bdirectory%5D=${encodeURIComponent(directory)}`));
       catalog.commands.set(Array.isArray(value) ? list(value) : []);
+    }),
+    settle(async () => {
+      const value = record(unwrap(await scopedRequest(hostId, `/api/config/skills?${query(directory)}`)));
+      catalog.skills.set(list(value.skills));
     }),
   ]);
   catalog.loaded = failures.length === 0;
@@ -1081,14 +1241,16 @@ export function defaultSelection(catalog: Catalog): Selection {
   };
 }
 
-export async function searchFiles(directory: string, value: string): Promise<Row[]> {
-  const payload = record(await request(`/api/fs/find?${query(directory)}&query=${encodeURIComponent(value)}&limit=20&type=file`));
+export async function searchFiles(directory: string, value: string, hostId: string | null = null): Promise<Row[]> {
+  const payload = record(
+    await scopedRequest(hostId, `/api/fs/find?${query(directory)}&query=${encodeURIComponent(value)}&limit=20&type=file`),
+  );
   return list(payload.data);
 }
 
-export async function readGitBranch(directory: string): Promise<{ branch: string; isRepo: boolean }> {
+export async function readGitBranch(directory: string, hostId: string | null = null): Promise<{ branch: string; isRepo: boolean }> {
   try {
-    const value = record(await request(`/api/git/status?${query(directory)}`));
+    const value = record(await scopedRequest(hostId, `/api/git/status?${query(directory)}`));
     return { branch: textOf(value.current), isRepo: value.isGitRepository === true };
   } catch {
     return { branch: '', isRepo: false };
@@ -1096,9 +1258,9 @@ export async function readGitBranch(directory: string): Promise<{ branch: string
 }
 
 /** Distinct changed files of the working tree, for the header menu badge. */
-export async function readDirtyChanges(directory: string): Promise<number> {
+export async function readDirtyChanges(directory: string, hostId: string | null = null): Promise<number> {
   try {
-    const value = record(await request(`/api/git/status?${query(directory)}`));
+    const value = record(await scopedRequest(hostId, `/api/git/status?${query(directory)}`));
     if (!Array.isArray(value.files)) return 0;
     return new Set(list(value.files).map((file) => textOf(file.path)).filter(Boolean)).size;
   } catch {
@@ -1164,8 +1326,8 @@ export function modelEntries(catalog: Catalog): PickerModel[] {
 
 export const variantsOf = (model: Row): string[] => Object.keys(record(model.variants)).filter(Boolean);
 
-async function writePreferences(patch: Row): Promise<void> {
-  await request('/api/config/settings', 'PUT', patch);
+async function writePreferences(hostId: string | null, patch: Row): Promise<void> {
+  await scopedRequest(hostId, '/api/config/settings', 'PUT', patch);
 }
 
 export async function chooseModel(conversation: Conversation, catalog: Catalog, ref: ModelRef): Promise<void> {
@@ -1178,21 +1340,21 @@ export async function chooseModel(conversation: Conversation, catalog: Catalog, 
   void saveDraft(conversation);
   const id = conversation.sessionID();
   if (id) {
-    await request(`${sessionPath(id, 'model')}?${query(conversation.directory())}`, 'POST', {
+    await ask(conversation, `${sessionPath(id, 'model')}?${query(conversation.directory())}`, 'POST', {
       model: { providerID: ref.providerID, id: ref.modelID, ...(ref.variant ? { variant: ref.variant } : {}) },
     });
   }
   const preferences = catalog.preferences();
   const recent = [ref, ...modelRefs(preferences.recentModels).filter((entry) => !sameModel(entry, ref))].slice(0, 5);
   catalog.preferences.set({ ...preferences, recentModels: recent });
-  await writePreferences({ recentModels: recent }).catch(() => undefined);
+  await writePreferences(catalog.hostId, { recentModels: recent }).catch(() => undefined);
 }
 
 export async function chooseAgent(conversation: Conversation, name: string): Promise<void> {
   conversation.selection.set({ ...conversation.selection(), agent: name });
   void saveDraft(conversation);
   const id = conversation.sessionID();
-  if (id) await request(`${sessionPath(id, 'agent')}?${query(conversation.directory())}`, 'POST', { agent: name });
+  if (id) await ask(conversation, `${sessionPath(id, 'agent')}?${query(conversation.directory())}`, 'POST', { agent: name });
 }
 
 export async function toggleFavoriteModel(catalog: Catalog, ref: ModelRef): Promise<void> {
@@ -1202,7 +1364,7 @@ export async function toggleFavoriteModel(catalog: Catalog, ref: ModelRef): Prom
     ? favorites.filter((entry) => !sameModel(entry, ref))
     : [ref, ...favorites].slice(0, 64);
   catalog.preferences.set({ ...preferences, favoriteModels: next });
-  await writePreferences({ favoriteModels: next }).catch(() => undefined);
+  await writePreferences(catalog.hostId, { favoriteModels: next }).catch(() => undefined);
 }
 
 export { messageDuration, messageTps, userText, partKey, messageFrom };

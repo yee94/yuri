@@ -183,6 +183,13 @@ export function runtimeEventFrom(payload: unknown): RuntimeEvent | null {
   }
 }
 
+/** One more consumer of the host event channel; opens no stream of its own, so a
+    remote transcript can read the Hub's `yuri:host-event` frames the global
+    stream already receives (Web `registry.subscribeEvents`). */
+export function onHostRuntimeEvent(handler: (payload: unknown) => void): () => void {
+  return onHostEvent('runtime.event', handler);
+}
+
 /** Global event stream (`/api/yuri/events`), scoped to the current connection. */
 export function startStream(options: {
   path: string;

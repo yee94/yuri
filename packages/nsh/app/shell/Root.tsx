@@ -5,7 +5,7 @@ import { loadSettings, settingsFlag, settingsText } from '../core/config';
 import { language, t } from '../core/i18n';
 import { colors, space } from '../core/theme';
 import { connection, loadConnections, loadProjectOrder, refreshCatalog } from '../core/store';
-import { alpha } from '../core/ui';
+import { alpha, SheetHost } from '../core/ui';
 import { ToastHost } from '../core/ToastHost';
 import { AssistantConversationPage } from '../assistant/AssistantConversationPage';
 import { AssistantPage } from '../assistant/AssistantPage';
@@ -14,7 +14,6 @@ import { ChatPage } from '../chat/ChatPage';
 import { ProjectsPage } from '../projects/ProjectsPage';
 import { SearchPage } from '../projects/SearchPage';
 import { ScheduledPage } from '../scheduled/ScheduledPage';
-import { ScheduledRunsPage } from '../scheduled/ScheduledRunsPage';
 import { SettingsDetailPage } from '../settings/SettingsDetailPage';
 import { SettingsPage } from '../settings/SettingsPage';
 import { ConnectPage } from './ConnectPage';
@@ -74,14 +73,6 @@ function CurrentPage(props: { tab: TabID; route: Route }) {
   if (props.route.kind === 'assistant') return <AssistantConversationPage route={props.route} />;
   if (props.route.kind === 'assistantSettings') return <AssistantSettingsPage assistantID={props.route.assistantID} />;
   if (props.route.kind === 'settings') return <SettingsDetailPage route={props.route} />;
-  if (props.route.kind === 'scheduledRuns')
-    return (
-      <ScheduledRunsPage
-        projectId={props.route.projectId}
-        taskId={props.route.taskId}
-        title={props.route.title}
-      />
-    );
   if (props.tab === 'assistant') return <AssistantPage />;
   if (props.tab === 'scheduled') return <ScheduledPage />;
   if (props.tab === 'settings') return <SettingsPage />;
@@ -201,6 +192,9 @@ export function Root() {
         >
           <If when={!!connection()} else={<ConnectPage embedded />}>
             <Shell />
+          </If>
+          <If when={platform.os === 'ios'}>
+            <SheetHost />
           </If>
           <ToastHost inset={tabBarInset()} />
         </If>

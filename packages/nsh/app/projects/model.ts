@@ -12,6 +12,7 @@ import {
   pinnedSessionIds,
   projectLabel,
   projectOrderIds,
+  projectSortOrder,
   projects,
   sessionById,
   sessionOrder,
@@ -106,6 +107,8 @@ export type ProjectItem = {
   remote?: ProjectRemote;
   /** Web offers worktree actions only on a git repository. */
   git: boolean;
+  /** `addedAt` / `lastOpenedAt`, whichever the active sort mode reads. */
+  sortValue: number;
 };
 
 const DEFAULT_VISIBLE = 3; // Web `getMobileSessionDefaultVisibleCount`
@@ -149,6 +152,9 @@ export const toggleWorktreeExpanded = (key: string) => {
   expandedWorktrees.set({ ...current, [key]: !(current[key] ?? false) });
 };
 const bucketVisibleCount = (key: string) => visibleCounts()[key] ?? DEFAULT_VISIBLE;
+/** Web `getBucketVisibleCount`: how many rows the bucket shows before "More". */
+export const bucketVisibleCountFor = (projectId: string, bucketKey: string) =>
+  bucketVisibleCount(`${projectId}::${bucketKey}`);
 export const showMoreSessions = (projectId: string, bucketKey: string) => {
   const key = `${projectId}::${bucketKey}`;
   const current = visibleCounts();
@@ -204,14 +210,26 @@ function effectiveOrder(
   return [...bumped, ...stable];
 }
 
-function orderedSessions(rows: Session[], scope: string): Session[] {
+function orderedSessions(rows: Session[], scope: string, pinnedIds: ReadonlySet<string>): Session[] {
   const order = sessionOrder();
   const activity: Record<string, number> = {};
   for (const row of rows) activity[row.id] = row.activity;
   const ids = effectiveOrder(rows.map((row) => row.id), order.byScope[scope], activity, order.activity[scope]);
-  if (ids.length === 0) return [...rows].sort((a, b) => b.activity - a.activity);
   const rank = new Map(ids.map((id, index) => [id, index]));
-  return [...rows].sort((a, b) => (rank.get(a.id) ?? ids.length) - (rank.get(b.id) ?? ids.length));
+  return [...rows].sort((a, b) => {
+    const left = rank.get(a.id);
+    const right = rank.get(b.id);
+    if (left !== undefined || right !== undefined) {
+      if (left === undefined) return 1;
+      if (right === undefined) return -1;
+      if (left !== right) return left - right;
+    }
+    const aPinned = pinnedIds.has(a.id);
+    const bPinned = pinnedIds.has(b.id);
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+    if (aPinned) return b.created - a.created;
+    return b.activity - a.activity;
+  });
 }
 
 function rankPinned(rows: Session[], manualOrder: string[]): Session[] {
@@ -292,26 +310,85 @@ const bucketRoots = (rows: Session[]): Session[] => {
 };
 
 const relativeLabel = (time: number): string | undefined => formatRelativeShort(time) || undefined;
+/** Web `getSessionTimestamp`: the row clock is `time.updated`, not the title-refresh activity. */
+const timestampOf = (session: Session): number => session.updated || session.created;
+
+// --- row identity: a rebuilt list keeps the previous object for unchanged rows ---
+
+const nodeCache = new Map<string, Node>();
+let nodePass = new Set<string>();
+
+function sameRemote(left?: NodeRemote, right?: NodeRemote): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.hostId === right.hostId &&
+    left.hostName === right.hostName &&
+    left.sessionID === right.sessionID &&
+    left.directory === right.directory &&
+    left.projectId === right.projectId
+  );
+}
+
+/** `key` separates the same session shown on two surfaces (pinned vs project bucket). */
+function reuseNode(key: string, next: Node): Node {
+  nodePass.add(key);
+  const previous = nodeCache.get(key);
+  if (
+    previous &&
+    previous.kind === next.kind &&
+    previous.title === next.title &&
+    previous.subtitle === next.subtitle &&
+    previous.changes === next.changes &&
+    previous.activityLabel === next.activityLabel &&
+    previous.unread === next.unread &&
+    previous.pinned === next.pinned &&
+    previous.archived === next.archived &&
+    previous.active === next.active &&
+    previous.directory === next.directory &&
+    previous.machine === next.machine &&
+    previous.share === next.share &&
+    previous.activity === next.activity &&
+    sameRemote(previous.remote, next.remote)
+  ) {
+    return previous;
+  }
+  nodeCache.set(key, next);
+  return next;
+}
+
+function paginationNode(id: string, title: string, directory: string, subtitle?: string): Node {
+  return reuseNode(id, {
+    id,
+    kind: 'pagination',
+    title,
+    ...(subtitle ? { subtitle } : {}),
+    unread: false,
+    pinned: false,
+    archived: false,
+    active: false,
+    directory,
+  });
+}
 
 function sessionNode(
   session: Session,
   options: { directory: string; subtitle?: string; pinned: boolean },
 ): Node {
-  return {
+  return reuseNode(`${session.id}|${options.subtitle ?? ''}`, {
     id: session.id,
     kind: 'session',
     title: session.title.trim() || t('mobile.sessions.untitled'),
     ...(options.subtitle ? { subtitle: options.subtitle } : {}),
     ...(session.changes ? { changes: session.changes } : {}),
     ...(session.share ? { share: session.share } : {}),
-    activityLabel: relativeLabel(session.activity),
+    activityLabel: relativeLabel(timestampOf(session)),
     unread: unreadCount(session.id) > 0,
     pinned: options.pinned,
     archived: session.archived,
     active: viewingSessionId() === session.id,
     directory: options.directory,
     activity: session.activity,
-  };
+  });
 }
 
 function remoteSessionNode(
@@ -321,22 +398,23 @@ function remoteSessionNode(
   options: { directory: string; subtitle?: string; pinned: boolean; machine?: boolean },
 ): Node {
   const name = hostName(hostId);
-  return {
+  const machineKey = options.machine === false ? '' : name;
+  return reuseNode(`${remoteSessionKey(hostId, session.id)}|${options.subtitle ?? ''}|${machineKey}`, {
     id: remoteSessionKey(hostId, session.id),
     kind: 'session',
     title: session.title.trim() || t('mobile.sessions.untitled'),
     ...(options.subtitle ? { subtitle: options.subtitle } : {}),
     ...(session.share ? { share: session.share } : {}),
-    activityLabel: relativeLabel(session.activity),
+    activityLabel: relativeLabel(timestampOf(session)),
     unread: remoteUnreadCount(hostId, session.id) > 0,
     pinned: options.pinned,
     archived: session.archived,
     active: viewingSessionId() === remoteSessionKey(hostId, session.id),
     directory: options.directory,
     remote: { hostId, hostName: name, sessionID: session.id, directory: options.directory, projectId: project.id },
-    ...(options.machine === false ? {} : { machine: name }),
+    ...(machineKey ? { machine: machineKey } : {}),
     activity: session.activity,
-  };
+  });
 }
 
 export type HomeModel = {
@@ -390,28 +468,22 @@ function remoteGroups(project: RemoteProject): { groups: WorktreeGroup[]; total:
     );
     const remaining = roots.length - nodes.length;
     if (roots.length > DEFAULT_VISIBLE && visibleCount > DEFAULT_VISIBLE) {
-      nodes.push({
-        id: `${SHOW_FEWER_PREFIX}${project.id}::${directory.path}`,
-        kind: 'pagination',
-        title: t('sessions.sidebar.group.showFewer'),
-        unread: false,
-        pinned: false,
-        archived: false,
-        active: false,
-        directory: directory.path,
-      });
+      nodes.push(
+        paginationNode(
+          `${SHOW_FEWER_PREFIX}${project.id}::${directory.path}`,
+          t('sessions.sidebar.group.showFewer'),
+          directory.path,
+        ),
+      );
     }
     if (remaining > 0 || directory.hasMore) {
-      nodes.push({
-        id: `${SHOW_MORE_PREFIX}${project.id}::${directory.path}`,
-        kind: 'pagination',
-        title: t('sessions.sidebar.group.showMore'),
-        unread: false,
-        pinned: false,
-        archived: false,
-        active: false,
-        directory: directory.path,
-      });
+      nodes.push(
+        paginationNode(
+          `${SHOW_MORE_PREFIX}${project.id}::${directory.path}`,
+          t('sessions.sidebar.group.showMore'),
+          directory.path,
+        ),
+      );
     }
     return {
       id: directory.path,
@@ -443,7 +515,19 @@ const byManualOrder = <T extends { id: string }>(items: T[]): T[] => {
   );
 };
 
+/** Web `sortProjectEntries`: manual keeps the saved drag order; the rest sort by the chosen key. */
+const orderProjects = (items: ProjectItem[]): ProjectItem[] => {
+  const mode = projectSortOrder();
+  if (mode === 'manual') return byManualOrder(items);
+  return [...items].sort((left, right) => {
+    if (mode === 'a-z') return left.name.toLowerCase().localeCompare(right.name.toLowerCase(), 'en');
+    if (mode === 'z-a') return right.name.toLowerCase().localeCompare(left.name.toLowerCase(), 'en');
+    return right.sortValue - left.sortValue;
+  });
+};
+
 export function homeModel(): HomeModel {
+  nodePass = new Set<string>();
   const projectList = projects();
   const byDirectory = sessionsByDirectory();
   const pinnedIds = pinnedSessionIds();
@@ -479,7 +563,7 @@ export function homeModel(): HomeModel {
   };
 
   const pinned: Node[] = rankPinned(
-    allSessions.filter((session) => pinnedIds.has(session.id)),
+    allSessions.filter((session) => pinnedIds.has(session.id) && !session.archived),
     order.byScope['__pinned__'] ?? [],
   ).map((session) =>
     sessionNode(session, { directory: session.directory, subtitle: subtitleFor(session), pinned: true }),
@@ -514,9 +598,9 @@ export function homeModel(): HomeModel {
     let partial = false;
     const worktrees: WorktreeGroup[] = buckets.map((bucket) => {
       const rows = (byDirectory.get(bucket.path) ?? []).filter(
-        (row) => owners.get(row.id)?.scopeDirectory === bucket.path && !isSessionHidden(row.id),
+        (row) => owners.get(row.id)?.scopeDirectory === bucket.path && !isSessionHidden(row.id) && !row.archived,
       );
-      const roots = orderedSessions(bucketRoots(rows), bucket.path);
+      const roots = orderedSessions(bucketRoots(rows), bucket.path, pinnedIds);
       projectSessions += roots.length;
       const pagination = paginationFor(bucket.path);
       if (pagination.hasMore) partial = true;
@@ -532,29 +616,23 @@ export function homeModel(): HomeModel {
       );
       const remaining = roots.length - nodes.length;
       if (roots.length > DEFAULT_VISIBLE && visibleCount > DEFAULT_VISIBLE) {
-        nodes.push({
-          id: `${SHOW_FEWER_PREFIX}${project.id}::${bucket.key}`,
-          kind: 'pagination',
-          title: t('sessions.sidebar.group.showFewer'),
-          unread: false,
-          pinned: false,
-          archived: false,
-          active: false,
-          directory: bucket.path,
-        });
+        nodes.push(
+          paginationNode(
+            `${SHOW_FEWER_PREFIX}${project.id}::${bucket.key}`,
+            t('sessions.sidebar.group.showFewer'),
+            bucket.path,
+          ),
+        );
       }
       if (remaining > 0 || pagination.hasMore) {
-        nodes.push({
-          id: `${SHOW_MORE_PREFIX}${project.id}::${bucket.key}`,
-          kind: 'pagination',
-          title: t('sessions.sidebar.group.showMore'),
-          ...(pagination.loading ? { subtitle: '\u2026' } : {}),
-          unread: false,
-          pinned: false,
-          archived: false,
-          active: false,
-          directory: bucket.path,
-        });
+        nodes.push(
+          paginationNode(
+            `${SHOW_MORE_PREFIX}${project.id}::${bucket.key}`,
+            t('sessions.sidebar.group.showMore'),
+            bucket.path,
+            pagination.loading ? '\u2026' : undefined,
+          ),
+        );
       }
       return {
         id: bucket.key,
@@ -590,6 +668,7 @@ export function homeModel(): HomeModel {
       ...(project.color ? { color: project.color } : {}),
       ...(project.iconBackground ? { iconBackground: project.iconBackground } : {}),
       git: trees.length > 0 || isRepository(project.path),
+      sortValue: projectSortOrder() === 'recent' ? (project.lastOpenedAt ?? project.addedAt) : project.addedAt,
     };
   });
 
@@ -664,11 +743,13 @@ export function homeModel(): HomeModel {
       ...(remote.color ? { color: remote.color } : {}),
       ...(remote.iconBackground ? { iconBackground: remote.iconBackground } : {}),
       git: Boolean(snapshot?.worktrees[normalizePath(remote.path)]?.length),
+      sortValue: projectSortOrder() === 'recent' ? (remote.lastOpenedAt ?? remote.addedAt) : remote.addedAt,
     });
   }
 
+  for (const id of [...nodeCache.keys()]) if (!nodePass.has(id)) nodeCache.delete(id);
   return {
-    projects: byManualOrder(items),
+    projects: orderProjects(items),
     pinned,
     inProgress: inProgress.sort((a, b) => (b.activity ?? 0) - (a.activity ?? 0)),
     issues: catalogIssues(),
@@ -699,11 +780,11 @@ export function filterProjects(items: ProjectItem[], rawQuery: string): ProjectI
 /** Session search (title/content) rows always carry the machine that owns the session. */
 export function searchSessionNode(session: Session, directory: string, remote?: NodeRemote): Node {
   if (remote) {
-    return {
+    return reuseNode(`${remoteSessionKey(remote.hostId, session.id)}|search`, {
       id: remoteSessionKey(remote.hostId, session.id),
       kind: 'session',
       title: session.title.trim() || t('mobile.sessions.untitled'),
-      activityLabel: relativeLabel(session.activity),
+      activityLabel: relativeLabel(timestampOf(session)),
       unread: remoteUnreadCount(remote.hostId, session.id) > 0,
       pinned: false,
       archived: session.archived,
@@ -712,20 +793,20 @@ export function searchSessionNode(session: Session, directory: string, remote?: 
       remote,
       machine: remote.hostName,
       activity: session.activity,
-    };
+    });
   }
-  return {
+  return reuseNode(`${session.id}|search`, {
     id: session.id,
     kind: 'session',
     title: session.title.trim() || t('mobile.sessions.untitled'),
-    activityLabel: relativeLabel(session.activity),
+    activityLabel: relativeLabel(timestampOf(session)),
     unread: unreadCount(session.id) > 0,
     pinned: pinnedSessionIds().has(session.id),
     archived: session.archived,
     active: viewingSessionId() === session.id,
     directory,
     activity: session.activity,
-  };
+  });
 }
 
 /** Local sessions known to the index, matching a title fragment (Web's fallback title search). */

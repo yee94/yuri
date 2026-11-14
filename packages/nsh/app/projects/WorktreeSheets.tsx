@@ -1,9 +1,9 @@
 import { Scroll, Text, View, effect, signal, untracked } from 'nsh';
-import { Button, Input, Sheet } from 'nsh/base';
+import { Button, Input } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { PrimaryButton, QuietButton, alpha, fontSize } from '../core/ui';
+import { alpha, fontSize, NativeSheet, PrimaryButton, QuietButton } from '../core/ui';
 import { normalizePath, sessionsFor, worktreesFor, type Worktree } from '../core/store';
 import { request } from '../core/host';
 import {
@@ -283,7 +283,7 @@ export function NewWorktreeSheet(props: {
   };
 
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe={!submitting()}
       closeOnBackdropPress={!submitting()}
@@ -469,7 +469,7 @@ export function NewWorktreeSheet(props: {
           </Button>
         </View>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }
 
@@ -572,7 +572,7 @@ export function DeleteWorktreeSheet(props: {
   };
 
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe={!deleting()}
       onOpenChange={(event) => {
@@ -660,6 +660,6 @@ export function DeleteWorktreeSheet(props: {
         />
         <QuietButton label={() => t('gitView.common.cancel')} onPress={() => props.onClose()} disabled={() => deleting()} />
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

@@ -28,8 +28,7 @@ export type Route =
   | { kind: 'search' }
   | AssistantRoute
   | AssistantSettingsRoute
-  | SettingsRoute
-  | ScheduledRunsRoute;
+  | SettingsRoute;
 
 export type AssistantRoute = { kind: 'assistant'; assistantID: string; title: string };
 
@@ -61,7 +60,8 @@ export type SettingsSlug =
 
 export type SettingsRoute = { kind: 'settings'; slug: SettingsSlug };
 
-export type ScheduledRunsRoute = { kind: 'scheduledRuns'; projectId: string; taskId: string; title: string };
+/** One task to open once the schedule tab has its list (Web `openScheduledTask`). */
+export const scheduledTaskRequest = signal<{ projectId: string; taskId: string } | null>(null);
 
 /** The tab on screen; each tab keeps its own stack, as the Web phone shell does. */
 export const tab = signal<TabID>('projects');
@@ -173,11 +173,9 @@ export function openSettingsPage(slug: SettingsSlug) {
   stack.push({ kind: 'settings', slug });
 }
 
-/** One scheduled task's run history, pushed from the schedule tab or a bot's settings. */
-export function openScheduledRuns(input: { projectId: string; taskId: string; title: string }) {
-  const stack = activeStack();
-  const routes = stack.routes();
-  const top = routes[routes.length - 1];
-  if (top?.kind === 'scheduledRuns' && top.taskId === input.taskId && top.projectId === input.projectId) return;
-  stack.push({ kind: 'scheduledRuns', projectId: input.projectId, taskId: input.taskId, title: input.title });
+/** Web `openScheduledTask`: the schedule tab's task view opens that task's editor. */
+export function openScheduledTask(input: { projectId: string; taskId: string }) {
+  tab.set('scheduled');
+  stackFor('scheduled').popToRoot();
+  scheduledTaskRequest.set(input);
 }

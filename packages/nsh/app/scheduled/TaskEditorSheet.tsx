@@ -1,9 +1,9 @@
-import { Text, View, signal } from 'nsh';
-import { Button, Input, Sheet } from 'nsh/base';
+import { Scroll, Text, View, signal } from 'nsh';
+import { Button, Input } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, radius } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { ChoiceSheet, PrimaryButton, QuietButton, actionMenu, alpha, fontSize } from '../core/ui';
+import { actionMenu, alpha, ChoiceSheet, fontSize, NativeSheet, PrimaryButton, QuietButton } from '../core/ui';
 import { agents, defaultModel, loadCatalog, providers } from '../core/models';
 import type { ScheduledTask, TaskEntry } from './data';
 
@@ -12,6 +12,12 @@ type DayKey = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
 
 const popup = { backgroundColor: colors.background(), borderTopLeftRadius: 26, borderTopRightRadius: 26 } as const;
 const backdrop = { backgroundColor: alpha('#000000', 0.32) } as const;
+const label = {
+  fontSize: 12,
+  lineHeight: 17,
+  color: colors.mutedForeground(),
+} as const;
+
 const field = {
   minHeight: 46,
   borderRadius: 12,
@@ -170,7 +176,7 @@ export function TaskEditorSheet(props: {
   };
 
   return (
-    <Sheet
+    <NativeSheet
       open
       closeOnSwipe
       onOpenChange={(event) => {
@@ -179,7 +185,7 @@ export function TaskEditorSheet(props: {
       popupStyle={popup}
       backdropStyle={backdrop}
     >
-      <View style={{ padding: 18, gap: 12, paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      <Scroll keyboardShouldPersistTaps="handled" contentStyle={{ padding: 18, gap: 12, paddingBottom: 'env(safe-area-inset-bottom)' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <Text style={{ flex: 1, fontSize: 18, fontWeight: '600', color: colors.foreground() }}>
             {t(editing ? 'sessions.scheduledTasks.editor.title.edit' : 'sessions.scheduledTasks.editor.title.new')}
@@ -195,23 +201,29 @@ export function TaskEditorSheet(props: {
           </If>
         </View>
 
-        <Input
-          testID="task-name"
-          value={name()}
-          onChange={(event) => name.set(event.value)}
-          placeholder={t('sessions.scheduledTasks.editor.taskName.placeholder')}
-          accessibilityLabel={t('sessions.scheduledTasks.editor.taskName.label')}
-          style={field}
-        />
-        <Input
-          testID="task-prompt"
-          value={prompt()}
-          onChange={(event) => prompt.set(event.value)}
-          placeholder={t('sessions.scheduledTasks.editor.prompt.placeholder')}
-          accessibilityLabel={t('sessions.scheduledTasks.editor.prompt.label')}
-          multiline
-          style={{ ...field, minHeight: 96, padding: 12 }}
-        />
+        <View style={{ gap: 6 }}>
+          <Text style={label}>{t('sessions.scheduledTasks.editor.taskName.label')}</Text>
+          <Input
+            testID="task-name"
+            value={name()}
+            onChange={(event) => name.set(event.value)}
+            placeholder={t('sessions.scheduledTasks.editor.taskName.placeholder')}
+            accessibilityLabel={t('sessions.scheduledTasks.editor.taskName.label')}
+            style={field}
+          />
+        </View>
+        <View style={{ gap: 6 }}>
+          <Text style={label}>{t('sessions.scheduledTasks.editor.prompt.label')}</Text>
+          <Input
+            testID="task-prompt"
+            value={prompt()}
+            onChange={(event) => prompt.set(event.value)}
+            placeholder={t('sessions.scheduledTasks.editor.prompt.placeholder')}
+            accessibilityLabel={t('sessions.scheduledTasks.editor.prompt.label')}
+            multiline
+            style={{ ...field, minHeight: 96, padding: 12 }}
+          />
+        </View>
 
         <View style={{ borderRadius: radius.inset, overflow: 'hidden', borderWidth: 1, borderColor: colors.border() }}>
           <View
@@ -229,6 +241,77 @@ export function TaskEditorSheet(props: {
             </Text>
             <Icon name="arrow-right-s" size={16} tone="muted" />
           </View>
+        </View>
+
+        <If when={kind() === 'daily' || kind() === 'weekly' || kind() === 'once'}>
+          <View style={{ gap: 6 }}>
+            <Text style={label}>{t('sessions.scheduledTasks.editor.times.label')}</Text>
+            <Input
+              testID="task-times"
+              value={times()}
+              onChange={(event) => times.set(event.value)}
+              placeholder="09:00, 18:00"
+              accessibilityLabel={t('sessions.scheduledTasks.editor.times.label')}
+              style={field}
+            />
+          </View>
+        </If>
+        <If when={kind() === 'weekly'}>
+          <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+            <Each of={weekdays} key={(day) => String(day.value)}>
+              {(day) => (
+                <Button
+                  onPress={() => toggleDay(day().value)}
+                  style={{
+                    minWidth: 38,
+                    height: 38,
+                    borderRadius: 19,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: days().includes(day().value) ? colors.foreground() : alpha(colors.muted(), 0.9),
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: fontSize.entityMeta,
+                      color: days().includes(day().value) ? colors.background() : colors.foreground(),
+                    }}
+                  >
+                    {weekdayLabel(day().value)}
+                  </Text>
+                </Button>
+              )}
+            </Each>
+          </View>
+        </If>
+        <If when={kind() === 'once'}>
+          <View style={{ gap: 6 }}>
+            <Text style={label}>{t('sessions.scheduledTasks.editor.date.label')}</Text>
+            <Input
+              value={date()}
+              onChange={(event) => date.set(event.value)}
+              placeholder={t('sessions.scheduledTasks.editor.date.placeholder')}
+              accessibilityLabel={t('sessions.scheduledTasks.editor.date.label')}
+              style={field}
+            />
+          </View>
+        </If>
+        <If when={kind() === 'cron'}>
+          <View style={{ gap: 6 }}>
+            <Text style={label}>{t('sessions.scheduledTasks.editor.cronExpression.label')}</Text>
+            <Input
+              value={cron()}
+              onChange={(event) => cron.set(event.value)}
+              placeholder={t('sessions.scheduledTasks.editor.cronExpression.placeholder')}
+              accessibilityLabel={t('sessions.scheduledTasks.editor.cronExpression.label')}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={field}
+            />
+          </View>
+        </If>
+
+        <View style={{ borderRadius: radius.inset, overflow: 'hidden', borderWidth: 1, borderColor: colors.border() }}>
           <View
             testID="task-model"
             role="button"
@@ -260,65 +343,6 @@ export function TaskEditorSheet(props: {
           </View>
         </View>
 
-        <If when={kind() === 'daily' || kind() === 'weekly' || kind() === 'once'}>
-          <Input
-            testID="task-times"
-            value={times()}
-            onChange={(event) => times.set(event.value)}
-            placeholder={t('sessions.scheduledTasks.editor.times.label')}
-            accessibilityLabel={t('sessions.scheduledTasks.editor.times.label')}
-            style={field}
-          />
-        </If>
-        <If when={kind() === 'weekly'}>
-          <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-            <Each of={weekdays} key={(day) => String(day.value)}>
-              {(day) => (
-                <Button
-                  onPress={() => toggleDay(day().value)}
-                  style={{
-                    minWidth: 38,
-                    height: 38,
-                    borderRadius: 19,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: days().includes(day().value) ? colors.foreground() : alpha(colors.muted(), 0.9),
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: fontSize.entityMeta,
-                      color: days().includes(day().value) ? colors.background() : colors.foreground(),
-                    }}
-                  >
-                    {weekdayLabel(day().value)}
-                  </Text>
-                </Button>
-              )}
-            </Each>
-          </View>
-        </If>
-        <If when={kind() === 'once'}>
-          <Input
-            value={date()}
-            onChange={(event) => date.set(event.value)}
-            placeholder={t('sessions.scheduledTasks.editor.date.placeholder')}
-            accessibilityLabel={t('sessions.scheduledTasks.editor.date.label')}
-            style={field}
-          />
-        </If>
-        <If when={kind() === 'cron'}>
-          <Input
-            value={cron()}
-            onChange={(event) => cron.set(event.value)}
-            placeholder={t('sessions.scheduledTasks.editor.cronExpression.placeholder')}
-            accessibilityLabel={t('sessions.scheduledTasks.editor.cronExpression.label')}
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={field}
-          />
-        </If>
-
         <View
           role="button"
           onPress={() => enabled.set(!enabled())}
@@ -340,7 +364,7 @@ export function TaskEditorSheet(props: {
           onPress={() => void submit()}
         />
         <QuietButton label={() => t('sessions.scheduledTasks.editor.actions.cancel')} onPress={props.onClose} />
-      </View>
+      </Scroll>
 
       <ChoiceSheet
         open={() => picker() === 'schedule'}
@@ -386,6 +410,6 @@ export function TaskEditorSheet(props: {
         onSelect={(value) => agent.set(value)}
         onClose={() => picker.set(null)}
       />
-    </Sheet>
+    </NativeSheet>
   );
 }

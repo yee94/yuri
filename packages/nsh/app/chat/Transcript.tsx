@@ -1,4 +1,4 @@
-import { Scroll, Text, View, effect, signal, untracked, type ScrollRef } from 'nsh';
+import { Scroll, Text, View, effect, signal, untracked, type ScrollRef, type Signal } from 'nsh';
 import { Button } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors } from '../core/theme';
@@ -6,7 +6,7 @@ import { Icon } from '../core/Icon';
 import { EmptyState, QuietButton, Spinner, alpha } from '../core/ui';
 import { MessageRow } from './Parts';
 import { BlockingCards } from './Blocking';
-import { loadMessages, type Conversation } from './store';
+import { loadMessages, type Catalog, type Conversation } from './store';
 import type { RowGroup } from './model';
 
 function OlderHistory(props: { conversation: Conversation }) {
@@ -78,7 +78,14 @@ function Empty(props: { conversation: Conversation }) {
 
 /** The fully mounted transcript: every row has its native view, newest at the
  * bottom, older pages load at the top and the reading position stays put. */
-export function Transcript(props: { conversation: Conversation }) {
+export function Transcript(props: {
+  conversation: Conversation;
+  catalog?: () => Catalog;
+  /** Web `--yuri-mobile-composer-swap`: 0 expanded, 1 compact. */
+  chrome: Signal<number>;
+  /** Bumped by the compact composer pill to come back to the live edge. */
+  latest: () => number;
+}) {
   let scroller: ScrollRef | null = null;
   const rows = () => props.conversation.rows();
 
@@ -105,6 +112,23 @@ export function Transcript(props: { conversation: Conversation }) {
     return content - viewport - offset() <= latestThreshold;
   };
 
+  // Web `mobileComposerSwap`: the chrome starts leaving after 40px of travel
+  // and is compact after 80px, so header and composer shrink together.
+  const swap = () => {
+    const content = contentHeight();
+    const viewport = viewportHeight();
+    const distance = Math.max(0, content - viewport - offset());
+    return Math.max(0, Math.min(1, (distance - 40) / 40));
+  };
+  const publishChrome = () => {
+    const next = swap();
+    if (props.chrome() !== next) props.chrome.set(next);
+  };
+  const scrollLatest = (animated: boolean) => {
+    props.chrome.set(0);
+    scroller?.scrollTo({ y: contentHeight(), animated });
+  };
+
   const rememberTop = (row: RowGroup, y: number) => {
     const next = new Map(rowTops());
     next.set(row.key, y);
@@ -122,7 +146,18 @@ export function Transcript(props: { conversation: Conversation }) {
     const grew = height > followedHeight;
     followedHeight = height;
     if (!grew) return;
-    if (!userTouched || untracked(atLatest)) scroller?.scrollTo({ y: height, animated: false });
+    if (!userTouched || untracked(atLatest)) {
+      props.chrome.set(0);
+      scroller?.scrollTo({ y: height, animated: false });
+    }
+  });
+
+  // The compact pill asks for the live edge; the expand gesture also restores
+  // the full header and composer card.
+  effect(() => {
+    const token = props.latest();
+    if (!token) return;
+    untracked(() => scrollLatest(true));
   });
 
   // A load-older finished: rows appeared above, put the reader back.
@@ -165,7 +200,10 @@ export function Transcript(props: { conversation: Conversation }) {
         ref={(node) => {
           scroller = node;
         }}
-        onLayout={(event) => viewportHeight.set(event.bounds.size.height)}
+        onLayout={(event) => {
+          viewportHeight.set(event.bounds.size.height);
+          publishChrome();
+        }}
         onScrollDragStart={() => {
           userTouched = true;
         }}
@@ -173,25 +211,31 @@ export function Transcript(props: { conversation: Conversation }) {
           const y = event.offset.y;
           if (y > loadMoreThreshold + 24) wasAboveThreshold = true;
           offset.set(y);
+          publishChrome();
           if (y <= loadMoreThreshold) loadOlder();
         }}
       >
         <View
-          style={{ minHeight: '100%', paddingVertical: 8 }}
+          style={{
+            minHeight: '100%',
+            paddingTop: 'calc(env(safe-area-inset-top) + 52px)',
+            paddingBottom: 8,
+          }}
           onLayout={(event) => contentHeight.set(event.bounds.size.height)}
         >
           <OlderHistory conversation={props.conversation} />
-          <Blocking conversation={props.conversation} />
           <If when={rows().length === 0}>
             <Empty conversation={props.conversation} />
           </If>
           <Each of={rows()} key={(row) => row.key}>
             {(row) => (
               <View onLayout={(event) => rememberTop(row(), event.bounds.origin.y)}>
-                <MessageRow conversation={props.conversation} row={row} />
+                <MessageRow conversation={props.conversation} row={row} catalog={props.catalog} />
               </View>
             )}
           </Each>
+          {/* Web lists permissions and questions after the messages, above the composer. */}
+          <Blocking conversation={props.conversation} />
         </View>
       </Scroll>
       <If when={!atLatest()}>
@@ -199,7 +243,7 @@ export function Transcript(props: { conversation: Conversation }) {
           <Button
             testID="chat-scroll-latest"
             accessibilityLabel={t('chat.scrollToBottom.aria')}
-            onPress={() => scroller?.scrollTo({ y: contentHeight(), animated: true })}
+            onPress={() => scrollLatest(true)}
             style={{
               width: 34,
               height: 34,

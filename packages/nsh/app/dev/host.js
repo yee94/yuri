@@ -126,6 +126,35 @@ let assistants = [
     working: false,
     latestMessagePreview: null,
   },
+  {
+    id: 'a-pinned',
+    name: 'Pinned Bot',
+    avatarSeed: 'pinned',
+    pinnedAt: NOW - 60 * MINUTE,
+    revision: 1,
+    enabled: true,
+    defaultPrompt: 'Keep the pinned workspace tidy.',
+    workspacePath: null,
+    effectiveWorkspacePath: studio,
+    providerID: 'anthropic',
+    modelID: 'claude-sonnet-4-5',
+    agent: null,
+    variant: null,
+    mode: 'continuous',
+    sessionID: null,
+    sessionGeneration: 0,
+    unreadCount: 1,
+    readTip: { generation: 1, ordinal: 0, messageID: 'm-pinned-1' },
+    working: false,
+    latestMessagePreview: {
+      createdAt: NOW - 5 * MINUTE,
+      messageID: 'm-pinned-1',
+      ordinal: 0,
+      role: 'assistant',
+      text: 'Pinned note for the release train.',
+      fallbackKind: null,
+    },
+  },
 ];
 
 const channelSettings = {
@@ -244,15 +273,23 @@ const sessions = [
   session('s-running', 'Debug relay reconnect', studio, 2, { summary: { additions: 4, deletions: 0 } }),
   session('s-old', 'Tidy the settings panel', studio, 320, {}),
   session('s-index', 'Audit the session index', studio, 400, {}),
+  session('s-index-child', 'Child of the index audit', studio, 410, { parentID: 's-index' }),
   session('s-shell', 'Polish the mobile shell', studio, 520, {}),
   session('s-worktree', 'Fix auth redirect', studioWorktree, 12, {
     summary: { additions: 7, deletions: 5 },
   }),
   session('s-unread', 'Publish the changelog', site, 8, {}),
+  session('s-clock', 'Compare cache clocks', site, 150, {
+    metadata: { yuri: { titleRefresh: { activityUpdatedAt: NOW - MINUTE } } },
+  }),
 ];
 
+const cacheWorktree = '/Users/studio/Code/yuri/.worktrees/cache-lab';
 const worktrees = {
-  [studio]: [{ path: studioWorktree, name: 'fix-auth', branch: 'fix/auth' }],
+  [studio]: [
+    { path: studioWorktree, name: 'fix-auth', branch: 'fix/auth' },
+    { path: cacheWorktree, name: 'cache-lab', branch: 'cache/lab' },
+  ],
 };
 const branches = { [studio]: ['main', 'fix/auth', 'feature/pairing'], [site]: ['main'] };
 
@@ -330,7 +367,16 @@ const remoteSessions = [
     metadata: { yuri: { sessionStatus: { type: 'idle' } } },
   }),
   session('r-worktree', 'Ship the API endpoint', labWorktree, 14, {
-    metadata: { yuri: { sessionStatus: { type: 'busy' } } },
+    metadata: { yuri: { sessionStatus: { type: 'idle' } } },
+  }),
+  session('r-worktree-2', 'Ship the API migration', labWorktree, 20, {
+    metadata: { yuri: { sessionStatus: { type: 'idle' } } },
+  }),
+  session('r-worktree-3', 'Ship the API docs', labWorktree, 26, {
+    metadata: { yuri: { sessionStatus: { type: 'idle' } } },
+  }),
+  session('r-worktree-4', 'Ship the API client', labWorktree, 32, {
+    metadata: { yuri: { sessionStatus: { type: 'idle' } } },
   }),
   session('r-main', 'Draft the release notes', labProject, 40, {
     metadata: { yuri: { sessionStatus: { type: 'idle' } } },
@@ -340,6 +386,119 @@ let remotePinned = ['r-pinned'];
 const remoteUnread = {};
 const remoteWorktrees = { [labProject]: [labProject, labWorktree] };
 const remoteBranches = { [labProject]: ['main', 'api/work'] };
+
+/* One remote session's transcript, permission and content lease: the Hub proxies
+   these exactly like a local session, so the phone renders the same chat. */
+const remoteTranscripts = {};
+function remoteTranscript(id) {
+  if (remoteTranscripts[id]) return remoteTranscripts[id];
+  remoteTranscripts[id] = id === 'r-worktree' ? [
+    {
+      info: {
+        id: 'rm-user-1',
+        role: 'user',
+        sessionID: 'r-worktree',
+        time: { created: NOW - 18 * MINUTE },
+        model: { providerID: 'anthropic', modelID: 'claude-sonnet-4-5' },
+        metadata: { agent: 'build' },
+      },
+      parts: [text('The endpoint still returns 500 after the deploy. Can you trace it?')],
+    },
+    {
+      info: {
+        id: 'rm-assistant-1',
+        role: 'assistant',
+        sessionID: 'r-worktree',
+        time: { created: NOW - 17 * MINUTE, completed: NOW - 15 * MINUTE },
+        tokens: { input: 9210, output: 420, reasoning: 90 },
+        modelID: 'claude-sonnet-4-5',
+        providerID: 'anthropic',
+        model: { providerID: 'anthropic', modelID: 'claude-sonnet-4-5', variant: 'high' },
+      },
+      parts: [
+        reasoning('The handler resolves the project after the auth middleware, so a missing header throws.'),
+        tool('rm-tool-1', 'read', { filePath: 'apps/api/src/routes/session.ts' }, 'export function session() { /* … */ }'),
+        text(
+          [
+            'Found it: the route reads `request.project` before the auth hook runs.',
+            '',
+            'I moved the guard ahead of the handler and the endpoint returns 200 again.',
+          ].join('\n'),
+        ),
+      ],
+    },
+  ] : [];
+  return remoteTranscripts[id];
+}
+const remotePermissions = [
+  {
+    id: 'perm-remote',
+    sessionID: 'r-worktree',
+    permission: 'bash',
+    patterns: ['npm test --workspace apps/api'],
+    metadata: { command: 'npm test --workspace apps/api', description: 'Run the API tests' },
+  },
+];
+let remoteLeases = [];
+/** Every proxied call the Hub saw, with the machine it was routed to. */
+const remoteCalls = [];
+
+/** The Hub forwards one upstream event frame to every connected Hub client. */
+function emitHost(type, properties, directory) {
+  send({
+    key: 'global',
+    data: JSON.stringify({
+      type: 'yuri:host-event',
+      properties: {
+        hubId: 'hub-mock',
+        hostId: labHost,
+        ...(directory ? { directory } : {}),
+        payload: { type, properties },
+      },
+    }),
+  });
+}
+
+/** The remote assistant streams through the same event frames as a local one. */
+function scheduleRemoteReply(sessionID, directory, prompt) {
+  const transcript = remoteTranscript(sessionID);
+  const assistantID = `rm-reply-${Date.now().toString(36)}`;
+  const message = {
+    info: {
+      id: assistantID,
+      role: 'assistant',
+      sessionID,
+      time: { created: Date.now() },
+      tokens: { input: 1400, output: 40 },
+      model: { providerID: 'anthropic', modelID: 'claude-sonnet-4-5' },
+    },
+    parts: [{ type: 'text', text: '' }],
+  };
+  transcript.push(message);
+  emitHost('session.execution.started', { sessionID, directory }, directory);
+  const reply = `Lab Mac answered on ${labHost} at /api/session/${sessionID}/prompt: ${prompt}`;
+  const chunks = reply.match(/.{1,6}/g) || [];
+  let index = 0;
+  const step = () => {
+    if (index < chunks.length) {
+      const delta = chunks[index++];
+      message.parts[0].text += delta;
+      emitHost('session.text.delta', { sessionID, directory, assistantMessageID: assistantID, ordinal: 0, delta }, directory);
+      setTimeout(step, 16);
+      return;
+    }
+    message.info.time.completed = Date.now();
+    emitHost(
+      'session.text.ended',
+      { sessionID, directory, assistantMessageID: assistantID, ordinal: 0, text: message.parts[0].text },
+      directory,
+    );
+    emitHost('session.execution.succeeded', { sessionID, directory }, directory);
+    emitHost('session.idle', { sessionID, directory }, directory);
+  };
+  setTimeout(step, 40);
+}
+
 const remoteSummary = () => ({
   hubId: 'hub-mock',
   hostId: labHost,
@@ -349,10 +508,12 @@ const remoteSummary = () => ({
   pinnedSessionIds: remotePinned,
   directories: [labProject, labWorktree].map((directory) => ({
     directory,
-    hasMore: false,
-    cursor: null,
+    hasMore: directory === labWorktree,
+    cursor: directory === labWorktree ? 'api-page-2' : null,
     lastSyncedAt: NOW,
-    sessions: remoteSessions.filter((entry) => entry.directory === directory),
+    sessions: directory === labWorktree
+      ? remoteSessions.filter((entry) => entry.directory === directory).slice(0, 2)
+      : remoteSessions.filter((entry) => entry.directory === directory),
   })),
   unread: { revision: 1, sessions: remoteUnread },
   order: { revision: 1, sessionOrderByScope: {}, sessionOrderActivityByScope: {} },
@@ -388,7 +549,7 @@ const snapshot = () => ({ connections, selected, runtimeScope: scope });
 
 const index = () => ({
   available: true,
-  partial: false,
+  partial: true,
   pinnedSessionIds: pinned,
   directories: [studio, studioWorktree, site].map((directory) => ({
     directory,
@@ -403,7 +564,7 @@ const index = () => ({
 
 const text = (value) => ({ type: 'text', text: value });
 const reasoning = (value) => ({ type: 'reasoning', text: value });
-const tool = (id, name, input, output, status) => ({
+const tool = (id, name, input, output, status, metadata) => ({
   type: 'tool',
   id,
   name,
@@ -411,6 +572,7 @@ const tool = (id, name, input, output, status) => ({
     status: status || 'completed',
     input,
     ...(output === undefined ? {} : { output }),
+    ...(metadata === undefined ? {} : { metadata }),
     ...(status === 'running' ? {} : { time: { start: NOW - 40_000, end: NOW - 30_000 } }),
   },
 });
@@ -450,6 +612,23 @@ const runningTurn = [
       reasoning('The socket reconnects, but the pending request queue is never flushed. Let me read the relay client first.'),
       tool('t-1', 'read', { filePath: 'packages/ui/src/sync/relay-client.ts' }, 'export function connect() { /* … */ }'),
       tool('t-2', 'bash', { command: 'rg -n "reconnect" packages/ui/src/sync' }, 'relay-client.ts:41\ntransport.ts:88'),
+      tool(
+        't-3',
+        'edit',
+        { filePath: 'packages/ui/src/sync/transport.ts' },
+        'Updated the retry delay.',
+        'completed',
+        {
+          patch: [
+            '--- a/packages/ui/src/sync/transport.ts',
+            '+++ b/packages/ui/src/sync/transport.ts',
+            '@@ -1,2 +1,2 @@',
+            '-const retryDelay = 250;',
+            '+const retryDelay = 500;',
+            ' export const maxAttempts = 3;',
+          ].join('\n'),
+        },
+      ),
       text(
         [
           'Found it: **relay-client.ts** recreates the socket without draining the queued frames.',
@@ -597,7 +776,85 @@ function remoteRoute(path, method, body) {
     }
     return { metadata: entry ? entry.metadata : {} };
   }
-  if (inner.startsWith('/api/session/') && inner.includes('/message')) return { data: [], cursor: null };
+  if (inner === '/subscriptions' && method === 'POST') {
+    const lease = `sub-${remoteLeases.length + 1}`;
+    remoteLeases.push(lease);
+    const directory = body && typeof body.directory === 'string' ? body.directory : labWorktree;
+    const sessionId = body && typeof body.sessionId === 'string' ? body.sessionId : '';
+    // Web `HostContentDemand`: the lease answers once the upstream channel is ready.
+    setTimeout(() => emitHost('yuri:content-ready', { id: lease, sessionId, channelId: 'chan-remote', readyGeneration: 'gen-1' }, directory), 20);
+    return { id: lease, channelId: 'chan-remote', readyGeneration: 'gen-1' };
+  }
+  if (inner.startsWith('/subscriptions/') && method === 'DELETE') {
+    const lease = decodeURIComponent(inner.slice('/subscriptions/'.length));
+    remoteLeases = remoteLeases.filter((entry) => entry !== lease);
+    return true;
+  }
+  if (inner.startsWith('/api/session/') && inner.includes('/message')) {
+    const all = remoteTranscript(id);
+    const limit = Number(paramOf(inner, 'limit')) || 20;
+    const cursor = paramOf(inner, 'cursor');
+    const upper = cursor ? Math.max(0, Number(cursor)) : all.length;
+    const lower = Math.max(0, upper - limit);
+    return { data: all.slice(lower, upper).reverse(), cursor: { next: lower > 0 ? String(lower) : null } };
+  }
+  if (inner.startsWith('/api/session/') && inner.includes('/prompt')) {
+    const directory = directoryOf(inner) || labWorktree;
+    const promptText = body && typeof body.text === 'string' ? body.text : '';
+    remoteCalls.push({ hostId: labHost, method, path: inner });
+    if (body && typeof body.id === 'string' && promptText) {
+      remoteTranscript(id).push({
+        info: { id: body.id, role: 'user', sessionID: id, time: { created: Date.now() } },
+        parts: [{ type: 'text', text: promptText }],
+      });
+    }
+    scheduleRemoteReply(id, directory, promptText);
+    return { id: body && body.id };
+  }
+  if (inner.startsWith('/api/session/') && inner.includes('/interrupt')) {
+    remoteCalls.push({ hostId: labHost, method, path: inner });
+    return true;
+  }
+  if (inner.startsWith('/api/session/') && inner.includes('/permission/')) {
+    const permissionID = decodeURIComponent((inner.split('/permission/')[1] || '').split(/[/?]/)[0]);
+    const at = remotePermissions.findIndex((entry) => entry.id === permissionID);
+    if (at >= 0) remotePermissions.splice(at, 1);
+    remoteCalls.push({ hostId: labHost, method, path: inner });
+    return true;
+  }
+  if (inner.startsWith('/api/session/') && inner.includes('/inbox')) return [];
+  if (inner.startsWith('/api/session/') && inner.includes('/compact')) {
+    const directory = directoryOf(inner) || labWorktree;
+    remoteCalls.push({ hostId: labHost, method, path: inner });
+    remoteTranscript(id).push({
+      info: { id: `rm-compact-${Date.now().toString(36)}`, role: 'assistant', clientRole: 'compaction', sessionID: id, time: { created: Date.now() } },
+      parts: [{ type: 'compaction', status: 'completed' }],
+    });
+    emitHost('session.execution.started', { sessionID: id, directory }, directory);
+    setTimeout(() => emitHost('session.idle', { sessionID: id, directory }, directory), 20);
+    return true;
+  }
+  if (inner.startsWith('/api/session/') && inner.includes('/revert/stage')) return { messageID: body && body.messageID, files: [] };
+  if (inner.startsWith('/api/session/') && inner.includes('/revert')) return true;
+  if (inner.startsWith('/api/session/') && inner.includes('/fork')) {
+    const directory = directoryOf(inner) || labWorktree;
+    const forkedID = `r-fork-${Date.now().toString(36)}`;
+    remoteSessions.unshift(session(forkedID, 'Fork of Ship the API endpoint', directory, 0, {}));
+    remoteTranscript(forkedID).push(...remoteTranscript(id));
+    return { id: forkedID, directory, title: 'Fork of Ship the API endpoint' };
+  }
+  if (inner.startsWith('/api/session/') && (inner.includes('/model') || inner.includes('/agent')) && method === 'POST') return true;
+  if (inner.startsWith('/api/permission/request')) return remotePermissions;
+  if (inner.startsWith('/api/form')) return [];
+  if (inner.startsWith('/api/session/') && method === 'GET' && !inner.includes('/message')) {
+    const entry = remoteSessions.find((value) => value.id === id) || {};
+    return {
+      ...entry,
+      title: entry.title || '',
+      model: { providerID: 'anthropic', modelID: 'claude-sonnet-4-5', variant: 'high' },
+      agent: 'build',
+    };
+  }
   if (inner.startsWith('/api/session/') && method === 'PATCH') {
     const entry = remoteSessions.find((value) => value.id === id);
     if (entry && body && typeof body.title === 'string') entry.title = body.title;
@@ -611,6 +868,17 @@ function remoteRoute(path, method, body) {
   if (inner === '/api/session' || inner.startsWith('/api/session?')) {
     const directory = directoryOf(inner);
     const search = paramOf(inner, 'search').toLowerCase();
+    if (inner.includes('parentID=') && !inner.includes('parentID=null')) return { data: [], cursor: null };
+    if (method === 'POST') {
+      const created = session(`r-new-${Date.now().toString(36)}`, 'New session', directory || labWorktree, 0, {});
+      remoteSessions.unshift(created);
+      remoteTranscript(created.id);
+      return created;
+    }
+    if (inner.includes('cursor=api-page-2')) {
+      const rows = remoteSessions.filter((entry) => entry.directory === labWorktree).slice(2);
+      return { data: rows, cursor: null };
+    }
     if (method === 'GET') {
       const rows = remoteSessions.filter(
         (entry) =>
@@ -642,8 +910,22 @@ function remoteRoute(path, method, body) {
     }
     return remoteWorktrees[labProject] || [];
   }
-  if (inner.startsWith('/api/git/status')) return { isClean: true, current: 'main' };
+  if (inner.startsWith('/api/git/status')) return { isClean: true, current: 'main', isGitRepository: true, files: [] };
   if (inner.startsWith('/api/git/remote-branches')) return { success: true };
+  // Catalog and workspace reads resolve on the Host, exactly where the session runs.
+  if (
+    [
+      '/api/config/',
+      '/api/agent',
+      '/api/command',
+      '/api/fs/',
+      '/api/quota/',
+      '/api/mcp',
+      '/api/experimental/mcp/',
+      '/api/git/file-diff',
+    ].some((prefix) => inner.startsWith(prefix))
+  )
+    return route(inner, method, body);
   return {};
 }
 
@@ -721,8 +1003,8 @@ const route = (path, method, body) => {
     return { content: behaviorContent };
   }
   if (path.startsWith('/api/quota/magpie')) return { sources: [] };
-  if (path.startsWith('/api/system/info')) return { serveVersion: '1.2.3', opencodeVersion: '0.9.0' };
-  if (path.startsWith('/api/opencode/upgrade-status')) return { version: '0.9.0' };
+  if (path.startsWith('/api/system/info')) return { serveVersion: '1.2.3', yuriVersion: '1.2.3', opencodeVersion: '0.9.0' };
+  if (path.startsWith('/api/opencode/upgrade-status')) return { version: '0.9.0', serveVersion: '0.9.0', currentVersion: '0.9.0', management: 'manual-global', canManage: false };
 
   if (path.startsWith('/api/yuri/assistants/capability')) {
     return { supported: true, enabled: true, revision: 1, serverInstanceID: 'mock', sharingAvailable: false };
@@ -755,6 +1037,10 @@ const route = (path, method, body) => {
     if (area === 'channels') {
       const provider = leaf;
       const state = channelSettings[provider] || { status: 'unsupported', error: null };
+      if (verb === 'POST' && path.endsWith('/retry')) {
+        channelSettings[provider] = { ...state, status: 'connected', error: null };
+        return channelSettings[provider];
+      }
       if (verb === 'PUT') {
         channelSettings[provider] = {
           ...state,
@@ -780,6 +1066,16 @@ const route = (path, method, body) => {
       return state;
     }
     if (area === 'weixin') {
+      if (verb === 'POST' && leaf === 'verify') {
+        weixin.status = 'connected';
+        weixin.qrCode = '';
+        return { ...weixin };
+      }
+      if (verb === 'POST' && leaf === 'retry') {
+        weixin.status = 'connected';
+        weixin.error = null;
+        return { ...weixin };
+      }
       if (verb === 'POST') {
         weixin.status = 'waiting';
         weixin.qrCode = 'https://example.com/weixin-qr.svg';
@@ -796,7 +1092,13 @@ const route = (path, method, body) => {
       return scheduledTasks.map((row) => ({ projectID: row.projectId, task: row.task }));
     }
     if (verb === 'PATCH' && entry) {
-      Object.assign(entry, body || {});
+      const patch = { ...(body || {}) };
+      if (typeof patch.pinned === 'boolean') {
+        entry.pinnedAt = patch.pinned ? Date.now() : null;
+        delete patch.pinned;
+      }
+      delete patch.expectedRevision;
+      Object.assign(entry, patch);
       entry.revision += 1;
       return entry;
     }
@@ -841,10 +1143,19 @@ const route = (path, method, body) => {
   if (path.startsWith('/api/yuri/scheduled-task-runs')) {
     const projectId = paramOf(path, 'projectId');
     const taskId = paramOf(path, 'taskId');
-    const runs = scheduledRuns.filter(
-      (run) => (!projectId || run.projectId === projectId) && (!taskId || run.taskId === taskId),
-    );
-    return { runs, nextCursor: null, complete: true };
+    const scoped = scheduledRuns
+      .filter((run) => (!projectId || run.projectId === projectId) && (!taskId || run.taskId === taskId))
+      .sort((left, right) => right.startedAt - left.startedAt);
+    const limit = Number(paramOf(path, 'limit')) || 20;
+    const before = Number(paramOf(path, 'before'));
+    const remaining = before ? scoped.filter((run) => run.startedAt < before) : scoped;
+    const page = remaining.slice(0, limit);
+    const complete = remaining.length <= limit;
+    return {
+      runs: page,
+      nextCursor: complete ? null : String(page[page.length - 1].startedAt),
+      complete,
+    };
   }
 
   const projectTaskMatch = /^\/api\/projects\/([^/?]+)\/scheduled-tasks(?:\/([^/?]+))?(?:\/run)?/.exec(path);
@@ -1203,7 +1514,11 @@ function scheduleReply(sessionID, userMessageID) {
   const assistantID = `m-reply-${Date.now().toString(36)}`;
   const state = { sessionID, directory, assistantID, owner: 'mock-chat', step: undefined, index: 0 };
   streaming = state;
-  const reply = 'Sure — the queue drains now after a reconnect. I updated the relay client and added a regression test.';
+  const reply = [
+    'Sure — the queue drains now after a reconnect. I updated the relay client and added a regression test.',
+    'The pending frames replay before the socket resumes, and the retry delay stays bounded.',
+    'I also checked the transport counters and the reconnect path against the contract.',
+  ].join(' ').repeat(6);
   const chunks = reply.match(/.{1,7}/g) || [];
   transcripts[sessionID] = transcripts[sessionID] || [];
   transcripts[sessionID].push({
@@ -1270,6 +1585,7 @@ export function createHost(player) {
         selected = id;
         return snapshot();
       }
+      if (name === 'native.clientMetadata') return { schemaVersion: 1, version: '1.18.2', build: '370', updates: { status: 'unsupported' } };
       if (name === 'camera.scan') return 'yuri://connect?url=http%3A%2F%2F127.0.0.1%3A4096';
       if (name === 'runtime.pickAttachment') {
         return {

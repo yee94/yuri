@@ -85,12 +85,13 @@ export function ProjectCard(props: {
           />
         </View>
         <View style={{ flex: 1, gap: 4 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Highlighted
               value={() => props.model().name}
               query={props.highlight ? () => props.highlight ?? '' : undefined}
               style={{
                 flexShrink: 1,
+                ...(props.model().host ? { maxWidth: '60%', flexShrink: 0 } : {}),
                 fontSize: fontSize.entityTitle,
                 lineHeight: 18,
                 letterSpacing: -0.024,
@@ -125,17 +126,17 @@ export function ProjectCard(props: {
             </If>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-            <Text style={{ fontSize: fontSize.entityMeta, color: colors.mutedForeground() }}>
+            <Text style={{ flexShrink: 0, fontSize: fontSize.entityMeta, color: colors.mutedForeground() }}>
               {sessionCountLabel(props.model().count)}
               {props.model().partial ? '+' : ''}
             </Text>
             <If when={!!props.model().activity}>
-              <Text style={{ fontSize: fontSize.entityMeta, color: alpha(colors.mutedForeground(), 0.5) }}>·</Text>
-              <Text style={{ fontSize: fontSize.entityMeta, color: colors.mutedForeground() }}>{props.model().activity}</Text>
+              <Text style={{ flexShrink: 0, fontSize: fontSize.entityMeta, color: alpha(colors.mutedForeground(), 0.5) }}>·</Text>
+              <Text style={{ flexShrink: 0, fontSize: fontSize.entityMeta, color: colors.mutedForeground() }}>{props.model().activity}</Text>
             </If>
             <If when={!!props.model().path}>
-              <Text style={{ fontSize: fontSize.entityMeta, color: alpha(colors.mutedForeground(), 0.5) }}>·</Text>
-              <Text style={{ fontSize: fontSize.entityMeta, color: colors.mutedForeground(), numberOfLines: 1 }}>
+              <Text style={{ flexShrink: 0, fontSize: fontSize.entityMeta, color: alpha(colors.mutedForeground(), 0.5) }}>·</Text>
+              <Text style={{ flexShrink: 1, fontSize: fontSize.entityMeta, color: colors.mutedForeground(), numberOfLines: 1 }}>
                 {pathHint(props.model().path ?? '')}
               </Text>
             </If>
@@ -148,8 +149,8 @@ export function ProjectCard(props: {
           role="button"
           onPress={() => props.onOpenActions?.()}
           accessibilityLabel={t('sessions.sidebar.project.actions.projectMenu')}
-          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 12 }}
-          style={{ width: 34, height: 34, alignSelf: 'center', marginRight: 4, alignItems: 'center', justifyContent: 'center' }}
+          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 18 }}
+          style={{ width: 36, height: 36, alignSelf: 'center', marginRight: 4, alignItems: 'center', justifyContent: 'center' }}
         >
           <Icon name="more-2" size={16} tone="muted" />
         </View>

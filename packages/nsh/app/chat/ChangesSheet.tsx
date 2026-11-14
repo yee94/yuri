@@ -1,11 +1,11 @@
 import { Scroll, Text, View, effect, signal, untracked } from 'nsh';
-import { Button, Sheet } from 'nsh/base';
+import { Button } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, radius } from '../core/theme';
 import { Icon, type IconName } from '../core/Icon';
-import { EmptyState, Spinner, alpha } from '../core/ui';
-import { request, record, textOf, unwrap } from '../core/host';
-import type { Conversation } from './store';
+import { alpha, EmptyState, NativeSheet, Spinner } from '../core/ui';
+import { record, textOf, unwrap } from '../core/host';
+import { sessionRequest, type Conversation } from './store';
 
 type ChangedFile = { path: string; index: string; working: string; additions: number; deletions: number; staged: boolean };
 
@@ -163,7 +163,7 @@ export function ChangesSheet(props: { conversation: Conversation; open: () => bo
     loading.set(true);
     error.set('');
     try {
-      const value = record(await request(`/api/git/status?directory=${encodeURIComponent(props.conversation.directory())}`));
+      const value = record(await sessionRequest(props.conversation, `/api/git/status?directory=${encodeURIComponent(props.conversation.directory())}`));
       files.set(changedFiles(value));
       branch.set(textOf(value.current));
     } catch (failure) {
@@ -181,7 +181,7 @@ export function ChangesSheet(props: { conversation: Conversation; open: () => bo
     diffLoading.set(true);
     try {
       const query = `directory=${encodeURIComponent(props.conversation.directory())}&path=${encodeURIComponent(file.path)}${file.staged ? '&staged=true' : ''}`;
-      const value = record(await request(`/api/git/file-diff?${query}`));
+      const value = record(await sessionRequest(props.conversation, `/api/git/file-diff?${query}`));
       if (value.isBinary === true) throw new Error(t('chat.fileAttachment.fileFallback'));
       const before = textOf(value.original);
       const after = textOf(value.modified);
@@ -222,7 +222,7 @@ export function ChangesSheet(props: { conversation: Conversation; open: () => bo
   );
 
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -291,6 +291,6 @@ export function ChangesSheet(props: { conversation: Conversation; open: () => bo
           </Scroll>
         </If>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

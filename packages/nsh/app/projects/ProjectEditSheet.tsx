@@ -1,9 +1,9 @@
 import { Scroll, Text, View, effect, signal, untracked } from 'nsh';
-import { Button, Input, Sheet } from 'nsh/base';
+import { Button, Input } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { PrimaryButton, alpha } from '../core/ui';
+import { alpha, NativeSheet, PrimaryButton } from '../core/ui';
 import {
   PROJECT_COLOR_OPTIONS,
   PROJECT_ICON_OPTIONS,
@@ -61,7 +61,7 @@ export function ProjectEditSheet(props: {
   });
 
   return (
-    <Sheet
+    <NativeSheet
       open={!!props.project()}
       closeOnSwipe={!props.busy()}
       onOpenChange={(event) => {
@@ -197,6 +197,6 @@ export function ProjectEditSheet(props: {
           </Button>
         </Scroll>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

@@ -3,7 +3,7 @@ import { Button } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, statusColor } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { Spinner, Surface, alpha, fontSize } from '../core/ui';
+import { Surface, alpha } from '../core/ui';
 import { formatRelative, formatSchedule, type TaskEntry } from './data';
 import type { IconName } from '../core/Icon';
 
@@ -32,9 +32,19 @@ export function TaskCard(props: {
   onMore: () => void;
 }) {
   const task = () => props.entry().task;
+  const disc = {
+    backgroundColor: alpha(colors.card(), 0.9),
+    boxShadow: '0 0 0 0.5px rgba(0,0,0,0.04), 0 6px 18px -6px rgba(0,0,0,0.12)',
+  } as const;
   return (
-    <Surface style={{ opacity: task().enabled ? 1 : 0.65 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 4 }}>
+    <Surface
+      style={{
+        minHeight: 74,
+        overflow: 'hidden',
+        opacity: task().enabled ? 1 : 0.65,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
         <View
           testID={`task-${task().id}`}
           role="button"
@@ -45,40 +55,62 @@ export function TaskCard(props: {
             minWidth: 0,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 10,
-            minHeight: 52,
-            paddingVertical: 12,
-            paddingLeft: 12,
-            paddingRight: 4,
+            gap: 7,
+            minHeight: 74,
+            padding: 10,
           }}
         >
           <View
             style={{
-              width: 30,
-              height: 30,
-              borderRadius: 15,
+              width: 38,
+              height: 38,
+              borderRadius: 19,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: alpha(colors.muted(), 0.9),
+              ...disc,
             }}
           >
-            <If when={task().enabled && task().lastStatus === 'running'}>
-              <Spinner size={13} />
-            </If>
-            <If when={!(task().enabled && task().lastStatus === 'running')}>
-              <Icon name={statusIcon(props.entry())} size={15} color={() => statusTone(props.entry())} />
-            </If>
+            <Icon
+              name={task().enabled && task().lastStatus === 'running' ? 'loader-4' : statusIcon(props.entry())}
+              size={18}
+              color={() => statusTone(props.entry())}
+            />
           </View>
-          <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-            <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground(), numberOfLines: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text
+              style={{
+                fontSize: 14,
+                lineHeight: 18,
+                fontWeight: '600',
+                letterSpacing: -0.34,
+                color: colors.foreground(),
+                numberOfLines: 1,
+              }}
+            >
               {task().name}
             </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={{ fontSize: fontSize.sessionMeta, color: colors.mutedForeground(), numberOfLines: 1, flexShrink: 1 }}>
+            <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Text
+                style={{
+                  fontSize: 12,
+                  lineHeight: 15,
+                  color: colors.mutedForeground(),
+                  numberOfLines: 1,
+                  flexShrink: 1,
+                }}
+              >
                 {formatSchedule(task())}
               </Text>
-              <Text style={{ fontSize: fontSize.sessionMeta, color: alpha(colors.mutedForeground(), 0.6) }}>·</Text>
-              <Text style={{ fontSize: fontSize.sessionMeta, color: colors.mutedForeground(), numberOfLines: 1 }}>
+              <Text style={{ fontSize: 12, lineHeight: 15, color: alpha(colors.mutedForeground(), 0.5) }}>·</Text>
+              <Text
+                style={{
+                  fontSize: 12,
+                  lineHeight: 15,
+                  color: colors.mutedForeground(),
+                  numberOfLines: 1,
+                  flexShrink: 0,
+                }}
+              >
                 {task().nextRunAt ? formatRelative(task().nextRunAt) : '—'}
               </Text>
             </View>
@@ -88,20 +120,20 @@ export function TaskCard(props: {
           testID={`task-history-${task().id}`}
           onPress={props.onHistory}
           accessibilityLabel={t('sessions.scheduledTasks.workspace.views.history')}
-          style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
-          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 20 }}
+          style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' }}
+          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 22 }}
         >
-          <Icon name="history" size={17} tone="muted" />
+          <Icon name="history" size={16} tone="muted" />
         </Button>
         <Button
           testID={`task-menu-${task().id}`}
           onPress={props.onMore}
           disabled={props.busy()}
           accessibilityLabel={t('sessions.scheduledTasks.dialog.actions.moreAria', { taskName: task().name })}
-          style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
-          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 20 }}
+          style={{ width: 44, height: 44, borderRadius: 22, marginRight: 6, alignItems: 'center', justifyContent: 'center' }}
+          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 22 }}
         >
-          <Icon name="more-2" size={18} tone="muted" />
+          <Icon name="more-2" size={20} tone="muted" />
         </Button>
       </View>
     </Surface>

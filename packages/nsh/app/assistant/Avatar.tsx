@@ -1,4 +1,5 @@
 import { Image, Text, View } from 'nsh';
+import { colors, statusColor } from '../core/theme';
 
 const hashed = (value: string): number => {
   let hash = 0;
@@ -54,12 +55,38 @@ export function AssistantAvatar(props: { seed?: string; size: number; label?: st
     <Image
       src={assistantAvatarSource(props.seed)}
       accessibilityLabel={props.label}
-      style={{ width: props.size, height: props.size, borderRadius: props.size / 4 }}
+      style={{ width: props.size, height: props.size, borderRadius: 8 }}
     />
   );
 }
 
-/** Web `AssistantUnreadBadge`: a red pill over the avatar's corner. */
+/** Web `AssistantWorkingAvatar`: the face with its working dot on the bottom-right corner. */
+export function AssistantWorkingAvatar(props: { seed?: string; size: number; label?: string; working?: boolean }) {
+  return (
+    <View style={{ width: props.size, height: props.size }}>
+      <AssistantAvatar seed={props.seed} size={props.size} label={props.label} />
+      <If when={!!props.working}>
+        <View
+          testID="assistant-working-dot"
+          style={{
+            position: 'absolute',
+            right: 0,
+            bottom: 0,
+            width: 10,
+            height: 10,
+            borderRadius: 5,
+            backgroundColor: statusColor('success'),
+            borderWidth: 2,
+            borderColor: colors.background(),
+            transform: [{ translateX: 2 }, { translateY: 2 }],
+          }}
+        />
+      </If>
+    </View>
+  );
+}
+
+/** Web `AssistantUnreadBadge`: an 18pt pill over the avatar's corner. */
 export function AssistantUnread(props: { count: number }) {
   return (
     <If when={props.count > 0}>
@@ -74,7 +101,7 @@ export function AssistantUnread(props: { count: number }) {
           backgroundColor: '#F95252',
         }}
       >
-        <Text style={{ fontSize: 10, lineHeight: 12, fontWeight: '600', color: '#ffffff' }}>
+        <Text style={{ fontSize: 12, lineHeight: 14, fontWeight: '600', color: '#ffffff' }}>
           {props.count > 99 ? '99+' : String(props.count)}
         </Text>
       </View>

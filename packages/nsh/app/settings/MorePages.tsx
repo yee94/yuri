@@ -2,11 +2,13 @@ import { Scroll, Text, View, resource, signal } from 'nsh';
 import { Button, NavPage } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, space } from '../core/theme';
+import { Icon } from '../core/Icon';
 import { ChoiceSheet, QuietButton, Surface, fontSize } from '../core/ui';
 import { list, record, request, textOf } from '../core/host';
 import { loadSettings, saveSettings, settingsDocument, settingsFlag, settingsText } from '../core/config';
 import { normalizePath, projects, sessionsByDirectory } from '../core/store';
-import { assistantTitle, assistants, loadAssistants } from '../assistant/data';
+import { assistantError, assistantLoading, assistantTitle, assistants, loadAssistants } from '../assistant/data';
+import { AssistantAvatar } from '../assistant/Avatar';
 import { openAssistantSettings, openSession, tabBarInset } from '../shell/nav';
 import { Group, Loading, Row, SwitchRow } from './ui';
 
@@ -194,19 +196,54 @@ export function AssistantsSettingsListPage() {
     >
       <Scroll class="flex-1" contentStyle={{ paddingBottom: tabBarInset() + 28 }}>
         <View style={{ width: '100%', maxWidth: 452, alignSelf: 'center', paddingHorizontal: space.pageInset, gap: 20, paddingTop: 8 }}>
+          <If when={!!assistantError()}>
+            <Surface style={{ padding: 14, gap: 8 }}>
+              <Text style={{ fontSize: 13, color: colors.destructive() }}>{assistantError()}</Text>
+              <QuietButton label={() => t('assistants.actions.retry')} onPress={() => void loadAssistants(true)} />
+            </Surface>
+          </If>
+
           <Group label={t('assistants.settings.listTitle')}>
-            <If when={assistants().length === 0}>
+            <If when={assistantLoading() && assistants().length === 0}>
+              <Loading />
+            </If>
+            <If when={!assistantLoading() && assistants().length === 0}>
               <Row label={t('assistants.settings.empty')} />
             </If>
             <Each of={assistants()} key={(assistant) => assistant.id}>
               {(assistant) => (
-                <Row
+                <View
                   testID={`settings-assistant-${assistant().id}`}
-                  label={() => assistantTitle(assistant())}
-                  description={() => (assistant().providerID ? `${assistant().providerID} · ${assistant().modelID}` : '')}
-                  icon="robot-2"
+                  role="button"
                   onPress={() => openAssistantSettings(assistant().id)}
-                />
+                  style={{
+                    minHeight: 52,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    paddingHorizontal: 14,
+                    paddingVertical: 9,
+                    borderTopWidth: 0.5,
+                    borderTopColor: colors.border(),
+                  }}
+                >
+                  <AssistantAvatar
+                    seed={assistant().avatarSeed ?? assistant().id}
+                    size={32}
+                    label={assistantTitle(assistant())}
+                  />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={{ fontSize: 13, lineHeight: 18, color: colors.foreground(), numberOfLines: 1 }}>
+                      {assistantTitle(assistant())}
+                    </Text>
+                    <If when={!!assistant().providerID}>
+                      <Text style={{ fontSize: 12, lineHeight: 16, color: colors.mutedForeground(), numberOfLines: 1 }}>
+                        {`${assistant().providerID} · ${assistant().modelID}`}
+                      </Text>
+                    </If>
+                  </View>
+                  <Icon name="arrow-right-s" size={16} tone="muted" />
+                </View>
               )}
             </Each>
           </Group>

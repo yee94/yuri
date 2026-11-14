@@ -1,8 +1,8 @@
 import { Text, View } from 'nsh';
-import { Button, Input, Sheet } from 'nsh/base';
+import { Button, Input } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors } from '../core/theme';
-import { PrimaryButton, QuietButton, alpha } from '../core/ui';
+import { alpha, NativeSheet, PrimaryButton, QuietButton } from '../core/ui';
 
 const sheetPopup = { backgroundColor: colors.background(), borderTopLeftRadius: 26, borderTopRightRadius: 26 } as const;
 const backdrop = { backgroundColor: alpha('#000000', 0.32) } as const;
@@ -29,7 +29,7 @@ export function RenameSheet(props: {
   onSmartTitle: () => void;
 }) {
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -53,7 +53,7 @@ export function RenameSheet(props: {
           <Text style={{ fontSize: 15, color: colors.mutedForeground() }}>{t('gitView.common.cancel')}</Text>
         </Button>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }
 
@@ -68,7 +68,7 @@ export function AddProjectSheet(props: {
   onSubmit: () => void;
 }) {
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -103,6 +103,6 @@ export function AddProjectSheet(props: {
           <Text style={{ fontSize: 15, color: colors.mutedForeground() }}>{t('gitView.common.cancel')}</Text>
         </Button>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

@@ -1,9 +1,9 @@
 import { Scroll, Text, View, signal, windowSize } from 'nsh';
-import { Button, Input, Sheet } from 'nsh/base';
+import { Button, Input } from 'nsh/base';
 import { t, currentLocale } from '../core/i18n';
 import { colors, radius } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { EmptyState, alpha } from '../core/ui';
+import { alpha, EmptyState, NativeSheet } from '../core/ui';
 import { formatTimeForLocale } from '../../../ui/src/lib/time-format-core';
 import type { Conversation } from './store';
 
@@ -51,7 +51,7 @@ export function TimelineSheet(props: { conversation: Conversation; open: () => b
   };
   const height = () => Math.max(360, windowSize().height * 0.72);
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -104,6 +104,6 @@ export function TimelineSheet(props: { conversation: Conversation; open: () => b
           </If>
         </Scroll>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

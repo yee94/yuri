@@ -1,11 +1,11 @@
 import { Scroll, Text, View, effect, signal, untracked } from 'nsh';
-import { Button, Sheet } from 'nsh/base';
+import { Button } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, radius } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { EmptyState, Spinner, alpha } from '../core/ui';
-import { request, record, textOf } from '../core/host';
-import type { Conversation } from './store';
+import { alpha, EmptyState, NativeSheet, Spinner } from '../core/ui';
+import { record, textOf } from '../core/host';
+import { sessionRequest, type Conversation } from './store';
 
 type McpServer = { name: string; status: string; error: string };
 
@@ -39,14 +39,14 @@ export function McpSheet(props: { conversation: Conversation; open: () => boolea
     let names: string[] = [];
     const statuses = new Map<string, McpServer>();
     try {
-      const config = await request(`/api/config/mcp?${location()}`);
+      const config = await sessionRequest(props.conversation, `/api/config/mcp?${location()}`);
       if (Array.isArray(config)) names = config.map((entry) => textOf(record(entry).name)).filter(Boolean);
       else throw new Error('Invalid MCP configs response');
     } catch (failure) {
       failures.push(errorText(failure));
     }
     try {
-      const body = record(await request(`/api/mcp?${location()}`));
+      const body = record(await sessionRequest(props.conversation, `/api/mcp?${location()}`));
       if (!Array.isArray(body.data)) throw new Error('Invalid MCP list response');
       for (const entry of body.data) {
         const row = record(entry);
@@ -69,7 +69,7 @@ export function McpSheet(props: { conversation: Conversation; open: () => boolea
     const connected = server.status === 'connected';
     busy.set([...busy(), server.name]);
     try {
-      await request(`/api/experimental/mcp/${encodeURIComponent(server.name)}/${connected ? 'disconnect' : 'connect'}?${location()}`, 'POST');
+      await sessionRequest(props.conversation, `/api/experimental/mcp/${encodeURIComponent(server.name)}/${connected ? 'disconnect' : 'connect'}?${location()}`, 'POST');
       await refresh();
     } catch (failure) {
       error.set(errorText(failure));
@@ -84,7 +84,7 @@ export function McpSheet(props: { conversation: Conversation; open: () => boolea
   });
 
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -165,6 +165,6 @@ export function McpSheet(props: { conversation: Conversation; open: () => boolea
           </Scroll>
         </If>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

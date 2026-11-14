@@ -5,7 +5,8 @@ import { colors, statusColor } from '../core/theme';
 import { Icon } from '../core/Icon';
 import { actionMenu, alpha } from '../core/ui';
 import { markRead, projectLabel, projects, worktreesFor, normalizePath } from '../core/store';
-import { openNewSession } from '../shell/nav';
+import { remoteSessionIDFrom } from '../core/remote';
+import { activeStack, openNewSession } from '../shell/nav';
 import type { ChatRoute } from '../shell/nav';
 import { Composer } from './Composer';
 import { PickerSheet, ContextSheet } from './Sheets';
@@ -65,7 +66,15 @@ function ContextRing(props: { percentage: () => number }) {
 function DraftBody(props: { conversation: Conversation; onPickDirectory: () => void }) {
   const directory = () => props.conversation.directory();
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+    <View
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+        paddingTop: 'env(safe-area-inset-top)',
+      }}
+    >
       <Text style={{ fontSize: 28, lineHeight: 34, fontWeight: '400', color: colors.foreground(), textAlign: 'center' }}>
         {t('chat.emptyState.draftTitleWithProject', { project: projectLabel(directory()) })}
       </Text>
@@ -91,13 +100,106 @@ function DraftBody(props: { conversation: Conversation; onPickDirectory: () => v
   );
 }
 
+/** Web `MobileDetailNavigation`: the chat header is a glass overlay that leaves
+ * upward and fades as the reader moves into history, restored at the live edge. */
+function ChatHeader(props: {
+  title: () => string;
+  hint: () => string;
+  session: () => boolean;
+  progress: () => number;
+  percentage: () => number;
+  onBack: () => void;
+  onContext: () => void;
+  onMore: () => void;
+}) {
+  const shift = () => props.progress() * 64;
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 30,
+        paddingTop: 'env(safe-area-inset-top)',
+        transform: props.progress() > 0.001 ? `translateY(${-shift()}px)` : 'none',
+        opacity: 1 - props.progress(),
+        backgroundColor: alpha(colors.background(), 0.82),
+        backdropFilter: 'blur(20px) saturate(1.25)',
+        glassEffect: 'regular',
+        borderBottomWidth: 0.5,
+        borderBottomColor: alpha(colors.border(), 0.5),
+      }}
+    >
+      <View style={{ height: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6 }}>
+        <Button
+          testID="chat-back"
+          accessibilityLabel={t('header.actions.backAria')}
+          onPress={props.onBack}
+          activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1) }}
+          style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Icon name="arrow-left" size={18} />
+        </Button>
+        <View style={{ flex: 1, alignItems: 'center', gap: 1, paddingHorizontal: 4 }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: colors.foreground(), numberOfLines: 1 }}>
+            {props.title()}
+          </Text>
+          <If when={!!props.hint()}>
+            <Text style={{ fontSize: 10, color: colors.mutedForeground(), numberOfLines: 1 }}>{props.hint()}</Text>
+          </If>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+          <If when={props.session()}>
+            <Button
+              testID="chat-context"
+              accessibilityLabel={t('mobile.header.openMetadataAria')}
+              onPress={props.onContext}
+              activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1) }}
+              style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <ContextRing percentage={props.percentage} />
+            </Button>
+          </If>
+          <Button
+            testID="chat-more"
+            accessibilityLabel={t('mobile.menu.titleAria')}
+            onPress={props.onMore}
+            activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1) }}
+            style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Icon name="more-2" size={17} />
+          </Button>
+        </View>
+      </View>
+      <View
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: -18,
+          height: 18,
+          backgroundImage: `linear-gradient(to bottom, ${alpha(colors.background(), 0.82)}, ${alpha(colors.background(), 0)})`,
+        }}
+      />
+    </View>
+  );
+}
+
 /** One session's chat page, or the new-session draft while no session exists yet. */
 export function ChatPage(props: { route: ChatRoute }) {
   const route = props.route;
   const initialDirectory = normalizePath(route.directory);
-  const key = route.draft || !route.sessionID ? `draft:${initialDirectory}` : `session:${route.sessionID}`;
-  const conversation = conversationForRoute(key, initialDirectory, route);
-  const catalog = signal(catalogFor(initialDirectory));
+  // The phone row key carries its machine; the Host's session id is what the
+  // proxied routes and transcript windows address (Web `remoteSession.sessionId`).
+  const sessionID = route.remote && route.sessionID
+    ? remoteSessionIDFrom(route.remote.hostId, route.sessionID)
+    : route.sessionID;
+  const scope = route.remote ? `remote:${route.remote.hostId}:` : '';
+  const key = route.draft || !sessionID ? `${scope}draft:${initialDirectory}` : `${scope}session:${sessionID}`;
+  const conversation = conversationForRoute(key, initialDirectory, route, sessionID);
+  const hostId = conversation.hostId;
+  const catalog = signal(catalogFor(initialDirectory, hostId));
   const pickerOpen = signal(false);
   const pickerTab = signal<'model' | 'agent'>('model');
   const contextOpen = signal(false);
@@ -108,6 +210,9 @@ export function ChatPage(props: { route: ChatRoute }) {
   const childrenOpen = signal(false);
   const branch = signal('');
   const dirty = signal(0);
+  // 0 = full header/composer, 1 = compact composer pill (Web composer swap).
+  const chrome = signal(0);
+  const latest = signal(0);
 
   const title = () => {
     if (!conversation.sessionID()) return t('mobile.menu.newSession');
@@ -137,9 +242,9 @@ export function ChatPage(props: { route: ChatRoute }) {
 
   effect(() => {
     const directory = conversation.directory();
-    const next = catalogFor(directory);
+    const next = catalogFor(directory, hostId);
     if (next !== catalog()) catalog.set(next);
-    void untracked(() => loadCatalog(directory)).then((loaded) => {
+    void untracked(() => loadCatalog(directory, hostId)).then((loaded) => {
       if (!conversation.selection().modelID) conversation.selection.set(defaultSelection(loaded));
     });
   });
@@ -148,7 +253,8 @@ export function ChatPage(props: { route: ChatRoute }) {
     const id = conversation.sessionID();
     if (!id) return;
     return untracked(() => {
-      void markRead(id, false);
+      // The remote row already cleared its Host unread before opening (Web phone).
+      if (!conversation.hostId) void markRead(id, false);
       return attachSession(conversation, id);
     });
   });
@@ -157,9 +263,9 @@ export function ChatPage(props: { route: ChatRoute }) {
     const directory = conversation.directory();
     if (!contextOpen() && !moreOpen() && !changesOpen()) return;
     void untracked(async () => {
-      const status = await readGitBranch(directory);
+      const status = await readGitBranch(directory, hostId);
       branch.set(status.branch);
-      dirty.set(await readDirtyChanges(directory));
+      dirty.set(await readDirtyChanges(directory, hostId));
     });
   });
 
@@ -188,52 +294,44 @@ export function ChatPage(props: { route: ChatRoute }) {
     <NavPage
       testID="chat-page"
       title={title()}
-      headerBackTitle={t('mobile.tabs.projects')}
+      headerVisible={false}
       headerTransparent
       hidesBottomBarWhenPushed
       class="flex-1"
       style={{ backgroundColor: colors.background() }}
-      headerTitle={
-        <View style={{ alignItems: 'center', gap: 1 }}>
-          <Text style={{ fontSize: 15, fontWeight: '600', color: colors.foreground(), numberOfLines: 1 }}>
-            {title()}
-          </Text>
-          <If when={!!syncHint()}>
-            <Text style={{ fontSize: 10, color: colors.mutedForeground(), numberOfLines: 1 }}>{syncHint()}</Text>
-          </If>
-        </View>
-      }
-      headerRight={
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-          <If when={!!conversation.sessionID()}>
-            <Button
-              testID="chat-context"
-              accessibilityLabel={t('mobile.header.openMetadataAria')}
-              onPress={() => contextOpen.set(true)}
-              style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
-            >
-              <ContextRing percentage={percentage} />
-            </Button>
-          </If>
-          <Button
-            testID="chat-more"
-            accessibilityLabel={t('mobile.menu.titleAria')}
-            onPress={openMore}
-            style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Icon name="more-2" size={17} />
-          </Button>
-        </View>
-      }
     >
       <View class="flex-1" style={{ backgroundColor: colors.background() }}>
+        <ChatHeader
+          title={title}
+          hint={syncHint}
+          session={() => !!conversation.sessionID()}
+          progress={() => chrome()}
+          percentage={percentage}
+          onBack={() => activeStack().pop()}
+          onContext={() => contextOpen.set(true)}
+          onMore={openMore}
+        />
         <If
           when={!!conversation.sessionID()}
           else={<DraftBody conversation={conversation} onPickDirectory={() => void openDirectories()} />}
         >
-          <Transcript conversation={conversation} />
+          <Transcript
+            conversation={conversation}
+            catalog={catalog}
+            chrome={chrome}
+            latest={() => latest()}
+          />
         </If>
-        <Composer conversation={conversation} catalog={catalog} onOpenPicker={openPicker} />
+        <Composer
+          conversation={conversation}
+          catalog={catalog}
+          onOpenPicker={openPicker}
+          progress={() => chrome()}
+          onExpand={() => {
+            chrome.set(0);
+            latest.set(latest() + 1);
+          }}
+        />
       </View>
       <PickerSheet
         conversation={conversation}
@@ -257,7 +355,7 @@ export function ChatPage(props: { route: ChatRoute }) {
         dirtyChanges={dirty}
         onNew={() => {
           moreOpen.set(false);
-          openNewSession(conversation.directory());
+          openNewSession(conversation.directory(), conversation.remote ?? undefined);
         }}
         onChanges={() => {
           moreOpen.set(false);
@@ -288,8 +386,14 @@ export function ChatPage(props: { route: ChatRoute }) {
   );
 }
 
-function conversationForRoute(key: string, directory: string, route: ChatRoute) {
-  return conversationFor({ key, directory, sessionID: route.sessionID, title: route.title });
+function conversationForRoute(key: string, directory: string, route: ChatRoute, sessionID: string | null) {
+  return conversationFor({
+    key,
+    directory,
+    sessionID,
+    title: route.title,
+    remote: route.remote ?? null,
+  });
 }
 
 export const chatTitle = (conversation: Conversation) => conversation.title();

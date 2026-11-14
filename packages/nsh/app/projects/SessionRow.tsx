@@ -8,7 +8,7 @@ import { liveStatus, pendingFor } from '../core/store';
 import type { Node } from './model';
 import type { SessionDrag } from './drag';
 
-const RAIL_WIDTH = 104;
+const RAIL_WIDTH = 100; // Web `--yuri-mobile-session-actions-width` (2 × 3.125rem)
 const RAIL_OPEN = 36;
 
 /** Web `resolveMobileSessionIndicator`: one dot says what the session needs. */
@@ -67,6 +67,7 @@ export function PaginationRow(props: { node: () => Node; continues: () => boolea
       }}
     >
       <Button
+        testID={props.node().id}
         onPress={props.onSelect}
         activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.08) }}
         style={{ minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 36, paddingRight: 10, paddingVertical: 6 }}
@@ -77,7 +78,7 @@ export function PaginationRow(props: { node: () => Node; continues: () => boolea
         <If when={!!props.node().subtitle}>
           <Text style={{ fontSize: fontSize.sessionMeta, color: colors.mutedForeground() }}>{props.node().subtitle ?? ''}</Text>
         </If>
-        <Icon name="arrow-right-s" size={14} tone="muted" />
+        <Icon name="arrow-right-s" size={16} tone="muted" />
       </Button>
     </View>
   );
@@ -151,8 +152,10 @@ export function SessionRow(props: {
             }}
             style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: colors.muted() }}
           >
-            <Icon name={() => (props.node().pinned ? 'unpin' : 'pushpin')} size={17} />
-            <Text style={{ fontSize: fontSize.sessionMeta, color: colors.foreground(), numberOfLines: 1 }}>{pinLabel()}</Text>
+            <Icon name={() => (props.node().pinned ? 'unpin' : 'pushpin')} size={18} />
+            <Text style={{ fontSize: fontSize.sessionMeta, fontWeight: '500', color: colors.foreground(), numberOfLines: 1 }}>
+              {pinLabel()}
+            </Text>
           </Button>
           <Button
             onPress={() => {
@@ -161,8 +164,8 @@ export function SessionRow(props: {
             }}
             style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: alpha(colors.destructive(), 0.12) }}
           >
-            <Icon name="archive" size={17} color={() => colors.destructive()} />
-            <Text style={{ fontSize: fontSize.sessionMeta, color: colors.destructive(), numberOfLines: 1 }}>
+            <Icon name="archive" size={18} color={() => colors.destructive()} />
+            <Text style={{ fontSize: fontSize.sessionMeta, fontWeight: '500', color: colors.destructive(), numberOfLines: 1 }}>
               {t('sessions.sidebar.bulkActions.archive')}
             </Text>
           </Button>
@@ -224,7 +227,7 @@ export function SessionRow(props: {
                     fontSize: fontSize.sessionTitle,
                     lineHeight: 16,
                     letterSpacing: -0.012,
-                    fontWeight: props.node().unread ? '700' : '500',
+                    fontWeight: props.node().unread ? '600' : '500',
                     color: colors.foreground(),
                     numberOfLines: 1,
                   }}
@@ -234,21 +237,19 @@ export function SessionRow(props: {
                     {props.node().changes ?? ''}
                   </Text>
                 </If>
-                <If when={props.node().pinned}>
-                  <Icon name="pushpin" size={10} tone="muted" />
-                </If>
                 <If when={props.node().archived}>
                   <Icon name="archive" size={12} tone="muted" />
                 </If>
               </View>
               <If when={!!(props.node().subtitle || props.node().machine)}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <If when={!!props.node().subtitle}>
                     <Highlighted
                       value={() => props.node().subtitle ?? ''}
                       query={props.highlight}
                       style={{
                         flexShrink: 1,
+                        ...(props.node().machine ? { maxWidth: '60%' } : {}),
                         fontSize: fontSize.sessionMeta,
                         lineHeight: 12,
                         color: colors.mutedForeground(),
@@ -257,7 +258,10 @@ export function SessionRow(props: {
                     />
                   </If>
                   <If when={!!props.node().machine}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 1 }}>
+                    <View
+                      testID={`${props.idPrefix ?? ''}session-machine-${id()}`}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 1 }}
+                    >
                       <Icon name="computer" size={10} tone="muted" />
                       <Text style={{ fontSize: fontSize.sessionMeta, color: colors.mutedForeground(), numberOfLines: 1 }}>
                         {props.node().machine ?? ''}
@@ -278,7 +282,7 @@ export function SessionRow(props: {
           testID={`${props.idPrefix ?? ''}session-menu-${id()}`}
           onPress={() => props.onOpenActions()}
           accessibilityLabel={t('sessions.sidebar.session.menu.label')}
-          style={{ width: 36, height: 36, marginRight: 2, alignItems: 'center', justifyContent: 'center' }}
+          style={{ width: 36, height: 36, marginRight: 4, alignItems: 'center', justifyContent: 'center' }}
           activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.1), borderRadius: 12 }}
         >
           <Icon name="more-2" size={14} tone="muted" />

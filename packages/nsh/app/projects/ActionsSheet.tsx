@@ -1,8 +1,8 @@
 import { Text, View } from 'nsh';
-import { Button, Sheet } from 'nsh/base';
+import { Button } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, radius } from '../core/theme';
-import { ActionRow, alpha, fontSize } from '../core/ui';
+import { ActionRow, alpha, fontSize, NativeSheet } from '../core/ui';
 import type { IconName } from '../core/Icon';
 
 export type SheetItem = {
@@ -34,7 +34,7 @@ export function ActionsSheet(props: {
     return out;
   };
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => props.onOpenChange(event.open)}
@@ -90,6 +90,6 @@ export function ActionsSheet(props: {
           </Button>
         </View>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

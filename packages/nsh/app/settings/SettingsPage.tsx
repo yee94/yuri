@@ -3,8 +3,8 @@ import { Button, Input, NavPage } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, space } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { QuietButton, actionMenu, alpha, confirm, fontSize } from '../core/ui';
-import { reloadOpenCode, settingsDocument, loadSettings } from '../core/config';
+import { QuietButton, Surface, actionMenu, alpha, confirm, fontSize } from '../core/ui';
+import { reloadOpenCode, settingsDocument, settingsError, settingsLoading, loadSettings } from '../core/config';
 import { connection, connections, online, refreshCatalog, removeConnection, switchConnection } from '../core/store';
 import { openConnect, openSettingsPage, tabBarInset } from '../shell/nav';
 import { filterSettingsPages } from './model';
@@ -119,6 +119,19 @@ export function SettingsPage() {
         >
           {searchField}
 
+          <If when={settingsLoading() && !settingsDocument()}>
+            <View style={{ alignItems: 'center', paddingVertical: 18 }}>
+              <Icon name="loader-4" size={18} tone="muted" />
+            </View>
+          </If>
+
+          <If when={!!settingsError()}>
+            <Surface style={{ padding: 14, gap: 8 }}>
+              <Text style={{ fontSize: 13, color: colors.destructive() }}>{settingsError()}</Text>
+              <QuietButton label={() => t('assistants.actions.retry')} onPress={() => void loadSettings(true)} />
+            </Surface>
+          </If>
+
           <If when={!!(failure() || (connection()?.id && !online()))}>
             <Text style={{ fontSize: 13, color: failure() ? colors.destructive() : colors.mutedForeground(), paddingHorizontal: 6 }}>
               {failure() || t('mobile.instances.status.saved')}
@@ -177,7 +190,7 @@ export function SettingsPage() {
           </If>
 
           <If when={!query().trim()}>
-            <View style={{ borderRadius: 16, overflow: 'hidden' }}>
+            <Group>
               <Row
                 label={t('settings.view.actions.reloadOpenCode')}
                 icon="restart"
@@ -185,7 +198,7 @@ export function SettingsPage() {
                   void reloadOpenCode().catch((error) => failure.set(errorText(error)))
                 }
               />
-            </View>
+            </Group>
           </If>
 
           <If when={!!query().trim() && connections().length > 0}>

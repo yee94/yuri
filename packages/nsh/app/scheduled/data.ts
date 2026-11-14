@@ -49,7 +49,7 @@ export type RunsFilter = { projectId?: string; taskId?: string };
 
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-const scheduleOf = (value: unknown): Schedule => {
+export const parseSchedule = (value: unknown): Schedule => {
   const row = record(value);
   const times = Array.isArray(row.times)
     ? row.times.map(textOf).filter((time) => timePattern.test(time))
@@ -85,7 +85,7 @@ const parseTask = (value: unknown): ScheduledTask | null => {
     id,
     name: textOf(row.name) || id,
     enabled: row.enabled !== false,
-    schedule: scheduleOf(row.schedule),
+    schedule: parseSchedule(row.schedule),
     prompt: textOf(execution.prompt),
     providerID: textOf(execution.providerID),
     modelID: textOf(execution.modelID),
@@ -302,20 +302,24 @@ const weekdayKey = (value: number) => {
 };
 
 /** The card's schedule line; the phone never shows the timezone. */
-export function formatSchedule(task: ScheduledTask): string {
-  const times = task.schedule.times.join(', ') || task.schedule.time || '--:--';
-  if (task.schedule.kind === 'daily') return t('sessions.scheduledTasks.dialog.schedule.daily', { time: times });
-  if (task.schedule.kind === 'weekly') {
-    const days = task.schedule.weekdays.map(weekdayKey).join(', ');
+export function formatScheduleOf(schedule: Schedule): string {
+  const times = schedule.times.join(', ') || schedule.time || '--:--';
+  if (schedule.kind === 'daily') return t('sessions.scheduledTasks.dialog.schedule.daily', { time: times });
+  if (schedule.kind === 'weekly') {
+    const days = schedule.weekdays.map(weekdayKey).join(', ');
     return t('sessions.scheduledTasks.dialog.schedule.weekly', { days, time: times });
   }
-  if (task.schedule.kind === 'once') {
+  if (schedule.kind === 'once') {
     return t('sessions.scheduledTasks.dialog.schedule.once', {
-      date: task.schedule.date.trim() || t('sessions.scheduledTasks.dialog.schedule.unknownDate'),
-      time: task.schedule.time.trim() || '--:--',
+      date: schedule.date.trim() || t('sessions.scheduledTasks.dialog.schedule.unknownDate'),
+      time: schedule.time.trim() || '--:--',
     });
   }
-  return t('sessions.scheduledTasks.dialog.schedule.cron', { cron: task.schedule.cron });
+  return t('sessions.scheduledTasks.dialog.schedule.cron', { cron: schedule.cron });
+}
+
+export function formatSchedule(task: ScheduledTask): string {
+  return formatScheduleOf(task.schedule);
 }
 
 export function formatRelative(value: number): string {

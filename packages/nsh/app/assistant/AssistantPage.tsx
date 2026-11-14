@@ -3,10 +3,12 @@ import { Button, NavPage } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, space } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { PrimaryButton, QuietButton, Spinner, Surface, actionMenu, alpha, confirm, fontSize } from '../core/ui';
+import { PrimaryButton, QuietButton, Surface, actionMenu, alpha, confirm } from '../core/ui';
+import { showToast } from '../core/toast';
 import { openAssistant, openAssistantSettings, openSettingsPage, tabBarInset } from '../shell/nav';
 import { AssistantCard } from './AssistantCard';
-import { AssistantAvatar, AssistantUnread } from './Avatar';
+import { AssistantGuide, AssistantSkeleton } from './AssistantGuide';
+import { AssistantUnread, AssistantWorkingAvatar } from './Avatar';
 import {
   assistantCapability,
   assistantContacts,
@@ -15,18 +17,19 @@ import {
   assistantSnapshot,
   assistantTitle,
   assistants,
-  assistantsEnabled,
   deleteAssistant,
   loadAssistants,
   markAllAssistantsRead,
+  toggleAssistantPin,
   type Assistant,
 } from './data';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-function StateCard(props: { icon: 'ai-agent' | 'sparkling' | 'cloud'; title: string; description?: string }) {
+/** Web `yuri-mobile-assistant-state-card`: icon, title and one line of help. */
+function StateCard(props: { icon: 'cloud-off' | 'sparkling'; title: string; description?: string }) {
   return (
-    <Surface style={{ padding: 20, gap: 8 }}>
+    <Surface style={{ width: '100%', padding: 20, gap: 8 }}>
       <View
         style={{
           width: 48,
@@ -39,9 +42,11 @@ function StateCard(props: { icon: 'ai-agent' | 'sparkling' | 'cloud'; title: str
       >
         <Icon name={props.icon} size={20} tone="muted" />
       </View>
-      <Text style={{ marginTop: 8, fontSize: 18, fontWeight: '600', color: colors.foreground() }}>{props.title}</Text>
+      <Text style={{ marginTop: 12, maxWidth: 300, fontSize: 18, fontWeight: '600', lineHeight: 23, color: colors.foreground() }}>
+        {props.title}
+      </Text>
       <If when={!!props.description}>
-        <Text style={{ fontSize: fontSize.entityTitle, lineHeight: 20, color: colors.mutedForeground() }}>
+        <Text style={{ marginTop: 4, fontSize: 13, lineHeight: 19, color: colors.mutedForeground() }}>
           {props.description ?? ''}
         </Text>
       </If>
@@ -52,7 +57,6 @@ function StateCard(props: { icon: 'ai-agent' | 'sparkling' | 'cloud'; title: str
 /** The bots tab: pinned contact, every bot's latest message, unread badges and swipe actions. */
 export function AssistantPage() {
   const busy = signal(false);
-  const failure = signal('');
 
   if (!assistantCapability() && !assistantLoading()) void loadAssistants();
 
@@ -79,8 +83,17 @@ export function AssistantPage() {
     if (!confirmed) return;
     try {
       await deleteAssistant(assistant.id, assistant.revision);
-    } catch (error) {
-      failure.set(errorText(error));
+      showToast({ message: t('assistants.settings.toast.deleted') });
+    } catch {
+      showToast({ message: t('assistants.settings.toast.deleteFailed') });
+    }
+  };
+
+  const pin = async (assistant: Assistant) => {
+    try {
+      await toggleAssistantPin(assistant);
+    } catch {
+      showToast({ message: t('assistants.menu.pinError') });
     }
   };
 
@@ -88,10 +101,15 @@ export function AssistantPage() {
     const action = await actionMenu({
       title: assistantTitle(assistant),
       actions: [
+        {
+          id: 'pin',
+          label: t(assistant.pinnedAt == null ? 'assistants.menu.pin' : 'assistants.menu.unpin'),
+        },
         { id: 'edit', label: t('assistants.menu.edit') },
         { id: 'delete', label: t('assistants.settings.delete'), destructive: true },
       ],
     });
+    if (action === 'pin') void pin(assistant);
     if (action === 'edit') edit(assistant);
     if (action === 'delete') void remove(assistant);
   };
@@ -99,24 +117,46 @@ export function AssistantPage() {
   const markAll = async () => {
     if (busy()) return;
     busy.set(true);
-    failure.set('');
     try {
       const failed = await markAllAssistantsRead();
-      if (failed > 0) failure.set(t('assistants.unread.markAllFailed'));
-    } catch (error) {
-      failure.set(errorText(error));
+      if (failed > 0) showToast({ message: t('assistants.unread.markAllFailed') });
+    } catch {
+      showToast({ message: t('assistants.unread.markAllFailed') });
     } finally {
       busy.set(false);
     }
   };
 
+  const canList = () =>
+    assistantCapability()?.supported === true &&
+    assistantCapability()?.enabled !== false &&
+    !!assistantSnapshot() &&
+    assistantSnapshot()?.enabled === true;
+  const isEmpty = () => canList() && assistants().length === 0;
+  const unavailable = () => !!assistantError();
+  const unsupported = () => assistantCapability()?.supported === false;
+  const disabled = () =>
+    !unavailable() &&
+    assistantCapability()?.supported === true &&
+    (assistantCapability()?.enabled === false || assistantSnapshot()?.enabled === false);
+
   const headerRight = (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+    <If when={canList() && assistants().length > 0}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
       <If when={assistants().some((assistant) => assistant.unreadCount > 0)}>
         <Button
+          testID="assistants-mark-all"
           onPress={() => void markAll()}
           accessibilityLabel={t('assistants.unread.markAll')}
-          style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: alpha(colors.card(), 0.88),
+            backdropFilter: 'blur(20px) saturate(1.25)',
+          }}
         >
           <Icon name="check-double" size={20} />
         </Button>
@@ -125,11 +165,19 @@ export function AssistantPage() {
         testID="assistants-create"
         onPress={() => openAssistantSettings('new')}
         accessibilityLabel={t('assistants.settings.create')}
-        style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: colors.foreground(),
+        }}
       >
-        <Icon name="add" size={22} />
+        <Icon name="add" size={20} color={() => colors.background()} />
       </Button>
     </View>
+    </If>
   );
 
   return (
@@ -150,56 +198,27 @@ export function AssistantPage() {
             gap: 14,
           }}
         >
-          <If when={!!(failure() || assistantError())}>
-            <Surface style={{ padding: 14, gap: 8 }}>
-              <Text style={{ fontSize: 13, color: colors.destructive() }}>{failure() || assistantError()}</Text>
-              <QuietButton label={() => t('assistants.actions.retry')} onPress={reload} />
-            </Surface>
+          <If when={!assistantSnapshot() && !unavailable() && !unsupported()}>
+            <AssistantSkeleton />
           </If>
 
-          <If when={!assistantCapability() || (assistantLoading() && !assistantSnapshot())}>
-            <Surface style={{ padding: 24, alignItems: 'center' }}>
-              <Icon name="ai-agent" size={24} tone="muted" />
-            </Surface>
-          </If>
-
-          <If when={assistantCapability()?.supported === false}>
+          <If when={unavailable() || unsupported()}>
             <StateCard
-              icon="cloud"
-              title={t('assistants.state.unsupportedTitle')}
-              description={t('assistants.state.unsupportedDescription')}
+              icon="cloud-off"
+              title={unavailable() ? t('assistants.state.unavailable') : t('assistants.state.unsupportedTitle')}
+              description={unavailable() ? undefined : t('assistants.state.unsupportedDescription')}
             />
+            <If when={unavailable()}>
+              <QuietButton label={() => t('assistants.actions.retry')} onPress={reload} />
+            </If>
           </If>
 
-          <If
-            when={
-              assistantCapability()?.supported === true &&
-              (assistantCapability()?.enabled === false || !assistantsEnabled()) &&
-              !!assistantSnapshot()
-            }
-          >
-            <View style={{ gap: 12 }}>
-              <StateCard
-                icon="sparkling"
-                title={t('assistants.guide.disabledTitle')}
-                description={t('assistants.guide.disabledDescription')}
-              />
-              <PrimaryButton
-                label={() => t('assistants.guide.enableAction')}
-                onPress={() => openSettingsPage('assistants')}
-              />
-            </View>
+          <If when={disabled()}>
+            <AssistantGuide onEnable={() => openSettingsPage('assistants')} />
           </If>
 
-          <If
-            when={
-              assistantCapability()?.supported === true &&
-              assistantCapability()?.enabled !== false &&
-              assistantsEnabled() &&
-              assistants().length === 0
-            }
-          >
-            <Surface style={{ padding: 24, gap: 8 }}>
+          <If when={isEmpty()}>
+            <Surface style={{ width: '100%', padding: 24, gap: 2 }}>
               <View
                 style={{
                   width: 36,
@@ -210,75 +229,92 @@ export function AssistantPage() {
                   backgroundColor: alpha(colors.foreground(), 0.08),
                 }}
               >
-                <Icon name="ai-agent" size={18} tone="muted" />
+                <Icon name="ai-agent" size={20} />
               </View>
-              <Text style={{ marginTop: 8, fontSize: 18, fontWeight: '600', color: colors.foreground() }}>
+              <Text style={{ marginTop: 20, fontSize: 18, fontWeight: '600', lineHeight: 23, letterSpacing: -0.45, color: colors.foreground() }}>
                 {t('assistants.onboarding.title')}
               </Text>
-              <Text style={{ fontSize: fontSize.entityTitle, lineHeight: 21, color: colors.mutedForeground() }}>
+              <Text style={{ marginTop: 8, fontSize: 13, lineHeight: 20, color: colors.mutedForeground() }}>
                 {t('assistants.onboarding.description')}
               </Text>
-              <View style={{ marginTop: 12 }}>
+              <View style={{ marginTop: 24 }}>
                 <PrimaryButton
                   label={() => t('assistants.onboarding.action')}
                   icon="add"
-                  onPress={() => openSettingsPage('assistants')}
+                  onPress={() => openAssistantSettings('new')}
                 />
               </View>
             </Surface>
           </If>
 
-          <Each of={assistantContacts().pinned} key={(assistant) => `pinned-${assistant.id}`}>
-            {(entry) => (
-              <View
-                testID={`assistant-pinned-${entry().id}`}
-                role="button"
-                onPress={() => open(entry())}
-                onLongPress={() => void openMenu(entry())}
-                style={{ alignSelf: 'center', alignItems: 'center', gap: 8, maxWidth: 140, paddingVertical: 4 }}
-              >
-                <View style={{ width: 64, height: 64 }}>
-                  <AssistantAvatar seed={entry().avatarSeed ?? entry().id} size={64} label={assistantTitle(entry())} />
-                  <If when={entry().working}>
-                    <View style={{ position: 'absolute', right: -4, bottom: -4, backgroundColor: colors.background(), borderRadius: 7, padding: 1 }}>
-                      <Spinner size={12} />
-                    </View>
-                  </If>
-                  <View style={{ position: 'absolute', right: -4, top: -4 }}>
-                    <AssistantUnread count={entry().unreadCount} />
-                  </View>
+          <If when={canList() && assistants().length > 0}>
+            <View style={{ gap: 14 }}>
+              <If when={assistantContacts().pinned.length > 0}>
+                <View
+                  role="group"
+                  accessibilityLabel={t('assistants.list.pinned')}
+                  style={{ alignItems: 'center', gap: 8, paddingTop: 8, paddingBottom: 12 }}
+                >
+                  <Each of={assistantContacts().pinned} key={(assistant) => `pinned-${assistant.id}`}>
+                    {(entry) => (
+                      <View
+                        testID={`assistant-pinned-${entry().id}`}
+                        role="button"
+                        onPress={() => open(entry())}
+                        onLongPress={() => void openMenu(entry())}
+                        activeStyle={{ backgroundColor: alpha(colors.mutedForeground(), 0.06) }}
+                        style={{
+                          width: '100%',
+                          maxWidth: 112,
+                          alignItems: 'center',
+                          gap: 8,
+                          borderRadius: 16,
+                          paddingHorizontal: 8,
+                          paddingVertical: 12,
+                        }}
+                      >
+                        <View style={{ position: 'relative' }}>
+                          <AssistantWorkingAvatar
+                            seed={entry().avatarSeed ?? entry().id}
+                            size={64}
+                            label={assistantTitle(entry())}
+                            working={entry().working}
+                          />
+                          <View style={{ position: 'absolute', right: -4, top: -4 }}>
+                            <AssistantUnread count={entry().unreadCount} />
+                          </View>
+                        </View>
+                        <Text
+                          style={{
+                            width: '100%',
+                            fontSize: 13,
+                            fontWeight: '500',
+                            lineHeight: 20,
+                            color: colors.foreground(),
+                            textAlign: 'center',
+                            numberOfLines: 1,
+                          }}
+                        >
+                          {assistantTitle(entry())}
+                        </Text>
+                      </View>
+                    )}
+                  </Each>
                 </View>
-                <Text style={{ fontSize: 14, fontWeight: '500', color: colors.foreground(), numberOfLines: 1 }}>
-                  {assistantTitle(entry())}
-                </Text>
-              </View>
-            )}
-          </Each>
+              </If>
 
-          <View style={{ gap: 14 }}>
-            <Each of={assistantContacts().unpinned} key={(assistant) => assistant.id}>
-              {(entry) => (
-                <AssistantCard
-                  assistant={entry}
-                  onOpen={() => open(entry())}
-                  onEdit={() => edit(entry())}
-                  onDelete={() => void remove(entry())}
-                />
-              )}
-            </Each>
-          </View>
-
-          <If
-            when={
-              assistantCapability()?.supported === true &&
-              assistantCapability()?.enabled !== false &&
-              assistantsEnabled() &&
-              assistants().length === 0
-            }
-          >
-            <Text style={{ fontSize: fontSize.sessionMeta, color: colors.mutedForeground(), textAlign: 'center' }}>
-              {t('assistants.subtitle')}
-            </Text>
+              <Each of={assistantContacts().unpinned} key={(assistant) => assistant.id}>
+                {(entry) => (
+                  <AssistantCard
+                    assistant={entry}
+                    onOpen={() => open(entry())}
+                    onEdit={() => edit(entry())}
+                    onDelete={() => void remove(entry())}
+                    onMenu={() => void openMenu(entry())}
+                  />
+                )}
+              </Each>
+            </View>
           </If>
         </View>
       </Scroll>

@@ -58,16 +58,16 @@ export function RunRow(props: { run: () => Run }) {
         </View>
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
-            <Text style={{ flex: 1, fontSize: 13, fontWeight: '600', color: colors.foreground(), numberOfLines: 2 }}>
+            <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, fontWeight: '600', color: colors.foreground(), numberOfLines: 3 }}>
               {run().taskName}
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <If when={!!formatDuration(run().durationMs ?? 0)}>
-                <Text style={{ fontSize: 10, color: colors.mutedForeground() }}>
+                <Text style={{ fontSize: 12, color: colors.mutedForeground() }}>
                   {formatDuration(run().durationMs ?? 0)}
                 </Text>
               </If>
-              <Text style={{ fontSize: 10, fontWeight: '500', color: runStatusColor(run()) }}>
+              <Text style={{ fontSize: 12, lineHeight: 15, fontWeight: '500', color: runStatusColor(run()) }}>
                 {run().status === 'running'
                   ? t('sessions.scheduledTasks.dialog.status.running')
                   : run().status === 'success'
@@ -77,19 +77,19 @@ export function RunRow(props: { run: () => Run }) {
             </View>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Icon name="folder" size={11} tone="muted" />
-            <Text style={{ fontSize: 11, color: colors.mutedForeground(), numberOfLines: 1, flexShrink: 1 }}>
+            <Icon name="folder" size={12} tone="muted" />
+            <Text style={{ fontSize: 12, lineHeight: 16, color: colors.mutedForeground(), numberOfLines: 2, flexShrink: 1 }}>
               {run().directory || run().projectId}
             </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <Icon name="time" size={10} tone="muted" />
-              <Text style={{ fontSize: 10, color: colors.mutedForeground() }}>{formatRunTime(run().startedAt)}</Text>
+              <Icon name="time" size={12} tone="muted" />
+              <Text style={{ fontSize: 12, color: colors.mutedForeground() }}>{formatRunTime(run().startedAt)}</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <Icon name={run().trigger === 'manual' ? 'play' : 'calendar-schedule'} size={10} tone="muted" />
-              <Text style={{ fontSize: 10, color: colors.mutedForeground() }}>
+              <Icon name={run().trigger === 'manual' ? 'play' : 'calendar-schedule'} size={12} tone="muted" />
+              <Text style={{ fontSize: 12, color: colors.mutedForeground() }}>
                 {run().trigger === 'manual'
                   ? t('sessions.scheduledTasks.history.trigger.manual')
                   : t('sessions.scheduledTasks.history.trigger.scheduled')}
@@ -97,7 +97,7 @@ export function RunRow(props: { run: () => Run }) {
             </View>
           </View>
           <If when={!!run().error}>
-            <Text style={{ fontSize: 10, color: colors.mutedForeground(), numberOfLines: 3, marginTop: 2 }}>
+            <Text style={{ fontSize: 12, lineHeight: 16, color: colors.mutedForeground(), numberOfLines: 3, marginTop: 6 }}>
               {run().error ?? ''}
             </Text>
           </If>

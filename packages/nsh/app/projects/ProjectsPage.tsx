@@ -17,6 +17,7 @@ import {
   loadMore,
   markRead,
   paginationFor,
+  projectSortOrder,
   projects as projectCatalog,
   refreshCatalog,
   refreshSessionRecord,
@@ -50,6 +51,7 @@ import {
   remoteTogglePin,
 } from '../core/remote';
 import {
+  bucketVisibleCountFor,
   filterProjects,
   homeModel,
   isPaginationId,
@@ -69,7 +71,7 @@ import { ActionsSheet, type SheetItem } from './ActionsSheet';
 import { AddProjectSheet, RenameSheet } from './ProjectSheets';
 import { DeleteWorktreeSheet, NewWorktreeSheet } from './WorktreeSheets';
 import { ProjectEditSheet } from './ProjectEditSheet';
-import { openConnect, openNewSession, openSearch, openSession, tabBarInset } from '../shell/nav';
+import { openConnect, openNewSession, openSearch, openSession, openSettingsPage, tabBarInset } from '../shell/nav';
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -152,8 +154,15 @@ export function ProjectsPage() {
       if (parsed.kind === 'more') {
         showMoreSessions(parsed.projectId, parsed.bucketKey);
         const project = model().projects.find((entry) => entry.id === parsed.projectId);
-        if (project?.remote) void remoteLoadMore(project.remote.hostId, parsed.bucketKey);
-        else if (paginationFor(node.directory).hasMore) void loadMore(node.directory);
+        if (project?.remote) {
+          // Web asks for the next remote page only once the slice covers what is cached.
+          const bucket = project.worktrees.find((group) => group.path === node.directory);
+          if (bucketVisibleCountFor(parsed.projectId, parsed.bucketKey) >= (bucket?.sessionCount ?? 0)) {
+            void remoteLoadMore(project.remote.hostId, parsed.bucketKey);
+          }
+        } else if (paginationFor(node.directory).hasMore) {
+          void loadMore(node.directory);
+        }
       } else {
         showFewerSessions(parsed.projectId, parsed.bucketKey);
       }
@@ -188,7 +197,7 @@ export function ProjectsPage() {
   const archiveNode = (node: Node) => {
     if (isPaginationId(node.id)) return;
     if (!node.remote) {
-      void archiveSessionWithUndo(node.id);
+      void archiveSessionWithUndo(node.id, { onViewArchived: () => openSettingsPage('archived-sessions') });
       return;
     }
     const remote = node.remote;
@@ -297,18 +306,14 @@ export function ProjectsPage() {
             },
           ]
         : []),
-      ...(node.remote
-        ? []
-        : [
-            {
-              id: 'refresh',
-              icon: 'refresh' as const,
-              label: t('sessions.sidebar.session.menu.refreshTranscript'),
-              disabled: running,
-              busy: running,
-              onPress: () => void refreshNode(node),
-            },
-          ]),
+      {
+        id: 'refresh',
+        icon: 'refresh' as const,
+        label: t('sessions.sidebar.session.menu.refreshTranscript'),
+        disabled: running,
+        busy: running,
+        onPress: () => void refreshNode(node),
+      },
       {
         id: 'archive',
         icon: 'archive',
@@ -374,7 +379,7 @@ export function ProjectsPage() {
         ? [
             {
               id: 'newWorktree',
-              icon: 'git-branch' as const,
+              icon: 'node-tree' as const,
               label: t('sessions.sidebar.project.actions.newWorktree'),
               disabled: Boolean(project.remote) && !hostAvailable(project.remote!.hostId),
               onPress: () => worktreeProject.set(project),
@@ -382,16 +387,16 @@ export function ProjectsPage() {
           ]
         : []),
       {
-        id: 'edit',
-        icon: 'pencil-ai',
-        label: t('sessions.sidebar.project.actions.edit'),
-        onPress: () => editTarget.set(project),
-      },
-      {
         id: 'syncSessions',
         icon: 'refresh',
         label: t('sessions.sidebar.project.actions.syncSessions'),
         onPress: () => syncProjectSessions(project),
+      },
+      {
+        id: 'edit',
+        icon: 'pencil-ai',
+        label: t('sessions.sidebar.project.actions.edit'),
+        onPress: () => editTarget.set(project),
       },
       {
         id: 'closeProject',
@@ -692,7 +697,7 @@ export function ProjectsPage() {
             onOpenActions={openSessionActions}
           />
 
-          <ProjectList items={items} canReorder={() => !query().trim()}>
+          <ProjectList items={items} canReorder={() => !query().trim() && projectSortOrder() === 'manual'}>
             {(project, drag) => (
               <ProjectSurface
                 project={project}
@@ -703,6 +708,8 @@ export function ProjectsPage() {
                 onOpenActions={() => openProjectActions(project())}
                 onToggleWorktree={(group) => toggleWorktreeExpanded(`${project().id}::${group.id}`)}
                 onOpenWorktreeActions={(group) => openWorktreeActions(project(), group)}
+                onNewWorktreeSession={(group) => startDraft(project(), group.path)}
+                onDeleteWorktree={(group) => worktreeDelete.set({ project: project(), group })}
                 onSelect={selectNode}
                 onPin={pinNode}
                 onArchive={archiveNode}

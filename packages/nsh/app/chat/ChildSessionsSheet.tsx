@@ -1,9 +1,9 @@
 import { Scroll, Text, View, effect, signal, untracked } from 'nsh';
-import { Button, Sheet } from 'nsh/base';
+import { Button } from 'nsh/base';
 import { t } from '../core/i18n';
 import { colors, radius } from '../core/theme';
 import { Icon } from '../core/Icon';
-import { EmptyState, Spinner, alpha } from '../core/ui';
+import { alpha, EmptyState, NativeSheet, Spinner } from '../core/ui';
 import { record, textOf } from '../core/host';
 import { liveStatus, type Session } from '../core/store';
 import { openSession } from '../shell/nav';
@@ -26,7 +26,7 @@ export function ChildSessionsSheet(props: { conversation: Conversation; open: ()
     loading.set(true);
     error.set('');
     try {
-      const data = await loadChildSessions(props.conversation.directory(), id);
+      const data = await loadChildSessions(props.conversation.directory(), id, props.conversation.hostId);
       rows.set(
         data.map((entry) => ({
           id: textOf(entry.id),
@@ -53,12 +53,17 @@ export function ChildSessionsSheet(props: { conversation: Conversation; open: ()
   });
 
   const open = (row: Session) => {
-    openSession({ id: row.id, title: row.title, directory: row.directory });
+    openSession({
+      id: row.id,
+      title: row.title,
+      directory: row.directory,
+      ...(props.conversation.remote ? { remote: props.conversation.remote } : {}),
+    });
     props.close();
   };
 
   return (
-    <Sheet
+    <NativeSheet
       open={props.open()}
       closeOnSwipe
       onOpenChange={(event) => {
@@ -67,7 +72,7 @@ export function ChildSessionsSheet(props: { conversation: Conversation; open: ()
       popupStyle={sheetPopup}
       backdropStyle={backdrop}
     >
-      <View style={{ height: 420, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 'env(safe-area-inset-bottom)' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 8 }}>
           <Text style={{ flex: 1, fontSize: 17, fontWeight: '600', color: colors.foreground() }}>
             {t('chat.workStatus.section.subagents')}
@@ -98,7 +103,7 @@ export function ChildSessionsSheet(props: { conversation: Conversation; open: ()
             </If>
           }
         >
-          <Scroll class="flex-1" scrollbar={false} contentStyle={{ paddingBottom: 10 }}>
+          <Scroll style={{ maxHeight: 420 }} scrollbar={false} contentStyle={{ paddingBottom: 10 }}>
             <View style={{ borderRadius: radius.inset, overflow: 'hidden', backgroundColor: alpha(colors.muted(), 0.25) }}>
               <Each of={rows()} key={(row) => row.id}>
                 {(row) => {
@@ -125,6 +130,6 @@ export function ChildSessionsSheet(props: { conversation: Conversation; open: ()
           </Scroll>
         </If>
       </View>
-    </Sheet>
+    </NativeSheet>
   );
 }

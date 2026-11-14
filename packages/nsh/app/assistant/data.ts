@@ -1,6 +1,7 @@
 import { signal } from 'nsh';
 import { list, record, request, textOf } from '../core/host';
 import { t } from '../core/i18n';
+import { parseSchedule, type Schedule } from '../scheduled/data';
 
 export type AssistantFallbackKind = 'image' | 'file' | 'session' | 'assistant' | 'schedule';
 export type AssistantPreview = {
@@ -253,6 +254,17 @@ export async function deleteAssistant(id: string, revision: number): Promise<voi
   }
 }
 
+/** Web `AssistantContactMenu`: pin or unpin one contact from its long-press menu. */
+export async function toggleAssistantPin(assistant: Assistant): Promise<void> {
+  const saved = parseAssistant(
+    await request(`/api/yuri/assistants/${encodeURIComponent(assistant.id)}`, 'PATCH', {
+      pinned: assistant.pinnedAt == null,
+      expectedRevision: assistant.revision,
+    }),
+  );
+  if (saved) replaceAssistant(saved);
+}
+
 export async function markAssistantRead(assistant: Assistant): Promise<void> {
   if (!assistant.readTip) return;
   await request(`/api/yuri/assistants/${encodeURIComponent(assistant.id)}/contact/read`, 'POST', {
@@ -330,26 +342,42 @@ export async function disconnectChannel(id: string, provider: ChannelProvider): 
   await request(`/api/yuri/assistants/${encodeURIComponent(id)}/channels/${provider}`, 'DELETE');
 }
 
+export async function retryChannel(id: string, provider: ChannelProvider): Promise<void> {
+  await request(`/api/yuri/assistants/${encodeURIComponent(id)}/channels/${provider}/retry`, 'POST', {});
+}
+
 export type WeixinStatus = { status: string; error: string | null; qrCode: string };
+
+const parseWeixin = (row: Record<string, unknown>): WeixinStatus => ({
+  status: textOf(row.status) || 'unsupported',
+  error: textOf(row.error) || null,
+  qrCode: textOf(row.qrCode),
+});
 
 export async function readWeixin(id: string): Promise<WeixinStatus> {
   try {
-    const row = record(await request(`/api/yuri/assistants/${encodeURIComponent(id)}/weixin`, 'GET'));
-    return { status: textOf(row.status) || 'unsupported', error: textOf(row.error) || null, qrCode: textOf(row.qrCode) };
+    return parseWeixin(record(await request(`/api/yuri/assistants/${encodeURIComponent(id)}/weixin`, 'GET')));
   } catch (error) {
     return { status: 'unsupported', error: errorText(error), qrCode: '' };
   }
 }
 
-export async function weixinAction(id: string, action: 'login' | 'disconnect'): Promise<WeixinStatus> {
+export async function weixinAction(id: string, action: 'login' | 'disconnect' | 'retry'): Promise<WeixinStatus> {
   const row = record(
     await request(
-      `/api/yuri/assistants/${encodeURIComponent(id)}/weixin${action === 'login' ? '/login' : ''}`,
-      action === 'login' ? 'POST' : 'DELETE',
+      `/api/yuri/assistants/${encodeURIComponent(id)}/weixin${action === 'disconnect' ? '' : `/${action}`}`,
+      action === 'disconnect' ? 'DELETE' : 'POST',
       {},
     ),
   );
-  return { status: textOf(row.status) || 'unsupported', error: textOf(row.error) || null, qrCode: textOf(row.qrCode) };
+  return parseWeixin(row);
+}
+
+export async function verifyWeixin(id: string, code: string): Promise<WeixinStatus> {
+  const row = record(
+    await request(`/api/yuri/assistants/${encodeURIComponent(id)}/weixin/verify`, 'POST', { code }),
+  );
+  return parseWeixin(row);
 }
 
 // --- assistant tasks ---
@@ -361,6 +389,7 @@ export type AssistantTask = {
   enabled: boolean;
   lastStatus: string;
   nextRunAt: number;
+  schedule: Schedule;
 };
 
 export async function readAssistantTasks(id: string): Promise<AssistantTask[]> {
@@ -378,6 +407,7 @@ export async function readAssistantTasks(id: string): Promise<AssistantTask[]> {
         enabled: task.enabled !== false,
         lastStatus: textOf(taskState.lastStatus) || 'idle',
         nextRunAt: Number(taskState.nextRunAt) || 0,
+        schedule: parseSchedule(task.schedule),
       };
     })
     .filter((task) => task.taskID);

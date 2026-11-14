@@ -42,7 +42,7 @@ export function PinnedSurface(props: {
                   nodes={props.pinned}
                   idPrefix="pinned-"
 
-                  canReorder={() => true}
+                  canReorder={() => !props.highlight().trim()}
                   highlight={props.highlight}
                   onSelect={props.onSelect}
                   onPin={props.onPin}
