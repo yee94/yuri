@@ -10,6 +10,7 @@
     "ios:build": "node scripts/build-ios.mjs",
     "ios:build:device": "node scripts/build-ios.mjs --device",
     "test:native": "bun scripts/check-native-bridge.mjs",
-    "test": "bunx --package vitest@4.1.11 vitest run --root ../.. --config packages/nsh/vitest.config.ts"
+    "test": "bunx --package vitest@4.1.11 vitest run --root ../.. --config packages/nsh/vitest.config.ts",
+    "android:build": "node scripts/build-android.mjs"
   }
 }

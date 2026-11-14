@@ -261,3 +261,32 @@ Chat 直接消费唯一 canonical appearance 的 `messageStreamTransport`，未�
 表中尚未对齐的能力仍属于交付范围，不是可删减项。只有检查过的测试、构建和设备行为可以作为验收证据；headless 通过不代表 UIKit 布局、真实 Relay 部署、生产 Host 或相机/通知验证完成。Chat 的逐轮证据与视觉差异见 `CHAT-VALIDATION.md`。
 
 Projects/session 全入口、P/C/R 功能和 F01–F27 逐帧场景的持续验收入口为 `PROJECTS-SESSION-ACCEPTANCE.md`。矩阵明确区分当前代码、fixture、真实 Host、完整 UIKit 和真机，未取得必要证据的行维持未完成。
+
+## Android Host
+
+`android/` 是与 `ios/*.swift` 对等的 Android Host：同一份 TSX、`nsh.json` 与 Host 协议，由
+`com.longbridge.nsh.NshView` 渲染，入口为 `com.yee94.yuri.nsh.MainActivity`。
+
+| 模块 | 职责 |
+| --- | --- |
+| `android/src/.../MainActivity.java` | 单一 `NshView`、`RuntimeBridge`、全部 Bridge 装配、`yuri://connect` 确认后发 `connection.link`、前台/后台与销毁生命周期 |
+| `android/src/.../NativeHandlers.java` | 统一 Bridge 形状（`install`/`invalidate`/`setForeground`/活动结果）、主线程回复、结构化视图定位；`RuntimeBridge.setOnInvalidate` 统一撤销 |
+| `android/src/.../AppearanceBridge.java` + `NativeFont*` | 语义色板与字体快照整包校验、`setThemeOverrides` 覆盖、字体投影与 ticket；Android 不能应用 App 字体，非 system family 返回 `unsupported` |
+| `android/src/.../DiagnosticsBridge.java` | 内容无关的版本快照、有界内存事件 ring、`ACTION_CREATE_DOCUMENT` 导出（有真实完成结果） |
+| `android/src/.../AttachmentBridge.java` + `AttachmentReceiptJournal`/`AttachmentUploadPolicy`/`AttachmentRuntime` | `ACTION_OPEN_DOCUMENT` 选择、25 MiB/非空/SHA-256、prepared/unknown/retiring/retired 阶段与 64 条 journal；Host 传输与原始授权属 `RuntimeBridge`，通过 `AttachmentRuntime` seam 注入 |
+| `android/src/.../ScheduleDateBridge.java` | IANA 偏移与 DST transition（`java.time`），cron 仍归 cron-parser |
+| `android/src/.../NavigationBridge.java` / `FeedbackLayoutBridge.java` | 只读 surface 几何；无 AX identifier 时 anchor 返回 `null`，不改写布局 |
+| `android/src/.../DatePickerBridge.java` | `CalendarView` 单日期组件，严格 ISO 日期、周起始与 min/max |
+| `android/src/.../NewSessionPickerBridge`/`NativeInputMetadata*`/`NativeComposerSpellcheck*`/`ComposerPress*`/`ChatHeaderCollapse*`/`SheetPresentation*` | 逐项移植的组件生命周期；Android 无对应物时发 `unsupported` 事件，不伪造成功 |
+| `android/AndroidManifest.xml` + `res/` | minSdk 28、targetSdk 35、configChanges、`adjustResize`、`enableOnBackInvokedCallback`、启动页与图标 |
+| `scripts/build-android.mjs` | 复用 `stage-native-application.mjs`，直接用 SDK `aapt2/javac/d8/zipalign/apksigner` 构建并签名 APK |
+
+Android 与 iOS 的有意差异：
+
+- 无 AndroidX：不强制 `uiMode`；`appearance.apply` 仍校验 `mode`，由 TSX `setColorScheme` 应用，原生 chrome 跟随系统。
+- 无 per-editor spellcheck、无 NSH 渲染卡的兄弟组件变换、无平台导航栏：对应组件只报 `unsupported`。
+- 附件统一用 `ACTION_OPEN_DOCUMENT`（无相册专用 picker），不需要存储权限；导出使用 `ACTION_CREATE_DOCUMENT` 而不是分享 sheet，因此有真实完成回调。
+- NSH Android 不暴露 JS `testID` 对应的 accessibility identifier，AX 绑定按结构定位并在歧义时拒绝。
+
+构建与自测命令、unsupported 清单、JVM 测试表和未在真机验证的项目见
+[`android/README.md`](./android/README.md)。

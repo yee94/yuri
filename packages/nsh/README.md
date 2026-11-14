@@ -28,6 +28,23 @@ xcrun simctl launch booted com.yee94.yuri.nsh
 
 设备架构构建使用 `ios:build:device`。未提供开发签名配置时产物为 unsigned；`NSH_SIGN_IDENTITY` 和 `NSH_PROVISIONING_PROFILE` 指定开发证书与匹配的 development profile。构建脚本校验 application identifier、开发设备和到期时间，不自动发布或上传 TestFlight。
 
+## Android
+
+Android Host 与 iOS 共用同一份 TSX 与 `nsh.json`，由 `com.longbridge.nsh.NshView` 渲染，
+无需 Gradle/Kotlin：
+
+```sh
+export NSH_BIN="/path/to/nsh/bin/nsh"
+export NSH_DIST="/path/to/nsh"        # 含 embed/android/nsh.aar
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+
+bun run --cwd packages/nsh android:build
+```
+
+产物 `packages/nsh/.nsh/out/YuriNative.apk`（debug keystore 自动生成）。SDK 要求
+`platforms/android-35` 与 build-tools；minSdk 28、targetSdk 35。宿主调用、unsupported
+清单、JVM 测试与未验证边界见 [`android/README.md`](./android/README.md)。
+
 ## 验证
 
 ```sh
