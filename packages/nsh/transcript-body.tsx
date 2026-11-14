@@ -15,6 +15,7 @@ import { isRestartNotice } from '../ui/src/components/chat/message/assistantErro
 import { getReasoningSummary, initialReasoningExpansion, reconcileReasoningExpansion, type ReasoningExpansionState } from '../ui/src/components/chat/message/parts/reasoningPresentation';
 import { nativeReasoningPresentation } from './chat-preferences-core';
 import { NativeAgentAvatar } from './chat-identity';
+import { NativeFlipUpText, NativeShimmerText } from './text-motion';
 import type { ActivityMaterialization } from './transcript-materialization';
 
 type ProcessNode = Extract<NativeBodyNode, { kind: 'process' }>;
@@ -62,8 +63,10 @@ function ToolGroup(props: { node: ToolGroupNode; body: BodyProps }) {
       accessibilityLabel={t(skill() ? expanded() ? 'chat.skillGroup.collapseAria' : 'chat.skillGroup.expandAria' : expanded() ? 'chat.usedGroup.collapseAria' : 'chat.usedGroup.expandAria')}
       onPress={() => { if (props.body.current()) expanded.set(!expanded()); }}>
       <View class="items-center justify-center" style={{ width: 16, height: 16 }}><If when={props.node.active} else={<Icon name={skill() ? 'book' : 'search'} size={14} />}><NativeToolOrb current={props.body.current} /></If></View>
-      <Text testID={`body-${props.node.key}-${props.node.active ? 'active' : 'settled'}`} class="text-muted-foreground" style={nativeChatTextStyle('meta')}>{t(skill() ? 'chat.tools.display.skill' : props.node.active ? 'chat.usedGroup.running' : 'chat.usedGroup.used')}</Text>
-      <Text class="text-muted-foreground flex-1" style={{ ...nativeChatTextStyle('meta'), numberOfLines: 1 }}>{description()}</Text>
+      <NativeShimmerText testID={`body-${props.node.key}-${props.node.active ? 'active' : 'settled'}`} class="text-muted-foreground" active={props.node.active}
+        text={t(skill() ? 'chat.tools.display.skill' : props.node.active ? 'chat.usedGroup.running' : 'chat.usedGroup.used')} style={nativeChatTextStyle('meta')} current={props.body.current} />
+      <NativeFlipUpText class="flex-1 min-w-0" active={props.node.active} text={description()} current={props.body.current}
+        style={{ ...nativeChatTextStyle('meta'), color: token('muted-foreground'), numberOfLines: 1 }} />
       <DiffTotals added={diffs()?.added ?? 0} removed={diffs()?.removed ?? 0} />
       <View style={{ width: 14, height: 14, flexShrink: 0 }}><Icon name={expanded() ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></View>
     </Button>
@@ -107,7 +110,7 @@ function CollapsibleReasoning(props: { part: NativeBodyPart; body: BodyProps; co
       accessibilityLabel={t(expanded() ? 'chat.reasoningTrace.collapseAria' : 'chat.reasoningTrace.expandAria')}
       onPress={() => { if (props.body.current()) choice.set({ key: props.part.key, expansion: { expanded: !expanded(), source: 'user' } }); }}>
       <Icon name={expanded() ? 'arrow-down-s' : 'brain-ai-3'} size={14} />
-      <Text class="text-muted-foreground" style={nativeChatTextStyle('meta')}>{t(streaming() || expanded() ? 'chat.reasoningTrace.thinking' : 'chat.reasoningTrace.thought')}</Text>
+      <NativeShimmerText class="text-muted-foreground" active={streaming()} text={t(streaming() || expanded() ? 'chat.reasoningTrace.thinking' : 'chat.reasoningTrace.thought')} style={nativeChatTextStyle('meta')} current={props.body.current} />
       <If when={!streaming() && !expanded()}><Text class="text-muted-foreground flex-1" style={{ ...nativeChatTextStyle('meta'), minWidth: 0, numberOfLines: 1 }}>{preview()}</Text></If>
     </Button>
     <If when={expanded()}><View class="ml-2 pl-3 border-l border-border pt-0.5 pb-1">
@@ -225,7 +228,8 @@ export function NativeTranscriptBody(props: BodyProps) {
         accessibilityLabel={t(expanded() ? 'chat.activity.collapseAria' : 'chat.activity.expandAria')}
         disabled={plan().locked} onPress={() => { if (!props.current() || plan().locked) return; if (!expanded()) requestOutput(); if (props.onToggleActivity) props.onToggleActivity(turnID(), !expanded()); else choice.set({ key: turnID(), expanded: !expanded() }); }}>
         <If when={plan().compaction}><Icon name="fold-vertical" size={14} /></If>
-        <Text class="text-muted-foreground" style={{ ...nativeChatTextStyle('meta'), color: plan().compaction && plan().active ? nativeAgentPaletteTokens()['--status-info'] : undefined, flexShrink: 1, minWidth: 0, numberOfLines: 1 }}>{plan().compaction ? t(plan().active ? 'chat.activity.compacting' : 'chat.activity.compactionCompleted') : plan().durationMs !== undefined ? t('chat.activity.completed', { duration: formatActivityDuration(plan().durationMs!) }) : t('chat.activity.completedStatus')}</Text>
+        <NativeShimmerText class="text-muted-foreground" active={plan().active} text={plan().compaction ? t(plan().active ? 'chat.activity.compacting' : 'chat.activity.compactionCompleted') : plan().durationMs !== undefined ? t('chat.activity.completed', { duration: formatActivityDuration(plan().durationMs!) }) : t('chat.activity.completedStatus')}
+          style={{ ...nativeChatTextStyle('meta'), color: plan().compaction && plan().active ? nativeAgentPaletteTokens()['--status-info'] : undefined, flexShrink: 1, minWidth: 0, numberOfLines: 1 }} current={props.current} />
         <If when={!plan().locked && !plan().compaction}><View testID={`body-activity-arrow-${props.row.key}`} style={{ width: 14, height: 14, flexShrink: 0 }}><Icon name={expanded() ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></View></If>
         <If when={plan().compaction && !plan().active && plan().durationMs !== undefined}><Text class="text-muted-foreground" style={nativeChatTextStyle('meta')}>{formatActivityDuration(plan().durationMs!)}</Text></If>
         <View class="flex-1" />

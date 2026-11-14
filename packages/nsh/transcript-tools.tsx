@@ -8,6 +8,7 @@ import { nativeMultiFileEntries, nativeToolDescription, nativeToolDetails, nativ
 import { toolIconSpec } from '../ui/src/components/chat/message/parts/toolIconModel';
 import { formatToolInput, resolveToolDisplayName } from '../ui/src/lib/toolHelpers';
 import { NativeAgentAvatar } from './chat-identity';
+import { NativeCharacterFadeText, NativeFadeInText, NativeShimmerText } from './text-motion';
 import { Icon } from './Icon';
 import { nativeChatTextStyle, nativeToolPaletteTokens } from './appearance';
 import { nativeTranscriptMarkdownStyles } from './transcript-body-markdown';
@@ -58,6 +59,8 @@ export function NativeToolRow(props: NativeToolRowProps) {
   const rowStyle = () => ({ ...nativeChatTextStyle('meta'), lineHeight: 20 });
   const palette = nativeToolPaletteTokens;
   const failed = () => ['error', 'failed'].includes(details().status);
+  /** Web ToolPart's `taskBusy`: a running subagent task keeps the shimmering title. */
+  const taskBusy = () => active() && !!details().task && !['completed', 'error'].includes(details().status);
   const icon = () => toolIconSpec(details().name);
   const totals = computed(() => {
     const files = details().files;
@@ -107,9 +110,11 @@ export function NativeToolRow(props: NativeToolRowProps) {
     <View class="flex-row items-center gap-1">
       <Button testID={details().task && details().sessionID ? `tool-session-${details().sessionID}` : `tool-expand-${String(props.tool.id || details().name)}`} class={multi().length > 0 ? 'min-h-0 w-full min-w-0 flex-row flex-wrap flex-1 items-center rounded-lg py-0.5 active:bg-foreground/5' : 'min-h-0 flex-row flex-1 items-center gap-1.5 rounded-lg py-0.5 active:bg-foreground/5'} style={multi().length > 0 ? { columnGap: 8, rowGap: 2 } : undefined} hitSlop={8} disabled={!current()} onPress={mainPress} accessibilityLabel={title()}>
         <View class="items-center justify-center" style={{ width: 16, height: 16 }}><If when={details().task && !!(details().agent || details().sessionID)} else={<If when={active()} else={<Icon name={icon().name} size={icon().size} color={failed() ? palette()?.error : palette()?.icon} />}><NativeToolOrb current={current} color={palette()?.icon} /></If>}><NativeAgentAvatar name={details().sessionID || details().agent} size={14} /></If></View>
-        <Text class={failed() ? 'text-destructive font-medium' : 'text-muted-foreground font-medium'} style={{ ...rowStyle(), color: failed() ? palette()?.error : palette()?.title, flexShrink: 0 }}>{title()}</Text>
+        <If when={taskBusy()} else={<NativeCharacterFadeText class={failed() ? 'text-destructive font-medium' : 'text-muted-foreground font-medium'} style={{ ...rowStyle(), color: failed() ? palette()?.error : palette()?.title, flexShrink: 0 }} text={title()} current={current} />}>
+          <NativeShimmerText class={failed() ? 'text-destructive font-medium' : 'text-muted-foreground font-medium'} active text={title()} style={{ ...rowStyle(), color: failed() ? palette()?.error : palette()?.title, flexShrink: 0 }} current={current} />
+        </If>
         <If when={shell() && !!nativeToolDuration(details().start, details().end, active() ? now() : undefined)}><Text testID={`tool-duration-${String(props.tool.id || details().name)}`} class="text-muted-foreground" style={{ ...rowStyle(), opacity: .8 }}>{nativeToolDuration(details().start, details().end, active() ? now() : undefined)}</Text></If>
-        <If when={multi().length > 0} else={<Text class="text-muted-foreground flex-1" style={{ ...rowStyle(), color: palette()?.description, numberOfLines: 1 }}>{nativeToolDescription(details(), props.target.directory)}</Text>}>
+        <If when={multi().length > 0} else={<NativeFadeInText class="text-muted-foreground flex-1" style={{ ...rowStyle(), color: palette()?.description, numberOfLines: 1 }} text={nativeToolDescription(details(), props.target.directory)} current={current} />}>
           <Each of={multi()} key={entry => entry.path}>{entry => <View class="flex-row items-center gap-1" style={{ maxWidth: '100%', flexShrink: 1, minWidth: 0 }}>
             <Text class="text-muted-foreground" style={{ ...rowStyle(), color: palette()?.description, flexShrink: 1, minWidth: 0, numberOfLines: 1 }}>{entry().name}</Text>
             <If when={entry().added !== null || entry().removed !== null}><View class="flex-row" style={{ flexShrink: 0 }}><Text class="text-success" style={rowStyle()}>+{entry().added ?? 0}</Text><Text class="text-muted-foreground" style={{ ...rowStyle(), color: palette()?.description }}>/</Text><Text class="text-destructive" style={rowStyle()}>-{entry().removed ?? 0}</Text></View></If>
