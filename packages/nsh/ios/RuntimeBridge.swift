@@ -1221,6 +1221,7 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
             }.map(\.element)
             let expectedServer = candidates.first { $0["type"] as? String == "relay" }?["serverId"] as? String
             var chosen: SavedConnection?
+            var lastCandidateFailure: Error?
             for candidate in ordered {
                 try checkCurrent()
                 var configuration: RelayConfiguration?
@@ -1247,14 +1248,11 @@ final class NoRedirect: NSObject, URLSessionTaskDelegate {
                 } catch {
                     if let transport { await transport.close() }
                     try checkCurrent()
-                    let networkFailure = (error as? URLError).map { $0.code != .cancelled } ?? false
-                    let relayFailure = (error as? RelayTunnel.Failure).map { failure -> Bool in
-                        switch failure { case .timeout, .disconnected: return true; default: return false }
-                    } ?? false
-                    guard networkFailure || relayFailure else { throw error }
+                    if error is CancellationError { throw error }
+                    lastCandidateFailure = error
                 }
             }
-            guard let temporary = chosen else { throw NativeFailure.message("所有配对地址均无法连接，请检查 Host 与网络后重试") }
+            guard let temporary = chosen else { throw lastCandidateFailure ?? NativeFailure.message("所有配对地址均无法连接，请检查 Host 与网络后重试") }
             url = temporary.url; relay = temporary.relay
             // Probe candidates before redeeming. A lost redemption response is ambiguous and never retried.
             let (status, response) = try await send(makeRequest("/api/client-auth/pairing/redeem", connection: temporary, method: "POST", body: ["pairingId": pairingID, "secret": secret, "clientKind": "mobile", "clientLabel": "Yuri Native iOS", "devicePlatform": "ios", "appVersion": "0.1.0"], authentication: true), connection: temporary, tunnel: pairingTunnel)
