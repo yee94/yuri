@@ -82,6 +82,7 @@ test('renaming a session from its sheet updates the row', async () => {
   await app.waitFor('id:rename-input');
   await app.clear('id:rename-input');
   await app.type('id:rename-input', 'Renamed by test');
+  await app.keyboard.press('return');
   await app.press('text:Save session name');
   await app.waitFor('text:Renamed by test');
   expect(app.texts()).not.toContain('Tidy the settings panel');
@@ -135,6 +136,7 @@ test('editing a project updates its card name', async () => {
   await app.waitFor('id:project-name-input');
   await app.clear('id:project-name-input');
   await app.type('id:project-name-input', 'yuri-renamed');
+  await app.keyboard.press('return');
   await app.press('text:Save');
   await app.waitFor('text:yuri-renamed');
 });
@@ -150,11 +152,15 @@ test('the new worktree sheet loads branches and validates the name', async () =>
   expect(app.texts()).toContain('Source Branch');
   await app.clear('id:worktree-branch');
   await app.type('id:worktree-branch', 'feature/test');
+  await app.keyboard.press('return');
   await app.press('text:Create Worktree');
   await app.waitUntil(() => app.texts().some((text) => text.includes('.worktrees/feature-test')));
   // The sheet is still dismissing when the draft first appears; wait it out.
   await app.waitUntil(() => !app.texts().some((text) => text === 'Create Worktree'));
-  await app.back();
+  for (let i = 0; i < 3 && !app.texts().includes('feature/test'); i++) {
+    await app.back();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  }
   await app.waitFor('text:feature/test');
 });
 
