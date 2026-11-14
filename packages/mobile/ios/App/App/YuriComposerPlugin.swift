@@ -368,7 +368,7 @@ class YuriComposerPlugin: CAPPlugin, CAPBridgedPlugin, YuriComposerViewDelegate 
         }
         let overlap = Self.keyboardOverlap(endFrame: notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect, host: host)
         let gap = Self.bottomGap(
-            sessionOpen: keyboardSessionOpen,
+            sessionOpen: keyboardSessionOpen && composer.ownsKeyboard,
             overlap: overlap,
             windowSafeBottom: host.window?.safeAreaInsets.bottom ?? host.safeAreaInsets.bottom
         )

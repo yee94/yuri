@@ -387,6 +387,8 @@ final class YuriComposerView: UIView, UITextViewDelegate {
         return super.hitTest(point, with: event)
     }
 
+    var ownsKeyboard: Bool { textView.isFirstResponder || keepExpandedThroughPicker }
+
     func focusInput() {
         guard !isHidden else { return }
         textView.becomeFirstResponder()
