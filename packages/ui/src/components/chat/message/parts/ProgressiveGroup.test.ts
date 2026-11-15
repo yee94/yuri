@@ -353,8 +353,9 @@ describe('progressive activity presentation', () => {
         expect(progressiveGroupSource).toContain('const disclosureLockedOpen = isActive;');
         expect(progressiveGroupSource).toContain('const effectivelyExpanded = disclosureLockedOpen || isExpanded;');
         expect(progressiveGroupSource).toContain('if (disclosureLockedOpen) {\n            return;\n        }');
-        expect(progressiveGroupSource).toContain("className={disclosureLockedOpen ? undefined : 'relative ml-2 pl-3'}");
-        expect(progressiveGroupSource).toContain('{!disclosureLockedOpen ? (');
+        expect(progressiveGroupSource).not.toContain('relative ml-2 pl-3');
+        expect(progressiveGroupSource).not.toContain('pointer-events-none absolute left-0 top-px bottom-0 w-px');
+        expect(progressiveGroupSource).not.toContain("disclosureLockedOpen ? undefined : 'ml-5'");
         expect(progressiveGroupSource).toContain('aria-disabled={disclosureLockedOpen || undefined}');
     });
 
