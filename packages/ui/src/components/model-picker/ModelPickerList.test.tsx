@@ -293,3 +293,157 @@ describe('ModelPickerList model identity', () => {
     }
   });
 });
+
+describe('ModelPickerList stairs layout', () => {
+  const labels = { searchPlaceholder: 'Search', noResults: 'Empty', favorites: 'Favorites', recent: 'Recent', keyboardHint: 'Navigate', all: 'All', provider: 'Provider' };
+  const claudeA = { id: 'claude-opus', name: 'Claude Opus' };
+  const claudeB = { id: 'claude-sonnet', name: 'Claude Sonnet' };
+  const providers = [
+    { id: 'anthropic', name: 'Anthropic', models: [claudeA, { id: 'haiku', name: 'Claude Haiku' }] },
+    { id: 'cursor', name: 'Cursor', models: [claudeB, { id: 'auto', name: 'Auto' }] },
+  ];
+  const render = async (searchQuery: string, extra: Partial<React.ComponentProps<typeof ModelPickerList>> = {}) => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const onSelect = vi.fn();
+    await React.act(async () => root.render(
+      <div className="yuri-composer-picker">
+        <ModelPickerList
+          virtualize stairs autoFocus={false} tooltipsEnabled={false}
+          providers={providers} favoriteModels={[]} recentModels={[]}
+          searchQuery={searchQuery} onSearchQueryChange={() => {}} onSelect={onSelect}
+          labels={labels} {...extra}
+        />
+      </div>,
+    ));
+    return { container, root, onSelect };
+  };
+
+  test('renders a provider rail and plain group labels without collapse controls', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const { container, root } = await render('');
+    try {
+      const rail = container.querySelector('.model-picker-rail')!;
+      expect(Array.from(rail.querySelectorAll('button')).map((button) => button.getAttribute('aria-label'))).toEqual(['All', 'Anthropic', 'Cursor']);
+      expect(rail.querySelector('button[aria-current="true"]')?.getAttribute('aria-label')).toBe('All');
+      const headers = Array.from(container.querySelectorAll('.model-picker-section-header'));
+      expect(headers.map((header) => header.textContent)).toEqual(['Anthropic', 'Cursor']);
+      expect(container.querySelector('.model-picker-section-header[aria-expanded]')).toBeNull();
+      expect(container.querySelector('.model-picker-section-header svg')).toBeNull();
+    } finally {
+      await React.act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('ranks search results by recent usage and selects the top hit with Enter', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const recent = [{ providerID: 'cursor', modelID: 'claude-sonnet', model: claudeB }];
+    const { container, root, onSelect } = await render('claude', { recentModels: recent, recencyOrder: recent });
+    try {
+      const names = Array.from(container.querySelectorAll('.model-picker-row-name')).map((node) => node.textContent);
+      expect(names).toEqual(['Claude Sonnet', 'Claude Opus', 'Claude Haiku']);
+      expect(container.querySelector('.model-picker-section-header')).toBeNull();
+      expect(container.querySelector('[data-model-section="search"] .model-picker-row-provider')?.textContent).toBe('Cursor');
+      await React.act(async () => container.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+      expect(onSelect).toHaveBeenCalledWith({ providerID: 'cursor', modelID: 'claude-sonnet', model: claudeB });
+    } finally {
+      await React.act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('finds a model by provider ID fragment plus model name', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const sonnet = { id: 'vps-us/claude/claude-sonnet-5-5', name: 'Claude Sonnet 5.5' };
+    const opus = { id: 'vps-us/claude/claude-opus-5-5', name: 'Claude Opus 5.5' };
+    const { container, root } = await render('vpsus sonnet', {
+      providers: [
+        { id: 'magpie-remote-magpie%2Fvps-us%2Fclaude', name: 'Claude Code', models: [opus, sonnet] },
+        { id: 'anthropic', name: 'Anthropic', models: [{ id: 'claude-sonnet', name: 'Claude Sonnet' }] },
+      ],
+    });
+    try {
+      expect(Array.from(container.querySelectorAll('.model-picker-row-name')).map((node) => node.textContent)).toEqual(['Claude Sonnet 5.5']);
+    } finally {
+      await React.act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('lifts the selected model provider to the first group and rail slot', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const { container, root } = await render('', { selectedModel: { providerID: 'cursor', modelID: 'auto' } });
+    try {
+      expect(Array.from(container.querySelectorAll('.model-picker-section-header')).map((node) => node.textContent)).toEqual(['Cursor', 'Anthropic']);
+      expect(Array.from(container.querySelectorAll('.model-picker-rail button')).map((node) => node.getAttribute('aria-label'))).toEqual(['All', 'Cursor', 'Anthropic']);
+    } finally {
+      await React.act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('ranks the selected model and its provider first in search without any recent history', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const { container, root } = await render('claude', { selectedModel: { providerID: 'cursor', modelID: 'claude-sonnet' } });
+    try {
+      expect(Array.from(container.querySelectorAll('.model-picker-row-name')).map((node) => node.textContent)).toEqual(['Claude Sonnet', 'Claude Opus', 'Claude Haiku']);
+    } finally {
+      await React.act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('keeps the remembered thinking variant on ranked search results', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const recent = [{ providerID: 'anthropic', modelID: 'claude-opus', model: claudeA, variant: 'high' }];
+    const { container, root, onSelect } = await render('opus', { recentModels: recent });
+    try {
+      await React.act(async () => container.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+      expect(onSelect).toHaveBeenCalledWith({ providerID: 'anthropic', modelID: 'claude-opus', model: claudeA, variant: 'high' });
+    } finally {
+      await React.act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('clicking a rail entry scrolls the list to that provider and marks it active', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const { container, root } = await render('');
+    try {
+      const scroller = container.querySelector<HTMLElement>('.overlay-scrollbar-target')!;
+      Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 5000 });
+      Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 300 });
+      const cursor = container.querySelector<HTMLButtonElement>('.model-picker-rail button[aria-label="Cursor"]')!;
+      await React.act(async () => cursor.click());
+      expect(scroller.scrollTop).toBeGreaterThan(0);
+      const all = container.querySelector<HTMLButtonElement>('.model-picker-rail button[aria-label="All"]')!;
+      await React.act(async () => all.click());
+      expect(scroller.scrollTop).toBe(0);
+    } finally {
+      await React.act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('does not enable the stairs layout without virtualization', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const { container, root } = await render('', { virtualize: false });
+    try {
+      expect(container.querySelector('.model-picker-rail')).toBeNull();
+      expect(container.querySelector('.model-picker-section-header[aria-expanded]')).not.toBeNull();
+    } finally {
+      await React.act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+});

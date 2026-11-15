@@ -12,7 +12,8 @@ import { useI18n } from '@/lib/i18n';
 import { formatCompactTokensShort } from '@/lib/intlFormatters';
 import { mergeModelMetadataWithLiveModel } from '@/lib/modelMetadata';
 import { getModelDisplayName } from '@/lib/modelDisplay';
-import { matchesModelSearch } from '@/lib/search/modelSearch';
+import { buildModelSearchText, matchesModelSearch } from '@/lib/search/modelSearch';
+import { liftSelectedProvider, rankModelSearchEntries } from '@/lib/search/modelPickerRanking';
 import { cn } from '@/lib/utils';
 import type { ModelMetadata } from '@/types';
 import type { ModelPickerEntry, ModelPickerProvider } from './ModelPickerList';
@@ -45,6 +46,8 @@ interface MobileModelPickerPanelProps {
     providers: ModelPickerProvider[];
     favoriteModels: ModelPickerEntry[];
     recentModels: ModelPickerEntry[];
+    /** Most-recent-first usage order used to rank search results; defaults to `recentModels`. */
+    recencyOrder?: ReadonlyArray<{ providerID: string; modelID: string }>;
     hiddenModels?: HiddenModel[];
     allowedProviderIds?: string[];
     allowedModelIdsByProvider?: Record<string, readonly string[]>;
@@ -72,6 +75,7 @@ export const MobileModelPickerPanel: React.FC<MobileModelPickerPanelProps> = ({
     providers,
     favoriteModels,
     recentModels,
+    recencyOrder,
     hiddenModels = [],
     allowedProviderIds,
     allowedModelIdsByProvider,
@@ -86,25 +90,19 @@ export const MobileModelPickerPanel: React.FC<MobileModelPickerPanelProps> = ({
     const { t } = useI18n();
     const mobileSheetId = React.useId();
     const [query, setQuery] = React.useState('');
-    const [expandedProviders, setExpandedProviders] = React.useState<Set<string>>(() => new Set(selectedProviderID ? [selectedProviderID] : []));
     const [expandedModelKey, setExpandedModelKey] = React.useState<string | null>(null);
     const [internalView, setInternalView] = React.useState<PickerView>('model');
     const [variantTarget, setVariantTarget] = React.useState<VariantTarget | null>(null);
-    const previousOpenRef = React.useRef(false);
     const activeView = view ?? internalView;
 
     React.useEffect(() => {
-        if (open && !previousOpenRef.current) {
-            setExpandedProviders(new Set(selectedProviderID ? [selectedProviderID] : []));
-        }
         if (!open) {
             setQuery('');
             setExpandedModelKey(null);
             setInternalView('model');
             setVariantTarget(null);
         }
-        previousOpenRef.current = open;
-    }, [open, selectedProviderID]);
+    }, [open]);
 
     const setView = (nextView: PickerView) => {
         setInternalView(nextView);
@@ -142,8 +140,6 @@ export const MobileModelPickerPanel: React.FC<MobileModelPickerPanelProps> = ({
             <MobileModelPickerPanelBody
                 query={query}
                 onQueryChange={setQuery}
-                expandedProviders={expandedProviders}
-                onExpandedProvidersChange={setExpandedProviders}
                 expandedModelKey={expandedModelKey}
                 onExpandedModelKeyChange={setExpandedModelKey}
                 activeView={activeView}
@@ -157,6 +153,7 @@ export const MobileModelPickerPanel: React.FC<MobileModelPickerPanelProps> = ({
                 providers={providers}
                 favoriteModels={favoriteModels}
                 recentModels={recentModels}
+                recencyOrder={recencyOrder}
                 hiddenModels={hiddenModels}
                 allowedProviderIds={allowedProviderIds}
                 allowedModelIdsByProvider={allowedModelIdsByProvider}
@@ -173,8 +170,6 @@ export const MobileModelPickerPanel: React.FC<MobileModelPickerPanelProps> = ({
 type MobileModelPickerPanelBodyProps = {
     query: string;
     onQueryChange: (value: string) => void;
-    expandedProviders: Set<string>;
-    onExpandedProvidersChange: (value: Set<string> | ((current: Set<string>) => Set<string>)) => void;
     expandedModelKey: string | null;
     onExpandedModelKeyChange: (value: string | null | ((current: string | null) => string | null)) => void;
     activeView: PickerView;
@@ -188,6 +183,7 @@ type MobileModelPickerPanelBodyProps = {
     providers: ModelPickerProvider[];
     favoriteModels: ModelPickerEntry[];
     recentModels: ModelPickerEntry[];
+    recencyOrder?: ReadonlyArray<{ providerID: string; modelID: string }>;
     hiddenModels: HiddenModel[];
     allowedProviderIds?: string[];
     allowedModelIdsByProvider?: Record<string, readonly string[]>;
@@ -201,8 +197,6 @@ type MobileModelPickerPanelBodyProps = {
 const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
     query,
     onQueryChange,
-    expandedProviders,
-    onExpandedProvidersChange,
     expandedModelKey,
     onExpandedModelKeyChange,
     activeView,
@@ -216,6 +210,7 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
     providers,
     favoriteModels,
     recentModels,
+    recencyOrder,
     hiddenModels,
     allowedProviderIds,
     allowedModelIdsByProvider,
@@ -240,17 +235,21 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
     );
     const providerByID = React.useMemo(() => new Map(providers.map((provider) => [provider.id, provider])), [providers]);
     const orderedProviders = React.useMemo(() => {
-        if (!providerOrder?.length) return providers;
-        const rank = new Map(providerOrder.map((providerID, index) => [providerID, index]));
-        return [...providers].sort((left, right) => {
-            const leftRank = rank.get(left.id);
-            const rightRank = rank.get(right.id);
-            if (leftRank === undefined && rightRank === undefined) return 0;
-            if (leftRank === undefined) return 1;
-            if (rightRank === undefined) return -1;
-            return leftRank - rightRank;
-        });
-    }, [providerOrder, providers]);
+        let ordered = providers;
+        if (providerOrder?.length) {
+            const rank = new Map(providerOrder.map((providerID, index) => [providerID, index]));
+            ordered = [...providers].sort((left, right) => {
+                const leftRank = rank.get(left.id);
+                const rightRank = rank.get(right.id);
+                if (leftRank === undefined && rightRank === undefined) return 0;
+                if (leftRank === undefined) return 1;
+                if (rightRank === undefined) return -1;
+                return leftRank - rightRank;
+            });
+        }
+        // The selected model's provider becomes the first group and rail slot.
+        return liftSelectedProvider(ordered, selectedProviderID || undefined);
+    }, [providerOrder, providers, selectedProviderID]);
 
     // Render-phase predicates via useMemo (stable identity + real deps; not useEvent).
     const isAllowed = React.useMemo(
@@ -269,8 +268,12 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
             const provider = providerByID.get(entry.providerID);
             const providerName = provider?.name || entry.providerID;
             const modelName = getModelDisplayName(entry.model, entry.modelID, { maxLength: 40 });
-            return matchesModelSearch(`${providerName} ${modelName}`, normalizedQuery)
-                || matchesModelSearch(`${entry.providerID} ${entry.modelID}`, normalizedQuery);
+            return matchesModelSearch(buildModelSearchText({
+                providerName,
+                providerID: entry.providerID,
+                modelName,
+                modelID: entry.modelID,
+            }), normalizedQuery);
         },
         [providerByID, query],
     );
@@ -295,14 +298,106 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                     const modelID = typeof model.id === 'string' ? model.id : '';
                     if (!modelID || !isAllowed(provider.id, modelID)) return false;
                     if (providerMatches || !normalizedQuery) return true;
-                    const providerName = provider.name || provider.id;
-                    return matchesModelSearch(`${providerName} ${getModelDisplayName(model, modelID, { maxLength: 40 })}`, normalizedQuery)
-                        || matchesModelSearch(`${provider.id} ${modelID}`, normalizedQuery);
+                    return matchesModelSearch(buildModelSearchText({
+                        providerName: provider.name || provider.id,
+                        providerID: provider.id,
+                        modelName: getModelDisplayName(model, modelID, { maxLength: 40 }),
+                        modelID,
+                    }), normalizedQuery);
                 });
                 return { provider, models };
             })
             .filter((entry) => entry.models.length > 0);
     }, [allowedProviderSet, isAllowed, orderedProviders, query]);
+
+    const hasQuery = query.trim().length > 0;
+    // Search is one flat list ranked by match + recent usage + selection, so the
+    // most relevant model is the first row regardless of its provider group.
+    const searchResults = React.useMemo(() => {
+        if (!hasQuery) return null;
+        return rankModelSearchEntries<ModelPickerEntry>({
+            candidates: filteredProviders.flatMap(({ provider, models }) => models.map((model) => ({
+                entry: { model, providerID: provider.id, modelID: model.id as string },
+                providerName: provider.name || provider.id,
+                modelName: getModelDisplayName(model, model.id as string, { maxLength: 40 }),
+            }))),
+            query: query.trim(),
+            recencyOrder: recencyOrder ?? recentModels,
+            recentModels,
+            favoriteModels,
+            selectedModel: selectedProviderID && selectedModelID
+                ? { providerID: selectedProviderID, modelID: selectedModelID }
+                : null,
+        });
+    }, [favoriteModels, filteredProviders, hasQuery, query, recencyOrder, recentModels, selectedModelID, selectedProviderID]);
+
+    // The rail lists every selectable provider regardless of the query so it does not reshuffle while typing.
+    const railProviders = React.useMemo(() => orderedProviders.filter((provider) => (
+        (!allowedProviderSet || allowedProviderSet.has(provider.id))
+        && (provider.models ?? []).some((model) => typeof model.id === 'string' && isAllowed(provider.id, model.id))
+    )), [allowedProviderSet, isAllowed, orderedProviders]);
+
+    const [railActiveId, setRailActiveId] = React.useState('all');
+    const scrollRef = React.useRef<HTMLElement | null>(null);
+    const railRef = React.useRef<HTMLElement | null>(null);
+    // A tapped rail entry stays active until the list scrolls away from its target,
+    // so short trailing groups that can never reach the top remain selectable.
+    const railPinRef = React.useRef<{ id: string; offset: number } | null>(null);
+
+    const getRailSections = () => Array.from(scrollRef.current?.querySelectorAll<HTMLElement>('[data-rail-section]') ?? []);
+
+    const syncRailActive = () => {
+        const container = scrollRef.current;
+        if (!container) return;
+        const pin = railPinRef.current;
+        if (pin) {
+            if (Math.abs(container.scrollTop - pin.offset) < 2) return;
+            railPinRef.current = null;
+        }
+        const containerTop = container.getBoundingClientRect().top;
+        let active = 'all';
+        for (const section of getRailSections()) {
+            if (section.getBoundingClientRect().top - containerTop > 8) break;
+            active = section.dataset.railSection ?? active;
+        }
+        setRailActiveId(active);
+    };
+
+    const scrollToRailSection = (id: string) => {
+        const container = scrollRef.current;
+        if (!container) return;
+        let target = 0;
+        if (id !== 'all') {
+            const section = getRailSections().find((element) => element.dataset.railSection === id);
+            if (!section) return;
+            target = section.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+        }
+        target = Math.max(0, Math.min(target, container.scrollHeight - container.clientHeight));
+        container.scrollTop = target;
+        railPinRef.current = { id, offset: target };
+        setRailActiveId(id);
+    };
+
+    React.useEffect(() => {
+        const container = scrollRef.current;
+        if (!container) return;
+        container.scrollTop = 0;
+        railPinRef.current = null;
+        syncRailActive();
+        // Only the query switches between the sectioned list and flat results.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [hasQuery]);
+
+    // Keep the active rail entry visible when the rail itself overflows.
+    React.useEffect(() => {
+        const rail = railRef.current;
+        const active = rail?.querySelector<HTMLElement>('[aria-current="true"]');
+        if (!rail || !active) return;
+        const railRect = rail.getBoundingClientRect();
+        const activeRect = active.getBoundingClientRect();
+        if (activeRect.top < railRect.top) rail.scrollTop += activeRect.top - railRect.top - 4;
+        else if (activeRect.bottom > railRect.bottom) rail.scrollTop += activeRect.bottom - railRect.bottom + 4;
+    }, [railActiveId]);
 
     const formatVariantLabel = (variant: string | undefined) => {
         if (!variant?.trim()) return t('chat.modelControls.default');
@@ -441,7 +536,12 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
             : undefined;
         return remembered ?? resolveSelectedVariant(activeVariantTarget.providerID, activeVariantTarget.modelID);
     })();
-    const hasResults = filteredFavorites.length > 0 || filteredRecents.length > 0 || filteredProviders.length > 0;
+    const hasResults = searchResults
+        ? searchResults.length > 0
+        : filteredFavorites.length > 0 || filteredRecents.length > 0 || filteredProviders.length > 0;
+    const renderGroupLabel = (label: string) => (
+        <div className="sticky top-0 z-10 bg-[var(--surface-elevated)] px-2 py-1.5 typography-micro font-semibold text-muted-foreground">{label}</div>
+    );
     const isVariantView = activeView === 'variant' && Boolean(activeVariantTarget);
 
     return (
@@ -486,8 +586,41 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                     ) : null}
                 </div>
             ) : null}
+            <div className="flex min-h-0 flex-1 gap-1">
+            {!isVariantView ? (
+                <nav
+                    ref={railRef}
+                    aria-label={t('chat.modelControls.provider')}
+                    aria-disabled={hasQuery || undefined}
+                    data-mobile-sheet-no-dismiss=""
+                    className={cn('model-picker-rail flex w-10 shrink-0 flex-col items-center gap-1 overflow-y-auto py-1 scrollbar-hidden', hasQuery && 'pointer-events-none opacity-40')}
+                >
+                    {[{ id: 'all', name: t('chat.modelControls.modeValue.all') }, ...railProviders.map((provider) => ({ id: provider.id, name: provider.name || provider.id }))].map((item) => {
+                        const active = !hasQuery && railActiveId === item.id;
+                        return (
+                            <Button
+                                key={item.id}
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                {...matchingPressProps}
+                                tabIndex={hasQuery ? -1 : undefined}
+                                aria-label={item.name}
+                                aria-current={active ? 'true' : undefined}
+                                onClick={() => scrollToRailSection(item.id)}
+                                className={cn('size-9 shrink-0', active && 'bg-interactive-selection')}
+                            >
+                                {item.id === 'all'
+                                    ? <Icon name="list-unordered" className="size-4" />
+                                    : <ProviderLogo providerId={item.id} className="size-4 flex-shrink-0" />}
+                            </Button>
+                        );
+                    })}
+                </nav>
+            ) : null}
             <ScrollableOverlay
-                useScrollShadow
+                ref={scrollRef}
+                onScroll={syncRailActive}
                 disableHorizontal
                 preventOverscroll
                 outerClassName="min-h-0 flex-1"
@@ -522,64 +655,43 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                                     {t('chat.modelControls.noProvidersOrModelsFound')}
                                 </div>
                             ) : null}
-                            {filteredFavorites.length > 0 ? (
-                                <div className="overflow-hidden rounded-xl border border-border/40 bg-[var(--surface-elevated)]">
-                                    <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                        <Icon name="star-fill" className="mr-1.5 inline-block size-3 text-primary" />
-                                        {t('chat.modelControls.favorites')}
-                                    </div>
-                                    <div className="flex flex-col border-t border-border/30">{filteredFavorites.map((entry) => renderModelRow(entry, { showProvider: true, preferRememberedVariant: true }))}</div>
-                                </div>
-                            ) : null}
-                            {filteredRecents.length > 0 ? (
-                                <div className="overflow-hidden rounded-xl border border-border/40 bg-[var(--surface-elevated)]">
-                                    <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                        <Icon name="time" className="mr-1.5 inline-block size-3" />
-                                        {t('chat.modelControls.recent')}
-                                    </div>
-                                    <div className="flex flex-col border-t border-border/30">{filteredRecents.map((entry) => renderModelRow(entry, { showProvider: true, preferRememberedVariant: true }))}</div>
-                                </div>
-                            ) : null}
-                            {filteredProviders.map(({ provider, models }) => {
-                                const expanded = expandedProviders.has(provider.id) || query.trim().length > 0;
-                                return (
-                                    <div key={provider.id} className="overflow-hidden rounded-xl border border-border/40 bg-[var(--surface-elevated)]">
-                                        <button
-                                            type="button"
-                                            {...matchingPressProps}
-                                            onClick={() => {
-                                                if (query.trim()) return;
-                                                onExpandedProvidersChange((current) => {
-                                                    const next = new Set(current);
-                                                    if (next.has(provider.id)) next.delete(provider.id);
-                                                    else next.add(provider.id);
-                                                    return next;
-                                                });
-                                            }}
-                                            className="flex w-full items-center justify-between gap-1.5 px-2 py-1.5 text-left"
-                                            aria-expanded={expanded}
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                <ProviderLogo providerId={provider.id} className="size-3.5" />
-                                                <span className="typography-meta font-medium text-foreground">{provider.name || provider.id}</span>
-                                                {provider.id === selectedProviderID ? (
-                                                    <span className="typography-micro text-primary/80">{t('chat.modelControls.current')}</span>
+                            {hasResults ? (
+                                <div className="rounded-xl border border-border/40 bg-[var(--surface-elevated)]">
+                                    {searchResults ? (
+                                        <div className="flex flex-col">{searchResults.map((entry) => renderModelRow(entry, { showProvider: true, preferRememberedVariant: true }))}</div>
+                                    ) : (
+                                        <>
+                                            <div data-rail-section="all">
+                                                {filteredFavorites.length > 0 ? (
+                                                    <div>
+                                                        {renderGroupLabel(t('chat.modelControls.favorites'))}
+                                                        <div className="flex flex-col">{filteredFavorites.map((entry) => renderModelRow(entry, { showProvider: true, preferRememberedVariant: true }))}</div>
+                                                    </div>
+                                                ) : null}
+                                                {filteredRecents.length > 0 ? (
+                                                    <div>
+                                                        {renderGroupLabel(t('chat.modelControls.recent'))}
+                                                        <div className="flex flex-col">{filteredRecents.map((entry) => renderModelRow(entry, { showProvider: true, preferRememberedVariant: true }))}</div>
+                                                    </div>
                                                 ) : null}
                                             </div>
-                                            <Icon name={expanded ? 'arrow-down-s' : 'arrow-right-s'} className="size-3 text-muted-foreground" />
-                                        </button>
-                                        {expanded ? (
-                                            <div className="flex flex-col border-t border-border/30">
-                                                {models.map((model) => renderModelRow({ model, providerID: provider.id, modelID: model.id as string }))}
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                );
-                            })}
+                                            {filteredProviders.map(({ provider, models }) => (
+                                                <div key={provider.id} data-rail-section={provider.id}>
+                                                    {renderGroupLabel(provider.name || provider.id)}
+                                                    <div className="flex flex-col">
+                                                        {models.map((model) => renderModelRow({ model, providerID: provider.id, modelID: model.id as string }))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </>
+                                    )}
+                                </div>
+                            ) : null}
                         </>
                     )}
                 </div>
             </ScrollableOverlay>
+            </div>
         </div>
     );
 };

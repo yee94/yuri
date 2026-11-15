@@ -46,7 +46,8 @@ vi.mock('@/lib/modelDisplay', () => ({
   getModelDisplayName: (_model: unknown, modelID: string) => modelID,
 }));
 
-vi.mock('@/lib/search/modelSearch', () => ({
+vi.mock('@/lib/search/modelSearch', async () => ({
+  ...await vi.importActual<typeof import('@/lib/search/modelSearch')>('@/lib/search/modelSearch'),
   matchesModelSearch: () => true,
 }));
 

@@ -411,6 +411,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const setSettingsDialogOpen = useUIStore((state) => state.setSettingsDialogOpen);
     const setSettingsPage = useUIStore((state) => state.setSettingsPage);
     const hiddenModels = useUIStore((state) => state.hiddenModels);
+    const recentModelUsage = useUIStore((state) => state.recentModels);
     const cycleAgentShortcutOverride = useUIStore((state) => state.shortcutOverrides.cycle_agent);
     const cycleAgentShortcut = React.useMemo(() => (
         getEffectiveShortcutCombo('cycle_agent', cycleAgentShortcutOverride ? { cycle_agent: cycleAgentShortcutOverride } : undefined)
@@ -1830,6 +1831,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                 providers={providers as ModelPickerProvider[]}
                 favoriteModels={favoriteModelsList}
                 recentModels={recentModelsList}
+                recencyOrder={recentModelUsage}
                 hiddenModels={hiddenModels}
                 providerOrder={providerOrder}
                 isFavorite={isFavoriteModel}
@@ -2117,6 +2119,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             favorites: t('chat.modelControls.favorites'),
             recent: t('chat.modelControls.recent'),
             keyboardHint: t('chat.modelControls.keyboardHintNavigate'),
+            all: t('chat.modelControls.modeValue.all'),
             favorite: t('chat.modelControls.favoriteAria'),
             unfavorite: t('chat.modelControls.unfavoriteAria'),
             provider: t('chat.modelControls.provider'),
@@ -2363,8 +2366,10 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                         onSearchQueryChange={setDesktopModelQuery}
                                         onSelect={handleSharedModelSelect}
                                         labels={modelPickerLabels}
-                                        stickyHeaders={false}
+                                        stickyHeaders
                                         virtualize
+                                        stairs
+                                        recencyOrder={recentModelUsage}
                                         selectedModel={currentProviderId && currentModelId ? { providerID: currentProviderId, modelID: currentModelId } : null}
                                         hiddenModels={hiddenModels}
                                         onActiveKeyDown={handleModelPickerKeyDown}

@@ -588,6 +588,27 @@
   background: transparent;
 }
 
+.yuri-composer-picker .model-picker-rail {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+  width: 2.75rem;
+  padding: 0.375rem 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  border-right: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
+.yuri-composer-picker .model-picker-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.yuri-composer-picker .model-picker-stairs .model-picker-section-header {
+  color: var(--surface-muted-foreground);
+}
+
 .yuri-composer-picker .model-picker-row {
   min-height: 2.5rem;
   margin-block: 0;

@@ -19,13 +19,14 @@ import { toast } from '@/components/ui/toast';
 import { ModelLogo } from '@/components/ui/ModelLogo';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
-import { Tooltip, TooltipContent } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
 import { formatCompactNumber, formatUsdCurrency } from '@/lib/intlFormatters';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { mergeModelMetadataWithLiveModel } from '@/lib/modelMetadata';
 import { getModelDisplayName as getSharedModelDisplayName } from '@/lib/modelDisplay';
-import { matchesModelSearch } from '@/lib/search/modelSearch';
+import { buildModelSearchText, matchesModelSearch } from '@/lib/search/modelSearch';
+import { liftSelectedProvider, rankModelSearchEntries } from '@/lib/search/modelPickerRanking';
 import { cn } from '@/lib/utils';
 import { useModelPickerSectionsStore } from '@/stores/useModelPickerSectionsStore';
 import type { ModelMetadata } from '@/types';
@@ -368,6 +369,8 @@ const SortableProviderSection: React.FC<{
   );
 };
 
+const NO_COLLAPSED_SECTIONS: ReadonlySet<string> = new Set();
+
 const STICKY_HEADER_OFFSET = 32;
 
 const scrollIntoView = (container: HTMLElement | null, node: HTMLElement | null) => {
@@ -407,6 +410,8 @@ interface ModelPickerListProps {
     favorites: string;
     recent: string;
     keyboardHint: string;
+    /** Label of the first provider-rail entry in the `stairs` layout. */
+    all?: string;
     notSelected?: string;
     favorite?: string;
     unfavorite?: string;
@@ -452,6 +457,14 @@ interface ModelPickerListProps {
   renderVersion?: number;
   tooltipsEnabled?: boolean;
   virtualize?: boolean;
+  /**
+   * Desktop composer "stairs" layout: a compact provider rail that jumps to each
+   * provider group, plain sticky group labels (no icons or collapse), and search
+   * results ranked by text match plus recent usage. Requires `virtualize`.
+   */
+  stairs?: boolean;
+  /** Most-recent-first usage order used to rank stairs search results; defaults to `recentModels`. */
+  recencyOrder?: ReadonlyArray<{ providerID: string; modelID: string }>;
 }
 
 export const ModelPickerList: React.FC<ModelPickerListProps> = ({
@@ -494,7 +507,10 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
   renderVersion,
   tooltipsEnabled = true,
   virtualize = false,
+  stairs = false,
+  recencyOrder,
 }) => {
+  const stairsEnabled = stairs && virtualize;
   const selectionStoreRef = React.useRef<IndexSelectionStore | null>(null);
   if (!selectionStoreRef.current) selectionStoreRef.current = createIndexSelectionStore();
   const selectionStore = selectionStoreRef.current;
@@ -510,7 +526,9 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
   );
   const hasSearchQuery = searchQuery.trim().length > 0;
   const [searchCollapsedSections, setSearchCollapsedSections] = React.useState<Set<string>>(() => new Set());
-  const effectiveCollapsedSections = hasSearchQuery ? searchCollapsedSections : collapsedSections;
+  const effectiveCollapsedSections = stairsEnabled
+    ? NO_COLLAPSED_SECTIONS
+    : hasSearchQuery ? searchCollapsedSections : collapsedSections;
   const favoriteRowSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
@@ -544,11 +562,11 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     return hiddenModels.some((hidden) => hidden.providerID === providerID && hidden.modelID === modelID);
   }, [hiddenModels]);
 
-  const matchesQuery = React.useCallback((modelName: string, providerName: string) => {
+  const matchesQuery = React.useCallback((modelName: string, providerName: string, providerID: string, modelID: string) => {
     const query = searchQuery.trim();
     if (!query) return true;
-    // Separator-tolerant: "GLM 5.2" should still hit "GLM-5.2".
-    return matchesModelSearch(`${providerName} ${modelName}`, query);
+    // Separator-tolerant: "GLM 5.2" should still hit "GLM-5.2"; provider/model IDs are searchable too.
+    return matchesModelSearch(buildModelSearchText({ providerName, providerID, modelName, modelID }), query);
   }, [searchQuery]);
 
   const filteredFavorites = React.useMemo(() => favoriteModels.filter(({ model, providerID, modelID }) => {
@@ -556,7 +574,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     if (!isAllowedModel(providerID, modelID)) return false;
     if (isHidden(providerID, modelID)) return false;
     const providerName = providerById.get(providerID)?.name || providerID;
-    return matchesQuery(getModelDisplayName(model), providerName);
+    return matchesQuery(getModelDisplayName(model), providerName, providerID, modelID);
   }), [allowedProviderSet, favoriteModels, isAllowedModel, isHidden, matchesQuery, providerById]);
 
   const filteredRecents = React.useMemo(() => recentModels.filter(({ model, providerID, modelID }) => {
@@ -564,18 +582,23 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     if (!isAllowedModel(providerID, modelID)) return false;
     if (isHidden(providerID, modelID)) return false;
     const providerName = providerById.get(providerID)?.name || providerID;
-    return matchesQuery(getModelDisplayName(model), providerName);
+    return matchesQuery(getModelDisplayName(model), providerName, providerID, modelID);
   }), [allowedProviderSet, isAllowedModel, isHidden, matchesQuery, providerById, recentModels]);
 
+  const selectedProviderID = selectedModel?.providerID;
   const orderedProviders = React.useMemo(() => {
-    if (!providerOrder || providerOrder.length === 0) return providers;
-    const rank = new Map(providerOrder.map((id, index) => [id, index] as const));
-    const ranked = providers
-      .filter((provider) => rank.has(provider.id))
-      .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
-    const unranked = providers.filter((provider) => !rank.has(provider.id));
-    return [...ranked, ...unranked];
-  }, [providerOrder, providers]);
+    let ordered = providers;
+    if (providerOrder && providerOrder.length > 0) {
+      const rank = new Map(providerOrder.map((id, index) => [id, index] as const));
+      const ranked = providers
+        .filter((provider) => rank.has(provider.id))
+        .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+      const unranked = providers.filter((provider) => !rank.has(provider.id));
+      ordered = [...ranked, ...unranked];
+    }
+    // Stairs lifts the selected model's provider to the first group (and rail slot).
+    return stairsEnabled ? liftSelectedProvider(ordered, selectedProviderID) : ordered;
+  }, [providerOrder, providers, selectedProviderID, stairsEnabled]);
 
   const filteredProviders = React.useMemo(() => orderedProviders
     .filter((provider) => !allowedProviderSet || allowedProviderSet.has(provider.id))
@@ -585,11 +608,38 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
         const modelID = typeof model.id === 'string' ? model.id : '';
         if (!modelID || isHidden(provider.id, modelID)) return false;
         if (!isAllowedModel(provider.id, modelID)) return false;
-        return matchesQuery(getModelDisplayName(model), provider.name || provider.id);
+        return matchesQuery(getModelDisplayName(model), provider.name || provider.id, provider.id, modelID);
       });
       return { ...provider, models: filteredModels };
     })
     .filter((provider) => provider.models.length > 0), [allowedProviderSet, isAllowedModel, isHidden, matchesQuery, orderedProviders]);
+
+  // Stairs search is one flat list ranked by match + recent usage instead of
+  // per-section filtering, so the most relevant model is always the first row.
+  const searchResults = React.useMemo(() => {
+    if (!stairsEnabled || !hasSearchQuery) return null;
+    return rankModelSearchEntries<ModelPickerEntry>({
+      candidates: filteredProviders.flatMap((provider) => provider.models.map((model) => ({
+        entry: { model, providerID: provider.id, modelID: model.id as string },
+        providerName: provider.name || provider.id,
+        modelName: getModelDisplayName(model),
+      }))),
+      query: searchQuery.trim(),
+      recencyOrder: recencyOrder ?? recentModels,
+      recentModels,
+      favoriteModels,
+      selectedModel,
+    });
+  }, [favoriteModels, filteredProviders, hasSearchQuery, recencyOrder, recentModels, searchQuery, selectedModel, stairsEnabled]);
+
+  // The rail lists every selectable provider regardless of the search query so
+  // it does not reshuffle while typing.
+  const railProviders = React.useMemo(() => orderedProviders
+    .filter((provider) => !allowedProviderSet || allowedProviderSet.has(provider.id))
+    .filter((provider) => (Array.isArray(provider.models) ? provider.models : []).some((model) => {
+      const modelID = typeof model.id === 'string' ? model.id : '';
+      return Boolean(modelID) && !isHidden(provider.id, modelID) && isAllowedModel(provider.id, modelID);
+    })), [allowedProviderSet, isAllowedModel, isHidden, orderedProviders]);
 
   const { flatModelList, modelRowIndices } = React.useMemo(() => {
     const items: ModelPickerEntry[] = [];
@@ -598,6 +648,10 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
       modelRowIndices.set(`${section}:${entry.providerID}:${entry.modelID}`, items.length);
       items.push(entry);
     };
+    if (searchResults) {
+      searchResults.forEach((entry) => append(entry, 'search'));
+      return { flatModelList: items, modelRowIndices };
+    }
     if (!effectiveCollapsedSections.has('favorites')) filteredFavorites.forEach((entry) => append(entry, 'fav'));
     if (!effectiveCollapsedSections.has('recent')) filteredRecents.forEach((entry) => append(entry, 'recent'));
     filteredProviders.forEach((provider) => {
@@ -605,7 +659,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
       provider.models.forEach((model) => append({ model, providerID: provider.id, modelID: model.id as string }, 'provider'));
     });
     return { flatModelList: items, modelRowIndices };
-  }, [effectiveCollapsedSections, filteredFavorites, filteredProviders, filteredRecents]);
+  }, [effectiveCollapsedSections, filteredFavorites, filteredProviders, filteredRecents, searchResults]);
 
   const [rootFontSize, setRootFontSize] = React.useState(16);
   React.useLayoutEffect(() => {
@@ -620,6 +674,10 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
       if (effectiveCollapsedSections.has(key)) return;
       for (const entry of entries) slots.push({ key: `${key}:${entry.providerID}:${entry.modelID}`, height: rowHeight * rootFontSize, modelIndex: modelIndex++ });
     };
+    if (searchResults) {
+      for (const entry of searchResults) slots.push({ key: `search:${entry.providerID}:${entry.modelID}`, height: 2.5 * rootFontSize, modelIndex: modelIndex++ });
+      return slots;
+    }
     if (filteredFavorites.length) addSection('favorites', filteredFavorites, 2.5, false);
     if (filteredRecents.length) addSection('recent', filteredRecents, 2.5, filteredFavorites.length > 0);
     filteredProviders.forEach((provider, index) => addSection(
@@ -629,7 +687,24 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
       index > 0 || filteredFavorites.length > 0 || filteredRecents.length > 0,
     ));
     return slots;
-  }, [effectiveCollapsedSections, filteredFavorites, filteredProviders, filteredRecents, rootFontSize, virtualize]);
+  }, [effectiveCollapsedSections, filteredFavorites, filteredProviders, filteredRecents, rootFontSize, searchResults, virtualize]);
+
+  // Scroll offsets at which each provider's label reaches the top of the list.
+  const providerSectionTops = React.useMemo(() => {
+    if (!stairsEnabled || searchResults) return [];
+    const labelHeight = 1.5 * rootFontSize;
+    const tops: Array<{ id: string; top: number }> = [];
+    let offset = 0.375 * rootFontSize;
+    for (const slot of virtualLayout) {
+      if (slot.modelIndex === -1 && slot.key.startsWith('provider:')) {
+        tops.push({ id: slot.key.slice('provider:'.length), top: offset + slot.height - labelHeight });
+      }
+      offset += slot.height;
+    }
+    return tops;
+  }, [rootFontSize, searchResults, stairsEnabled, virtualLayout]);
+  const railRef = React.useRef<HTMLElement | null>(null);
+  const [railPin, setRailPin] = React.useState<{ id: string; offset: number } | null>(null);
   const virtualMeasurements = React.useMemo(() => ({
     estimateSize: (index: number) => virtualLayout[index].height,
     getItemKey: (index: number) => virtualLayout[index].key,
@@ -646,6 +721,35 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
   });
   const virtualItems = rowVirtualizer.getVirtualItems();
   const visibleModelIndices = new Set(virtualItems.map((item) => virtualLayout[item.index].modelIndex));
+
+  const stairsScrollOffset = rowVirtualizer.scrollOffset ?? 0;
+  const railActiveId = (() => {
+    if (railPin && Math.abs(stairsScrollOffset - railPin.offset) < 2) return railPin.id;
+    let active = 'all';
+    for (const section of providerSectionTops) {
+      if (section.top <= stairsScrollOffset + 4) active = section.id;
+    }
+    return active;
+  })();
+  // Keep the active rail entry visible when the rail itself overflows.
+  React.useEffect(() => {
+    const rail = railRef.current;
+    const active = rail?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (!rail || !active) return;
+    const railRect = rail.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    if (activeRect.top < railRect.top) rail.scrollTop += activeRect.top - railRect.top - 4;
+    else if (activeRect.bottom > railRect.bottom) rail.scrollTop += activeRect.bottom - railRect.bottom + 4;
+  }, [railActiveId, stairsEnabled]);
+  const scrollToRailSection = (id: string) => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const sectionTop = id === 'all' ? 0 : providerSectionTops.find((section) => section.id === id)?.top;
+    if (sectionTop === undefined) return;
+    const target = Math.max(0, Math.min(sectionTop, container.scrollHeight - container.clientHeight));
+    container.scrollTop = target;
+    setRailPin({ id, offset: target });
+  };
 
   const hasResults = flatModelList.length > 0;
   const favoriteSortingEnabled = Boolean(onReorderFavorite) && searchQuery.trim().length === 0 && filteredFavorites.length > 1;
@@ -859,6 +963,22 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
       }
     };
 
+    // Stairs labels are plain text: no icon, no collapse. Reorderable provider
+    // labels still act as the drag activator.
+    if (stairsEnabled) {
+      return (
+        <div
+          ref={headerDragProps?.setActivatorNodeRef}
+          {...headerDragProps?.attributes}
+          {...headerDragProps?.listeners}
+          title={headerDragProps ? reorderProviderTitle : undefined}
+          className={cn(headerClassName, headerDragProps && 'cursor-grab select-none active:cursor-grabbing')}
+        >
+          <span className="min-w-0 truncate">{label}</span>
+        </div>
+      );
+    }
+
     // When the section is reorderable, the whole header acts as the drag
     // activator (desktop mouse, with an 8px threshold so a plain click still
     // toggles collapse). A <button> cannot be the activator because dnd-kit's
@@ -919,24 +1039,8 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     </>
   );
 
-  return (
-    <>
-      <div className="model-picker-search-area p-1.5 pb-1">
-        <div className="relative">
-          <Icon name="search" className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder={labels.searchPlaceholder}
-            value={searchQuery}
-            onChange={(event) => onSearchQueryChange(event.target.value)}
-            onKeyDown={handleKeyDown}
-            className="model-picker-search h-8 pl-8 typography-meta"
-            autoFocus={autoFocus}
-          />
-        </div>
-      </div>
-
-      <ScrollableOverlay ref={scrollRef} outerClassName={maxHeightClassName} className="overlay-scrollbar-target--no-gutter" style={maxHeightStyle}>
+  const scrollArea = (
+      <ScrollableOverlay ref={scrollRef} outerClassName={stairsEnabled ? 'min-w-0 flex-1' : maxHeightClassName} className="overlay-scrollbar-target--no-gutter" style={stairsEnabled ? undefined : maxHeightStyle}>
         <div className="model-picker-list px-1">
           {includeNotSelected ? (
             <>
@@ -957,6 +1061,8 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
             <div className="px-2 py-4 text-center typography-meta text-muted-foreground">{labels.noResults}</div>
           ) : null}
 
+          {searchResults ? searchResults.map((entry) => renderRow(entry, 'search', true)) : (
+          <>
           {filteredFavorites.length > 0 ? (
             <div className="model-picker-section">
               {renderSectionHeader('favorites', <Icon name="star-fill" className="h-4 w-4 text-primary" />, labels.favorites)}
@@ -1003,8 +1109,60 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
               </div>
             ))
           )}
+          </>
+          )}
         </div>
       </ScrollableOverlay>
+  );
+
+  const stairsRail = stairsEnabled ? (
+    <nav ref={railRef} className={cn('model-picker-rail', hasSearchQuery && 'pointer-events-none opacity-40')} aria-label={labels.provider} aria-disabled={hasSearchQuery || undefined}>
+      {[{ id: 'all', name: labels.all }, ...railProviders.map((provider) => ({ id: provider.id, name: provider.name || provider.id }))].map((item) => (
+        <Tooltip key={item.id}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              tabIndex={hasSearchQuery ? -1 : undefined}
+              aria-label={item.name}
+              aria-current={!hasSearchQuery && railActiveId === item.id ? 'true' : undefined}
+              onClick={() => scrollToRailSection(item.id)}
+              className={cn('model-picker-rail-item size-8', !hasSearchQuery && railActiveId === item.id && 'bg-interactive-selection')}
+            >
+              {item.id === 'all'
+                ? <Icon name="list-unordered" className="size-4" />
+                : <ProviderLogo providerId={item.id} className="size-4 flex-shrink-0" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={6}>{item.name}</TooltipContent>
+        </Tooltip>
+      ))}
+    </nav>
+  ) : null;
+
+  return (
+    <>
+      <div className="model-picker-search-area p-1.5 pb-1">
+        <div className="relative">
+          <Icon name="search" className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder={labels.searchPlaceholder}
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.target.value)}
+            onKeyDown={handleKeyDown}
+            className="model-picker-search h-8 pl-8 typography-meta"
+            autoFocus={autoFocus}
+          />
+        </div>
+      </div>
+
+      {stairsEnabled ? (
+        <div className={cn('model-picker-stairs flex min-h-0', maxHeightClassName)} style={maxHeightStyle}>
+          {stairsRail}
+          {scrollArea}
+        </div>
+      ) : scrollArea}
 
       <div className="model-picker-footer px-3 pt-1 pb-1.5 border-t border-border/40 typography-micro text-muted-foreground">
         <ModelPickerFooter store={selectionStore} flatModelList={flatModelList} footerContent={footerContent} fallback={labels.keyboardHint} />

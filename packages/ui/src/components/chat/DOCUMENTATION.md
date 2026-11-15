@@ -209,6 +209,32 @@ dragged favorites remain mounted. Row indices are derived from that catalog, nev
 a mutable counter inside deferred sortable render callbacks. Mobile and other
 picker consumers do not opt into the compact desktop geometry.
 
+The desktop composer model picker also opts into `ModelPickerList.stairs`
+(effective only together with `virtualize`): a 44px provider rail (first entry
+"All", then one icon per selectable provider in `providerOrder`, hover shows the
+name) jumps to each provider group and follows scrolling. Offsets come from the
+virtual layout, never DOM measurement; a clicked entry stays active until the
+list scrolls away from its target, so short trailing groups remain selectable.
+Favorites and Recent sit under "All". Group labels are plain, sticky text
+(no icons or collapse; provider labels remain drag-reorderable). While searching,
+the rail is inert and results form one flat list ranked by
+`lib/search/modelSearch.scoreModelSearch`: text tier (exact 100, prefix 80, token
+prefix 65, substring 50, provider/loose 20) plus a recency boost (+40 for the most
+recent, −8 per step, from `recencyOrder`, the raw usage history including
+favorites) and +8 for favorites. Remembered thinking variants survive ranking.
+Other consumers keep the collapsible, section-filtered list.
+
+The mobile `MobileModelPickerPanel` has the same capabilities through its own
+layout (it is not virtualized): a 40px icon rail ("All" plus selectable providers,
+selected provider first) beside one continuous list with sticky plain group labels
+and no accordion. Rail offsets are measured from the `data-rail-section` elements;
+a tapped entry stays active until the list scrolls away from its target. Search is
+a flat list with the same ranking and ID/multi-term matching. Ranking and
+selected-provider lifting are shared in `lib/search/modelPickerRanking.ts`; the
+mobile panel takes `recencyOrder` (raw usage history) like the desktop list.
+Because every group is now expanded, row work scales with the full catalog; the
+closed-sheet gate still keeps it out of the closed state.
+
 ## Mobile session read/unread actions
 
 The mobile Projects home, Sessions sheet (including the iPad sidebar), and status
