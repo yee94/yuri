@@ -8,6 +8,13 @@ title menu and PC switch (`list-check-2` for Tasks, `folder-tree` for Projects).
 The shared native tab definitions and native bridge remain unchanged.
 Mobile task cards share the same glass background regardless of running state
 or the last selected session; execution is indicated only by the status slot.
+Their compact type scale is scoped in `mobile.css`: title 14/20px, project
+12/16px and time/branch 11/14px at the default rem scale. Titles use regular (400)
+weight, with medium (500) reserved for unread tasks. Cards use 14px horizontal
+and 12px vertical insets, 18px corners and an 8px list gap; the archive group
+follows in document flow with a 12px gap. Titles clamp to two lines, metadata
+truncates, and the separate menu/restore controls retain their 36px touch floor.
+The large page title, shared glass material and native bottom bar are unchanged.
 
 Archived task rows use Lucide `undo-2` for restore on mobile and PC. On PC the
 quick restore replaces the row's time on hover/focus; the archived row does not

@@ -580,7 +580,7 @@ export function MobileProjectsHome({
   const handleMenuOpenChange = useEvent((open: boolean) => setMenuOpen(open));
 
   return (
-    <main className={cn('relative isolate mx-auto flex w-full max-w-[26rem] flex-col gap-5', className)}>
+    <main className={cn('relative isolate mx-auto flex w-full max-w-[26rem] flex-col', task?.view === 'tasks' ? 'gap-3' : 'gap-5', className)}>
       <MobileTabPageHeader
         title={task
           ? <MobileHomeViewMenu value={task.view} onChange={task.onViewChange} />
@@ -761,9 +761,9 @@ function MobileTaskView({ task, model }: {
   const listed = [...model.pinned, ...model.active];
   const remaining = model.settledTotal - model.settled.length;
   return (
-    <>
+    <div className="flex flex-col gap-3">
       {listed.length > 0 ? (
-        <section className="flex flex-col gap-2.5" aria-label={t('sessions.sidebar.view.tasks')}>
+        <section className="flex flex-col gap-2" aria-label={t('sessions.sidebar.view.tasks')}>
           {listed.map((node) => (
             <MobileTaskCard
               key={node.id}
@@ -780,17 +780,17 @@ function MobileTaskView({ task, model }: {
 
       {model.settledTotal > 0 ? (
         <MobileFloatingSurface asChild>
-          <section className="overflow-hidden rounded-[var(--yuri-mobile-surface-radius)]" aria-label={t('sessions.sidebar.task.shelf.settled')}>
+          <section className="overflow-hidden rounded-[1.125rem]" aria-label={t('sessions.sidebar.task.shelf.settled')}>
             <button
               type="button"
               data-mobile-press-feedback="soft"
-              className="flex h-12 w-full items-center gap-2 px-4 text-left typography-ui-label text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
+              className="yuri-mobile-task-project flex h-11 w-full items-center gap-2 px-3.5 text-left text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
               aria-expanded={task.settledOpen}
               onClick={() => task.onSettledOpenChange(!task.settledOpen)}
             >
               <Icon name="inbox-archive" className="size-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{t('sessions.sidebar.task.shelf.settled')}</span>
-              <span className="tabular-nums">{model.settledTotal}</span>
+              <span className="yuri-mobile-task-meta tabular-nums">{model.settledTotal}</span>
               <Icon
                 name="arrow-down-s"
                 className={cn(
@@ -814,7 +814,7 @@ function MobileTaskView({ task, model }: {
           </section>
         </MobileFloatingSurface>
       ) : null}
-    </>
+    </div>
   );
 }
 

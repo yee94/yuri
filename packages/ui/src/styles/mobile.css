@@ -974,6 +974,25 @@
   line-height: var(--yuri-mobile-entity-meta-line-height);
 }
 
+.yuri-mobile-task-card {
+  --yuri-mobile-entity-title-size: 0.875rem;
+  --yuri-mobile-entity-title-line-height: 1.25rem;
+}
+
+.yuri-mobile-task-card .yuri-mobile-entity-title {
+  letter-spacing: -0.01em;
+}
+
+.yuri-mobile-task-project {
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.yuri-mobile-task-meta {
+  font-size: 0.6875rem;
+  line-height: 0.875rem;
+}
+
 .yuri-mobile-project-chevron {
   width: 0.875rem;
   height: 0.875rem;

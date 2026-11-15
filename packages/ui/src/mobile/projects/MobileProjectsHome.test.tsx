@@ -126,6 +126,79 @@ const props: MobileProjectsHomeProps = {
   onOpenSessionActions: noop,
 };
 
+test('compact task cards keep selection separate from menu actions and preserve long title and branch content', async () => {
+  const select = vi.fn();
+  const actions = vi.fn();
+  const task = {
+    id: 'compact-task',
+    title: '移动端交互设计与任务状态布局'.repeat(4),
+    projectLabel: 'project-with-a-long-name',
+    project: null,
+    branch: 'feature/compact-mobile-task-cards',
+    activityLabel: '1h',
+    unread: true,
+    pinned: true,
+    active: false,
+  };
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<I18nProvider>
+      <MobileTaskCard task={task} runStartedAt={null} onSelect={select} onOpenActions={actions} />
+    </I18nProvider>));
+    const [card, menu] = host.querySelectorAll('button');
+    expect(card.textContent).toContain(task.title);
+    expect(card.textContent).toContain(task.projectLabel);
+    expect(card.textContent).toContain(task.branch);
+    expect(card.querySelector('use[href="#yuri-pushpin-2-fill"]')).not.toBeNull();
+    expect(card.querySelector('button')).toBeNull();
+    await act(async () => menu.click());
+    expect(actions).toHaveBeenCalledExactlyOnceWith(task.id);
+    expect(select).not.toHaveBeenCalled();
+    await act(async () => card.click());
+    expect(select).toHaveBeenCalledExactlyOnceWith(task.id);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+test('compact task archive stays after the cards and restores without selecting a session', async () => {
+  const select = vi.fn();
+  const restore = vi.fn();
+  const toggle = vi.fn();
+  const active = { id: 'active', title: 'Active task', projectLabel: 'Project', project: null, unread: false, pinned: false, active: false };
+  const settled = { ...active, id: 'archived', title: 'Archived task' };
+  const task: NonNullable<MobileProjectsHomeProps['task']> = {
+    view: 'tasks',
+    onViewChange: noop,
+    model: { pinned: [], active: [active], settled: [settled], settledTotal: 1, settledIds: new Set([settled.id]), runStartTimes: new Map() },
+    settledOpen: false,
+    onSettledOpenChange: toggle,
+    onShowMoreSettled: noop,
+    onSelectTask: select,
+    onOpenTaskActions: noop,
+    onRestoreTask: restore,
+  };
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<I18nProvider><MobileProjectsHome {...props} task={task} /></I18nProvider>));
+    expect(host.textContent).not.toContain(settled.title);
+    const cardList = host.querySelector('.yuri-mobile-task-card')!.parentElement!;
+    const archive = cardList.nextElementSibling!;
+    expect(archive.querySelector('button')?.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => (archive.querySelector('button') as HTMLButtonElement).click());
+    expect(toggle).toHaveBeenCalledExactlyOnceWith(true);
+    await act(async () => root.render(<I18nProvider><MobileProjectsHome {...props} task={{ ...task, settledOpen: true }} /></I18nProvider>));
+    const restoreButton = host.querySelector('use[href="#yuri-undo-2"]')!.closest('button')!;
+    await act(async () => restoreButton.click());
+    expect(restore).toHaveBeenCalledExactlyOnceWith(settled.id);
+    expect(select).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
 test.each(['custom', 'auto'] as const)('mobile home project circle uses the configured %s logo from the project store', async (source) => {
   const previousProjects = useProjectsStore.getState().projects;
   const project = { id: `home-${source}`, path: '/project', label: 'Logo project', icon: 'rocket', iconImage: { mime: 'image/png', updatedAt: 1, source } };

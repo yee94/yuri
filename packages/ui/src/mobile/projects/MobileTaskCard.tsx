@@ -91,31 +91,31 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions }: Tas
       : null;
   const statusSlot = waitingLabel ? (
     <span
-      className="inline-flex shrink-0 items-center gap-1 typography-micro font-medium leading-none text-status-warning"
+      className="yuri-mobile-task-meta inline-flex min-w-0 max-w-[55%] items-center gap-1 font-medium text-status-warning"
       aria-label={waitingLabel}
     >
-      <Icon name={indicator === 'question' ? 'question' : 'shield'} className="size-3" />
-      {waitingLabel}
+      <Icon name={indicator === 'question' ? 'question' : 'shield'} className="size-3 shrink-0" />
+      <span className="truncate">{waitingLabel}</span>
     </span>
   ) : indicator === 'running' ? (
     <span
-      className="inline-flex shrink-0 items-center gap-1 typography-micro font-medium leading-none tabular-nums text-status-info"
+      className="yuri-mobile-task-meta inline-flex shrink-0 items-center gap-1 font-medium tabular-nums text-status-info"
       title={t('sessions.sidebar.session.status.active')}
     >
       <SessionBusyIndicator size={11} arcColor="var(--status-info)" className="motion-reduce:[&_svg]:animate-none" />
       {runStartedAt !== null ? <TaskRunElapsed startedAt={runStartedAt} /> : null}
     </span>
   ) : task.activityLabel ? (
-    <span className="shrink-0 typography-micro leading-none tabular-nums text-muted-foreground">{task.activityLabel}</span>
+    <span className="yuri-mobile-task-meta shrink-0 tabular-nums text-muted-foreground">{task.activityLabel}</span>
   ) : null;
   const receding = indicator === 'running' && !task.active;
 
   return (
-    <div className="yuri-mobile-floating-surface relative overflow-hidden rounded-[var(--yuri-mobile-surface-radius)]">
+    <div className="yuri-mobile-task-card yuri-mobile-floating-surface relative overflow-hidden rounded-[1.125rem]">
       <button
         type="button"
         data-mobile-press-feedback="soft"
-        className="block w-full min-w-0 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
+        className="block w-full min-w-0 px-3.5 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
         style={{ touchAction: 'pan-y' }}
         onClick={handleClick}
         onPointerDown={handlePointerDown}
@@ -124,22 +124,22 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions }: Tas
         onPointerCancel={handlePointerCancel}
         onContextMenu={handleContextMenu}
       >
-        <span className="flex h-6 items-center gap-1.5 pr-9">
+        <span className="flex h-4 items-center gap-1.5 pr-7">
           <TaskProjectBadge project={task.project} />
-          <span className="min-w-0 flex-1 truncate typography-small font-medium text-muted-foreground">{task.projectLabel}</span>
+          <span className="yuri-mobile-task-project min-w-0 flex-1 truncate text-muted-foreground">{task.projectLabel}</span>
           {statusSlot}
         </span>
         <span
           className={cn(
-            'yuri-mobile-entity-title mt-0.5 line-clamp-2 block text-foreground',
-            task.unread ? 'font-semibold' : 'font-medium',
+            'yuri-mobile-entity-title mt-1 line-clamp-2 break-words text-foreground',
+            task.unread ? 'font-medium' : 'font-normal',
             receding && 'text-foreground/70',
           )}
         >
           {task.title}
         </span>
         {task.branch || task.pinned ? (
-          <span className="mt-1 flex h-4 items-center gap-1 typography-micro text-muted-foreground/70">
+          <span className="yuri-mobile-task-meta mt-1.5 flex h-3.5 items-center gap-1 text-muted-foreground">
             {task.branch ? (
               <>
                 <Icon name="git-branch" className="size-3 shrink-0" />
@@ -156,7 +156,7 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions }: Tas
         type="button"
         variant="ghost"
         size="icon"
-        className="absolute right-1.5 top-1.5 min-h-9 min-w-9 rounded-full text-muted-foreground"
+        className="absolute right-1 top-0.5 min-h-9 min-w-9 rounded-full text-muted-foreground"
         aria-label={t('sessions.sidebar.session.menu.label')}
         onClick={handleOpenActions}
       >
@@ -179,17 +179,17 @@ function MobileSettledLineImpl({ task, onSelect, onRestore }: SettledLineProps) 
   const handleSelect = useEvent(() => onSelect(task.id));
   const handleRestore = useEvent(() => onRestore(task.id));
   return (
-    <div className="flex min-h-12 items-center gap-1 pl-4 pr-2 [&:not(:last-child)]:shadow-[inset_0_-1px_0_var(--yuri-mobile-divider)]">
+    <div className="flex min-h-11 items-center gap-1 pl-3.5 pr-1 [&:not(:last-child)]:shadow-[inset_0_-1px_0_var(--yuri-mobile-divider)]">
       <button
         type="button"
         data-mobile-press-feedback="soft"
-        className="flex min-w-0 flex-1 items-center gap-2 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
+        className="flex min-w-0 flex-1 items-center gap-2 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
         onClick={handleSelect}
       >
         <TaskProjectBadge project={task.project} />
-        <span className="min-w-0 flex-1 truncate typography-ui-label text-muted-foreground">{task.title}</span>
+        <span className="yuri-mobile-task-project min-w-0 flex-1 truncate text-muted-foreground">{task.title}</span>
         {task.activityLabel ? (
-          <span className="shrink-0 typography-micro tabular-nums text-muted-foreground/70">{task.activityLabel}</span>
+          <span className="yuri-mobile-task-meta shrink-0 tabular-nums text-muted-foreground">{task.activityLabel}</span>
         ) : null}
       </button>
       <Button
