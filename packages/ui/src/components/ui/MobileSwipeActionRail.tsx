@@ -21,15 +21,22 @@ export function MobileSwipeActionRail({ swipe, actions }: {
   return <div
     ref={actionRailRef}
     data-session-drag-ignore
+    data-revealed={revealed ? 'true' : 'false'}
+    data-dragging={dragging ? 'true' : undefined}
     className={cn('yuri-mobile-session-actions absolute inset-y-0 right-0 z-0 flex items-stretch',
-      dragging ? 'transition-none' : 'transition-transform duration-150 ease-out',
-      !revealed && 'invisible pointer-events-none')}
+      !revealed && 'pointer-events-none')}
     style={{
       '--yuri-mobile-session-action-count': actions.length,
       transform: `translate3d(calc(100% + ${offset}px), 0, 0)`,
       willChange: revealed ? 'transform' : undefined,
+      touchAction: 'pan-y',
     } as CSSProperties}
     aria-hidden={!revealed}
+    onPointerDown={swipe.handlePointerDown}
+    onPointerMove={swipe.handlePointerMove}
+    onPointerUp={swipe.finishGesture}
+    onPointerCancel={swipe.handlePointerCancel}
+    onClickCapture={swipe.handleActionClickCapture}
   >
     {actions.map((action) => <Button
       key={action.ariaLabel ?? action.label} type="button" variant={action.variant ?? (action.destructive ? 'destructive' : 'secondary')}

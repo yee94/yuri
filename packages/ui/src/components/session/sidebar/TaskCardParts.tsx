@@ -28,6 +28,17 @@ export function TaskProjectBadge({ project }: { project: TaskProjectMark | null 
   );
 }
 
+export function TaskUnreadDot(): React.ReactNode {
+  const { t } = useI18n();
+  return (
+    <span
+      className="yuri-task-unread-dot inline-block size-2 shrink-0 self-center rounded-full bg-[var(--session-unread-fill)]"
+      role="img"
+      aria-label={t('sessions.sidebar.session.status.unread')}
+    />
+  );
+}
+
 /** "Running 3m". Only this span re-renders on each tick, never the row. */
 export function TaskRunElapsed({ startedAt }: { startedAt: number }): React.ReactNode {
   const { t } = useI18n();

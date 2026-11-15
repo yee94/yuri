@@ -161,8 +161,19 @@ with 4px inline padding (including icon buttons), keeping the compact 10px
 Cancel-pin label fully visible in Chinese. Contact widths remain unchanged.
 Touch/pen intent locks after 10px; vertical
 intent yields to scrolling, horizontal movement clamps to the measured rail width,
-and release snaps at 35%. Mouse drags and long holds never reveal actions. A shared
-reveal event closes other rows; cancelled gestures restore their starting offset.
+and opening snaps at 35%. Once open, a rightward drag past the 10px intent lock
+closes on release regardless of rail width. Both the row and exposed action buttons
+accept this gesture; a drag on an action must never execute it. Vertical scrolling,
+pending-gesture scroll cancellation and wheel input dismiss an open rail. Horizontal
+cancellation restores the starting offset. Outside pointer-down closes without
+swallowing the target's interaction. Window blur also dismisses. Every non-drag
+close keeps the existing 150ms transform transition: the rail's visibility becomes
+hidden only after the slide finishes, while aria-hidden, tab stops and pointer
+interaction are disabled immediately. Reopening cancels the delayed hide; dragging
+has no transition, and reduced motion removes both the slide and hide delay.
+No per-row blur/filter is added. Dismissal listeners exist only while a rail is
+revealed. Mouse drags and long holds never reveal actions. A shared reveal event
+closes other rows and cancels their in-progress gestures.
 Consumers retain their own foreground content and business actions. Pointer moves
 only update the active row, read geometry once at gesture start, and add no requests.
 Session reorder disables swipe through the existing drag context.

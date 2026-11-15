@@ -20,6 +20,14 @@ the glass header and dock keep their existing layout.
 The overflow button and bottom pin mark share a 36px trailing column flush with
 the row's right edge, centering both glyphs on the same axis. The overflow button
 retains its full 36px touch target; the pin remains part of the row selection target.
+PC and mobile task cards share `TaskUnreadDot`: an 8px blue marker immediately
+before the project name in the first line's normal flex flow, vertically centered
+within that metadata line (not the whole task row or avatar). The dedicated
+`--session-unread-fill` token stays blue independently of the theme's info color.
+The dot, title weight and swipe Read/Unread action consume authoritative unread
+state; selected rows do not hide it. Running/question/permission indicators take
+precedence as in project rows. Marking read removes the dot without changing row
+height or the title/branch insets.
 Their compact type scale is scoped in `mobile.css`: title 14/20px, project
 12/16px and time/branch 11/14px at the default rem scale. Titles use regular (400)
 weight, with medium (500) reserved for unread tasks. Rows use 14px vertical

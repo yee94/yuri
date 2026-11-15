@@ -3,12 +3,13 @@ import { createRoot } from 'react-dom/client';
 import { afterAll, afterEach, expect, test, vi } from 'vitest';
 import type { Session } from '@/lib/opencode/v2-types';
 
-const { requestTitle, loadChildren, saveTitle, openWindow, desktopAvailable } = vi.hoisted(() => ({
+const { requestTitle, loadChildren, saveTitle, openWindow, desktopAvailable, sessionActivity } = vi.hoisted(() => ({
   requestTitle: vi.fn(() => new Promise<void>(() => {})),
   loadChildren: vi.fn(async () => {}),
   saveTitle: vi.fn(),
   openWindow: vi.fn(async () => {}),
   desktopAvailable: vi.fn(() => false),
+  sessionActivity: vi.fn(() => true),
 }));
 vi.mock('@/lib/desktop', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/desktop')>(),
@@ -19,7 +20,7 @@ vi.mock('@/sync/session-actions', () => ({ requestSessionSmartTitle: requestTitl
 vi.mock('@/sync/sync-context', () => ({
   useDirectoryStore: () => null,
   useLiveSessionStatus: () => ({ type: 'busy' }),
-  useSessionActivity: () => true,
+  useSessionActivity: sessionActivity,
   useSessionPermissions: () => [],
   useSessionQuestions: () => [],
 }));
@@ -39,7 +40,7 @@ vi.hoisted(() => {
 import { SessionNodeItem } from './SessionNodeItem';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui';
-import { resetSessionUnreadProjection, useNotificationStore } from '@/sync/notification-store';
+import { applySessionUnreadSnapshot, resetSessionUnreadProjection, useNotificationStore } from '@/sync/notification-store';
 
 const noop = () => {};
 const session = { id: 'ses_title', title: 'Original title', directory: '/repo', time: { created: 1, updated: 2 } } as Session;
@@ -53,6 +54,7 @@ afterEach(async () => {
   saveTitle.mockClear();
   openWindow.mockClear();
   desktopAvailable.mockReset().mockReturnValue(false);
+  sessionActivity.mockReset().mockReturnValue(true);
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -61,20 +63,22 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
-function Harness({ live = session, editing = true, indexed = session, children = [], duplicateRows = false, onRestore }: {
+function Harness({ live = session, editing = true, indexed = session, children = [], duplicateRows = false, onRestore, card = false, active = false }: {
   live?: Session;
   editing?: boolean;
   indexed?: Session;
   children?: Array<{ session: Session; children: []; worktree: null }>;
   duplicateRows?: boolean;
   onRestore?: (sessionId: string, settled: boolean) => void;
+  card?: boolean;
+  active?: boolean;
 }) {
   const [editingId, setEditingId] = React.useState<string | null>(editing ? session.id : null);
   const [expandedParents, setExpandedParents] = React.useState<Set<string>>(new Set());
   const row = <SessionNodeItem
     node={{ session: indexed, children, worktree: null }}
     groupDirectory="/repo"
-    currentSessionId={null}
+    currentSessionId={active ? session.id : null}
     pinnedSessionIds={new Set()}
     expandedParents={expandedParents}
     hasSessionSearchQuery={false}
@@ -116,7 +120,7 @@ function Harness({ live = session, editing = true, indexed = session, children =
     menuOpenSessionId={null}
     nodeStructureKey={session.id}
     liveSessionById={new Map([[session.id, live]])}
-    secondaryMeta={onRestore ? { slim: true, projectLabel: 'Project' } : undefined}
+    secondaryMeta={card ? { card: true, projectLabel: 'Project', branchLabel: 'main' } : onRestore ? { slim: true, projectLabel: 'Project' } : undefined}
     settledSessionIds={onRestore ? new Set([session.id]) : undefined}
     setSessionSettled={onRestore}
   />;
@@ -125,6 +129,38 @@ function Harness({ live = session, editing = true, indexed = session, children =
     <div data-test-section="project">{row}</div>
   </> : row}</TooltipProvider>;
 }
+
+test.each([false, true])('task card puts its unread dot inline before project text when selected=%s', async (active) => {
+  sessionActivity.mockReturnValue(false);
+  root = createRoot(container);
+  try {
+    await act(async () => {
+      applySessionUnreadSnapshot({
+        [session.id]: { directory: '/repo', unreadCount: 1, manual: true, hasError: false, revision: 1 },
+      });
+      root.render(<Harness editing={false} card active={active} />);
+    });
+    const dot = container.querySelector('.yuri-task-unread-dot')!;
+    expect(dot).not.toBeNull();
+    expect(dot.getAttribute('aria-label')).toBe('sessions.sidebar.session.status.unread');
+    expect(dot.nextElementSibling?.textContent).toBe('Project');
+    expect(dot.parentElement?.classList.contains('h-5')).toBe(true);
+    expect(dot.classList.contains('size-2')).toBe(true);
+    expect(dot.classList.contains('self-center')).toBe(true);
+    await act(async () => applySessionUnreadSnapshot({}));
+    expect(container.querySelector('.yuri-task-unread-dot')).toBeNull();
+    await act(async () => {
+      applySessionUnreadSnapshot({
+        [session.id]: { directory: '/repo', unreadCount: 1, manual: true, hasError: false, revision: 2 },
+      });
+      sessionActivity.mockReturnValue(true);
+      root.render(<Harness editing={false} card active={active} />);
+    });
+    expect(container.querySelector('.yuri-task-unread-dot')).toBeNull();
+  } finally {
+    await act(async () => resetSessionUnreadProjection());
+  }
+});
 
 test('archived task quick action restores with undo-2 instead of offering another archive or pin', async () => {
   const restore = vi.fn();

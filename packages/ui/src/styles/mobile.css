@@ -1360,6 +1360,23 @@ button.yuri-mobile-worktree-label-trigger:active,
   overflow: hidden;
   border-start-end-radius: var(--yuri-mobile-session-radius-start-end);
   border-end-end-radius: var(--yuri-mobile-session-radius-end-end);
+  visibility: hidden;
+  transition: transform 150ms ease-out, visibility 0s linear 150ms;
+}
+
+.yuri-mobile-session-actions[data-revealed="true"] {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.yuri-mobile-session-actions[data-dragging="true"] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yuri-mobile-session-actions {
+    transition: none;
+  }
 }
 
 .yuri-mobile-session-action {

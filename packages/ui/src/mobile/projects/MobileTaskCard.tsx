@@ -3,7 +3,7 @@ import { useEvent } from '@reactuses/core';
 
 import { Icon } from '@/components/icon/Icon';
 import { SessionBusyIndicator } from '@/components/session/SessionBusyIndicator';
-import { TaskProjectBadge, TaskRunElapsed, type TaskProjectMark } from '@/components/session/sidebar/TaskCardParts';
+import { TaskProjectBadge, TaskRunElapsed, TaskUnreadDot, type TaskProjectMark } from '@/components/session/sidebar/TaskCardParts';
 import { Button } from '@/components/ui/button';
 import { MobileSwipeActionRail } from '@/components/ui/MobileSwipeActionRail';
 import { useMobileSwipeActions } from '@/components/ui/useMobileSwipeActions';
@@ -56,7 +56,7 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
     hasPendingQuestion: questions.length > 0,
     hasPendingPermission: permissions.length > 0,
     running,
-    unread: task.unread,
+    unread,
   });
   const longPressRef = React.useRef<MobileLongPressController | null>(null);
   const swipe = useMobileSwipeActions(task.id, () => onSelect(task.id));
@@ -178,13 +178,14 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
             <TaskProjectBadge project={task.project} />
           </span>
           <span className="flex h-4 items-center gap-1.5 pr-9">
+            {indicator === 'completed-unread' ? <TaskUnreadDot /> : null}
             <span className="yuri-mobile-task-project min-w-0 flex-1 truncate text-muted-foreground">{task.projectLabel}</span>
             {statusSlot}
           </span>
           <span
             className={cn(
               'yuri-mobile-entity-title mt-1 line-clamp-2 break-words text-foreground',
-              task.unread ? 'font-medium' : 'font-normal',
+              unread ? 'font-medium' : 'font-normal',
               receding && 'text-foreground/70',
             )}
           >

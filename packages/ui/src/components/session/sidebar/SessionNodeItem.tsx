@@ -31,7 +31,7 @@ import { useSync } from '@/sync/use-sync';
 import { useViewportStore, viewportSessionKey } from '@/sync/viewport-store';
 import { DraggableSessionRow } from './sessionFolderDnd';
 import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
-import { TaskProjectBadge, TaskRunElapsed, type TaskProjectMark } from './TaskCardParts';
+import { TaskProjectBadge, TaskRunElapsed, TaskUnreadDot, type TaskProjectMark } from './TaskCardParts';
 import { SessionHoverDetails } from './SessionHoverDetails';
 import { nodeContainsSessionId, resolvedSessionRenderKey } from './sessionNodeItemUtils';
 import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './sessionNodeItemUtils';
@@ -974,8 +974,9 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   const showUnreadStatus = !hasPendingQuestion && !isStreaming && needsAttention;
   // Task-view card (t3-style): header = project icon + name on the left and ONE
   // small status slot on the right (waiting chip, "Running 3m", or the time);
-  // then the title, then the branch. Ready is unlabeled and an unread title
-  // turns bolder, so cards carry no trailing marker; in-flight titles recede.
+  // then the title, then the branch. Ready is unlabeled; unread cards add an
+  // inline dot before the project name and a bolder title, never a trailing marker.
+  // In-flight titles recede.
   // Nothing on the row repeats the status.
   const isCardRow = Boolean(secondaryMeta?.card);
   const isSlimRow = Boolean(secondaryMeta?.slim);
@@ -1361,6 +1362,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       // header line makes room for them; title and branch keep full width.
                       <div className={cn('flex h-5 w-full min-w-0 items-center gap-1 overflow-hidden', actionPaddingClass)}>
                         <TaskProjectBadge project={secondaryMeta?.project} />
+                        {cardUnread && !cardWaiting ? <TaskUnreadDot /> : null}
                         <span className={cn('min-w-0 flex-1 truncate typography-micro leading-4', rowIsEmphasized ? 'text-foreground/80' : 'text-muted-foreground')}>
                           {secondaryMeta?.projectLabel}
                         </span>

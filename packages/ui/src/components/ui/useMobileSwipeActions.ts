@@ -13,6 +13,7 @@ type ActiveGesture = {
   startY: number;
   startOffset: number;
   actionWidth: number;
+  fromActionRail: boolean;
   intent: 'pending' | 'horizontal' | 'vertical';
 };
 
@@ -22,6 +23,7 @@ export function useMobileSwipeActions(id: string, onSelect: () => void, disabled
   const [dragging, setDragging] = React.useState(false);
   const gestureRef = React.useRef<ActiveGesture | null>(null);
   const suppressClickRef = React.useRef(false);
+  const suppressActionClickRef = React.useRef(false);
   const actionRailRef = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
     if (!disabled) return;
@@ -33,10 +35,21 @@ export function useMobileSwipeActions(id: string, onSelect: () => void, disabled
   React.useEffect(() => {
     setOffset(0);
   }, [id]);
-  useEventListener(REVEALED_ROW_EVENT, (event: Event) => {
-    if ((event as CustomEvent<string>).detail !== id) setOffset(0);
+  const closeActions = useEvent(() => {
+    gestureRef.current = null;
+    setOffset(0);
+    setDragging(false);
   });
-  const closeActions = useEvent(() => setOffset(0));
+  useEventListener(REVEALED_ROW_EVENT, (event: Event) => {
+    if ((event as CustomEvent<string>).detail !== id) closeActions();
+  });
+  const dismissalTarget = () => offset !== 0 ? window : null;
+  useEventListener('pointerdown', (event: PointerEvent) => {
+    const row = actionRailRef.current?.parentElement;
+    if (row && !event.composedPath().includes(row)) closeActions();
+  }, dismissalTarget, { passive: true });
+  useEventListener('wheel', () => closeActions(), dismissalTarget, { passive: true });
+  useEventListener('blur', () => closeActions(), dismissalTarget);
   const handlePointerDown = useEvent((event: React.PointerEvent<HTMLElement>) => {
     if (disabled || event.button !== 0) return;
     // Swipe reveal is touch/pen only — mouse drag on desktop left residual
@@ -47,8 +60,10 @@ export function useMobileSwipeActions(id: string, onSelect: () => void, disabled
     gestureRef.current = {
       pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
       startOffset: offset, actionWidth, intent: 'pending',
+      fromActionRail: actionRailRef.current?.contains(event.target as Node) ?? false,
     };
     suppressClickRef.current = false;
+    suppressActionClickRef.current = false;
   });
   const handlePointerMove = useEvent((event: React.PointerEvent<HTMLElement>) => {
     if (disabled) return;
@@ -62,12 +77,17 @@ export function useMobileSwipeActions(id: string, onSelect: () => void, disabled
       if (absY > INTENT_LOCK_PX && absY > absX) {
         gesture.intent = 'vertical';
         gestureRef.current = null;
+        if (gesture.startOffset !== 0) {
+          suppressClickRef.current = true;
+          closeActions();
+        }
         return;
       }
       if (absX > INTENT_LOCK_PX && absX > absY) {
         gesture.intent = 'horizontal';
         setDragging(true);
         suppressClickRef.current = true;
+        suppressActionClickRef.current = gesture.fromActionRail;
         try {
           event.currentTarget.setPointerCapture(event.pointerId);
         } catch {
@@ -87,13 +107,20 @@ export function useMobileSwipeActions(id: string, onSelect: () => void, disabled
     gestureRef.current = null;
     if (gesture.intent !== 'horizontal') return;
     setDragging(false);
-    setOffset((current) => current < -(gesture.actionWidth * 0.35) ? -gesture.actionWidth : 0);
+    const closing = gesture.startOffset !== 0 && event.clientX - gesture.startX > INTENT_LOCK_PX;
+    setOffset((current) => closing ? 0 : current < -(gesture.actionWidth * 0.35) ? -gesture.actionWidth : 0);
   });
   const handlePointerCancel = useEvent(() => {
     const gesture = gestureRef.current;
     gestureRef.current = null;
     setDragging(false);
-    setOffset(gesture?.startOffset ?? 0);
+    setOffset(gesture?.intent === 'horizontal' ? gesture.startOffset : 0);
+  });
+  const handleActionClickCapture = useEvent((event: React.MouseEvent<HTMLElement>) => {
+    if (!suppressActionClickRef.current) return;
+    suppressActionClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
   });
   const handleSelect = useEvent(() => {
     if (suppressClickRef.current) {
@@ -110,6 +137,6 @@ export function useMobileSwipeActions(id: string, onSelect: () => void, disabled
   });
   return {
     offset, dragging, actionRailRef, closeActions, handleSelect,
-    handlePointerDown, handlePointerMove, finishGesture, handlePointerCancel, handleContextMenu,
+    handlePointerDown, handlePointerMove, finishGesture, handlePointerCancel, handleContextMenu, handleActionClickCapture,
   };
 }

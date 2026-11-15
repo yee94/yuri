@@ -361,6 +361,7 @@ test('task swipe read action shares Host state, reflects external updates and ne
     expect(readAction().querySelector('span')!.className).toContain('truncate');
     expect(readAction().getAttribute('aria-label')).toBe('Mark as unread');
     expect(readAction().querySelector('use')?.getAttribute('href')).toBe('#yuri-mail');
+    expect(host.querySelector('.yuri-task-unread-dot')).toBeNull();
     reveal();
     expect(host.querySelector<HTMLElement>('.yuri-mobile-task-content')!.style.transform).toBe('translate3d(-168px, 0, 0)');
     await act(async () => readAction().click());
@@ -369,22 +370,59 @@ test('task swipe read action shares Host state, reflects external updates and ne
     expect(readAction().getAttribute('aria-label')).toBe('Mark as read');
     expect(readAction().textContent).toBe('Read');
     expect(readAction().querySelector('use')?.getAttribute('href')).toBe('#yuri-mail-open');
+    const dot = host.querySelector('.yuri-task-unread-dot[aria-label="Unread updates"]')!;
+    expect(dot).not.toBeNull();
+    expect(dot.nextElementSibling?.textContent).toBe(task.projectLabel);
+    expect(dot.parentElement?.classList.contains('h-4')).toBe(true);
+    expect(dot.classList.contains('size-2')).toBe(true);
+    expect(dot.classList.contains('self-center')).toBe(true);
+    expect(host.querySelector('.yuri-mobile-entity-title')?.classList.contains('font-medium')).toBe(true);
     reveal();
     await act(async () => readAction().click());
     expect(read).toHaveBeenCalledExactlyOnceWith(task.id);
     expect(readAction().getAttribute('aria-label')).toBe('Mark as unread');
+    expect(host.querySelector('.yuri-task-unread-dot')).toBeNull();
     reveal();
     await act(async () => applySessionUnreadSnapshot({
       [task.id]: { directory: '/project', unreadCount: 1, manual: true, hasError: false, revision: 2 },
     }));
     expect(readAction().getAttribute('aria-label')).toBe('Mark as read');
+    expect(host.querySelector('.yuri-task-unread-dot')).not.toBeNull();
     expect(rail.getAttribute('aria-hidden')).toBe('false');
     await act(async () => applySessionUnreadSnapshot({}));
     expect(readAction().getAttribute('aria-label')).toBe('Mark as unread');
+    expect(host.querySelector('.yuri-task-unread-dot')).toBeNull();
     expect(select).not.toHaveBeenCalled();
   } finally {
     await act(async () => root.unmount());
     stopReadSync();
+    resetSessionUnreadProjection();
+  }
+});
+
+test.each([false, true])('task unread dot remains visible when selected=%s and yields to running status', async (active) => {
+  const task = { id: 'unread-dot-priority', title: 'Task', projectLabel: 'Project', project: null, unread: false, pinned: false, active };
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  try {
+    await act(async () => {
+      applySessionUnreadSnapshot({
+        [task.id]: { directory: '/project', unreadCount: 1, manual: true, hasError: false, revision: 1 },
+      });
+      root.render(<I18nProvider>
+        <MobileTaskCard task={task} runStartedAt={null} onSelect={noop} onOpenActions={noop} onPin={noop} onArchive={noop} />
+      </I18nProvider>);
+    });
+    expect(host.querySelector('.yuri-task-unread-dot[role="img"]')).not.toBeNull();
+    fixtures.running.add(task.id);
+    await act(async () => root.render(<I18nProvider>
+      <MobileTaskCard task={{ ...task }} runStartedAt={Date.now()} onSelect={noop} onOpenActions={noop} onPin={noop} onArchive={noop} />
+    </I18nProvider>));
+    expect(host.querySelector('.yuri-task-unread-dot')).toBeNull();
+    expect(host.querySelector('.yuri-mobile-task-content .text-status-info')).not.toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    fixtures.running.delete(task.id);
     resetSessionUnreadProjection();
   }
 });

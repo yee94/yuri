@@ -96,8 +96,116 @@ test('three-action rail uses the measured full width and closes after the added 
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="Read"]')!.click());
     expect(onRead).toHaveBeenCalledOnce();
     expect(rail.getAttribute('aria-hidden')).toBe('true');
+    expect(rail.classList.contains('invisible')).toBe(false);
+    expect(rail.dataset.revealed).toBe('false');
+    expect(rail.classList.contains('pointer-events-none')).toBe(true);
     expect(onOpen).not.toHaveBeenCalled();
   } finally {
     act(() => root.unmount());
+  }
+});
+
+test.each([112, 192].flatMap(width =>
+  ['outside', 'blur', 'reverse-row', 'reverse-actions', 'vertical', 'cancel-scroll'].map(mode => ({ width, mode })),
+))('open $width px rail dismisses with $mode without accidental actions', ({ width, mode }) => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const onOpen = vi.fn();
+  const onEdit = vi.fn();
+  const outside = vi.fn();
+  const pointer = (target: Element, type: string, x: number, y = 0) => act(() => {
+    target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 1, button: 0,
+      pointerType: 'touch', clientX: x, clientY: y,
+    }));
+  });
+  try {
+    act(() => root.render(<>
+      <Row id="dismiss" onOpen={onOpen} onEdit={onEdit} onDelete={vi.fn()} onRead={width === 192 ? vi.fn() : undefined} />
+      <button data-outside onClick={outside}>Outside</button>
+    </>));
+    const main = container.querySelector('[data-main]')!;
+    const rail = container.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    Object.defineProperty(rail, 'offsetWidth', { value: width });
+    pointer(main, 'pointerdown', 240);
+    pointer(main, 'pointermove', 20);
+    pointer(main, 'pointerup', 20);
+    expect(rail.getAttribute('aria-hidden')).toBe('false');
+    if (mode === 'outside') {
+      const button = container.querySelector<HTMLButtonElement>('[data-outside]')!;
+      pointer(button, 'pointerdown', 200);
+      act(() => button.click());
+      expect(outside).toHaveBeenCalledOnce();
+    } else if (mode === 'blur') {
+      act(() => window.dispatchEvent(new Event('blur')));
+    } else if (mode === 'cancel-scroll') {
+      pointer(main, 'pointerdown', 80);
+      pointer(main, 'pointercancel', 80);
+    } else {
+      const target = mode === 'reverse-actions' ? rail.querySelector('button')! : main;
+      pointer(target, 'pointerdown', 80);
+      if (mode === 'vertical') {
+        pointer(target, 'pointermove', 82, 30);
+        pointer(target, 'pointerup', 82, 30);
+      } else {
+        pointer(target, 'pointermove', 104);
+        pointer(target, 'pointerup', 104);
+        act(() => (target as HTMLButtonElement).click());
+      }
+    }
+    expect(rail.getAttribute('aria-hidden')).toBe('true');
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onEdit).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+  }
+});
+
+test('dismissal listeners exist only on the revealed rail and are cleaned on close and unmount', () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const add = vi.spyOn(window, 'addEventListener');
+  const remove = vi.spyOn(window, 'removeEventListener');
+  const pointer = (target: Element, type: string, x: number) => act(() => {
+    target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 1, button: 0,
+      pointerType: 'touch', clientX: x, clientY: 0,
+    }));
+  });
+  try {
+    act(() => root.render(<Row id="listeners" onOpen={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />));
+    const main = container.querySelector('[data-main]')!;
+    const rail = container.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    Object.defineProperty(rail, 'offsetWidth', { value: 112 });
+    const open = () => {
+      pointer(main, 'pointerdown', 200);
+      pointer(main, 'pointermove', 100);
+      pointer(main, 'pointermove', 80);
+      pointer(main, 'pointerup', 80);
+    };
+    const count = (spy: typeof add | typeof remove, name: string) => spy.mock.calls.filter(([event]) => event === name).length;
+    expect(count(add, 'pointerdown')).toBe(0);
+    open();
+    expect(count(add, 'pointerdown')).toBe(1);
+    expect(count(add, 'wheel')).toBe(1);
+    expect(count(add, 'blur')).toBe(1);
+    act(() => window.dispatchEvent(new WheelEvent('wheel')));
+    expect(rail.getAttribute('aria-hidden')).toBe('true');
+    expect(count(remove, 'pointerdown')).toBe(1);
+    expect(count(remove, 'wheel')).toBe(1);
+    expect(count(remove, 'blur')).toBe(1);
+    open();
+    act(() => root.unmount());
+    expect(count(remove, 'pointerdown')).toBe(2);
+    expect(count(remove, 'wheel')).toBe(2);
+    expect(count(remove, 'blur')).toBe(2);
+  } finally {
+    act(() => root.unmount());
+    add.mockRestore();
+    remove.mockRestore();
+    container.remove();
   }
 });
