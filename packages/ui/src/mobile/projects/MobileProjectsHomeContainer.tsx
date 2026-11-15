@@ -131,9 +131,8 @@ export function MobileProjectsHomeContainer({
   const togglePinnedSession = useTogglePinnedSession();
   const setSessionSettled = useSetSessionSettled();
   const [taskStatus, setTaskStatus] = React.useState<MobileTaskStatus>('active');
-  const [unreadOnly, setUnreadOnly] = React.useState(false);
   const [settledLimit, setSettledLimit] = React.useState(SETTLED_SHELF_PAGE_SIZE);
-  const taskModel = useMobileTaskViewModel(model, { enabled: homeView === 'tasks', status: taskStatus, unreadOnly, settledLimit });
+  const taskModel = useMobileTaskViewModel(model, { enabled: homeView === 'tasks', status: taskStatus, settledLimit });
   const handleTaskStatusChange = useEvent((status: MobileTaskStatus) => {
     setTaskStatus(status);
     setSettledLimit(SETTLED_SHELF_PAGE_SIZE);
@@ -735,8 +734,6 @@ export function MobileProjectsHomeContainer({
           model: taskModel,
           status: taskStatus,
           onStatusChange: handleTaskStatusChange,
-          unreadOnly,
-          onUnreadOnlyChange: setUnreadOnly,
           onShowMoreSettled: handleShowMoreSettled,
           onSelectTask: handleSelectTask,
           onOpenTaskActions: handleOpenTaskActions,

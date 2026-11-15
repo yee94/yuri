@@ -238,7 +238,7 @@ test('task swipe, long press and three-dot actions preserve scrolling and route 
   const task: NonNullable<MobileProjectsHomeProps['task']> = {
     view: 'tasks', onViewChange: noop,
     model: { items: active, total: active.length, runStartTimes: new Map() },
-    status: 'active', onStatusChange: noop, unreadOnly: false, onUnreadOnlyChange: noop, onShowMoreSettled: noop,
+    status: 'active', onStatusChange: noop, onShowMoreSettled: noop,
     onSelectTask: select, onOpenTaskActions: actions, onRestoreTask: noop,
   };
   const host = document.createElement('div');
@@ -496,11 +496,10 @@ test('100 inbox rows isolate 50 pointer moves and unrelated parent updates to th
   }
 });
 
-test('task status picker and unread filter drive the list, and archived rows swipe to restore', async () => {
+test('task status tabs drive the list, and archived rows swipe to restore', async () => {
   const select = vi.fn();
   const restore = vi.fn();
   const changeStatus = vi.fn();
-  const changeUnread = vi.fn();
   const showMore = vi.fn();
   const archivedNode = { id: 'archived', title: 'Archived task', projectLabel: 'Project', project: null, unread: false, pinned: false, active: false };
   const task: NonNullable<MobileProjectsHomeProps['task']> = {
@@ -509,8 +508,6 @@ test('task status picker and unread filter drive the list, and archived rows swi
     model: { items: [archivedNode], total: 2, runStartTimes: new Map() },
     status: 'archived',
     onStatusChange: changeStatus,
-    unreadOnly: false,
-    onUnreadOnlyChange: changeUnread,
     onShowMoreSettled: showMore,
     onSelectTask: select,
     onOpenTaskActions: noop,
@@ -520,18 +517,18 @@ test('task status picker and unread filter drive the list, and archived rows swi
   const root = createRoot(host);
   try {
     await act(async () => root.render(<I18nProvider><MobileProjectsHome {...props} task={task} /></I18nProvider>));
-    const bar = host.querySelector('[role="toolbar"]')!;
-    expect(bar.textContent).toContain('Archived');
+    const bar = host.querySelector('[role="tablist"]')!;
+    const tabs = [...bar.querySelectorAll('[role="tab"]')];
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Active', 'Unread', 'Archived']);
+    expect(tabs.map((tab) => tab.getAttribute('aria-selected'))).toEqual(['false', 'false', 'true']);
     const row = host.querySelector('.yuri-mobile-task-card')!;
     expect(row.textContent).toContain(archivedNode.title);
     const railButtons = row.querySelectorAll('.yuri-mobile-session-actions button');
     expect(railButtons).toHaveLength(2);
     await act(async () => (railButtons[1] as HTMLButtonElement).click());
     expect(restore).toHaveBeenCalledExactlyOnceWith(archivedNode.id);
-    const unread = [...bar.querySelectorAll('button')].find((button) => button.hasAttribute('aria-pressed'))!;
-    expect(unread.getAttribute('aria-pressed')).toBe('false');
-    await act(async () => unread.click());
-    expect(changeUnread).toHaveBeenCalledExactlyOnceWith(true);
+    await act(async () => (tabs[1] as HTMLButtonElement).click());
+    expect(changeStatus).toHaveBeenCalledExactlyOnceWith('unread');
     const more = [...host.querySelectorAll('section > button')].at(-1) as HTMLButtonElement;
     await act(async () => more.click());
     expect(showMore).toHaveBeenCalledOnce();

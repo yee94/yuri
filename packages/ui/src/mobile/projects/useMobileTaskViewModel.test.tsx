@@ -62,7 +62,7 @@ test('task model distinguishes unknown Git, ready branch and confirmed non-repos
   const root = createRoot(document.createElement('div'));
   let latest: MobileTaskViewModel | null = null;
   function Harness() {
-    latest = useMobileTaskViewModel(model, { enabled: true, status: 'active', unreadOnly: false, settledLimit: 30 });
+    latest = useMobileTaskViewModel(model, { enabled: true, status: 'active', settledLimit: 30 });
     return null;
   }
   const read = () => (latest as MobileTaskViewModel | null)?.items[0];
@@ -81,7 +81,7 @@ test('task model distinguishes unknown Git, ready branch and confirmed non-repos
   }
 });
 
-test('unread filter keeps only unread tasks and reports the filtered total', () => {
+test('unread tab keeps only unread tasks and reports the filtered total', () => {
   fixtures.gitStatus = new Map();
   fixtures.counts = { b: 2 };
   const sessions = ['a', 'b'].map((id) => ({ id, title: id, directory: '/home/user/project', time: { created: 1, updated: 1 } }) as Session);
@@ -92,14 +92,14 @@ test('unread filter keeps only unread tasks and reports the filtered total', () 
   };
   const root = createRoot(document.createElement('div'));
   let latest: MobileTaskViewModel | null = null;
-  function Harness({ unreadOnly }: { unreadOnly: boolean }) {
-    latest = useMobileTaskViewModel(model, { enabled: true, status: 'active', unreadOnly, settledLimit: 30 });
+  function Harness({ status }: { status: 'active' | 'unread' }) {
+    latest = useMobileTaskViewModel(model, { enabled: true, status, settledLimit: 30 });
     return null;
   }
   try {
-    act(() => root.render(<Harness unreadOnly={false} />));
+    act(() => root.render(<Harness status="active" />));
     expect((latest as MobileTaskViewModel | null)?.total).toBe(2);
-    act(() => root.render(<Harness unreadOnly />));
+    act(() => root.render(<Harness status="unread" />));
     expect((latest as MobileTaskViewModel | null)?.items.map((node) => node.id)).toEqual(['b']);
     expect((latest as MobileTaskViewModel | null)?.total).toBe(1);
   } finally {

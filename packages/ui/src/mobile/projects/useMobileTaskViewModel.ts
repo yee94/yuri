@@ -60,13 +60,13 @@ const resolveTaskBranch = (
   return branch && branch !== 'HEAD' && branch !== projectLabel ? branch : undefined;
 };
 
-/** Status picker of the task view: everything open, only tasks waiting on the user, or Archived. */
-export type MobileTaskStatus = 'active' | 'waiting' | 'archived';
+/** Task view tabs: every open task, only unread open tasks, or Archived. */
+export type MobileTaskStatus = 'active' | 'unread' | 'archived';
 
 export type MobileTaskViewModel = {
-  /** Rows of the selected status after the unread filter; Archived is cut to the current page. */
+  /** Rows of the selected tab; Archived is cut to the current page. */
   items: MobileTaskNode[];
-  /** Rows matching the selected status and filter before paging. */
+  /** Rows matching the selected tab before paging. */
   total: number;
   runStartTimes: ReadonlyMap<string, number>;
 };
@@ -78,9 +78,9 @@ export type MobileTaskViewModel = {
  */
 export function useMobileTaskViewModel(
   model: Pick<MobileProjectsHomeModel, 'allSessions' | 'ownership' | 'projectMetaById'>,
-  options: { enabled: boolean; status: MobileTaskStatus; unreadOnly: boolean; settledLimit: number },
+  options: { enabled: boolean; status: MobileTaskStatus; settledLimit: number },
 ): MobileTaskViewModel | null {
-  const { enabled, status, unreadOnly, settledLimit } = options;
+  const { enabled, status, settledLimit } = options;
   const { t } = useI18n();
   const pinnedSessionIds = usePinnedSessionIds();
   const settledIds = useSettledSessionIds();
@@ -160,12 +160,8 @@ export function useMobileTaskViewModel(
     };
     const isUnread = (session: Session): boolean => (unseenBySession[session.id] ?? 0) > 0;
     const open = [...pinnedSessions, ...buckets.active];
-    const scoped = status === 'archived'
-      ? buckets.settled
-      : status === 'waiting'
-        ? open.filter((session) => pendingRequestSessionIds.has(session.id))
-        : open;
-    const matching = unreadOnly ? scoped.filter(isUnread) : scoped;
+    const scoped = status === 'archived' ? buckets.settled : open;
+    const matching = status === 'unread' ? scoped.filter(isUnread) : scoped;
     const visible = status === 'archived' ? matching.slice(0, settledLimit) : matching;
     const result = {
       items: visible.map((session) => toNode(session, pinnedSessionIds.has(session.id))),
@@ -192,7 +188,6 @@ export function useMobileTaskViewModel(
     settledLimit,
     status,
     t,
-    unreadOnly,
     unseenBySession,
   ]);
 }
