@@ -43,8 +43,9 @@ import {
 } from './MobileSessionRow';
 import { resolveMobileSessionIndicator } from './mobileSessionIndicator';
 import { MobileHomeViewMenu } from './MobileHomeViewMenu';
-import { MobileSettledLine, MobileTaskCard } from './MobileTaskCard';
-import type { MobileTaskViewModel } from './useMobileTaskViewModel';
+import { MobileTaskCard } from './MobileTaskCard';
+import { MobileTaskFilterBar } from './MobileTaskFilterBar';
+import type { MobileTaskStatus, MobileTaskViewModel } from './useMobileTaskViewModel';
 
 const INTENT_LOCK_PX = 10;
 const REVEALED_WORKTREE_EVENT = 'yuri:mobile-worktree-row-revealed';
@@ -133,8 +134,10 @@ export type MobileProjectsHomeProps = {
     view: SidebarView;
     onViewChange: (view: SidebarView) => void;
     model: MobileTaskViewModel | null;
-    settledOpen: boolean;
-    onSettledOpenChange: (open: boolean) => void;
+    status: MobileTaskStatus;
+    onStatusChange: (status: MobileTaskStatus) => void;
+    unreadOnly: boolean;
+    onUnreadOnlyChange: (unreadOnly: boolean) => void;
     onShowMoreSettled: () => void;
     onSelectTask: (sessionId: string) => void;
     onOpenTaskActions: (sessionId: string) => void;
@@ -653,7 +656,7 @@ export function MobileProjectsHome({
       />
 
       {task?.view === 'tasks' && task.model ? (
-        <MobileTaskView task={task} model={task.model} onPinSession={onPinSession} onArchiveSession={onArchiveSession} />
+        <MobileTaskView task={task} model={task.model} onPinSession={onPinSession} onArchiveSession={onArchiveSession} onNewSession={handleNewSession} />
       ) : null}
 
       {task?.view === 'tasks' ? null : pinnedSessions.length > 0 || inProgressSessions.length > 0 ? (
@@ -753,73 +756,72 @@ export function MobileProjectsHome({
   );
 }
 
-function MobileTaskView({ task, model, onPinSession, onArchiveSession }: {
+function MobileTaskView({ task, model, onPinSession, onArchiveSession, onNewSession }: {
   task: NonNullable<MobileProjectsHomeProps['task']>;
   model: MobileTaskViewModel;
-} & Pick<MobileProjectsHomeProps, 'onPinSession' | 'onArchiveSession'>) {
+} & Pick<MobileProjectsHomeProps, 'onPinSession' | 'onArchiveSession' | 'onNewSession'>) {
   const { t } = useI18n();
-  const archivedListId = React.useId();
   const handlePin = useEvent((sessionId: string) => onPinSession({ id: sessionId, title: '' }));
   const handleArchive = useEvent((sessionId: string) => onArchiveSession({ id: sessionId, title: '' }));
-  const listed = [...model.pinned, ...model.active];
-  const remaining = model.settledTotal - model.settled.length;
+  const archived = task.status === 'archived';
+  const remaining = model.total - model.items.length;
   return (
     <div className="yuri-mobile-task-list flex flex-col gap-2">
-      {listed.length > 0 ? (
+      <div className="yuri-mobile-task-filter-bar">
+        <MobileTaskFilterBar
+          status={task.status}
+          onStatusChange={task.onStatusChange}
+          unreadOnly={task.unreadOnly}
+          onUnreadOnlyChange={task.onUnreadOnlyChange}
+        />
+      </div>
+      {model.items.length > 0 ? (
         <section className="flex flex-col" aria-label={t('sessions.sidebar.view.tasks')}>
-          {listed.map((node) => (
+          {model.items.map((node) => (
             <MobileTaskCard
               key={node.id}
               task={node}
               runStartedAt={model.runStartTimes.get(node.id) ?? null}
+              archived={archived}
               onSelect={task.onSelectTask}
               onOpenActions={task.onOpenTaskActions}
               onPin={handlePin}
               onArchive={handleArchive}
+              onRestore={task.onRestoreTask}
             />
           ))}
-        </section>
-      ) : (
-        <p className="px-3 py-10 text-center typography-small text-muted-foreground">{t('sessions.sidebar.task.empty')}</p>
-      )}
-
-      {model.settledTotal > 0 ? (
-        <section className="yuri-mobile-task-archive" aria-label={t('sessions.sidebar.task.shelf.settled')}>
-          <button
-            type="button"
-            data-mobile-press-feedback="soft"
-            className="yuri-mobile-task-project grid h-12 w-full grid-cols-[2.5rem_minmax(0,1fr)_auto_0.875rem] items-center gap-3.5 text-left text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
-            aria-expanded={task.settledOpen}
-            aria-controls={archivedListId}
-            onClick={() => task.onSettledOpenChange(!task.settledOpen)}
-          >
-            <span className="flex size-10 items-center justify-center">
-              <Icon name="inbox-archive" className="size-[18px]" />
-            </span>
-            <span className="min-w-0 truncate">{t('sessions.sidebar.task.shelf.settled')}</span>
-            <span className="yuri-mobile-task-meta tabular-nums">{model.settledTotal}</span>
-            <Icon
-              name="arrow-down-s"
-              className={cn(
-                'size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none',
-                task.settledOpen ? 'rotate-0' : '-rotate-90',
-              )}
-            />
-          </button>
-          {task.settledOpen ? (
-            <div id={archivedListId} className="ml-[3.375rem]">
-              {model.settled.map((node) => (
-                <MobileSettledLine key={node.id} task={node} onSelect={task.onSelectTask} onRestore={task.onRestoreTask} />
-              ))}
-              {remaining > 0 ? (
-                <Button type="button" variant="ghost" className="h-11 w-full rounded-none text-muted-foreground" onClick={task.onShowMoreSettled}>
-                  {t(remaining === 1 ? 'sessions.sidebar.group.showMoreSingle' : 'sessions.sidebar.group.showMorePlural', { count: Math.min(SETTLED_SHELF_PAGE_SIZE, remaining) })}
-                </Button>
-              ) : null}
-            </div>
+          {archived && remaining > 0 ? (
+            <Button type="button" variant="ghost" className="h-11 w-full rounded-none text-muted-foreground" onClick={task.onShowMoreSettled}>
+              {t(remaining === 1 ? 'sessions.sidebar.group.showMoreSingle' : 'sessions.sidebar.group.showMorePlural', { count: Math.min(SETTLED_SHELF_PAGE_SIZE, remaining) })}
+            </Button>
           ) : null}
         </section>
-      ) : null}
+      ) : task.status === 'active' && !task.unreadOnly ? (
+        <section className="flex flex-col items-center px-6 py-16 text-center">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            className="size-14 text-muted-foreground"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21.801 10A10 10 0 1 1 17 3.335" />
+            <path d="m9 11 3 3L22 4" />
+          </svg>
+          <p className="mt-4 typography-ui-label text-muted-foreground">{t('mobile.tasks.empty.allDone')}</p>
+          <Button type="button" size="lg" className="mt-5 min-h-10 rounded-full px-5" onClick={onNewSession}>
+            <Icon name="chat-new" className="size-4" />
+            {t('mobile.projects.menu.newChat')}
+          </Button>
+        </section>
+      ) : (
+        <p className="px-3 py-10 text-center typography-small text-muted-foreground">
+          {t('mobile.tasks.empty.filtered')}
+        </p>
+      )}
     </div>
   );
 }

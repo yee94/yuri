@@ -237,8 +237,8 @@ test('task swipe, long press and three-dot actions preserve scrolling and route 
   const active = ['a', 'b'].map(id => ({ id, title: id, projectLabel: 'Project', project: null, unread: false, pinned: false, active: false }));
   const task: NonNullable<MobileProjectsHomeProps['task']> = {
     view: 'tasks', onViewChange: noop,
-    model: { pinned: [], active, settled: [], settledTotal: 0, settledIds: new Set(), runStartTimes: new Map() },
-    settledOpen: false, onSettledOpenChange: noop, onShowMoreSettled: noop,
+    model: { items: active, total: active.length, runStartTimes: new Map() },
+    status: 'active', onStatusChange: noop, unreadOnly: false, onUnreadOnlyChange: noop, onShowMoreSettled: noop,
     onSelectTask: select, onOpenTaskActions: actions, onRestoreTask: noop,
   };
   const host = document.createElement('div');
@@ -496,19 +496,21 @@ test('100 inbox rows isolate 50 pointer moves and unrelated parent updates to th
   }
 });
 
-test('inline task archive stays after the rows and restores without selecting a session', async () => {
+test('task status picker and unread filter drive the list, and archived rows swipe to restore', async () => {
   const select = vi.fn();
   const restore = vi.fn();
-  const toggle = vi.fn();
+  const changeStatus = vi.fn();
+  const changeUnread = vi.fn();
   const showMore = vi.fn();
-  const active = { id: 'active', title: 'Active task', projectLabel: 'Project', project: null, unread: false, pinned: false, active: false };
-  const settled = { ...active, id: 'archived', title: 'Archived task with a long title'.repeat(4), activityLabel: '2d' };
+  const archivedNode = { id: 'archived', title: 'Archived task', projectLabel: 'Project', project: null, unread: false, pinned: false, active: false };
   const task: NonNullable<MobileProjectsHomeProps['task']> = {
     view: 'tasks',
     onViewChange: noop,
-    model: { pinned: [], active: [active], settled: [settled], settledTotal: 2, settledIds: new Set([settled.id]), runStartTimes: new Map() },
-    settledOpen: false,
-    onSettledOpenChange: toggle,
+    model: { items: [archivedNode], total: 2, runStartTimes: new Map() },
+    status: 'archived',
+    onStatusChange: changeStatus,
+    unreadOnly: false,
+    onUnreadOnlyChange: changeUnread,
     onShowMoreSettled: showMore,
     onSelectTask: select,
     onOpenTaskActions: noop,
@@ -518,32 +520,22 @@ test('inline task archive stays after the rows and restores without selecting a 
   const root = createRoot(host);
   try {
     await act(async () => root.render(<I18nProvider><MobileProjectsHome {...props} task={task} /></I18nProvider>));
-    expect(host.textContent).not.toContain(settled.title);
-    const cardList = host.querySelector('.yuri-mobile-task-card')!.parentElement!;
-    const archive = cardList.nextElementSibling!;
-    expect(archive.classList.contains('yuri-mobile-floating-surface')).toBe(false);
-    expect(archive.querySelector('button')?.getAttribute('aria-expanded')).toBe('false');
-    await act(async () => (archive.querySelector('button') as HTMLButtonElement).click());
-    expect(toggle).toHaveBeenCalledExactlyOnceWith(true);
-    await act(async () => root.render(<I18nProvider><MobileProjectsHome {...props} task={{ ...task, settledOpen: true }} /></I18nProvider>));
-    const disclosure = archive.querySelector('button')!;
-    const archivedList = host.querySelector('.yuri-mobile-task-archived-row')!.parentElement!;
-    expect(archivedList.id).toBe(disclosure.getAttribute('aria-controls'));
-    const archivedRow = archivedList.querySelector('.yuri-mobile-task-archived-row')!;
-    expect(archivedRow.textContent).toContain(settled.title);
-    expect(archivedRow.textContent).not.toContain(settled.activityLabel);
-    expect(archivedRow.querySelector('use[href="#yuri-folder-open"]')).toBeNull();
-    await act(async () => (archivedRow.querySelector('button') as HTMLButtonElement).click());
-    expect(select).toHaveBeenCalledExactlyOnceWith(settled.id);
-    select.mockClear();
-    const restoreButton = host.querySelector('use[href="#yuri-undo-2"]')!.closest('button')!;
-    await act(async () => restoreButton.click());
-    expect(restore).toHaveBeenCalledExactlyOnceWith(settled.id);
-    expect(select).not.toHaveBeenCalled();
-    await act(async () => (archivedList.lastElementChild as HTMLButtonElement).click());
+    const bar = host.querySelector('[role="toolbar"]')!;
+    expect(bar.textContent).toContain('Archived');
+    const row = host.querySelector('.yuri-mobile-task-card')!;
+    expect(row.textContent).toContain(archivedNode.title);
+    const railButtons = row.querySelectorAll('.yuri-mobile-session-actions button');
+    expect(railButtons).toHaveLength(2);
+    await act(async () => (railButtons[1] as HTMLButtonElement).click());
+    expect(restore).toHaveBeenCalledExactlyOnceWith(archivedNode.id);
+    const unread = [...bar.querySelectorAll('button')].find((button) => button.hasAttribute('aria-pressed'))!;
+    expect(unread.getAttribute('aria-pressed')).toBe('false');
+    await act(async () => unread.click());
+    expect(changeUnread).toHaveBeenCalledExactlyOnceWith(true);
+    const more = [...host.querySelectorAll('section > button')].at(-1) as HTMLButtonElement;
+    await act(async () => more.click());
     expect(showMore).toHaveBeenCalledOnce();
-    await act(async () => root.render(<I18nProvider><MobileProjectsHome {...props} task={task} /></I18nProvider>));
-    expect(host.querySelector('.yuri-mobile-task-archived-row')).toBeNull();
+    expect(select).not.toHaveBeenCalled();
   } finally {
     await act(async () => root.unmount());
   }

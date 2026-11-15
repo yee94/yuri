@@ -60,13 +60,14 @@ const resolveTaskBranch = (
   return branch && branch !== 'HEAD' && branch !== projectLabel ? branch : undefined;
 };
 
+/** Status picker of the task view: everything open, only tasks waiting on the user, or Archived. */
+export type MobileTaskStatus = 'active' | 'waiting' | 'archived';
+
 export type MobileTaskViewModel = {
-  pinned: MobileTaskNode[];
-  active: MobileTaskNode[];
-  /** Only the Settled rows the sheet currently shows. */
-  settled: MobileTaskNode[];
-  settledTotal: number;
-  settledIds: ReadonlySet<string>;
+  /** Rows of the selected status after the unread filter; Archived is cut to the current page. */
+  items: MobileTaskNode[];
+  /** Rows matching the selected status and filter before paging. */
+  total: number;
   runStartTimes: ReadonlyMap<string, number>;
 };
 
@@ -77,9 +78,9 @@ export type MobileTaskViewModel = {
  */
 export function useMobileTaskViewModel(
   model: Pick<MobileProjectsHomeModel, 'allSessions' | 'ownership' | 'projectMetaById'>,
-  options: { enabled: boolean; settledLimit: number },
+  options: { enabled: boolean; status: MobileTaskStatus; unreadOnly: boolean; settledLimit: number },
 ): MobileTaskViewModel | null {
-  const { enabled, settledLimit } = options;
+  const { enabled, status, unreadOnly, settledLimit } = options;
   const { t } = useI18n();
   const pinnedSessionIds = usePinnedSessionIds();
   const settledIds = useSettledSessionIds();
@@ -157,12 +158,18 @@ export function useMobileTaskViewModel(
       next.set(session.id, node);
       return node;
     };
+    const isUnread = (session: Session): boolean => (unseenBySession[session.id] ?? 0) > 0;
+    const open = [...pinnedSessions, ...buckets.active];
+    const scoped = status === 'archived'
+      ? buckets.settled
+      : status === 'waiting'
+        ? open.filter((session) => pendingRequestSessionIds.has(session.id))
+        : open;
+    const matching = unreadOnly ? scoped.filter(isUnread) : scoped;
+    const visible = status === 'archived' ? matching.slice(0, settledLimit) : matching;
     const result = {
-      pinned: pinnedSessions.map((session) => toNode(session, true)),
-      active: buckets.active.map((session) => toNode(session, false)),
-      settled: buckets.settled.slice(0, settledLimit).map((session) => toNode(session, false)),
-      settledTotal: buckets.settled.length,
-      settledIds,
+      items: visible.map((session) => toNode(session, pinnedSessionIds.has(session.id))),
+      total: matching.length,
       runStartTimes,
     };
     previousNodesRef.current = next;
@@ -183,7 +190,9 @@ export function useMobileTaskViewModel(
     runningSessionIds,
     settledIds,
     settledLimit,
+    status,
     t,
+    unreadOnly,
     unseenBySession,
   ]);
 }

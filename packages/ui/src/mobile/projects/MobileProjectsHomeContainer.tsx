@@ -55,7 +55,7 @@ import {
   type MobileRowActionCallbacks,
   type MobileRowActionTarget,
 } from './MobileRowActionsSheet';
-import { useMobileTaskViewModel } from './useMobileTaskViewModel';
+import { useMobileTaskViewModel, type MobileTaskStatus } from './useMobileTaskViewModel';
 import {
   getParentId,
   getSessionDirectory,
@@ -130,12 +130,13 @@ export function MobileProjectsHomeContainer({
   const setWorktreeExpanded = useMobileSessionTreeStore((state) => state.setWorktreeExpanded);
   const togglePinnedSession = useTogglePinnedSession();
   const setSessionSettled = useSetSessionSettled();
-  const [settledOpen, setSettledOpen] = React.useState(false);
+  const [taskStatus, setTaskStatus] = React.useState<MobileTaskStatus>('active');
+  const [unreadOnly, setUnreadOnly] = React.useState(false);
   const [settledLimit, setSettledLimit] = React.useState(SETTLED_SHELF_PAGE_SIZE);
-  const taskModel = useMobileTaskViewModel(model, { enabled: homeView === 'tasks', settledLimit });
-  const handleSettledOpenChange = useEvent((open: boolean) => {
-    setSettledOpen(open);
-    if (!open) setSettledLimit(SETTLED_SHELF_PAGE_SIZE);
+  const taskModel = useMobileTaskViewModel(model, { enabled: homeView === 'tasks', status: taskStatus, unreadOnly, settledLimit });
+  const handleTaskStatusChange = useEvent((status: MobileTaskStatus) => {
+    setTaskStatus(status);
+    setSettledLimit(SETTLED_SHELF_PAGE_SIZE);
   });
   const handleShowMoreSettled = useEvent(() => setSettledLimit((limit) => limit + SETTLED_SHELF_PAGE_SIZE));
   const handleRestoreTask = useEvent((sessionId: string) => {
@@ -732,8 +733,10 @@ export function MobileProjectsHomeContainer({
           view: homeView,
           onViewChange: onHomeViewChange,
           model: taskModel,
-          settledOpen,
-          onSettledOpenChange: handleSettledOpenChange,
+          status: taskStatus,
+          onStatusChange: handleTaskStatusChange,
+          unreadOnly,
+          onUnreadOnlyChange: setUnreadOnly,
           onShowMoreSettled: handleShowMoreSettled,
           onSelectTask: handleSelectTask,
           onOpenTaskActions: handleOpenTaskActions,
