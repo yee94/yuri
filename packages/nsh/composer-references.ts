@@ -44,7 +44,7 @@ export function editNativeReferences(document: ReferenceDocument, next: string):
 }
 
 /** Expand an actual Input deletion to whole referenced runs; ordinary edits remain literal. */
-export function normalizeNativeReferenceDeletion(document: ReferenceDocument, next: string): { text: string; caret: number } | null {
+export function normalizeNativeReferenceDeletion(document: { text: string; references: readonly NativeReference[] }, next: string): { text: string; caret: number } | null {
   const before = document.text;
   if (!document.references.length || next.length >= before.length) return null;
   let start = 0, oldEnd = before.length, newEnd = next.length;

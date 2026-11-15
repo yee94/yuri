@@ -15,7 +15,9 @@ export function nativeAttachmentSource(file: Row, target: ChatTarget, hostID: st
       return { kind: 'contact', file: { ...descriptor, kind: 'contact', hostID, assistantID: target.id, name: descriptor.filename ?? descriptor.attachmentID } };
     } catch { return { kind: 'unavailable' }; }
   }
-  const source = text(file.uri) || text(file.url);
+  const bytes = text(file.data), bytesMime = text(file.mime).toLowerCase();
+  if (bytes && /^image\/(?:png|jpeg|jpg|gif|webp|avif|bmp)$/.test(bytesMime) && /^[A-Za-z0-9+/]+={0,2}$/.test(bytes) && bytes.length <= 35 * 1024 * 1024) return { kind: 'direct', src: `data:${bytesMime};base64,${bytes}` };
+  const source = text(file.uri) || text(file.url) || text(record(file.source).uri);
   if (/^data:image\/(?:png|jpeg|jpg|gif|webp|avif|bmp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(source) && source.length <= 35 * 1024 * 1024) return { kind: 'direct', src: source };
   try {
     if (source.startsWith('file:')) {

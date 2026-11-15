@@ -5,12 +5,13 @@ import { editNativeReferences, insertNativeReference, type ReferenceDocument, ty
 
 function Fixture() {
   const doc = signal<ReferenceDocument>({ text: '', references: [] }), selection = signal({ start: 0, end: 0 });
+  const suffix = signal(true);
   const keyboard = createNativeReferenceKeyboard({ active: () => true, scope: () => ({ host: 'fixture', draft: 'delete', directory: '/work' }),
     text: () => doc().text, references: () => doc().references, insert: () => false });
   let input: InputRef | undefined;
   const seed = (kind: ReferenceKind, composing = false) => {
     const value = insertNativeReference({ text: '前 ', references: [] }, { kind, value: kind, label: 'review' });
-    doc.set({ ...value, text: value.text + '后' });
+    doc.set({ ...value, text: suffix() ? value.text + '后' : value.text.trimEnd() });
     input?.focus(); keyboard.onFocus(); input?.setSelection(value.references[0].end);
     keyboard.onCompositionChange({ composing });
   };
@@ -23,6 +24,7 @@ function Fixture() {
     <Each of={['skill', 'file', 'directory', 'agent', 'session'] as const}>{kind => <Button testID={`seed-${kind()}`} onPress={() => seed(kind())}><Text>{kind()}</Text></Button>}</Each>
     <Button testID="seed-composing" onPress={() => seed('skill', true)}><Text>Composing</Text></Button>
     <Button testID="place-caret" onPress={() => { input?.focus(); input?.setSelection(doc().references[0].end); }}><Text>Place caret</Text></Button>
+    <Button testID="without-suffix" onPress={() => suffix.set(false)}><Text>No suffix</Text></Button>
   </View>;
 }
 mount(Fixture);

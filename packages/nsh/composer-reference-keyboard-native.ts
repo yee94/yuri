@@ -94,7 +94,7 @@ export function createNativeReferenceKeyboard(options: {
   function beforeChange(value: string): string;
   function beforeChange(value?: string): string | void {
     const deletion = value !== undefined && !composing()
-      ? normalizeNativeReferenceDeletion({ text: options.text(), references: [...options.references?.() ?? []] }, value) : null;
+      ? normalizeNativeReferenceDeletion({ text: options.text(), references: options.references?.() ?? [] }, value) : null;
     selectedRange.set(deletion ? { start: deletion.caret } : undefined);
     caret.set(deletion ? { start: deletion.caret, end: deletion.caret } : null);
     dismissed.set(null);

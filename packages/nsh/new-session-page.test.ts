@@ -59,7 +59,7 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
   };
   const active = source(true), keyboardHeight = source(0), lifecycle = source('active'), onBack = vi.fn(), nativeCommand = vi.fn();
   const uiRequest = vi.fn(async (path: string, method?: string, body?: unknown) => uiResponse(path, method, body));
-  const keyboard = { trigger: () => null, commandTrigger: () => null, dismiss: () => {}, ref: () => {}, selectedRange: () => undefined, onFocus: () => {}, onBlur: () => {}, submitBehavior: () => 'newline', onSubmit: () => {}, onSelectionChange: () => {}, onCompositionChange: () => {}, beforeChange: () => {}, refresh: () => {} };
+  const keyboard = { trigger: () => null, commandTrigger: () => null, dismiss: () => {}, ref: () => {}, selectedRange: () => undefined, onFocus: () => {}, onBlur: () => {}, submitBehavior: () => 'newline', onSubmit: () => {}, onSelectionChange: () => {}, onCompositionChange: () => {}, beforeChange: vi.fn((value?: string) => value), refresh: () => {} };
   const commandPorts: Array<Parameters<typeof createNativeReferenceKeyboard>[0]> = [];
   const imports: Record<string, unknown> = {
     nsh: { keymap: { bind: () => () => {} }, signal: source, computed: (work: () => unknown) => work, untracked: (work: () => unknown) => work(), token: (name: string) => name, cleanup: (work: () => void) => callbacks.push(work), effect: (work: () => void) => { effects.push(work); work(); }, lifecycle, platform: { os: 'ios' }, nativeComponent: (name: string, spec: unknown) => {
@@ -147,10 +147,22 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
   const tree = nodes(root);
   await flush();
   const find = (id: string) => { const result = nodes(root).find(node => node.props.testID === id); if (!result) throw new Error(`Missing page node: ${id}`); return result; };
-  return { owners, active, keyboardHeight, lifecycle, onBack, nativeCommand, commandPorts, uiRequest, root, tree, find, render: () => nodes(root), runEffects: () => effects.forEach(work => work()), unmount: () => { callbacks.splice(0).forEach(work => work()); } };
+  return { owners, active, keyboard, keyboardHeight, lifecycle, onBack, nativeCommand, commandPorts, uiRequest, root, tree, find, render: () => nodes(root), runEffects: () => effects.forEach(work => work()), unmount: () => { callbacks.splice(0).forEach(work => work()); } };
 }
 
 describe('new-session production page callback boundary', () => {
+  it('forwards current reference sidecars and adopts the atomic text returned by the input adapter', async () => {
+    const page = await pageFixture();
+    const owner = page.owners[0].owner;
+    owner.setDraftText('前 ');
+    owner.insertReference({ kind: 'skill', value: 'review', label: 'review' });
+    expect(page.commandPorts[0].references?.()).toHaveLength(1);
+    page.keyboard.beforeChange.mockReturnValueOnce('前 ');
+    (page.find('new-session-composer').props.onChange as (event: { value: string }) => void)({ value: '前 @revie ' });
+    expect(page.keyboard.beforeChange).toHaveBeenCalledWith('前 @revie ');
+    expect(owner.durable.draft()).toBe('前 ');
+    expect(owner.durable.references()).toEqual([]);
+  });
   it.each(['hidden', 'unmount'])('actual attachment callback captures original session scope and exactly cancels on %s', async reason => {
     let resolve!: (value: unknown) => void; const result = new Promise<unknown>(done => { resolve = done; });
     const call = vi.fn(async (name: string, body: Record<string, unknown>) => {

@@ -6,6 +6,10 @@ it('routes Host file URLs through authenticated resources, preserving opaque con
   expect(nativeAttachmentSource({ url: 'file:///work/my%20image.png' }, session, 'host')).toEqual({ kind: 'file', path: '/work/my image.png' });
   expect(nativeAttachmentSource({ url: 'https://host.example/api/fs/serve/work/photo.png' }, session, 'host', 'https://host.example')).toEqual({ kind: 'file', path: '/work/photo.png' });
   expect(nativeAttachmentSource({ url: 'https://host.example/private.png' }, session, 'host', 'https://host.example').kind).toBe('unavailable');
+  expect(nativeAttachmentSource({ type: 'file', mime: 'image/jpeg', name: 'a.png', data: '/9j/4AAQ', source: { type: 'uri', uri: 'file:///var/folders/x/a.png' } }, session, 'host'))
+    .toEqual({ kind: 'direct', src: 'data:image/jpeg;base64,/9j/4AAQ' });
+  expect(nativeAttachmentSource({ type: 'file', mime: 'image/png', source: { type: 'uri', uri: 'file:///work/a.png' } }, session, 'host')).toEqual({ kind: 'file', path: '/work/a.png' });
+  expect(nativeAttachmentSource({ type: 'file', mime: 'text/plain', data: 'aGk=' }, session, 'host').kind).toBe('unavailable');
   expect(nativeAttachmentSource({ url: 'https://example.com/x.png?oc_client_token=secret' }, session, 'host').kind).toBe('unavailable');
   const file = { type: 'file', attachmentID: 'opaque', sha256: 'a'.repeat(64), size: 12, mime: 'image/png', filename: 'a.png', generation: 4 };
   expect(nativeAttachmentSource(file, { ...session, kind: 'assistant' }, 'host')).toMatchObject({ kind: 'contact', file: { assistantID: 'session', hostID: 'host', generation: 4 } });
