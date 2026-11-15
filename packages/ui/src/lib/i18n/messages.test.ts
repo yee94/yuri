@@ -47,6 +47,12 @@ describe('i18n dictionaries', () => {
     expect(enDict['contextPanel.empty.selectFile']).toBe('Select a file to view');
   });
 
+  test('distinguishes the shared task settled label from session archive without renaming Chinese copy', () => {
+    expect(enDict['sessions.sidebar.task.shelf.settled']).toBe('Settled');
+    expect(enDict['sessions.sidebar.grouping.archived']).toBe('Archived');
+    expect(zhCnDict['sessions.sidebar.task.shelf.settled']).toBe('已归档');
+  });
+
   test('every selectable avatar silhouette has a translated accessible name in every locale', () => {
     for (const dictionary of Object.values(localeDictionaries)) {
       for (const shape of AVATAR_SHAPES) {

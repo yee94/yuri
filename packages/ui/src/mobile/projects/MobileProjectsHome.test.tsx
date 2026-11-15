@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
+import { useEvent } from '@reactuses/core';
 
 import { I18nProvider } from '@/lib/i18n';
 import { toast } from '@/components/ui/toast';
@@ -34,6 +35,10 @@ const fixtures = vi.hoisted(() => ({
   activityReads: new Map<string, number>(),
   iconFetch: vi.fn(async (_path: string) => new Response(new Blob(['logo'], { type: 'image/png' }))),
 }));
+vi.mock('@reactuses/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@reactuses/core')>();
+  return { ...actual, useEvent: vi.fn(actual.useEvent) };
+});
 vi.mock('@/lib/runtime-fetch', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/runtime-fetch')>(),
   runtimeFetch: fixtures.iconFetch,
@@ -64,6 +69,44 @@ const homeSource = readFileSync(
 );
 
 const noop = () => undefined;
+
+test('running tasks offer only pin and cancel an armed archive when activity starts', async () => {
+  const task: MobileTaskNode = { id: 'swipe-running', title: 'Task', projectLabel: 'Project', project: null, unread: false, pinned: false, active: false };
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  const archive = vi.fn();
+  const render = () => act(() => root.render(<I18nProvider>
+    <MobileTaskCard task={{ ...task }} runStartedAt={null} onSelect={noop} onOpenActions={noop} onPin={noop} onArchive={archive} />
+  </I18nProvider>));
+  const pointer = (target: Element, type: string, x: number) => act(() => {
+    target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, button: 0, pointerType: 'touch', clientX: x }));
+  });
+  try {
+    render();
+    const rail = host.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    const main = host.querySelector('.yuri-mobile-task-select')!;
+    Object.defineProperty(rail, 'offsetWidth', { value: 192 });
+    Object.defineProperty(rail.parentElement, 'offsetWidth', { value: 390 });
+    const staleReadAction = rail.querySelector<HTMLButtonElement>('[aria-label="Mark as unread"]')!;
+    pointer(main, 'pointerdown', 380);
+    pointer(main, 'pointermove', 20);
+    expect(rail.dataset.fullSwipeArmed).toBe('true');
+    fixtures.running.add(task.id);
+    render();
+    expect([...rail.querySelectorAll('button')].map(button => button.textContent)).toEqual(['Pin']);
+    expect(rail.dataset.revealed).toBe('false');
+    pointer(main, 'pointerup', 20);
+    await act(async () => staleReadAction.click());
+    expect(useNotificationStore.getState().sessionUnseenCount(task.id)).toBe(0);
+    expect(archive).not.toHaveBeenCalled();
+    fixtures.running.delete(task.id);
+    render();
+    expect(rail.querySelectorAll('button')).toHaveLength(3);
+  } finally {
+    fixtures.running.delete(task.id);
+    await act(async () => root.unmount());
+  }
+});
 
 test.each([
   { branchState: 'loading' as const },
@@ -133,7 +176,15 @@ test.each([
     expect(row.querySelector('.yuri-mobile-task-avatar')).not.toBeNull();
     expect(main.querySelectorAll('use[href="#yuri-folder-open"]')).toHaveLength(1);
     expect(main.className).not.toContain('bg-');
-    expect(Boolean(main.querySelector('.text-status-info'))).toBe(running);
+    const title = main.querySelector('.yuri-mobile-entity-title')!;
+    expect(title.classList.contains('text-foreground')).toBe(true);
+    expect(title.className).not.toMatch(/text-foreground\//);
+    const runningStatus = main.querySelector('.yuri-mobile-task-meta[title]');
+    expect(Boolean(runningStatus)).toBe(running);
+    if (runningStatus) {
+      expect(runningStatus.classList.contains('text-foreground')).toBe(true);
+      expect(runningStatus.classList.contains('text-status-info')).toBe(false);
+    }
   } finally {
     fixtures.running.delete(id);
   }
@@ -419,7 +470,7 @@ test.each([false, true])('task unread dot remains visible when selected=%s and y
       <MobileTaskCard task={{ ...task }} runStartedAt={Date.now()} onSelect={noop} onOpenActions={noop} onPin={noop} onArchive={noop} />
     </I18nProvider>));
     expect(host.querySelector('.yuri-task-unread-dot')).toBeNull();
-    expect(host.querySelector('.yuri-mobile-task-content .text-status-info')).not.toBeNull();
+    expect(host.querySelector('.yuri-mobile-task-meta[title].text-foreground')).not.toBeNull();
   } finally {
     await act(async () => root.unmount());
     fixtures.running.delete(task.id);
@@ -469,16 +520,19 @@ test('100 inbox rows isolate 50 pointer moves and unrelated parent updates to th
   try {
     await act(async () => root.render(<Surface bump={0} />));
     fixtures.activityReads.clear();
+    vi.mocked(useEvent).mockClear();
     for (let bump = 1; bump <= 50; bump++) {
       await act(async () => root.render(<Surface bump={bump} />));
     }
     expect(fixtures.activityReads.size).toBe(0);
+    expect(useEvent).not.toHaveBeenCalled();
     for (let index = 0; index < 50; index++) {
       await act(async () => appendNotification({
         session: `unrelated-${index}`, directory: '/other', type: 'turn-complete', viewed: false, time: Date.now(),
       }));
     }
     expect(fixtures.activityReads.size).toBe(0);
+    expect(useEvent).not.toHaveBeenCalled();
     const row = host.querySelector('.yuri-mobile-task-card')!;
     const rail = row.querySelector('.yuri-mobile-session-actions')!;
     const main = row.querySelector('.yuri-mobile-task-content > button')!;
@@ -487,6 +541,8 @@ test('100 inbox rows isolate 50 pointer moves and unrelated parent updates to th
     for (let move = 1; move <= 50; move++) pointer(main, 'pointermove', 200 - move * 2);
     pointer(main, 'pointerup', 100);
     expect([...fixtures.activityReads.keys()]).toEqual([tasks[0].id]);
+    // Only read-action, close and long-press callbacks need committed stable identity.
+    expect(useEvent).toHaveBeenCalledTimes(fixtures.activityReads.get(tasks[0].id)! * 3);
     expect(measure).toHaveBeenCalledOnce();
     expect(rail.getAttribute('aria-hidden')).toBe('false');
   } finally {
@@ -519,7 +575,7 @@ test('task status tabs drive the list, and archived rows swipe to restore', asyn
     await act(async () => root.render(<I18nProvider><MobileProjectsHome {...props} task={task} /></I18nProvider>));
     const bar = host.querySelector('[role="tablist"]')!;
     const tabs = [...bar.querySelectorAll('[role="tab"]')];
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Active', 'Unread', 'Archived']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Active', 'Unread', 'Settled']);
     expect(tabs.map((tab) => tab.getAttribute('aria-selected'))).toEqual(['false', 'false', 'true']);
     const row = host.querySelector('.yuri-mobile-task-card')!;
     expect(row.textContent).toContain(archivedNode.title);

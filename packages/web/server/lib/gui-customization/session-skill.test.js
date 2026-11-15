@@ -25,6 +25,7 @@ describe('built-in customization instructions', () => {
     expect(await fs.readFile(file, 'utf8')).toContain('name: yuri-customization');
     for (const name of ['projects', 'appearance', 'ui-surfaces', 'plugin-styles', 'gui-api', 'workflow', 'global-pages', 'work-status', 'icons', 'file-previews', 'preview-exports', 'remote-connections']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
     expect(entry.value).toContain('adding a directory as a project in Yuri');
+    expect(entry.value).toContain('task/session archive or restore (归档/恢复)');
     expect(await fs.readFile(file, 'utf8')).toContain('(references/projects.md)');
     const projects = await fs.readFile(path.join(path.dirname(file), 'references', 'projects.md'), 'utf8');
     expect(projects).toContain('POST /api/yuri/session-skills/projects');
@@ -55,6 +56,11 @@ describe('built-in customization instructions', () => {
     expect(projectFile).not.toBe(boundFile);
     expect(projectEntry).toContain('Bound project helper:');
     expect(projectEntry).toContain('local/remote project registration');
+    expect(projectEntry).toContain('task/session archive and restore');
+    expect(projects).toContain('任务归档');
+    expect(projects).toContain('会话归档');
+    expect(projects).toContain('lifecycleSupported:true');
+    expect(await fs.readFile(path.join(path.dirname(projectFile), 'projects.mjs'), 'utf8')).toContain("'settle-session', 'unsettle-session', 'archive-session', 'unarchive-session'");
     expect(projectEntry).toContain('discovering authorized remote machines');
     expect(await fs.readFile(path.join(path.dirname(projectFile), 'references', 'projects.md'), 'utf8')).toContain('commands.add-remote');
     expect(await fs.readFile(path.join(path.dirname(projectFile), 'projects.mjs'), 'utf8')).toContain("'remote-hosts', 'add-remote'");

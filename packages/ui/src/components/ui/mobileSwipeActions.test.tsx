@@ -3,14 +3,22 @@ import { createRoot } from 'react-dom/client';
 import { expect, test, vi } from 'vitest';
 import { MobileSwipeActionRail } from './MobileSwipeActionRail';
 import { useMobileSwipeActions } from './useMobileSwipeActions';
+import { triggerMobileHaptic } from '@/hooks/streamingHaptics';
+import { useEvent } from '@reactuses/core';
 
-function Row({ id, onOpen, onEdit, onDelete, onRead }: { id: string; onOpen: () => void; onEdit: () => void; onDelete: () => void; onRead?: () => void }) {
-  const swipe = useMobileSwipeActions(id, onOpen);
+vi.mock('@/hooks/streamingHaptics', () => ({ triggerMobileHaptic: vi.fn(() => true) }));
+vi.mock('@reactuses/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@reactuses/core')>();
+  return { ...actual, useEvent: vi.fn(actual.useEvent) };
+});
+
+function Row({ id, onOpen, onEdit, onDelete, onRead, onFullSwipe }: { id: string; onOpen: () => void; onEdit: () => void; onDelete: () => void; onRead?: () => void; onFullSwipe?: () => void }) {
+  const swipe = useMobileSwipeActions(id, onOpen, false, onFullSwipe);
   return <div data-row={id}>
     <MobileSwipeActionRail swipe={swipe} actions={[
       { label: 'Edit', icon: 'edit', onClick: onEdit },
       ...(onRead ? [{ label: 'Read', icon: 'mail-open' as const, onClick: onRead }] : []),
-      { label: 'Delete', icon: 'delete-bin', destructive: true, onClick: onDelete },
+      { label: 'Delete', icon: 'delete-bin', destructive: true, fullSwipe: Boolean(onFullSwipe), onClick: onDelete },
     ]} />
     <button data-main onClick={swipe.handleSelect} onPointerDown={swipe.handlePointerDown}
       onPointerMove={swipe.handlePointerMove} onPointerUp={swipe.finishGesture}
@@ -68,6 +76,169 @@ test('shared swipe reveals actions, coordinates rows, preserves scrolling and pr
   } finally {
     act(() => root.unmount());
     container.remove();
+  }
+});
+
+test.each([128, 192])('full swipe on a $width rail expands archive, vibrates once, and commits only on release', (width) => {
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  const archive = vi.fn();
+  const open = vi.fn();
+  const pointer = (target: Element, type: string, x: number) => act(() => {
+    target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 1, button: 0, pointerType: 'touch', clientX: x,
+    }));
+  });
+  vi.mocked(triggerMobileHaptic).mockClear();
+  try {
+    act(() => root.render(<Row id="full" onOpen={open} onEdit={vi.fn()} onDelete={archive} onRead={width === 192 ? vi.fn() : undefined} onFullSwipe={archive} />));
+    const rail = host.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    const main = host.querySelector<HTMLButtonElement>('[data-main]')!;
+    const geometry = vi.fn(() => width);
+    Object.defineProperty(rail, 'offsetWidth', { get: geometry });
+    Object.defineProperty(rail.parentElement, 'offsetWidth', { value: 390 });
+    pointer(main, 'pointerdown', 380);
+    pointer(main, 'pointermove', 380 - width);
+    pointer(main, 'pointerup', 380 - width);
+    expect(archive).not.toHaveBeenCalled();
+    expect(triggerMobileHaptic).not.toHaveBeenCalled();
+    // Continue from the already revealed rail, including a drag starting on an action.
+    const action = rail.querySelector<HTMLButtonElement>('button')!;
+    pointer(action, 'pointerdown', 220);
+    pointer(action, 'pointermove', 190);
+    expect(Number(rail.style.getPropertyValue('--yuri-mobile-full-swipe-progress'))).toBeGreaterThan(0);
+    expect(rail.querySelector('.yuri-mobile-session-action-full-swipe')).not.toBeNull();
+    pointer(action, 'pointermove', 20);
+    for (let i = 0; i < 50; i++) pointer(action, 'pointermove', 20 - i / 10);
+    expect(rail.dataset.fullSwipeArmed).toBe('true');
+    expect(triggerMobileHaptic).toHaveBeenCalledExactlyOnceWith('medium', { bypassCadence: true });
+    expect(geometry).toHaveBeenCalledTimes(2);
+    expect(archive).not.toHaveBeenCalled();
+    pointer(action, 'pointerup', 20);
+    act(() => action.click());
+    act(() => main.click());
+    expect(archive).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled();
+    expect(rail.dataset.revealed).toBe('false');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+test.each(['reverse', 'cancel', 'busy', 'other-row', 'blur'])('armed archive cancels on %s without dispatching', (mode) => {
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  const archive = vi.fn();
+  const render = (enabled = true) => act(() => root.render(<Row id="cancel-full" onOpen={vi.fn()} onEdit={vi.fn()} onDelete={archive} onFullSwipe={enabled ? archive : undefined} />));
+  const pointer = (target: Element, type: string, x: number) => act(() => {
+    target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 1, button: 0, pointerType: 'touch', clientX: x,
+    }));
+  });
+  try {
+    render();
+    const rail = host.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    const main = host.querySelector('[data-main]')!;
+    Object.defineProperty(rail, 'offsetWidth', { value: 192 });
+    Object.defineProperty(rail.parentElement, 'offsetWidth', { value: 390 });
+    pointer(main, 'pointerdown', 380);
+    pointer(main, 'pointermove', 20);
+    expect(rail.dataset.fullSwipeArmed).toBe('true');
+    if (mode === 'reverse') pointer(main, 'pointermove', 180);
+    if (mode === 'cancel') pointer(main, 'pointercancel', 20);
+    if (mode === 'busy') render(false);
+    if (mode === 'other-row') act(() => window.dispatchEvent(new CustomEvent('yuri:mobile-session-row-revealed', { detail: 'other' })));
+    if (mode === 'blur') act(() => window.dispatchEvent(new Event('blur')));
+    pointer(main, 'pointerup', 20);
+    expect(archive).not.toHaveBeenCalled();
+    expect(rail.dataset.fullSwipeArmed).toBeUndefined();
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+test('500 rows keep native swipe handlers free of per-handler effects and listener churn', () => {
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  const noop = () => undefined;
+  const MemoRow = React.memo(Row);
+  const rows = Array.from({ length: 500 }, (_, index) => `perf-${index}`);
+  const render = () => root.render(<>{rows.map(id => <MemoRow key={id} id={id}
+    onOpen={noop} onEdit={noop} onDelete={noop} onFullSwipe={noop} />)}</>);
+  const pointer = (target: Element, type: string, x: number) => act(() => {
+    target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 1, button: 0, pointerType: 'touch', clientX: x,
+    }));
+  });
+  const stableCallbacks = vi.mocked(useEvent);
+  const add = vi.spyOn(window, 'addEventListener');
+  const remove = vi.spyOn(window, 'removeEventListener');
+  try {
+    act(render);
+    stableCallbacks.mockClear();
+    for (let update = 0; update < 50; update++) act(render);
+    expect(stableCallbacks).not.toHaveBeenCalled();
+    const rail = host.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    const main = host.querySelector('[data-main]')!;
+    const measure = vi.fn(() => 192);
+    Object.defineProperty(rail, 'offsetWidth', { get: measure });
+    Object.defineProperty(rail.parentElement, 'offsetWidth', { value: 390 });
+    pointer(main, 'pointerdown', 380);
+    pointer(main, 'pointermove', 350);
+    add.mockClear();
+    remove.mockClear();
+    stableCallbacks.mockClear();
+    for (let move = 0; move < 50; move++) pointer(main, 'pointermove', 345 - move * 5);
+    // Only closeActions crosses a stable external/effect boundary; DOM handlers do not.
+    expect(stableCallbacks).toHaveBeenCalledTimes(50);
+    expect(add).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(measure).toHaveBeenCalledOnce();
+    pointer(main, 'pointercancel', 100);
+    stableCallbacks.mockClear();
+    act(() => window.dispatchEvent(new CustomEvent('yuri:mobile-session-row-revealed', { detail: 'other' })));
+    expect(stableCallbacks).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());
+    add.mockRestore();
+    remove.mockRestore();
+  }
+});
+
+test('same-batch cancellation resets pending motion and native handlers use the latest archive callback', () => {
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  const first = vi.fn();
+  const latest = vi.fn();
+  const noop = () => undefined;
+  const render = (archive: () => void) => act(() => root.render(<Row id="fresh" onOpen={noop}
+    onEdit={noop} onDelete={archive} onFullSwipe={archive} />));
+  const dispatch = (target: Element, type: string, x: number) => {
+    target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 1, button: 0, pointerType: 'touch', clientX: x,
+    }));
+  };
+  try {
+    render(first);
+    const rail = host.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    const main = host.querySelector('[data-main]')!;
+    Object.defineProperty(rail, 'offsetWidth', { value: 192 });
+    Object.defineProperty(rail.parentElement, 'offsetWidth', { value: 390 });
+    act(() => {
+      dispatch(main, 'pointerdown', 380);
+      dispatch(main, 'pointermove', 20);
+      dispatch(main, 'pointercancel', 20);
+    });
+    expect(rail.dataset.revealed).toBe('false');
+    expect(rail.dataset.fullSwipeArmed).toBeUndefined();
+    act(() => dispatch(main, 'pointerdown', 380));
+    act(() => dispatch(main, 'pointermove', 20));
+    render(latest);
+    act(() => dispatch(main, 'pointerup', 20));
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledOnce();
+  } finally {
+    act(() => root.unmount());
   }
 });
 

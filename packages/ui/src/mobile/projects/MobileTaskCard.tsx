@@ -51,8 +51,8 @@ type TaskCardProps = {
 
 function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin, onArchive, archived, onRestore }: TaskCardProps) {
   const { t } = useI18n();
-  const { unread, onToggleRead } = useSessionReadMenuAction(task);
   const running = useSessionActivity(task.id);
+  const { unread, onToggleRead } = useSessionReadMenuAction(task, undefined, running);
   const permissions = useSessionPermissions(task.id, task.directory, { bootstrap: false });
   const questions = useSessionQuestions(task.id, task.directory, { bootstrap: false });
   const indicator = resolveMobileSessionIndicator({
@@ -62,7 +62,10 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
     unread,
   });
   const longPressRef = React.useRef<MobileLongPressController | null>(null);
-  const swipe = useMobileSwipeActions(task.id, () => onSelect(task.id));
+  const handleArchive = () => {
+    if (!running && !archived) onArchive(task.id);
+  };
+  const swipe = useMobileSwipeActions(task.id, () => onSelect(task.id), false, !running && !archived ? handleArchive : undefined);
   if (!longPressRef.current) longPressRef.current = createMobileLongPressController();
   React.useEffect(() => () => longPressRef.current?.reset(), []);
 
@@ -71,11 +74,11 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
     swipe.closeActions();
     onOpenActions(task.id);
   });
-  const handleClick = useEvent(() => {
+  const handleClick = () => {
     if (longPressRef.current?.consumeClick(task.id)) return;
     swipe.handleSelect();
-  });
-  const handlePointerDown = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
+  };
+  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     if ((event.pointerType !== 'touch' && event.pointerType !== 'pen') || event.button !== 0) return;
     swipe.handlePointerDown(event);
     longPressRef.current?.start({
@@ -85,25 +88,25 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
       clientY: event.clientY,
       onTrigger: handleOpenActions,
     });
-  });
-  const handlePointerMove = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
+  };
+  const handlePointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
     longPressRef.current?.move(event.pointerId, event.clientX, event.clientY);
     swipe.handlePointerMove(event);
     if (event.isDefaultPrevented()) longPressRef.current?.cancel(event.pointerId);
-  });
-  const handlePointerEnd = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
+  };
+  const handlePointerEnd = (event: React.PointerEvent<HTMLButtonElement>) => {
     longPressRef.current?.end(event.pointerId);
     swipe.finishGesture(event);
-  });
-  const handlePointerCancel = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
+  };
+  const handlePointerCancel = (event: React.PointerEvent<HTMLButtonElement>) => {
     longPressRef.current?.cancel(event.pointerId);
     swipe.handlePointerCancel();
-  });
-  const handleContextMenu = useEvent((event: React.MouseEvent<HTMLButtonElement>) => {
+  };
+  const handleContextMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
     longPressRef.current?.openFromContextMenu(task.id, handleOpenActions);
-  });
+  };
 
   const waitingLabel = indicator === 'question'
     ? t('sessions.sidebar.session.status.questionRequired')
@@ -120,7 +123,7 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
     </span>
   ) : indicator === 'running' ? (
     <span
-      className="yuri-mobile-task-meta inline-flex shrink-0 items-center gap-1 font-medium tabular-nums text-status-info"
+      className="yuri-mobile-task-meta inline-flex shrink-0 items-center gap-1 font-medium tabular-nums text-foreground"
       title={t('sessions.sidebar.session.status.active')}
     >
       <SessionBusyIndicator size={11} arcColor="var(--status-info)" className="motion-reduce:[&_svg]:animate-none" />
@@ -129,18 +132,17 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
   ) : task.activityLabel ? (
     <span className="yuri-mobile-task-meta shrink-0 tabular-nums text-muted-foreground">{task.activityLabel}</span>
   ) : null;
-  const receding = indicator === 'running' && !task.active;
 
   return (
     <div className="yuri-mobile-task-card relative isolate overflow-hidden">
       <MobileSwipeActionRail swipe={swipe} actions={[
-        {
+        ...(onToggleRead ? [{
           label: t(unread ? 'sessions.sidebar.session.swipe.markRead' : 'sessions.sidebar.session.swipe.markUnread'),
           ariaLabel: t(unread ? 'sessions.sidebar.session.menu.markRead' : 'sessions.sidebar.session.menu.markUnread'),
-          icon: unread ? 'mail-open' : 'mail',
-          variant: 'default',
-          onClick: () => onToggleRead?.(),
-        },
+          icon: unread ? 'mail-open' as const : 'mail' as const,
+          variant: 'default' as const,
+          onClick: onToggleRead,
+        }] : []),
         ...(archived ? [
           {
             label: t('sessions.sidebar.session.menu.unsettle'),
@@ -153,13 +155,14 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
             icon: task.pinned ? 'unpin' as const : 'pushpin' as const,
             onClick: () => onPin(task.id),
           },
-          {
+          ...(!running ? [{
             label: t('sessions.sidebar.bulkActions.archive'),
             icon: 'inbox-archive' as const,
             destructive: true,
             variant: 'destructiveSolid' as const,
-            onClick: () => onArchive(task.id),
-          },
+            fullSwipe: true,
+            onClick: handleArchive,
+          }] : []),
         ]),
       ]} />
       <div
@@ -197,7 +200,6 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
             className={cn(
               'yuri-mobile-entity-title mt-1 line-clamp-2 break-words text-foreground',
               unread ? 'font-medium' : 'font-normal',
-              receding && 'text-foreground/70',
             )}
           >
             {task.title}

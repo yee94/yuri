@@ -1991,6 +1991,7 @@ async function main(options = {}) {
     globalMessageStreamHub,
     getServerId: () => relayService.getServerId(),
     sessionIndexService,
+    publishSessionIndexChange: () => sessionIndexSyncRuntime?.publishChange?.(),
     notifyContactTurnComplete: (event) => notificationTriggerRuntime.sendContactTurnNotification(event),
   });
 

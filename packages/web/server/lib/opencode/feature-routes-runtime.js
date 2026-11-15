@@ -1,6 +1,7 @@
 import { registerFsRoutes } from '../fs/routes.js';
 import { registerRemoteConnectionsSkill } from '../gui-customization/remote-connections.js';
 import { registerProjectsSkill } from '../gui-customization/projects.js';
+import { createProjectSessionLifecycle } from '../gui-customization/projects-lifecycle.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
 import { registerSmallModelRoutes } from '../small-model/routes.js';
 import { registerSessionMetadataRoutes } from '../session-metadata/routes.js';
@@ -161,6 +162,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       globalMessageStreamHub,
       getServerId,
       sessionIndexService,
+      publishSessionIndexChange = null,
       notifyContactTurnComplete,
       sessionMetadataStore = null,
       sessionArchiveService = null,
@@ -311,6 +313,9 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
       registerProject: (input) => projectRegistry.register(input), readSettingsFromDiskStrict, sanitizeProjects,
+      sessionLifecycle: createProjectSessionLifecycle({
+        sessionIndexService, sessionArchiveService, sessionMetadataStore, publishSessionIndexChange,
+      }),
     });
     historyImportRuntime = registerHistoryImportRoutes(app, {
       express, uiAuthController, dataDir: yuriDataDir,

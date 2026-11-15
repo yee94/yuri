@@ -88,6 +88,12 @@ describe('session project registration API', () => {
     expect(registerProject).not.toHaveBeenCalled();
   });
 
+  it('explicitly reports unsupported lifecycle capability instead of falling through to registration', async () => {
+    expect(await (await request('describe')).json()).toMatchObject({ lifecycleSupported: false });
+    expect((await request('settle-session', { sessionID: 'ses_target' })).status).toBe(501);
+    expect(registerProject).not.toHaveBeenCalled();
+  });
+
   it('keeps remote discovery under the existing service and per-session admission gate', async () => {
     expect(await (await request('describe')).json()).toMatchObject({ remoteSupported: true });
     expect(await (await request('remote-projects')).json()).toEqual({ projects: [], failed: [], complete: true });

@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { createWorktreeTopologyBroadcaster } from './feature-routes-runtime.js';
 
 describe('feature routes runtime composition', () => {
+  it('wires the bound lifecycle helper to the UI-owned services and revision publisher', async () => {
+    const routes = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');
+    const host = await fs.readFile(new URL('../../index.js', import.meta.url), 'utf8');
+    expect(routes).toMatch(/sessionLifecycle: createProjectSessionLifecycle\(\{\s*sessionIndexService, sessionArchiveService, sessionMetadataStore, publishSessionIndexChange/);
+    expect(host).toContain('publishSessionIndexChange: () => sessionIndexSyncRuntime?.publishChange?.()');
+  });
   it('wires session project registration to the shared registry and strict settings reader', async () => {
     const routes = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');
     expect(routes).toMatch(/registerProjectsSkill\(app, \{[\s\S]*?registerProject: \(input\) => projectRegistry.register\(input\), readSettingsFromDiskStrict, sanitizeProjects/);

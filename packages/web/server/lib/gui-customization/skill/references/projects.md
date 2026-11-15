@@ -62,6 +62,36 @@ those retain their own capability contract. When the helper is unavailable, use
 the intended Host's project UI or start a supported session. Keep desktop deep
 links for their existing navigation purpose, not as an API authorization fallback.
 
+## Archiving conversations (task archive vs session archive)
+
+Yuri has two different states that the UI labels alike. Pick by what the user sees:
+
+| Term | User wording | Operation | What it changes |
+|---|---|---|---|
+| **任务归档 / Task archive** (`settle`) | In the task view, 「归档」 / "move to the archived shelf" / "clear my task list" | `settle-session`, `unsettle-session` | Host session index only. Reversible; a session returns to active on new user activity. |
+| **会话归档 / Session archive** (`archive`) | Explicit "session-level archive", `archivedAt` | `archive-session`, `unarchive-session` | Session metadata `archivedAt`. The session's own lifecycle state. |
+
+Use these qualified Chinese terms in agent explanations; the task-view UI keeps its existing 「归档」 label (no new 「已搁置」 term).
+
+Default: when the user says 「归档」 about conversations/tasks without further detail, use `settle-session`. Never use `archive-session` for that request; it is not the task-view action. Neither operation deletes content.
+
+1. Run the bound project `describe` command. Continue only when `lifecycleSupported:true`; use the returned commands unchanged. Authentication is owned by the helper: no UI password or browser is required. A missing command or terminal error means stop and request a newly admitted session on an updated Host.
+2. Discover exact IDs with `commands["task-sessions"]`, supplying `{}` or `{"directory":"/workspace/my-project"}` on stdin. Results contain up to 50 metadata rows (`sessionID`, `directory`, `title`, `settled`, `pinned`, `activityUpdatedAt`) and `nextCursor`. Follow every returned cursor using the same directory filter **before writing**, then select only the user's scope. `indexedOnly:true` means this is the bound Host's task index, not every historical OpenCode session; `historyComplete:false` means full upstream history is not confirmed. Re-read after a concurrent catalog change; never interpret a failed read as an empty list.
+3. Supply JSON on stdin to the chosen write command, one session per call:
+
+   ```json
+   {"sessionID":"ses_xxxxxxxx"}
+   ```
+
+   `archive-session` / `unarchive-session` also accept an optional absolute `directory` hint. `sessionID` must be an existing OpenCode session ID (`ses…`).
+4. Completion: settle returns `{"sessionID":"ses_…","settled":true}`, restore returns `settled:false`. Read `commands["session-state"]` with `{"sessionID":"ses_…"}` to verify the Host projection and archive timestamp, or re-list task rows. State returns `indexed`, `archivedAt`, `settled` and `pinned`; the last two are `null` when no task row is projected. It is Host state, not proof of upstream existence or live UI membership. Live running/pending-request sessions may remain visible as active, and settle preserves pins; it does not abort execution or guarantee an empty task view. New user message/inbox activity clears the settle override; assistant completion alone does not.
+   Session archive returns `{"sessionID":"ses_…","archived":true,"archivedAt":123,"index":{"ok":true}}`; restore returns `archived:false,archivedAt:0`. `index.ok:false` confirms metadata persistence but not index repair: report partial success and re-check the same ID before retrying; retain the original `archivedAt` receipt.
+5. `session_not_found`/`not_found` (404) means the selected ID is unavailable, not success. `session_archived` (409) means an existing session-level archive must be restored with `unarchive-session`, not `unsettle-session`. Errors remain unconfirmed and raw credentials/errors are not returned. After an interrupted write, inspect the same IDs before retrying; bulk work reports confirmed counts and per-ID failures.
+
+These operations affect only the **bound Host** and its current runtime. Task state for Remote Projects belongs to this connected Hub, never the remote machine's database. A remote `{target,...}` is not accepted here; session-level archive of a remote worker through this helper is unsupported. Keep the full remote target and use its supported workflow rather than falling back to a same-named local session.
+
+Archive only sessions the user named or clearly scoped, including the current session only when requested. Use the bound helper rather than UI-authenticated HTTP routes, browser cookies, credential discovery or direct SQLite writes. The Host publishes normal index revisions after confirmed task writes.
+
 ## Connected remote projects and sessions
 
 Use this branch to add a remote project on an authorized machine or discover, read, create or continue its sessions. Registration uses the remote machine's filesystem, not this session's local filesystem.

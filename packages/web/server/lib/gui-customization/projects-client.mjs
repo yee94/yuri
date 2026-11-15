@@ -8,7 +8,8 @@ async function main() {
   try {
     const [encoded, operation] = process.argv.slice(2);
     const binding = JSON.parse(Buffer.from(encoded, 'base64url').toString());
-    const operations = ['list', 'add', 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session'];
+    const lifecycle = ['task-sessions', 'session-state', 'settle-session', 'unsettle-session', 'archive-session', 'unarchive-session'];
+    const operations = ['list', 'add', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session'];
     if (!['describe', ...operations].includes(operation)) throw new Error();
     const origin = new URL(binding.hostOrigin);
     if (origin.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(origin.hostname) || origin.username || origin.password) throw new Error();
@@ -33,7 +34,7 @@ async function main() {
     if (!response.ok) {
       const terminal = [401, 403, 501].includes(response.status);
       console.error(JSON.stringify({ error: 'Project API operation failed', status: response.status, terminal,
-        ...(['invalid_input', 'validation_error', 'project_unavailable', 'project_operation_failed', 'remote_unavailable', 'remote_target_mismatch', 'remote_response_invalid'].includes(result?.code) ? { code: result.code } : {}),
+        ...(['invalid_input', 'session_not_found', 'session_archived', 'session_operation_failed', 'not_found', 'directory_mismatch', 'validation_error', 'project_unavailable', 'project_operation_failed', 'remote_unavailable', 'remote_target_mismatch', 'remote_response_invalid'].includes(result?.code) ? { code: result.code } : {}),
         recovery: terminal ? 'Stop this workflow; resume only with a new supported session and its bound project describe command.'
           : 'Result not confirmed. Inspect the same target before retrying; retain sessionID/messageID for interrupted writes. Never switch to local or claim success from a failed request.',
       }));
@@ -43,9 +44,19 @@ async function main() {
     if (['add', 'add-remote'].includes(operation) && (typeof result.project?.id !== 'string' || typeof result.project?.path !== 'string' || typeof result.created !== 'boolean')) throw new Error();
     if (operation === 'remote-hosts' && (!Array.isArray(result.hosts) || !Array.isArray(result.failed) || typeof result.complete !== 'boolean')) throw new Error();
     if (operation === 'list' && !Array.isArray(result.projects)) throw new Error();
+    if (operation === 'task-sessions' && (!Array.isArray(result.sessions) || result.indexedOnly !== true
+      || typeof result.historyComplete !== 'boolean' || (result.nextCursor !== null && typeof result.nextCursor !== 'string'))) throw new Error();
+    if (operation === 'session-state' && (result.sessionID !== input.sessionID || typeof result.indexed !== 'boolean'
+      || !Number.isFinite(result.archivedAt) || (result.settled !== null && typeof result.settled !== 'boolean')
+      || (result.pinned !== null && typeof result.pinned !== 'boolean'))) throw new Error();
+    if (['settle-session', 'unsettle-session'].includes(operation)
+      && (result.sessionID !== input.sessionID || result.settled !== (operation === 'settle-session'))) throw new Error();
+    if (['archive-session', 'unarchive-session'].includes(operation)
+      && (result.sessionID !== input.sessionID || result.archived !== (operation === 'archive-session')
+        || !Number.isFinite(result.archivedAt) || (result.archivedAt > 0) !== result.archived)) throw new Error();
     if (operation === 'describe' && result.supported !== true) throw new Error();
     console.log(JSON.stringify(operation === 'describe' ? { ...result,
-      commands: Object.fromEntries(operations.filter((op) => result.remoteSupported || ['list', 'add'].includes(op)).map((op) => [op, sessionSkillCommand(process.execPath, process.argv[1], encoded, op)])),
+      commands: Object.fromEntries(operations.filter((op) => (lifecycle.includes(op) ? result.lifecycleSupported : result.remoteSupported || ['list', 'add'].includes(op))).map((op) => [op, sessionSkillCommand(process.execPath, process.argv[1], encoded, op)])),
     } : result));
   } catch {
     console.error(JSON.stringify({ error: 'Bound project helper failed; the result is unconfirmed', terminal: !bound,

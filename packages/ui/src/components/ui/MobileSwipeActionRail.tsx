@@ -12,21 +12,28 @@ export function MobileSwipeActionRail({ swipe, actions }: {
     ariaLabel?: string;
     icon: IconName;
     destructive?: boolean;
+    fullSwipe?: boolean;
     variant?: ComponentProps<typeof Button>['variant'];
     onClick: () => void;
   }[];
 }) {
-  const { offset, dragging, actionRailRef, closeActions } = swipe;
+  const { offset, dragging, fullSwipeProgress, actionRailRef, closeActions } = swipe;
   const revealed = offset !== 0;
+  const hasFullSwipe = actions.some(action => action.fullSwipe);
   return <div
     ref={actionRailRef}
     data-session-drag-ignore
     data-revealed={revealed ? 'true' : 'false'}
     data-dragging={dragging ? 'true' : undefined}
+    data-full-swipe-armed={fullSwipeProgress === 1 ? 'true' : undefined}
     className={cn('yuri-mobile-session-actions absolute inset-y-0 right-0 z-0 flex items-stretch',
       !revealed && 'pointer-events-none')}
     style={{
       '--yuri-mobile-session-action-count': actions.length,
+      '--yuri-mobile-full-swipe-progress': fullSwipeProgress,
+      width: hasFullSwipe
+        ? `max(calc(var(--yuri-mobile-session-action-width) * ${actions.length}), ${-offset}px)`
+        : undefined,
       transform: `translate3d(calc(100% + ${offset}px), 0, 0)`,
       willChange: revealed ? 'transform' : undefined,
       touchAction: 'pan-y',
@@ -41,7 +48,9 @@ export function MobileSwipeActionRail({ swipe, actions }: {
     {actions.map((action) => <Button
       key={action.ariaLabel ?? action.label} type="button" variant={action.variant ?? (action.destructive ? 'destructive' : 'secondary')}
       className={cn('yuri-mobile-session-action h-full flex-col rounded-none border-0 px-1 has-[>svg]:px-1',
+        action.fullSwipe && 'yuri-mobile-session-action-full-swipe',
         !action.destructive && !action.variant && 'bg-interactive-selection text-interactive-selection-foreground hover:bg-interactive-active')}
+      data-full-swipe-secondary={hasFullSwipe && !action.fullSwipe ? 'true' : undefined}
       aria-label={action.ariaLabel ?? action.label} tabIndex={revealed ? 0 : -1}
       onClick={() => { closeActions(); action.onClick(); }}
     >

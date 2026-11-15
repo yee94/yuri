@@ -176,6 +176,21 @@ revealed. Mouse drags and long holds never reveal actions. A shared reveal event
 closes other rows and cancels their in-progress gestures.
 Consumers retain their own foreground content and business actions. Pointer moves
 only update the active row, read geometry once at gesture start, and add no requests.
+Native DOM gesture handlers use ordinary callbacks, not per-handler `useEvent`
+layout effects. Only the external close callback requires stable identity. One
+availability/identity effect cancels invalid gestures; closed idle rows skip all
+close setters. Dismissal listeners do not rebind during pointer moves. The 500-row
+regression checks 50 parent-only updates with no row Hook work, 50 pointer moves
+with one stable-callback Hook per active-row render, one geometry read and no
+listener churn; batched cancellation and callback freshness are covered separately.
+Archivable session rows opt into full swipe. Past the measured rail width, the red
+archive action expands over the other actions while their content fades. Confirmation
+is reached after another 55% of the remaining row width (at least 64px), with one
+medium native haptic per gesture. Releasing beyond that threshold dispatches the
+existing Archive command once; reversing, pointer cancellation, blur or another row
+cancels confirmation. Contacts, restore actions and running sessions never opt in.
+Changing availability cancels an in-flight gesture. Hosted browsers retain the
+gesture and animation without native haptics; reduced motion removes width easing.
 Session reorder disables swipe through the existing drag context.
 Action descriptors may supply a shared Button `variant` and a full `ariaLabel`
 when compact visible copy is used. Task and project-tree Archive actions use the

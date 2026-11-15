@@ -6,11 +6,12 @@ import { markSessionUnread, markSessionViewed, useNotificationStore, useSessionU
 export function useSessionReadMenuAction(
   session: { id: string; parentID?: string | null; directory?: string | null } | null | undefined,
   directory?: string | null,
+  disabled = false,
 ) {
   const { t } = useI18n();
   const unread = useSessionUnseenCount(session?.id ?? '') > 0;
   const onToggleRead = useEvent(() => {
-    if (!session || session.parentID) return;
+    if (!session || session.parentID || disabled) return;
     if (useNotificationStore.getState().sessionUnseenCount(session.id) > 0) {
       markSessionViewed(session.id);
     } else {
@@ -18,5 +19,5 @@ export function useSessionReadMenuAction(
         .catch(() => toast.error(t('sessions.sidebar.session.menu.markUnreadFailed')));
     }
   });
-  return { unread, onToggleRead: session && !session.parentID ? onToggleRead : undefined };
+  return { unread, onToggleRead: session && !session.parentID && !disabled ? onToggleRead : undefined };
 }

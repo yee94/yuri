@@ -1390,6 +1390,24 @@ button.yuri-mobile-worktree-label-trigger:active,
   padding-block: 0;
 }
 
+.yuri-mobile-session-action-full-swipe {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  width: calc(var(--yuri-mobile-session-action-width) + (100% - var(--yuri-mobile-session-action-width)) * var(--yuri-mobile-full-swipe-progress, 0));
+  transition: width 150ms ease-out;
+}
+
+.yuri-mobile-session-action[data-full-swipe-secondary="true"] {
+  opacity: calc(1 - var(--yuri-mobile-full-swipe-progress, 0));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yuri-mobile-session-action-full-swipe {
+    transition: none;
+  }
+}
+
 .yuri-mobile-session-pagination-row {
   display: flex;
   width: 100%;

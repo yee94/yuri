@@ -67,6 +67,11 @@ pin mark, overflow button and separator translate together; there is no per-row
 glass fill. Moving/scrolling cancels the long-press timer, and completing a swipe
 or hold never selects the session. Pointer moves update only the active row and
 measure rail width once at pointer-down; they do not reload sessions or transcripts.
+Running tasks expose only Pin/Unpin: Read/Unread and Archive are omitted from both
+the rail and full action sheet. Archive dispatch rechecks live activity, including
+descendant work, before changing pins or settled/archive state. Archivable task and
+project rows share the full-swipe expansion, threshold haptic and release-to-archive
+behavior described in the shared UI documentation.
 
 Archived task rows use Lucide `undo-2` for restore on mobile and PC. On PC the
 quick restore replaces the row's time on hover/focus; the archived row does not

@@ -34,7 +34,9 @@ import { syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStor
 import { prefetchSessionTranscript } from '@/sync/session-actions';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isSessionSharingAvailable } from '@/sync/session-sharing-availability';
-import { useLiveSessionStatus } from '@/sync/sync-context';
+import { useLiveSessionStatus, useSessionActivity } from '@/sync/sync-context';
+import { getSyncChildStores } from '@/sync/sync-refs';
+import { getSessionActivityReader } from '@/sync/session-activity';
 import { useSync } from '@/sync/use-sync';
 import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
 import { normalizePath } from '@/lib/pathNormalization';
@@ -187,12 +189,14 @@ export function MobileProjectsHomeContainer({
   const actionSessionId = actionTarget?.kind === 'session' ? actionTarget.session.id : '';
   const actionSessionStatus = useLiveSessionStatus(actionSessionId);
   const isActionSessionBusy = actionSessionStatus?.type === 'busy' || actionSessionStatus?.type === 'retry';
+  const isActionSessionRunning = useSessionActivity(actionSessionId);
   const actionSessionDirectory = actionTarget?.kind === 'session'
     ? getSessionDirectory(actionTarget.session)
     : '';
   const { unread: actionSessionUnread, onToggleRead } = useSessionReadMenuAction(
     actionTarget?.kind === 'session' ? actionTarget.session : null,
     actionSessionDirectory,
+    isActionSessionRunning,
   );
   const isActionTranscriptRefreshing = Boolean(actionSessionId) && refreshingSessionId === actionSessionId;
   const refreshTranscriptDisabled = !actionSessionDirectory || isActionTranscriptRefreshing || isActionSessionBusy;
@@ -273,6 +277,7 @@ export function MobileProjectsHomeContainer({
 
   const handleArchiveSession = useEvent(async (session: MobileSessionTreeNode) => {
     if (isPaginationNodeId(session.id)) return;
+    if (getSessionActivityReader(getSyncChildStores()).read().has(session.id)) return;
     if (homeView === 'tasks') {
       const wasPinned = pinnedSessionIds.has(session.id);
       if (wasPinned) togglePinnedSession(session.id);
@@ -619,7 +624,7 @@ export function MobileProjectsHomeContainer({
             }
           : undefined,
         onRefreshTranscript: handleRefreshTranscript,
-        onArchive: () => {
+        onArchive: isActionSessionRunning ? undefined : () => {
           void handleArchiveSession({
             id: session.id,
             title: session.title?.trim() || t('mobile.sessions.untitled'),
@@ -663,6 +668,7 @@ export function MobileProjectsHomeContainer({
     handleShareFromMenu,
     handleUnshareFromMenu,
     onToggleRead,
+    isActionSessionRunning,
     resolveWorktreeMetadata,
     sharingAvailable,
     startSessionDraftForDirectory,

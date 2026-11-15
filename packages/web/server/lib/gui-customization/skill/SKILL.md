@@ -1,11 +1,13 @@
 ---
 name: yuri-customization
-description: Register local or remote Yuri projects, discover authorized remote machines and read/create/continue remote sessions, configure SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
+description: Register local or remote Yuri projects, archive conversations (task-view 归档 or session archive), discover authorized remote machines and read/create/continue remote sessions, configure SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
 ---
 
 # Yuri customization
 
 For adding an existing directory to Yuri's project list, follow [projects](references/projects.md) using this session's bound project API helper. Registration is separate from creating files, cloning or opening a conversation.
+
+For archiving conversations ("归档", moving tasks to the archived shelf, or session-level archive), use the same bound project helper and [archiving conversations](references/projects.md#archiving-conversations-task-archive-vs-session-archive). The task-view 「归档」 is `settle-session`; do not call UI-authenticated routes or edit Host databases.
 
 For adding a remote project on an authorized machine or working with its sessions, use the same bound project helper and the [remote project workflow](references/projects.md#connected-remote-projects-and-sessions). This grants no SSH setup or new connection permission.
 

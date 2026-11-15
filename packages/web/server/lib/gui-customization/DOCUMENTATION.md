@@ -29,7 +29,7 @@ their immutable staged references until a new session is admitted. Contacts use
 their own granted `yuri.projects` tools, not this session binding.
 
 `projects.js` owns `POST /api/yuri/session-skills/projects` (`describe`, `list`,
-`add`, `remote-hosts`, `add-remote`, `remote-projects`, `sessions`, `read-session`, `create-session`, `prompt-session`). `projects-remote.js` uses the injected `remoteHostGateway` and its immutable task leases; discovery returns authenticated `{hubId,hostId,instanceId}` targets, and explicit targets never fall back to local. `remote-hosts` includes authorized machines with no associated project, reports per-machine failures and releases each probe. `add-remote` uses `gateway.registerProject`, shared with the UI: the target validates/canonicalizes and registers the directory before the Hub saves a deduplicated reference and broadcasts project-order invalidation. A Hub write failure leaves the remote project intact; retrying the same target/path completes association. Paths are never resolved on the Hub filesystem. Lease cleanup runs on every outcome. Remote SDK requests preserve generated request data through the lease; bounded message reads use the existing Host turn-page route. No remote bodies are persisted on Hub. Session creation/prompt require stable caller IDs for ambiguous-result inspection, not automatic replay. This capability neither uses nor grants the desktop SSH helper. The global gate and route require the existing loopback service credential,
+`add`, `task-sessions`, `session-state`, `settle-session`, `unsettle-session`, `archive-session`, `unarchive-session`, `remote-hosts`, `add-remote`, `remote-projects`, `sessions`, `read-session`, `create-session`, `prompt-session`). `projects-remote.js` uses the injected `remoteHostGateway` and its immutable task leases; discovery returns authenticated `{hubId,hostId,instanceId}` targets, and explicit targets never fall back to local. `remote-hosts` includes authorized machines with no associated project, reports per-machine failures and releases each probe. `add-remote` uses `gateway.registerProject`, shared with the UI: the target validates/canonicalizes and registers the directory before the Hub saves a deduplicated reference and broadcasts project-order invalidation. A Hub write failure leaves the remote project intact; retrying the same target/path completes association. Paths are never resolved on the Hub filesystem. Lease cleanup runs on every outcome. Remote SDK requests preserve generated request data through the lease; bounded message reads use the existing Host turn-page route. No remote bodies are persisted on Hub. Session creation/prompt require stable caller IDs for ambiguous-result inspection, not automatic replay. This capability neither uses nor grants the desktop SSH helper. The global gate and route require the existing loopback service credential,
 no browser Origin, shared-service ownership and the session's admitted Host origin.
 The bridge reuses `projects/registry.js`, just like the UI directory API and contact
 tools: strict reads, canonical path deduplication, serialized persistence and
@@ -45,6 +45,22 @@ execution admission even when the Hub's own OpenCode is unavailable. Reads use a
 client waits five seconds longer for the result). Caller disconnect cancels and
 releases the task lease; uncertain writes are inspected by their stable IDs before
 any retry.
+
+`projects-lifecycle.js` owns bound-Host task/session archive operations.
+`task-sessions` pages the current index metadata (50 rows), using the same committed
+Host archive filter as the UI; it explicitly distinguishes an exhausted index from
+complete upstream history. It exposes no messages or raw metadata.
+Verification uses `session-state`, which exposes Host archive authority even after
+an archived row leaves the index; nullable task fields do not imply live membership.
+Task archive (`settle-session`) and restore (`unsettle-session`) reuse index writers and the normal
+revision publisher, validating existing membership before writing. Session archive
+and restore reuse `sessionArchiveService.setArchive`, including partial index-repair
+receipts and sanitized errors. Neither path needs a UI password, deletes content,
+changes another runtime partition or bypasses the existing session binding.
+Task projection is not live UI membership: pins and running/pending requests retain
+their existing precedence. Remote targets are rejected by these local operations.
+New admitted sessions get the updated fingerprinted skill and helper after the Host
+is upgraded; existing staged helpers remain immutable, not silently overwritten.
 
 `references/plugin-styles.md` inventories existing host CSS variables for plugin-owned
 Solid/DOM content, including colors, typography, geometry, controls and optional
@@ -141,6 +157,11 @@ sessions across backend upgrades.
 `projects.test.js` exercises project bridge validation, authentication, binding,
 persisted idempotent registration and failure receipts. Shared-service admission
 tests execute the exact staged project helper through the real global auth gate.
+`projects-lifecycle.test.js` executes the staged lifecycle commands through that
+gate with UI password protection enabled, real temporary SQLite/metadata stores
+and the existing archive service. It verifies discovery/pagination, settle and
+archive round trips, missing IDs, binding/runtime rejection, write/read failures,
+revision publication and sanitized partial-repair receipts without production data.
 `session-skill.test.js` exercises staging, complete resource availability, short
 per-session pointers, managed admission/rollback/adopted sessions and external
 ownership. Shared-service admission is covered by

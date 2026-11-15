@@ -732,7 +732,7 @@ export const dict = {
   'sessions.sidebar.view.tasks': 'Tasks',
   'sessions.sidebar.view.aria': 'Sidebar view',
   'sessions.sidebar.task.runningFor': 'Running {duration}',
-  'sessions.sidebar.task.shelf.settled': 'Archived',
+  'sessions.sidebar.task.shelf.settled': 'Settled',
   'sessions.sidebar.task.empty': 'Nothing needs your attention',
   'sessions.sidebar.task.unassigned': 'No project',
   'mobile.tasks.status.active': 'Active',

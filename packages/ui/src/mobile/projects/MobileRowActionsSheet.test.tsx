@@ -32,9 +32,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-function ReadActionHarness({ id = 'session-1', parentID }: { id?: string; parentID?: string }) {
+function ReadActionHarness({ id = 'session-1', parentID, disabled = false }: { id?: string; parentID?: string; disabled?: boolean }) {
   renderReadAction();
-  const { unread, onToggleRead } = useSessionReadMenuAction({ id, directory: '/project', parentID });
+  const { unread, onToggleRead } = useSessionReadMenuAction({ id, directory: '/project', parentID }, undefined, disabled);
   return <MobileRowActionsSheet
     open
     target={{ kind: 'session', title: 'Session', pinned: false, shared: false, unread }}
@@ -44,7 +44,7 @@ function ReadActionHarness({ id = 'session-1', parentID }: { id?: string; parent
 }
 const closeSheet = vi.fn();
 const renderReadAction = vi.fn();
-async function mountReadAction(props: { id?: string; parentID?: string } = {}) {
+async function mountReadAction(props: { id?: string; parentID?: string; disabled?: boolean } = {}) {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -131,6 +131,15 @@ describe('MobileRowActionsSheet session actions', () => {
 
   test('child sessions omit the action like desktop', async () => {
     await mountReadAction({ parentID: 'parent' });
+    expect(readAction()).toBeUndefined();
+  });
+
+  test('running session read options stay hidden until activity ends', async () => {
+    await mountReadAction({ disabled: true });
+    expect(readAction()).toBeUndefined();
+    await act(async () => root!.render(<I18nProvider><ReadActionHarness disabled={false} /></I18nProvider>));
+    expect(readAction()?.textContent).toContain('Mark as unread');
+    await act(async () => root!.render(<I18nProvider><ReadActionHarness disabled /></I18nProvider>));
     expect(readAction()).toBeUndefined();
   });
 
