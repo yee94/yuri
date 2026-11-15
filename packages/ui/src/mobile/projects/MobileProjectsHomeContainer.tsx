@@ -274,9 +274,17 @@ export function MobileProjectsHomeContainer({
   const handleArchiveSession = useEvent(async (session: MobileSessionTreeNode) => {
     if (isPaginationNodeId(session.id)) return;
     if (homeView === 'tasks') {
+      const wasPinned = pinnedSessionIds.has(session.id);
+      if (wasPinned) togglePinnedSession(session.id);
       setSessionSettled(session.id, true);
       toast.success(t('sessions.sidebar.session.archive.success'), {
-        action: { label: t('sessions.sidebar.undo'), onClick: () => setSessionSettled(session.id, false) },
+        action: {
+          label: t('sessions.sidebar.undo'),
+          onClick: () => {
+            setSessionSettled(session.id, false);
+            if (wasPinned) togglePinnedSession(session.id);
+          },
+        },
       });
       return;
     }
