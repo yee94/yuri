@@ -62,10 +62,10 @@ test('task model distinguishes unknown Git, ready branch and confirmed non-repos
   const root = createRoot(document.createElement('div'));
   let latest: MobileTaskViewModel | null = null;
   function Harness() {
-    latest = useMobileTaskViewModel(model, { enabled: true, settledLimit: 30 });
+    latest = useMobileTaskViewModel(model, { enabled: true, status: 'active', unreadOnly: false, settledLimit: 30 });
     return null;
   }
-  const read = () => (latest as MobileTaskViewModel | null)?.active[0];
+  const read = () => (latest as MobileTaskViewModel | null)?.items[0];
   try {
     act(() => root.render(<Harness />));
     expect(read()).toMatchObject({ branchState: 'loading', branch: undefined, pathLabel: undefined });
@@ -78,5 +78,32 @@ test('task model distinguishes unknown Git, ready branch and confirmed non-repos
     expect(fixtures.ensureStatus).not.toHaveBeenCalled();
   } finally {
     act(() => root.unmount());
+  }
+});
+
+test('unread filter keeps only unread tasks and reports the filtered total', () => {
+  fixtures.gitStatus = new Map();
+  fixtures.counts = { b: 2 };
+  const sessions = ['a', 'b'].map((id) => ({ id, title: id, directory: '/home/user/project', time: { created: 1, updated: 1 } }) as Session);
+  const model: Pick<MobileProjectsHomeModel, 'allSessions' | 'ownership' | 'projectMetaById'> = {
+    allSessions: sessions,
+    ownership: createSessionOwnershipIndex(sessions, [{ id: 'project', normalizedPath: '/home/user/project' }], new Map(), false),
+    projectMetaById: new Map([['project', { id: 'project', path: '/home/user/project', label: 'Project', worktrees: [] }]]),
+  };
+  const root = createRoot(document.createElement('div'));
+  let latest: MobileTaskViewModel | null = null;
+  function Harness({ unreadOnly }: { unreadOnly: boolean }) {
+    latest = useMobileTaskViewModel(model, { enabled: true, status: 'active', unreadOnly, settledLimit: 30 });
+    return null;
+  }
+  try {
+    act(() => root.render(<Harness unreadOnly={false} />));
+    expect((latest as MobileTaskViewModel | null)?.total).toBe(2);
+    act(() => root.render(<Harness unreadOnly />));
+    expect((latest as MobileTaskViewModel | null)?.items.map((node) => node.id)).toEqual(['b']);
+    expect((latest as MobileTaskViewModel | null)?.total).toBe(1);
+  } finally {
+    act(() => root.unmount());
+    fixtures.counts = {};
   }
 });

@@ -44,9 +44,12 @@ type TaskCardProps = {
   onOpenActions: (sessionId: string) => void;
   onPin: (sessionId: string) => void;
   onArchive: (sessionId: string) => void;
+  /** Archived rows keep the card but swipe to Unarchive instead of Pin / Archive. */
+  archived?: boolean;
+  onRestore?: (sessionId: string) => void;
 };
 
-function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin, onArchive }: TaskCardProps) {
+function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin, onArchive, archived, onRestore }: TaskCardProps) {
   const { t } = useI18n();
   const { unread, onToggleRead } = useSessionReadMenuAction(task);
   const running = useSessionActivity(task.id);
@@ -138,18 +141,26 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
           variant: 'default',
           onClick: () => onToggleRead?.(),
         },
-        {
-          label: t(task.pinned ? 'sessions.sidebar.session.menu.unpin' : 'sessions.sidebar.session.menu.pin'),
-          icon: task.pinned ? 'unpin' : 'pushpin',
-          onClick: () => onPin(task.id),
-        },
-        {
-          label: t('sessions.sidebar.bulkActions.archive'),
-          icon: 'inbox-archive',
-          destructive: true,
-          variant: 'destructiveSolid',
-          onClick: () => onArchive(task.id),
-        },
+        ...(archived ? [
+          {
+            label: t('sessions.sidebar.session.menu.unsettle'),
+            icon: 'undo-2' as const,
+            onClick: () => onRestore?.(task.id),
+          },
+        ] : [
+          {
+            label: t(task.pinned ? 'sessions.sidebar.session.menu.unpin' : 'sessions.sidebar.session.menu.pin'),
+            icon: task.pinned ? 'unpin' as const : 'pushpin' as const,
+            onClick: () => onPin(task.id),
+          },
+          {
+            label: t('sessions.sidebar.bulkActions.archive'),
+            icon: 'inbox-archive' as const,
+            destructive: true,
+            variant: 'destructiveSolid' as const,
+            onClick: () => onArchive(task.id),
+          },
+        ]),
       ]} />
       <div
         className={cn(
@@ -231,39 +242,3 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
 }
 
 export const MobileTaskCard = React.memo(MobileTaskCardImpl);
-
-type SettledLineProps = {
-  task: MobileTaskNode;
-  onSelect: (sessionId: string) => void;
-  onRestore: (sessionId: string) => void;
-};
-
-function MobileSettledLineImpl({ task, onSelect, onRestore }: SettledLineProps) {
-  const { t } = useI18n();
-  const handleSelect = useEvent(() => onSelect(task.id));
-  const handleRestore = useEvent(() => onRestore(task.id));
-  return (
-    <div className="yuri-mobile-task-archived-row flex min-h-11 items-center gap-2">
-      <button
-        type="button"
-        data-mobile-press-feedback="soft"
-        className="flex min-h-11 min-w-0 flex-1 items-center text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
-        onClick={handleSelect}
-      >
-        <span className="yuri-mobile-task-project min-w-0 flex-1 truncate text-muted-foreground">{task.title}</span>
-      </button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="min-h-9 min-w-9 shrink-0 rounded-full text-muted-foreground"
-        aria-label={t('sessions.sidebar.session.menu.unsettle')}
-        onClick={handleRestore}
-      >
-        <Icon name="undo-2" className="size-4" />
-      </Button>
-    </div>
-  );
-}
-
-export const MobileSettledLine = React.memo(MobileSettledLineImpl);

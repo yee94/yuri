@@ -1000,7 +1000,7 @@
   margin-right: calc(-1 * var(--yuri-mobile-page-inline-inset));
 }
 
-.yuri-mobile-task-archive {
+.yuri-mobile-task-filter-bar {
   padding-inline: var(--yuri-mobile-page-inline-inset);
 }
 
@@ -1039,10 +1039,6 @@
 
 .yuri-mobile-task-card .yuri-mobile-entity-title {
   letter-spacing: -0.01em;
-}
-
-.yuri-mobile-task-archived-row {
-  border-top: 1px solid color-mix(in srgb, var(--surface-foreground) 7%, transparent);
 }
 
 .yuri-mobile-task-project {
