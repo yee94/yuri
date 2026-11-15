@@ -6,6 +6,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToString } from 'react-dom/server';
 import { useEvent } from '@reactuses/core';
+import { triggerMobileHaptic } from '@/hooks/streamingHaptics';
 
 import { I18nProvider } from '@/lib/i18n';
 import { toast } from '@/components/ui/toast';
@@ -39,6 +40,7 @@ vi.mock('@reactuses/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@reactuses/core')>();
   return { ...actual, useEvent: vi.fn(actual.useEvent) };
 });
+vi.mock('@/hooks/streamingHaptics', () => ({ triggerMobileHaptic: vi.fn(() => true) }));
 vi.mock('@/lib/runtime-fetch', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/runtime-fetch')>(),
   runtimeFetch: fixtures.iconFetch,
@@ -589,6 +591,72 @@ test('task status tabs drive the list, and archived rows swipe to restore', asyn
     await act(async () => more.click());
     expect(showMore).toHaveBeenCalledOnce();
     expect(select).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+test.each(['closed', 'revealed', 'reverse', 'cancel', 'active', 'unavailable'])('settled full-swipe restore supports %s without archiving or navigation', async (mode) => {
+  const task: MobileTaskNode = { id: 'full-restore', title: 'Settled task', projectLabel: 'Project', project: null, unread: false, pinned: false, active: false };
+  const restore = vi.fn();
+  const archive = vi.fn();
+  const select = vi.fn();
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  const render = (archived = true, available = true) => act(() => root.render(<I18nProvider>
+    <MobileTaskCard task={task} runStartedAt={null} archived={archived}
+      onSelect={select} onOpenActions={noop} onPin={noop} onArchive={archive}
+      onRestore={available ? restore : undefined} />
+  </I18nProvider>));
+  const pointer = (target: Element, type: string, x: number) => act(() => {
+    target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 1, button: 0, pointerType: 'touch', clientX: x,
+    }));
+  });
+  vi.mocked(triggerMobileHaptic).mockClear();
+  try {
+    render(true, mode !== 'unavailable');
+    const rail = host.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    const main = host.querySelector<HTMLButtonElement>('.yuri-mobile-task-select')!;
+    const measure = vi.fn(() => 128);
+    Object.defineProperty(rail, 'offsetWidth', { get: measure });
+    Object.defineProperty(rail.parentElement, 'offsetWidth', { value: 390 });
+    let target: Element = main;
+    if (mode === 'revealed') {
+      pointer(main, 'pointerdown', 380);
+      pointer(main, 'pointermove', 252);
+      pointer(main, 'pointerup', 252);
+      expect(restore).not.toHaveBeenCalled();
+      expect(triggerMobileHaptic).not.toHaveBeenCalled();
+      target = rail.querySelector('button')!;
+    }
+    pointer(target, 'pointerdown', 380);
+    pointer(target, 'pointermove', 20);
+    if (mode === 'unavailable') {
+      expect(rail.dataset.fullSwipeArmed).toBeUndefined();
+      expect(triggerMobileHaptic).not.toHaveBeenCalled();
+    } else {
+      expect(rail.dataset.fullSwipeArmed).toBe('true');
+      const restoreAction = rail.querySelector('.yuri-mobile-session-action-full-swipe')!;
+      expect(restoreAction.querySelector('use')?.getAttribute('href')).toBe('#yuri-undo-2');
+      expect(restoreAction.className).toContain('bg-interactive-selection');
+      expect(triggerMobileHaptic).toHaveBeenCalledExactlyOnceWith('medium', { bypassCadence: true });
+    }
+    expect(restore).not.toHaveBeenCalled();
+    if (mode === 'reverse') pointer(target, 'pointermove', 280);
+    if (mode === 'cancel') pointer(target, 'pointercancel', 20);
+    if (mode === 'active') render(false);
+    pointer(target, 'pointerup', 20);
+    act(() => main.click());
+    if (mode === 'closed' || mode === 'revealed') {
+      expect(restore).toHaveBeenCalledExactlyOnceWith(task.id);
+      expect(rail.dataset.revealed).toBe('false');
+    } else {
+      expect(restore).not.toHaveBeenCalled();
+    }
+    expect(archive).not.toHaveBeenCalled();
+    expect(select).not.toHaveBeenCalled();
+    expect(measure).toHaveBeenCalledTimes(mode === 'revealed' ? 2 : 1);
   } finally {
     await act(async () => root.unmount());
   }

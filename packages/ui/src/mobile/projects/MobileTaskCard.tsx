@@ -65,7 +65,11 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
   const handleArchive = () => {
     if (!running && !archived) onArchive(task.id);
   };
-  const swipe = useMobileSwipeActions(task.id, () => onSelect(task.id), false, !running && !archived ? handleArchive : undefined);
+  const handleRestore = () => {
+    if (archived) onRestore?.(task.id);
+  };
+  const fullSwipeAction = archived ? (onRestore ? handleRestore : undefined) : (!running ? handleArchive : undefined);
+  const swipe = useMobileSwipeActions(archived ? `${task.id}:restore` : task.id, () => onSelect(task.id), false, fullSwipeAction);
   if (!longPressRef.current) longPressRef.current = createMobileLongPressController();
   React.useEffect(() => () => longPressRef.current?.reset(), []);
 
@@ -147,7 +151,8 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
           {
             label: t('sessions.sidebar.session.menu.unsettle'),
             icon: 'undo-2' as const,
-            onClick: () => onRestore?.(task.id),
+            fullSwipe: Boolean(onRestore),
+            onClick: handleRestore,
           },
         ] : [
           {

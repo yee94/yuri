@@ -188,7 +188,11 @@ archive action expands over the other actions while their content fades. Confirm
 is reached after another 55% of the remaining row width (at least 64px), with one
 medium native haptic per gesture. Releasing beyond that threshold dispatches the
 existing Archive command once; reversing, pointer cancellation, blur or another row
-cancels confirmation. Contacts, restore actions and running sessions never opt in.
+cancels confirmation. Settled task rows opt their Restore action into the same
+expansion, threshold haptic and release gesture, retaining the selection-tone
+restore plate rather than destructive red. The gesture identity includes restore
+mode, so changing between active and settled cancels an in-flight confirmation.
+Contacts and running active sessions never opt in.
 Changing availability cancels an in-flight gesture. Hosted browsers retain the
 gesture and animation without native haptics; reduced motion removes width easing.
 Session reorder disables swipe through the existing drag context.

@@ -77,6 +77,10 @@ Archived task rows use Lucide `undo-2` for restore on mobile and PC. On PC the
 quick restore replaces the row's time on hover/focus; the archived row does not
 also offer a quick pin. Shift still selects hard delete. Context-menu restore
 uses the same icon.
+Mobile settled rows also support full-swipe Restore: the existing restore plate
+expands over the read action, confirms with one haptic and restores on release.
+Reversing or cancelling keeps the row settled; this reuses the archive gesture
+controller without additional effects or per-move geometry reads.
 
 Archiving the current desktop/Web task never opens the archived shelf. After a
 confirmed write, focus moves to the next unarchived row in the current visual
