@@ -3465,6 +3465,29 @@ export async function fetchMessagesForSession(
   return trackedRequest
 }
 
+const SESSION_PREFETCH_INFLIGHT = new Set<string>()
+
+/**
+ * Warm the initial transcript tail for a session the user is about to open
+ * (finger down on its row). Cold sessions only: a cached transcript is left to
+ * the normal open path. Writes only the transcript repository; selection,
+ * viewed state and project/directory switching stay with setCurrentSession.
+ */
+export function prefetchSessionTranscript(sessionID: string, directory?: string | null): void {
+  const resolvedDir = movedSessionDirectory(sessionID) ?? directory ?? null
+  if (!resolvedDir || !_sdk || !_childStores) return
+  const repository = getTranscriptRepository()
+  if (!repository) return
+  const scope = transcriptScope(resolvedDir, sessionID)
+  if (repository.hasSession?.(scope) ?? repository.getTranscript(scope).messageOrder.length > 0) return
+  const key = JSON.stringify([getRuntimeTransportIdentity(), getRuntimeGeneration(), resolvedDir, sessionID])
+  if (SESSION_PREFETCH_INFLIGHT.has(key)) return
+  SESSION_PREFETCH_INFLIGHT.add(key)
+  void ensureTranscriptInitial(resolvedDir, sessionID)
+    .catch(() => undefined)
+    .finally(() => SESSION_PREFETCH_INFLIGHT.delete(key))
+}
+
 async function fetchMessagesForSessionInternal(
   sessionID: string,
   resolvedDir: string,

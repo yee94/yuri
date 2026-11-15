@@ -6,15 +6,51 @@
 it to both the home page and the Web tab bar. The Web Projects tab follows the
 title menu and PC switch (`list-check-2` for Tasks, `folder-tree` for Projects).
 The shared native tab definitions and native bridge remain unchanged.
-Mobile task cards share the same glass background regardless of running state
-or the last selected session; execution is indicated only by the status slot.
+Mobile tasks use flat inbox-style rows with no per-row glass background, shadow
+or backdrop filter regardless of running state or the last selected session;
+execution is indicated only by the status slot. Each row reuses `TaskProjectBadge`
+inside a 40px circular project mark, with a 22px logo/glyph and 14px content gap.
+The icon is part of the same full-width selection/long-press target as the text,
+not a separate action. Task lists and swipe rails span the viewport without the
+page's outer gutters or a maximum-width card shell. The existing page inset is
+inside the row instead, retaining icon/text/menu alignment and a full-width touch
+target; separators start at the text column (page inset + 54px) and reach the
+right edge. The inline archive retains its aligned inner padding. Project view,
+the glass header and dock keep their existing layout.
+The overflow button and bottom pin mark share a 36px trailing column flush with
+the row's right edge, centering both glyphs on the same axis. The overflow button
+retains its full 36px touch target; the pin remains part of the row selection target.
 Their compact type scale is scoped in `mobile.css`: title 14/20px, project
 12/16px and time/branch 11/14px at the default rem scale. Titles use regular (400)
-weight, with medium (500) reserved for unread tasks. Cards use 14px horizontal
-and 12px vertical insets, 18px corners and an 8px list gap; the archive group
-follows in document flow with a 12px gap. Titles clamp to two lines, metadata
+weight, with medium (500) reserved for unread tasks. Rows use 14px vertical
+insets and no inter-row gap; the archive group follows in document flow with an
+8px gap and no glass background, border shell, shadow or backdrop filter.
+Its 48px disclosure header aligns an 18px archive glyph within the same 40px
+icon column and puts its label at the task text inset (54px). The count uses
+the 11px meta scale. Expanded rows share that 54px inset, top separators and
+44px minimum height; they show only a single-line 12px title and `undo-2` restore
+action, omitting project badges and timestamps. Disclosure IDs are instance-unique;
+collapsed lists stay unmounted, and pagination keeps the existing Show-more action.
+Active titles clamp to two lines, metadata
 truncates, and the separate menu/restore controls retain their 36px touch floor.
-The large page title, shared glass material and native bottom bar are unchanged.
+The large page title, glass header controls and both bottom bars are unchanged.
+
+Inbox task rows retain three operation entrances. Left swipe reuses
+`useMobileSwipeActions` / `MobileSwipeActionRail` in left-to-right order:
+Mark read/unread, Pin/Unpin, task Archive. The first action uses compact Read/Unread
+copy with the full localized accessible name and a neutral solid button plate;
+Pin retains the selection-tone plate and Archive the destructive tint. Labels
+stay single-line with ellipsis for longer locales. Read actions share `useSessionReadMenuAction` with the half-sheet,
+including its narrow per-session subscription, Host writes and failure feedback;
+the callbacks route through the same home/container mutations as the full menu,
+so Archive remains the Host settled projection rather than real archive metadata.
+Long press and the visible three-dot button both use the existing
+`MobileRowActionsSheet` / `MobileResizableSheet` half-sheet with the complete
+session commands. Opening it closes the swipe rail. The project mark, text, time,
+pin mark, overflow button and separator translate together; there is no per-row
+glass fill. Moving/scrolling cancels the long-press timer, and completing a swipe
+or hold never selects the session. Pointer moves update only the active row and
+measure rail width once at pointer-down; they do not reload sessions or transcripts.
 
 Archived task rows use Lucide `undo-2` for restore on mobile and PC. On PC the
 quick restore replaces the row's time on hover/focus; the archived row does not

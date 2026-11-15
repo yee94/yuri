@@ -580,7 +580,7 @@ export function MobileProjectsHome({
   const handleMenuOpenChange = useEvent((open: boolean) => setMenuOpen(open));
 
   return (
-    <main className={cn('relative isolate mx-auto flex w-full max-w-[26rem] flex-col', task?.view === 'tasks' ? 'gap-3' : 'gap-5', className)}>
+    <main className={cn('relative isolate mx-auto flex w-full flex-col', task?.view === 'tasks' ? 'gap-3' : 'max-w-[26rem] gap-5', className)}>
       <MobileTabPageHeader
         title={task
           ? <MobileHomeViewMenu value={task.view} onChange={task.onViewChange} />
@@ -653,7 +653,7 @@ export function MobileProjectsHome({
       />
 
       {task?.view === 'tasks' && task.model ? (
-        <MobileTaskView task={task} model={task.model} />
+        <MobileTaskView task={task} model={task.model} onPinSession={onPinSession} onArchiveSession={onArchiveSession} />
       ) : null}
 
       {task?.view === 'tasks' ? null : pinnedSessions.length > 0 || inProgressSessions.length > 0 ? (
@@ -753,17 +753,20 @@ export function MobileProjectsHome({
   );
 }
 
-function MobileTaskView({ task, model }: {
+function MobileTaskView({ task, model, onPinSession, onArchiveSession }: {
   task: NonNullable<MobileProjectsHomeProps['task']>;
   model: MobileTaskViewModel;
-}) {
+} & Pick<MobileProjectsHomeProps, 'onPinSession' | 'onArchiveSession'>) {
   const { t } = useI18n();
+  const archivedListId = React.useId();
+  const handlePin = useEvent((sessionId: string) => onPinSession({ id: sessionId, title: '' }));
+  const handleArchive = useEvent((sessionId: string) => onArchiveSession({ id: sessionId, title: '' }));
   const listed = [...model.pinned, ...model.active];
   const remaining = model.settledTotal - model.settled.length;
   return (
-    <div className="flex flex-col gap-3">
+    <div className="yuri-mobile-task-list flex flex-col gap-2">
       {listed.length > 0 ? (
-        <section className="flex flex-col gap-2" aria-label={t('sessions.sidebar.view.tasks')}>
+        <section className="flex flex-col" aria-label={t('sessions.sidebar.view.tasks')}>
           {listed.map((node) => (
             <MobileTaskCard
               key={node.id}
@@ -771,6 +774,8 @@ function MobileTaskView({ task, model }: {
               runStartedAt={model.runStartTimes.get(node.id) ?? null}
               onSelect={task.onSelectTask}
               onOpenActions={task.onOpenTaskActions}
+              onPin={handlePin}
+              onArchive={handleArchive}
             />
           ))}
         </section>
@@ -779,40 +784,41 @@ function MobileTaskView({ task, model }: {
       )}
 
       {model.settledTotal > 0 ? (
-        <MobileFloatingSurface asChild>
-          <section className="overflow-hidden rounded-[1.125rem]" aria-label={t('sessions.sidebar.task.shelf.settled')}>
-            <button
-              type="button"
-              data-mobile-press-feedback="soft"
-              className="yuri-mobile-task-project flex h-11 w-full items-center gap-2 px-3.5 text-left text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
-              aria-expanded={task.settledOpen}
-              onClick={() => task.onSettledOpenChange(!task.settledOpen)}
-            >
-              <Icon name="inbox-archive" className="size-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{t('sessions.sidebar.task.shelf.settled')}</span>
-              <span className="yuri-mobile-task-meta tabular-nums">{model.settledTotal}</span>
-              <Icon
-                name="arrow-down-s"
-                className={cn(
-                  'size-4 shrink-0 transition-transform duration-150 motion-reduce:transition-none',
-                  task.settledOpen ? 'rotate-0' : '-rotate-90',
-                )}
-              />
-            </button>
-            {task.settledOpen ? (
-              <div className="border-t border-[var(--yuri-mobile-divider)]">
-                {model.settled.map((node) => (
-                  <MobileSettledLine key={node.id} task={node} onSelect={task.onSelectTask} onRestore={task.onRestoreTask} />
-                ))}
-                {remaining > 0 ? (
-                  <Button type="button" variant="ghost" className="h-11 w-full rounded-none text-muted-foreground" onClick={task.onShowMoreSettled}>
-                    {t(remaining === 1 ? 'sessions.sidebar.group.showMoreSingle' : 'sessions.sidebar.group.showMorePlural', { count: Math.min(SETTLED_SHELF_PAGE_SIZE, remaining) })}
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-          </section>
-        </MobileFloatingSurface>
+        <section className="yuri-mobile-task-archive" aria-label={t('sessions.sidebar.task.shelf.settled')}>
+          <button
+            type="button"
+            data-mobile-press-feedback="soft"
+            className="yuri-mobile-task-project grid h-12 w-full grid-cols-[2.5rem_minmax(0,1fr)_auto_0.875rem] items-center gap-3.5 text-left text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
+            aria-expanded={task.settledOpen}
+            aria-controls={archivedListId}
+            onClick={() => task.onSettledOpenChange(!task.settledOpen)}
+          >
+            <span className="flex size-10 items-center justify-center">
+              <Icon name="inbox-archive" className="size-[18px]" />
+            </span>
+            <span className="min-w-0 truncate">{t('sessions.sidebar.task.shelf.settled')}</span>
+            <span className="yuri-mobile-task-meta tabular-nums">{model.settledTotal}</span>
+            <Icon
+              name="arrow-down-s"
+              className={cn(
+                'size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none',
+                task.settledOpen ? 'rotate-0' : '-rotate-90',
+              )}
+            />
+          </button>
+          {task.settledOpen ? (
+            <div id={archivedListId} className="ml-[3.375rem]">
+              {model.settled.map((node) => (
+                <MobileSettledLine key={node.id} task={node} onSelect={task.onSelectTask} onRestore={task.onRestoreTask} />
+              ))}
+              {remaining > 0 ? (
+                <Button type="button" variant="ghost" className="h-11 w-full rounded-none text-muted-foreground" onClick={task.onShowMoreSettled}>
+                  {t(remaining === 1 ? 'sessions.sidebar.group.showMoreSingle' : 'sessions.sidebar.group.showMorePlural', { count: Math.min(SETTLED_SHELF_PAGE_SIZE, remaining) })}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
       ) : null}
     </div>
   );

@@ -4,11 +4,12 @@ import { expect, test, vi } from 'vitest';
 import { MobileSwipeActionRail } from './MobileSwipeActionRail';
 import { useMobileSwipeActions } from './useMobileSwipeActions';
 
-function Row({ id, onOpen, onEdit, onDelete }: { id: string; onOpen: () => void; onEdit: () => void; onDelete: () => void }) {
+function Row({ id, onOpen, onEdit, onDelete, onRead }: { id: string; onOpen: () => void; onEdit: () => void; onDelete: () => void; onRead?: () => void }) {
   const swipe = useMobileSwipeActions(id, onOpen);
   return <div data-row={id}>
     <MobileSwipeActionRail swipe={swipe} actions={[
       { label: 'Edit', icon: 'edit', onClick: onEdit },
+      ...(onRead ? [{ label: 'Read', icon: 'mail-open' as const, onClick: onRead }] : []),
       { label: 'Delete', icon: 'delete-bin', destructive: true, onClick: onDelete },
     ]} />
     <button data-main onClick={swipe.handleSelect} onPointerDown={swipe.handlePointerDown}
@@ -32,6 +33,7 @@ test('shared swipe reveals actions, coordinates rows, preserves scrolling and pr
     const rows = [...container.querySelectorAll('[data-row]')];
     const mains = rows.map(row => row.querySelector('[data-main]')!);
     const rails = rows.map(row => row.querySelector('.yuri-mobile-session-actions')!);
+    expect((rails[0] as HTMLElement).style.getPropertyValue('--yuri-mobile-session-action-count')).toBe('2');
     rails.forEach(rail => Object.defineProperty(rail, 'offsetWidth', { value: 112 }));
     const swipe = (index: number) => {
       event(mains[index], 'pointerdown', 200);
@@ -66,5 +68,33 @@ test('shared swipe reveals actions, coordinates rows, preserves scrolling and pr
   } finally {
     act(() => root.unmount());
     container.remove();
+  }
+});
+
+test('three-action rail uses the measured full width and closes after the added action', () => {
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  const onRead = vi.fn();
+  const onOpen = vi.fn();
+  try {
+    act(() => root.render(<Row id="three" onOpen={onOpen} onEdit={vi.fn()} onDelete={vi.fn()} onRead={onRead} />));
+    const rail = container.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
+    const main = container.querySelector('[data-main]')!;
+    Object.defineProperty(rail, 'offsetWidth', { value: 168 });
+    expect(rail.style.getPropertyValue('--yuri-mobile-session-action-count')).toBe('3');
+    expect(rail.querySelectorAll('button')).toHaveLength(3);
+    for (const [type, x] of [['pointerdown', 240], ['pointermove', 20], ['pointerup', 20]] as const) {
+      act(() => main.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerId: 1, button: 0, pointerType: 'touch', clientX: x, clientY: 0,
+      })));
+    }
+    expect(rail.style.transform).toBe('translate3d(calc(100% + -168px), 0, 0)');
+    expect(rail.getAttribute('aria-hidden')).toBe('false');
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Read"]')!.click());
+    expect(onRead).toHaveBeenCalledOnce();
+    expect(rail.getAttribute('aria-hidden')).toBe('true');
+    expect(onOpen).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());
   }
 });

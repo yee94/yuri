@@ -31,6 +31,7 @@ import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIn
 import { useSetSessionSettled } from '@/queries/sessionIndexSettleQueries';
 import { SETTLED_SHELF_PAGE_SIZE, type SidebarView } from '@/components/session/sidebar/taskView';
 import { syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
+import { prefetchSessionTranscript } from '@/sync/session-actions';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isSessionSharingAvailable } from '@/sync/session-sharing-availability';
 import { useLiveSessionStatus } from '@/sync/sync-context';
@@ -237,6 +238,29 @@ export function MobileProjectsHomeContainer({
     const directory = raw ? getSessionDirectory(raw) || null : null;
     onOpenChat({ sessionId: session.id, directory });
   });
+
+  // Finger-down warm-up for cold sessions. The short hold lets a scroll (which
+  // ends in pointercancel) cancel it, so only presses that stay put prefetch.
+  const prefetchTimerRef = React.useRef<number | null>(null);
+  const cancelPrefetch = useEvent(() => {
+    if (prefetchTimerRef.current === null) return;
+    window.clearTimeout(prefetchTimerRef.current);
+    prefetchTimerRef.current = null;
+  });
+  const handleRowPointerDown = useEvent((event: React.PointerEvent<HTMLElement>) => {
+    cancelPrefetch();
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+    const element = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-mobile-session-id]');
+    const sessionId = element?.dataset.mobileSessionId;
+    const raw = sessionId ? model.sessionById.get(sessionId) : undefined;
+    if (!sessionId || !raw || isPaginationNodeId(sessionId)) return;
+    const directory = getSessionDirectory(raw) || null;
+    prefetchTimerRef.current = window.setTimeout(() => {
+      prefetchTimerRef.current = null;
+      prefetchSessionTranscript(sessionId, directory);
+    }, 60);
+  });
+  React.useEffect(() => cancelPrefetch, [cancelPrefetch]);
 
   const handleSelectTask = useEvent((sessionId: string) => {
     handleSelectSession({ id: sessionId, title: '' });
@@ -661,6 +685,12 @@ export function MobileProjectsHomeContainer({
 
   return (
     <>
+      <div
+        className="contents"
+        onPointerDownCapture={handleRowPointerDown}
+        onPointerMoveCapture={cancelPrefetch}
+        onPointerCancelCapture={cancelPrefetch}
+      >
       <MobileProjectsHome
         remoteProjects={remoteProjects}
         hostRegistry={remoteNavigation.registry}
@@ -702,6 +732,7 @@ export function MobileProjectsHomeContainer({
           onRestoreTask: handleRestoreTask,
         }}
       />
+      </div>
 
       <MobileRowActionsSheet
         open={actionsOpen}

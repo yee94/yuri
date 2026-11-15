@@ -167,6 +167,7 @@ function MobileSessionRowImpl({
         <button
           type="button"
           data-mobile-press-feedback="soft"
+          data-mobile-session-id={session.id}
           className="yuri-mobile-session-row-main flex min-w-0 flex-1 items-center text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
           style={{
             paddingLeft: 16 + Math.min(depth, 4) * 12,

@@ -974,13 +974,74 @@
   line-height: var(--yuri-mobile-entity-meta-line-height);
 }
 
+.yuri-mobile-task-list {
+  margin-inline: calc(-1 * var(--yuri-mobile-page-inline-inset));
+}
+
 .yuri-mobile-task-card {
   --yuri-mobile-entity-title-size: 0.875rem;
   --yuri-mobile-entity-title-line-height: 1.25rem;
+  --yuri-mobile-task-action-width: 2.25rem;
+}
+
+.yuri-mobile-task-select {
+  padding-left: calc(var(--yuri-mobile-page-inline-inset) + 3.375rem);
+  padding-right: var(--yuri-mobile-page-inline-inset);
+}
+
+.yuri-mobile-task-more {
+  right: 0;
+  width: var(--yuri-mobile-task-action-width);
+}
+
+.yuri-mobile-task-pin {
+  width: var(--yuri-mobile-task-action-width);
+  margin-right: calc(-1 * var(--yuri-mobile-page-inline-inset));
+}
+
+.yuri-mobile-task-archive {
+  padding-inline: var(--yuri-mobile-page-inline-inset);
+}
+
+.yuri-mobile-task-content::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: calc(var(--yuri-mobile-page-inline-inset) + 3.375rem);
+  right: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--surface-foreground) 7%, transparent);
+  pointer-events: none;
+}
+
+.yuri-mobile-task-avatar {
+  position: absolute;
+  top: 0.875rem;
+  left: var(--yuri-mobile-page-inline-inset);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--surface-foreground) 7%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface-muted) 45%, transparent);
+  color: var(--surface-muted-foreground);
+}
+
+.yuri-mobile-task-avatar > span,
+.yuri-mobile-task-avatar svg {
+  width: 1.375rem;
+  height: 1.375rem;
 }
 
 .yuri-mobile-task-card .yuri-mobile-entity-title {
   letter-spacing: -0.01em;
+}
+
+.yuri-mobile-task-archived-row {
+  border-top: 1px solid color-mix(in srgb, var(--surface-foreground) 7%, transparent);
 }
 
 .yuri-mobile-task-project {
@@ -1294,7 +1355,7 @@ button.yuri-mobile-worktree-label-trigger:active,
   --yuri-mobile-session-action-width: calc(
     var(--yuri-mobile-session-actions-width) / 2
   );
-  width: var(--yuri-mobile-session-actions-width);
+  width: calc(var(--yuri-mobile-session-action-width) * var(--yuri-mobile-session-action-count, 2));
   overflow: hidden;
   border-start-end-radius: var(--yuri-mobile-session-radius-start-end);
   border-end-end-radius: var(--yuri-mobile-session-radius-end-end);

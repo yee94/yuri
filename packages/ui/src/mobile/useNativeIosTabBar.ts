@@ -58,7 +58,7 @@ export function useNativeIosTabBar(args: UseNativeIosTabBarArgs): NativeIosTabBa
   const appearance = typeof document === 'undefined'
     ? 'dark'
     : nativeIosTabBarAppearanceFromRoot(document.documentElement);
-  const accentColor = typeof document === 'undefined' ? '' : nativeIosTabBarAccentFromRoot();
+  const accentColor = !available || typeof document === 'undefined' ? '' : nativeIosTabBarAccentFromRoot();
 
   useEffect(() => {
     if (!available || typeof document === 'undefined') return;

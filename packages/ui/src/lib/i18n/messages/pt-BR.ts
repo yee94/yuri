@@ -10,6 +10,8 @@ export const dict: Record<I18nKey, string> = {
   'commandPalette.filter.switch': 'Alternar',
   'sessions.sidebar.session.menu.markUnread': 'Marcar como não lido',
   'sessions.sidebar.session.menu.markRead': 'Marcar como lido',
+  'sessions.sidebar.session.swipe.markRead': 'Lido',
+  'sessions.sidebar.session.swipe.markUnread': 'Não lido',
   'sessions.sidebar.session.menu.markUnreadFailed': 'Não foi possível marcar como não lido. Tente novamente.',
   'chat.find.label': 'Pesquisar na conversa carregada',
   'chat.find.count': '{current} / {total}',

@@ -5,12 +5,15 @@ import { Icon } from '@/components/icon/Icon';
 import { SessionBusyIndicator } from '@/components/session/SessionBusyIndicator';
 import { TaskProjectBadge, TaskRunElapsed, type TaskProjectMark } from '@/components/session/sidebar/TaskCardParts';
 import { Button } from '@/components/ui/button';
+import { MobileSwipeActionRail } from '@/components/ui/MobileSwipeActionRail';
+import { useMobileSwipeActions } from '@/components/ui/useMobileSwipeActions';
 import {
   createMobileLongPressController,
   type MobileLongPressController,
 } from '@/components/ui/mobileLongPress';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { useSessionReadMenuAction } from '@/mobile/useSessionReadMenuAction';
 import {
   useSessionActivity,
   useSessionPermissions,
@@ -37,10 +40,13 @@ type TaskCardProps = {
   runStartedAt: number | null;
   onSelect: (sessionId: string) => void;
   onOpenActions: (sessionId: string) => void;
+  onPin: (sessionId: string) => void;
+  onArchive: (sessionId: string) => void;
 };
 
-function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions }: TaskCardProps) {
+function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin, onArchive }: TaskCardProps) {
   const { t } = useI18n();
+  const { unread, onToggleRead } = useSessionReadMenuAction(task);
   const running = useSessionActivity(task.id);
   const permissions = useSessionPermissions(task.id, task.directory, { bootstrap: false });
   const questions = useSessionQuestions(task.id, task.directory, { bootstrap: false });
@@ -51,37 +57,47 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions }: Tas
     unread: task.unread,
   });
   const longPressRef = React.useRef<MobileLongPressController | null>(null);
+  const swipe = useMobileSwipeActions(task.id, () => onSelect(task.id));
   if (!longPressRef.current) longPressRef.current = createMobileLongPressController();
   React.useEffect(() => () => longPressRef.current?.reset(), []);
 
-  const handleOpenActions = useEvent(() => onOpenActions(task.id));
+  const handleOpenActions = useEvent(() => {
+    swipe.handlePointerCancel();
+    swipe.closeActions();
+    onOpenActions(task.id);
+  });
   const handleClick = useEvent(() => {
     if (longPressRef.current?.consumeClick(task.id)) return;
-    onSelect(task.id);
+    swipe.handleSelect();
   });
   const handlePointerDown = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
     if ((event.pointerType !== 'touch' && event.pointerType !== 'pen') || event.button !== 0) return;
+    swipe.handlePointerDown(event);
     longPressRef.current?.start({
       pointerId: event.pointerId,
       key: task.id,
       clientX: event.clientX,
       clientY: event.clientY,
-      onTrigger: () => onOpenActions(task.id),
+      onTrigger: handleOpenActions,
     });
   });
   const handlePointerMove = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
     longPressRef.current?.move(event.pointerId, event.clientX, event.clientY);
+    swipe.handlePointerMove(event);
+    if (event.isDefaultPrevented()) longPressRef.current?.cancel(event.pointerId);
   });
   const handlePointerEnd = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
     longPressRef.current?.end(event.pointerId);
+    swipe.finishGesture(event);
   });
   const handlePointerCancel = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
     longPressRef.current?.cancel(event.pointerId);
+    swipe.handlePointerCancel();
   });
   const handleContextMenu = useEvent((event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    longPressRef.current?.openFromContextMenu(task.id, () => onOpenActions(task.id));
+    longPressRef.current?.openFromContextMenu(task.id, handleOpenActions);
   });
 
   const waitingLabel = indicator === 'question'
@@ -111,57 +127,93 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions }: Tas
   const receding = indicator === 'running' && !task.active;
 
   return (
-    <div className="yuri-mobile-task-card yuri-mobile-floating-surface relative overflow-hidden rounded-[1.125rem]">
-      <button
-        type="button"
-        data-mobile-press-feedback="soft"
-        className="block w-full min-w-0 px-3.5 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
-        style={{ touchAction: 'pan-y' }}
-        onClick={handleClick}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerEnd}
-        onPointerCancel={handlePointerCancel}
-        onContextMenu={handleContextMenu}
+    <div className="yuri-mobile-task-card relative isolate overflow-hidden">
+      <MobileSwipeActionRail swipe={swipe} actions={[
+        {
+          label: t(unread ? 'sessions.sidebar.session.swipe.markRead' : 'sessions.sidebar.session.swipe.markUnread'),
+          ariaLabel: t(unread ? 'sessions.sidebar.session.menu.markRead' : 'sessions.sidebar.session.menu.markUnread'),
+          icon: unread ? 'mail-open' : 'mail',
+          variant: 'default',
+          onClick: () => onToggleRead?.(),
+        },
+        {
+          label: t(task.pinned ? 'sessions.sidebar.session.menu.unpin' : 'sessions.sidebar.session.menu.pin'),
+          icon: task.pinned ? 'unpin' : 'pushpin',
+          onClick: () => onPin(task.id),
+        },
+        {
+          label: t('sessions.sidebar.bulkActions.archive'),
+          icon: 'inbox-archive',
+          destructive: true,
+          onClick: () => onArchive(task.id),
+        },
+      ]} />
+      <div
+        className={cn(
+          'yuri-mobile-task-content relative z-10 min-w-0 ease-out motion-reduce:transition-none',
+          swipe.dragging ? 'transition-none' : 'transition-transform duration-150',
+        )}
+        style={{
+          transform: `translate3d(${swipe.offset}px, 0, 0)`,
+          willChange: swipe.offset === 0 ? undefined : 'transform',
+        }}
       >
-        <span className="flex h-4 items-center gap-1.5 pr-7">
-          <TaskProjectBadge project={task.project} />
-          <span className="yuri-mobile-task-project min-w-0 flex-1 truncate text-muted-foreground">{task.projectLabel}</span>
-          {statusSlot}
-        </span>
-        <span
-          className={cn(
-            'yuri-mobile-entity-title mt-1 line-clamp-2 break-words text-foreground',
-            task.unread ? 'font-medium' : 'font-normal',
-            receding && 'text-foreground/70',
-          )}
+        <button
+          type="button"
+          data-mobile-press-feedback="soft"
+          data-mobile-session-id={task.id}
+          className="yuri-mobile-task-select relative block w-full min-w-0 py-3.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
+          style={{ touchAction: 'pan-y' }}
+          onClick={handleClick}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerEnd}
+          onPointerCancel={handlePointerCancel}
+          onContextMenu={handleContextMenu}
         >
-          {task.title}
-        </span>
-        {task.branch || task.pinned ? (
-          <span className="yuri-mobile-task-meta mt-1.5 flex h-3.5 items-center gap-1 text-muted-foreground">
-            {task.branch ? (
-              <>
-                <Icon name="git-branch" className="size-3 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{task.branch}</span>
-              </>
-            ) : <span className="flex-1" />}
-            {task.pinned ? (
-              <Icon name="pushpin-2-fill" className="size-3 shrink-0" aria-label={t('sessions.sidebar.session.actions.pinned')} />
-            ) : null}
+          <span className="yuri-mobile-task-avatar" aria-hidden="true">
+            <TaskProjectBadge project={task.project} />
           </span>
-        ) : null}
-      </button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="absolute right-1 top-0.5 min-h-9 min-w-9 rounded-full text-muted-foreground"
-        aria-label={t('sessions.sidebar.session.menu.label')}
-        onClick={handleOpenActions}
-      >
-        <Icon name="more-2" className="size-3.5" />
-      </Button>
+          <span className="flex h-4 items-center gap-1.5 pr-9">
+            <span className="yuri-mobile-task-project min-w-0 flex-1 truncate text-muted-foreground">{task.projectLabel}</span>
+            {statusSlot}
+          </span>
+          <span
+            className={cn(
+              'yuri-mobile-entity-title mt-1 line-clamp-2 break-words text-foreground',
+              task.unread ? 'font-medium' : 'font-normal',
+              receding && 'text-foreground/70',
+            )}
+          >
+            {task.title}
+          </span>
+          {task.branch || task.pinned ? (
+            <span className="yuri-mobile-task-meta mt-1.5 flex h-3.5 items-center gap-1 text-muted-foreground">
+              {task.branch ? (
+                <>
+                  <Icon name="git-branch" className="size-3 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{task.branch}</span>
+                </>
+              ) : <span className="flex-1" />}
+              {task.pinned ? (
+                <span className="yuri-mobile-task-pin inline-flex shrink-0 items-center justify-center">
+                  <Icon name="pushpin-2-fill" className="size-3 shrink-0" aria-label={t('sessions.sidebar.session.actions.pinned')} />
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="yuri-mobile-task-more absolute top-1 min-h-9 min-w-9 rounded-full text-muted-foreground"
+          aria-label={t('sessions.sidebar.session.menu.label')}
+          onClick={handleOpenActions}
+        >
+          <Icon name="more-2" className="size-3.5" />
+        </Button>
+      </div>
     </div>
   );
 }
@@ -179,18 +231,14 @@ function MobileSettledLineImpl({ task, onSelect, onRestore }: SettledLineProps) 
   const handleSelect = useEvent(() => onSelect(task.id));
   const handleRestore = useEvent(() => onRestore(task.id));
   return (
-    <div className="flex min-h-11 items-center gap-1 pl-3.5 pr-1 [&:not(:last-child)]:shadow-[inset_0_-1px_0_var(--yuri-mobile-divider)]">
+    <div className="yuri-mobile-task-archived-row flex min-h-11 items-center gap-2">
       <button
         type="button"
         data-mobile-press-feedback="soft"
-        className="flex min-w-0 flex-1 items-center gap-2 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
+        className="flex min-h-11 min-w-0 flex-1 items-center text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
         onClick={handleSelect}
       >
-        <TaskProjectBadge project={task.project} />
         <span className="yuri-mobile-task-project min-w-0 flex-1 truncate text-muted-foreground">{task.title}</span>
-        {task.activityLabel ? (
-          <span className="yuri-mobile-task-meta shrink-0 tabular-nums text-muted-foreground">{task.activityLabel}</span>
-        ) : null}
       </button>
       <Button
         type="button"

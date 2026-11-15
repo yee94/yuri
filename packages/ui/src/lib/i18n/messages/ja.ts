@@ -724,6 +724,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.menu.pin': 'ピン留め',
   'sessions.sidebar.session.menu.markUnread': '未読にする',
   'sessions.sidebar.session.menu.markRead': '既読にする',
+  'sessions.sidebar.session.swipe.markRead': '既読',
+  'sessions.sidebar.session.swipe.markUnread': '未読',
   'sessions.sidebar.session.menu.markUnreadFailed': '未読にできませんでした。もう一度お試しください。',
   'sessions.sidebar.session.pin.error': 'セッションのピン留めに失敗しました',
   'sessions.sidebar.session.unpin.error': 'ピン留めの解除に失敗しました',
