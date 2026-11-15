@@ -1,7 +1,7 @@
-import { isNpmScopedPackageMention } from '@/lib/search/fileMentionSearch';
-import { DRAFT_COMPOSER_TRIGGER_ICON_SLOT, draftComposerSkillIdTokenPattern } from '@/sync/input-draft-types';
-import { stripComposerTriggerIconSlot } from '@/composer/inline-visual';
-import { buildAgentHref, buildSkillHref } from '@/lib/messages/inlineMessageLinks';
+import { isNpmScopedPackageMention } from '../../search/fileMentionSearch';
+import { DRAFT_COMPOSER_TRIGGER_ICON_SLOT, draftComposerSkillIdTokenPattern } from '../../../sync/input-draft-types';
+import { stripComposerTriggerIconSlot } from '../../../composer/inline-visual';
+import { buildAgentHref, buildSkillHref } from '../inlineMessageLinks';
 import { findLongestConfirmedSpacedMention, readSpacedPastedFileMention } from './spacedFileMention';
 import type {
     MessageReferenceDecoration,

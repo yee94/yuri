@@ -1,5 +1,5 @@
 import type { Part } from '@/lib/opencode/v2-types';
-import { stripComposerTriggerIconSlot } from '@/composer/inline-visual';
+import { stripComposerTriggerIconSlot } from '../../../composer/inline-visual';
 
 const IMAGE_FILENAME_PATTERN = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|heic|heif|tiff?)$/i;
 

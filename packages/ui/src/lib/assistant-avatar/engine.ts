@@ -6,6 +6,8 @@ import recipes from './vendor/grok-anatomy/grok-recipes.json';
 import { buildAvatarBody, compactAvatarOutline } from './geometry';
 import { AVATAR_PICKER_SHAPES, resolveAssistantAvatar, type AssistantAvatarRecipe, type AvatarMotion, type AvatarEyeColor } from './recipe';
 import { AVATAR_BODY_NAMES, type AvatarShape } from './catalog';
+import { assistantAvatarPigment } from './palette';
+export { assistantAvatarPigment } from './palette';
 
 const AVATAR_RENDER_SIZE = 256;
 const config = makeConfig(recipes);
@@ -13,15 +15,9 @@ const config = makeConfig(recipes);
 // generators for each contact or each rendered frame.
 const generators = makeMorphGenerators(config);
 const trail = makeTrail(config);
-const pigments = {
-  mint: '#9ed8bf', orange: '#f58332', iris: '#c4b9ee', jade: '#35bb81',
-  coral: '#edb0a0', blue: '#4b8fe8', sky: '#a5cbe7', violet: '#9469e4',
-  sand: '#e2c99b', rose: '#e76b9f', cyan: '#32b6ad', graphite: '#555c67',
-} as const satisfies Record<AssistantAvatarRecipe['color'], string>;
-export const assistantAvatarPigment = (color: AssistantAvatarRecipe['color']): string => pigments[color];
 const rgb = (hex: string): Vector => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255) as Vector;
 const themeFor = (recipe: AssistantAvatarRecipe, eyeColor?: AvatarEyeColor): Theme => ({
-  ink: rgb(pigments[recipe.color]),
+  ink: rgb(assistantAvatarPigment(recipe.color)),
   spot: eyeColor ? (eyeColor === 'white' ? [1, 1, 1] : [0, 0, 0]) : recipe.color === 'graphite' ? rgb('#f2f4f7') : [0, 0, 0],
   cutout: !eyeColor && recipe.color !== 'graphite',
 });
@@ -56,7 +52,7 @@ export function assistantAvatarStillModel(recipe: AssistantAvatarRecipe, eyeColo
   }
   const theme = themeFor(recipe, eyeColor);
   const model = theme.cutout ? rest.cutout : (rest.painted ??= modelFor(rest.frame, { ...theme, ink: [0, 0, 0] }));
-  return { ...model, inkPaint: pigments[recipe.color], spotPaint: hex(theme.spot) };
+  return { ...model, inkPaint: assistantAvatarPigment(recipe.color), spotPaint: hex(theme.spot) };
 }
 
 type Bounds = { x0: number; y0: number; x1: number; y1: number };

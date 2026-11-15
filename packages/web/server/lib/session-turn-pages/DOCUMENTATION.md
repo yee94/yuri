@@ -86,6 +86,8 @@ Success `200`:
 
 Every turn-page response summarizes `tool`, `reasoning`, and `file` parts plus message `summary.diffs` so it does not have to carry the bodies of a long tool-heavy turn, inline attachment data URLs, or full file patches. Projection runs **after** `selectTurnRecords`, so `turnCount`, `complete`, and cursor encoding are all derived from unprojected records and cannot shift.
 
+Native v2 `files[]` entries become `file` parts in `session-message-projection.js` with `url` resolved as inline `data` (as a `data:<mime>;base64,` URL) first, then top-level `uri` / `url`, then `source.uri`. Inline bytes win because a native source is frequently a temporary path (`<os.tmpdir()>/yuri-prompt-*/`) that is not guaranteed to outlive the message; an entry with no address at all projects `url: undefined`, which clients must treat as unavailable, never as an empty success.
+
 ### Changes Host contract (L1 / L2 / L3)
 
 | Layer | Surface | Payload |

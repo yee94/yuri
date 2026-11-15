@@ -67,6 +67,21 @@ const isControlSessionMessage = (entry) => {
 };
 
 /**
+ * Address of a native v2 `files[]` entry. Native attachments keep their bytes in
+ * `data` and only a source reference (often a temporary path) in `source.uri`, so
+ * inline bytes win over the reference — the same order the UI uses when it
+ * restores a sent message. Without this the part had no `url` and every client
+ * rendered the attachment as unavailable.
+ */
+const projectFileURL = (file) => {
+  if (!file || typeof file !== 'object') return undefined;
+  const mime = asNonEmptyString(file.mime) ?? 'application/octet-stream';
+  if (typeof file.data === 'string' && file.data) return `data:${mime};base64,${file.data}`;
+  const source = file.source && typeof file.source === 'object' && file.source.type === 'uri' ? file.source.uri : undefined;
+  return [file.uri, file.url, source].find((value) => typeof value === 'string' && value) ?? undefined;
+};
+
+/**
  * Project SessionMessageInfo body fields into host `parts`.
  *
  * v2 assistants put body in `content[]`. Users put body in top-level `text`.
@@ -142,7 +157,7 @@ const projectV2Parts = (entry) => {
         messageID,
         type: 'file',
         mime: file?.mime || 'application/octet-stream',
-        url: file?.uri ?? file?.url,
+        url: projectFileURL(file),
         ...(file?.name ? { filename: file.name } : {}),
       });
     });
