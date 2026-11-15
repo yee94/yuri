@@ -743,6 +743,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.task.shelf.settled": "Archivadas",
   "sessions.sidebar.task.empty": "Nada requiere tu atención",
   "sessions.sidebar.task.unassigned": "Sin proyecto",
+  "sessions.sidebar.session.hover.differentBranch": "Este directorio de trabajo está ahora en otra rama: {branch}.",
   "sessions.sidebar.session.menu.settle": "Archivar",
   "sessions.sidebar.session.menu.unsettle": "Desarchivar",
   "sessions.sidebar.session.settle.error": "No se pudo archivar la sesión",

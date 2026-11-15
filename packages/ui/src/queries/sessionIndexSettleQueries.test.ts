@@ -1,8 +1,29 @@
-import { describe, expect, test } from 'vitest';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { describe, expect, test, vi } from 'vitest';
 
 import type { SessionIndexSnapshot } from '@/lib/session-index-api';
 
-import { patchSessionIndexSettled, readSettledSessionIds } from './sessionIndexSettleQueries';
+const fixture = vi.hoisted(() => ({
+  transport: 'settle-test',
+  generation: 1,
+  settle: vi.fn<(id: string) => Promise<void>>(),
+  error: vi.fn(),
+}));
+vi.mock('@/lib/session-index-api', async (original) => ({
+  ...await original<typeof import('@/lib/session-index-api')>(),
+  settleSession: fixture.settle,
+}));
+vi.mock('@/lib/runtime-switch', async (original) => ({
+  ...await original<typeof import('@/lib/runtime-switch')>(),
+  getRuntimeTransportIdentity: () => fixture.transport,
+  getRuntimeGeneration: () => fixture.generation,
+}));
+vi.mock('@/components/ui', () => ({ toast: { error: fixture.error } }));
+
+import { patchSessionIndexSettled, readSettledSessionIds, useSetSessionSettled } from './sessionIndexSettleQueries';
+import { readSessionIndexSnapshotQuery, writeSessionIndexSnapshotQuery } from './sessionIndexQueries';
 
 const snapshot = (settledIds: string[], revision = 1): SessionIndexSnapshot => ({
   revision,
@@ -58,4 +79,62 @@ describe('settle patch', () => {
     expect(patchSessionIndexSettled(before, 'a0', null)).toBe(before);
     expect(patchSessionIndexSettled(before, 'missing', 7)).toBe(before);
   });
+});
+
+test.each(['success', 'failure', 'stale-generation', 'stale-transport', 'concurrent'] as const)('settle completion callback is confirmed and runtime-fenced (%s)', async (mode) => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  fixture.transport = 'settle-test';
+  fixture.generation = 1;
+  fixture.error.mockClear();
+  const completions = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
+  fixture.settle.mockImplementation((id) => new Promise<void>((resolve, reject) => {
+    completions.set(id, { resolve, reject });
+  }));
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+  const initial = snapshot([], 1);
+  for (const directory of initial.directories) {
+    Object.assign(directory, { cursor: null, hasMore: false, lastSyncedAt: 1, lastFullSyncedAt: 1, lastAccessedAt: 1 });
+    for (const row of directory.sessions) Object.assign(row, { title: row.id, directory: directory.directory });
+  }
+  writeSessionIndexSnapshotQuery(initial, { client, persist: false });
+  let submit: ReturnType<typeof useSetSessionSettled> | undefined;
+  function Surface() {
+    submit = useSetSessionSettled();
+    return null;
+  }
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  const onSuccess = vi.fn();
+  const secondSuccess = vi.fn();
+  try {
+    await act(async () => root.render(React.createElement(QueryClientProvider, { client }, React.createElement(Surface))));
+    await act(async () => submit!('a0', true, { onSuccess }));
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(readSessionIndexSnapshotQuery(client)?.directories[0].sessions[0].time.settled).toBeGreaterThan(0);
+    if (mode === 'concurrent') {
+      await act(async () => submit!('a1', true, { onSuccess: secondSuccess }));
+    }
+    if (mode === 'stale-generation') fixture.generation++;
+    if (mode === 'stale-transport') fixture.transport = 'other-runtime';
+    await act(async () => {
+      if (mode === 'failure') completions.get('a0')!.reject(new Error('write failed'));
+      else completions.get('a0')!.resolve();
+    });
+    expect(onSuccess).toHaveBeenCalledTimes(mode === 'success' || mode === 'concurrent' ? 1 : 0);
+    if (mode === 'failure') {
+      expect(readSessionIndexSnapshotQuery(client)?.directories[0].sessions[0].time.settled).toBeNull();
+      expect(fixture.error).toHaveBeenCalledOnce();
+    }
+    if (mode === 'concurrent') {
+      expect(secondSuccess).not.toHaveBeenCalled();
+      await act(async () => completions.get('a1')!.resolve());
+      expect(secondSuccess).toHaveBeenCalledOnce();
+    }
+  } finally {
+    await act(async () => root.unmount());
+    client.clear();
+    fixture.transport = 'settle-test';
+    fixture.generation = 1;
+    vi.unstubAllGlobals();
+  }
 });

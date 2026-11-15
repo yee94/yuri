@@ -131,6 +131,7 @@ describe('phone /btw page', () => {
     await act(async () => { useMobileNavigationStore.getState().openSession(target); });
     const chat = host.querySelector<HTMLElement>('[data-chat-active]')!;
     await act(async () => { expect(pushPhoneBtw(target)).toBe(true); });
+    await act(async () => { await vi.dynamicImportSettled(); });
 
     const pages = host.querySelectorAll<HTMLElement>('[data-mobile-secondary-page]');
     expect(pages).toHaveLength(2);

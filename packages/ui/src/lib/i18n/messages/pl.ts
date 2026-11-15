@@ -484,6 +484,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.task.shelf.settled': 'Zarchiwizowane',
   'sessions.sidebar.task.empty': 'Nic nie wymaga Twojej uwagi',
   'sessions.sidebar.task.unassigned': 'Bez projektu',
+  'sessions.sidebar.session.hover.differentBranch': 'Ten katalog roboczy jest obecnie na innej gałęzi: {branch}.',
   'sessions.sidebar.session.menu.settle': 'Archiwizuj',
   'sessions.sidebar.session.menu.unsettle': 'Przywróć z archiwum',
   'sessions.sidebar.session.settle.error': 'Nie udało się zarchiwizować sesji',

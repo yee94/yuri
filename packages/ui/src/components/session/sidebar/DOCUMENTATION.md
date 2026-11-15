@@ -1,5 +1,39 @@
 # Session Sidebar Documentation
 
+## Task navigation icons and hover details
+
+`MobilePhoneShell` owns the persisted `yuri.mobile.homeView` selection and passes
+it to both the home page and the Web tab bar. The Web Projects tab follows the
+title menu and PC switch (`list-check-2` for Tasks, `folder-tree` for Projects).
+The shared native tab definitions and native bridge remain unchanged.
+Mobile task cards share the same glass background regardless of running state
+or the last selected session; execution is indicated only by the status slot.
+
+Archived task rows use Lucide `undo-2` for restore on mobile and PC. On PC the
+quick restore replaces the row's time on hover/focus; the archived row does not
+also offer a quick pin. Shift still selects hard delete. Context-menu restore
+uses the same icon.
+
+Archiving the current desktop/Web task never opens the archived shelf. After a
+confirmed write, focus moves to the next unarchived row in the current visual
+order (pinned rows first), or the previous row when archiving the last one.
+If the preferred neighbor has disappeared, the first remaining task is used;
+with no remaining tasks, selection clears into a new-session draft without
+creating a session. Failed writes leave selection alone. The mutation completion
+is transport/generation-fenced, and a newer navigation intent (including ABA),
+session selection or departure from Chat cancels the focus move. Archiving an
+unfocused task and restoring an archived task do not navigate. Archived
+membership or an externally opened session never automatically expands the shelf.
+
+`SessionHoverDetails` mounts only while the row tooltip is open. It shows the
+full title, project badge, cached current-host label, branch and authoritative
+session model (resolved against that directory's existing provider catalog). Missing machine
+or model metadata is omitted; local desktop may use the existing Local label.
+The checkout warning requires both an expected branch and a different known
+current branch for that exact directory. Hover never fetches a transcript,
+probes a Host or requests git status. The shared Tooltip owns anchoring,
+collision handling and material.
+
 ## Error presentation
 
 Remote project mutation failures use the shared toast once and retain confirmed

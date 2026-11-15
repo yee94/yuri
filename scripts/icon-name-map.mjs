@@ -327,6 +327,7 @@ export const ICON_NAME_MAP = {
   "record-circle": { lucide: "circle-dot", fill: false },
   "refresh": { lucide: "refresh-cw", fill: false },
   "restart": { lucide: "rotate-ccw", fill: false },
+  "undo-2": { lucide: "undo-2", fill: false },
   "robot": { lucide: "bot", fill: false },
   "robot-2": { lucide: "bot", fill: false },
   "rocket": { lucide: "rocket", fill: false },

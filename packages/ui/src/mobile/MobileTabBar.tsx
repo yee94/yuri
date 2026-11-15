@@ -3,6 +3,7 @@ import { AssistantNavigationUnreadBadge } from '@/components/assistants/Assistan
 import { AssistantNavigationIcon } from '@/components/assistants/AssistantNavigationIcon';
 
 import { Icon } from '@/components/icon/Icon';
+import type { SidebarView } from '@/components/session/sidebar/taskView';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -12,6 +13,7 @@ import { MOBILE_TABS, type MobileTabId } from './mobileTabs';
 import { MobileFloatingBottomBar } from './MobileSurface';
 
 export type MobileTabBarProps = {
+  homeView?: SidebarView;
   activeTab: MobileTabId;
   onTabChange: (tab: MobileTabId) => void;
   className?: string;
@@ -23,7 +25,7 @@ export type MobileTabBarProps = {
  * Floating glass capsule tab bar. Labels use dedicated short `mobile.tabs.*`
  * keys and equal flex slots so Latin/CJK/long locales stay within a phone width.
  */
-export function MobileTabBar({ activeTab, onTabChange, className, tabMarks }: MobileTabBarProps) {
+export function MobileTabBar({ activeTab, onTabChange, className, tabMarks, homeView = 'projects' }: MobileTabBarProps) {
   const { t } = useI18n();
   const assistantUnread = useAssistantUnreadTotal();
   const loadingLabel = t('mobile.tabs.activity.loading');
@@ -104,7 +106,7 @@ export function MobileTabBar({ activeTab, onTabChange, className, tabMarks }: Mo
             <span className="relative inline-flex size-[23px] shrink-0 items-center justify-center overflow-visible">
               {tab.id === 'assistant'
                 ? <AssistantNavigationIcon size={23} className="size-[23px] shrink-0 items-center justify-center [&[data-assistant-navigation-avatar]]:scale-105" />
-                : <Icon name={tab.icon} weight="medium" className="size-[23px] shrink-0" />}
+                : <Icon name={tab.id === 'projects' ? (homeView === 'tasks' ? 'list-check-2' : 'folder-tree') : tab.icon} weight="medium" className="size-[23px] shrink-0" />}
               {markId ? (
                 <span
                   id={markId}

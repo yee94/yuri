@@ -253,17 +253,6 @@ export function ScheduledTasksDialog() {
   const open = useUIStore((state) => state.isScheduledTasksDialogOpen);
   const setOpen = useUIStore((state) => state.setScheduledTasksDialogOpen);
   const isMobile = useUIStore((state) => state.isMobile);
-  React.useEffect(() => {
-    if (!isMobile) return;
-    const restoreTaskRoute = (event?: PopStateEvent) => {
-      const route = parseRoute();
-      if (route.tab === 'schedule' && route.scheduleProjectId && route.scheduleTaskId) setOpen(true);
-      else if (event && route.tab !== 'schedule') setOpen(false);
-    };
-    restoreTaskRoute();
-    window.addEventListener('popstate', restoreTaskRoute);
-    return () => window.removeEventListener('popstate', restoreTaskRoute);
-  }, [isMobile, setOpen]);
   if (!isMobile) return null;
 
   return (

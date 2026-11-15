@@ -743,6 +743,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.task.shelf.settled": "Заархівовані",
   "sessions.sidebar.task.empty": "Нічого не потребує вашої уваги",
   "sessions.sidebar.task.unassigned": "Без проєкту",
+  "sessions.sidebar.session.hover.differentBranch": "Цей робочий каталог зараз на іншій гілці: {branch}.",
   "sessions.sidebar.session.menu.settle": "Архівувати",
   "sessions.sidebar.session.menu.unsettle": "Розархівувати",
   "sessions.sidebar.session.settle.error": "Не вдалося заархівувати сесію",

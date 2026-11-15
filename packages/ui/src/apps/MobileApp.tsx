@@ -29,12 +29,9 @@ import { SelectedProjectHostBoundary } from '@/contexts/SelectedProjectHostBound
 import { RemoteProjectsBootstrap } from '@/contexts/RemoteProjectsBootstrap';
 import { useRemoteMobileSession } from './remoteMobileSession';
 import { RemoteMobileHeader } from './remoteMobileHeader';
-import { ChatView as UnscopedChatView } from '@/components/views/ChatView';
-import { AssistantView } from '@/components/assistants/AssistantView';
 import { AssistantShareWelcome } from '@/components/assistants/AssistantShareWelcome';
 import { useAssistantCapabilityQuery } from '@/queries/assistantQueries';
-import { DiffView as UnscopedDiffView } from '@/components/views/DiffView';
-import { SettingsView } from '@/components/views/SettingsView';
+import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { MobileSurfaceHeader } from '@/components/ui/MobileSurfaceHeader';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
@@ -74,15 +71,14 @@ import { useMcpConfigStore, type McpDraft } from '@/stores/useMcpConfigStore';
 import { mcpConfigsQueryOptions, mcpStatusQueryOptions } from '@/queries/mcpQueries';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
-import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
 import type { QuotaProviderId, UsageWindow } from '@/types';
 import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 import { useSelectionStore } from '@/sync/selection-store';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { SessionStartupCoordinator } from '@/components/session/SessionStartupCoordinator';
+import { ScheduledTasksDialogHost } from '@/components/session/ScheduledTasksDialogHost';
 import { DirectoryExplorerDialog } from '@/components/session/DirectoryExplorerDialog';
-import { ScheduledTasksDialog, ScheduledTasksWorkspace } from '@/components/session/ScheduledTasksDialog';
 import { SettingsGroup } from '@/components/sections/shared/SettingsGroup';
 import { SyncProvider, useSessionContextUsage, useCurrentSessionEntity, useParentSessionTarget, useSessionMessages } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
@@ -95,23 +91,19 @@ import {
   isComposerKeyboardTarget,
   shouldDeferWebKeyboardToNativeComposer,
 } from './composerKeyboardLift';
-import { MobileChangesSurface as UnscopedMobileChangesSurface } from './MobileChangesSurface';
-import { MobileFilesSurface as UnscopedMobileFilesSurface } from './MobileFilesSurface';
 import { BusyDots } from '@/components/chat/message/parts/BusyDots';
 import { MobileSessionsSheet } from './MobileSessionsSheet';
 import { MobilePhoneShell } from '@/mobile/MobilePhoneShell';
-import { RemoteDesktopPanel } from '@/mobile/RemoteDesktopPanel';
 import { MobileDetailNavigation } from '@/mobile/MobileDetailNavigation';
 import { MobileFloatingSurface } from '@/mobile/MobileSurface';
 import {
   buildMobileContextDisplay,
-  ContextProgressIcon,
   getLatestUserMessageModel,
   getNumericLimit,
-  MobileChatScreen as UnscopedMobileChatScreen,
-  useMobileTranscriptSyncHint,
   type MobileContextDisplay,
-} from '@/mobile/chat';
+} from '@/mobile/chat/mobileContextUsage';
+import { ContextProgressIcon } from '@/mobile/chat/ContextProgressIcon';
+import { useMobileTranscriptSyncHint } from '@/mobile/chat/useMobileTranscriptSyncHint';
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { mobileBackNavigationCoordinator, useMobileNavigationDriver } from '@/mobile/mobileBackNavigation';
 import { DedicatedMobileAppProvider, type MobileAppActions } from './mobileAppContext';
@@ -131,20 +123,30 @@ import { useAndroidNotifications } from './useAndroidNotifications';
 import { MobileShareBridge } from './MobileShareBridge';
 import { handlePendingNativeAssistantOpen } from './nativeAssistantShortcut';
 
+const UnscopedChatView = lazyWithChunkRecovery(() => import('@/components/views/ChatView').then(m => ({ default: m.ChatView })));
+const AssistantView = lazyWithChunkRecovery(() => import('@/components/assistants/AssistantView').then(m => ({ default: m.AssistantView })));
+const UnscopedDiffView = lazyWithChunkRecovery(() => import('@/components/views/DiffView').then(m => ({ default: m.DiffView })));
+const SettingsView = lazyWithChunkRecovery(() => import('@/components/views/SettingsView').then(m => ({ default: m.SettingsView })));
+const UnscopedMobileChangesSurface = lazyWithChunkRecovery(() => import('./MobileChangesSurface').then(m => ({ default: m.MobileChangesSurface })));
+const UnscopedMobileFilesSurface = lazyWithChunkRecovery(() => import('./MobileFilesSurface').then(m => ({ default: m.MobileFilesSurface })));
+const UnscopedMobileChatScreen = lazyWithChunkRecovery(() => import('@/mobile/chat/MobileChatScreen').then(m => ({ default: m.MobileChatScreen })));
+const RemoteDesktopPanel = lazyWithChunkRecovery(() => import('@/mobile/RemoteDesktopPanel').then(m => ({ default: m.RemoteDesktopPanel })));
+const ScheduledTasksWorkspace = lazyWithChunkRecovery(() => import('@/components/session/ScheduledTasksDialog').then(m => ({ default: m.ScheduledTasksWorkspace })));
+
 function MobileChatScreen(props: React.ComponentProps<typeof UnscopedMobileChatScreen>) {
-  return <SelectedProjectHostBoundary><UnscopedMobileChatScreen {...props} /></SelectedProjectHostBoundary>;
+  return <SelectedProjectHostBoundary><React.Suspense fallback={null}><UnscopedMobileChatScreen {...props} /></React.Suspense></SelectedProjectHostBoundary>;
 }
 function ChatView(props: React.ComponentProps<typeof UnscopedChatView>) {
-  return <SelectedProjectHostBoundary><UnscopedChatView {...props} /></SelectedProjectHostBoundary>;
+  return <SelectedProjectHostBoundary><React.Suspense fallback={null}><UnscopedChatView {...props} /></React.Suspense></SelectedProjectHostBoundary>;
 }
 function DiffView(props: React.ComponentProps<typeof UnscopedDiffView>) {
-  return <SelectedProjectHostBoundary><UnscopedDiffView {...props} /></SelectedProjectHostBoundary>;
+  return <SelectedProjectHostBoundary><React.Suspense fallback={null}><UnscopedDiffView {...props} /></React.Suspense></SelectedProjectHostBoundary>;
 }
 function MobileFilesSurface(props: React.ComponentProps<typeof UnscopedMobileFilesSurface>) {
-  return <SelectedProjectHostBoundary><UnscopedMobileFilesSurface {...props} /></SelectedProjectHostBoundary>;
+  return <SelectedProjectHostBoundary><React.Suspense fallback={null}><UnscopedMobileFilesSurface {...props} /></React.Suspense></SelectedProjectHostBoundary>;
 }
 function MobileChangesSurface(props: React.ComponentProps<typeof UnscopedMobileChangesSurface>) {
-  return <SelectedProjectHostBoundary><UnscopedMobileChangesSurface {...props} /></SelectedProjectHostBoundary>;
+  return <SelectedProjectHostBoundary><React.Suspense fallback={null}><UnscopedMobileChangesSurface {...props} /></React.Suspense></SelectedProjectHostBoundary>;
 }
 function MobileHtmlPreviewSheet() {
   return <SelectedProjectHostBoundary><UnscopedMobileHtmlPreviewSheet /></SelectedProjectHostBoundary>;
@@ -2893,7 +2895,7 @@ const MobileShell: React.FC<{
               <main ref={chatMainRef} className="relative min-h-0 flex-1 overflow-hidden" data-page-scroll-lock="true">
                 <div className="relative h-full w-full bg-background">
                   <ErrorBoundary>
-                    {activeMainTab === 'assistant' ? <AssistantView /> : <ChatView />}
+                    <React.Suspense fallback={null}>{activeMainTab === 'assistant' ? <AssistantView /> : <ChatView />}</React.Suspense>
                   </ErrorBoundary>
                 </div>
               </main>
@@ -3121,13 +3123,13 @@ const MobileShell: React.FC<{
           rightOffset={isIPad && ipadRightPanel ? rightResize.width : 0}
         />
 
-        <ScheduledTasksDialog />
+        <ScheduledTasksDialogHost />
 
         {remoteDesktopOpen && (
-          <RemoteDesktopPanel
+          <React.Suspense fallback={null}><RemoteDesktopPanel
             onClose={closeRemoteDesktop}
             instanceName={connection.connections.find(isActiveRuntimeConnection)?.label}
-          />
+          /></React.Suspense>
         )}
 
         {/* Mount only while open so each surface computes safe-area layout
@@ -3345,7 +3347,7 @@ const MobileShell: React.FC<{
             initiallyExpanded
           >
             <ErrorBoundary>
-              <SettingsView
+              <React.Suspense fallback={null}><SettingsView
                 forceMobile
                 isWindowed
                 initialMobileStage={settingsInitialMobileStage}
@@ -3358,7 +3360,7 @@ const MobileShell: React.FC<{
                     onActiveConnectionDeleted={onActiveConnectionDeleted}
                   />
                 ) : undefined}
-              />
+              /></React.Suspense>
             </ErrorBoundary>
           </MobileResizableSheet>
         ) : null}
@@ -3419,7 +3421,6 @@ export function MobileApp({ apis }: MobileAppProps) {
   const clearError = useSessionUIStore((state) => state.clearError);
   const setIsMobile = useUIStore((state) => state.setIsMobile);
   const refreshGitHubAuthStatus = useGitHubAuthStore((state) => state.refreshStatus);
-  const projects = useProjectsStore((state) => state.projects);
   const [connectionEpoch, setConnectionEpoch] = React.useState(0);
   const [runtimeEndpointEpoch, setRuntimeEndpointEpoch] = React.useState(0);
   const [showConnectionRecovery, setShowConnectionRecovery] = React.useState(false);
@@ -3716,49 +3717,6 @@ export function MobileApp({ apis }: MobileAppProps) {
     if (!isConnected) return;
     void refreshGitHubAuthStatus(apis.github, { force: true });
   }, [apis.github, isConnected, refreshGitHubAuthStatus]);
-
-  // Discover linked worktrees for every known project so Projects home, draft
-  // selectors, and session sheets share the same catalog as desktop sidebar.
-  // Authoritative write path: forceRefreshProjectWorktreeCatalog (invalidate +
-  // list + per-project store merge) — same as topology sync / PC "sync sessions".
-  // Do not bulk-replace availableWorktreesByProject from a non-force list: a
-  // stale 30s cache or partial failure can wipe topology results (mobile missing
-  // worktrees that PC already shows).
-  // Gated on isConnected: probing before the runtime is reachable failed silently.
-  React.useEffect(() => {
-    if (!isConnected || projects.length === 0) return;
-    let cancelled = false;
-
-    const run = async () => {
-      await Promise.all(
-        projects.map(async (project) => {
-          // Remote catalogs are demand-driven and must never probe the Hub filesystem.
-          if (project.hostId) return;
-          const projectPath = normalizePath(project.path);
-          if (!projectPath) return;
-          try {
-            const cachedIsGitRepo = useGitStore.getState().directories.get(projectPath)?.isGitRepo;
-            const isGitRepo =
-              cachedIsGitRepo ?? (await import('@/lib/gitApi').then((m) => m.checkIsGitRepository(projectPath)));
-            if (!isGitRepo || cancelled) return;
-            await forceRefreshProjectWorktreeCatalog(
-              { id: project.id, path: projectPath },
-              { isCurrent: () => !cancelled },
-            );
-          } catch {
-            // Best-effort per project: forceRefresh only writes on success, so a
-            // failed probe keeps previously known (persisted / topology) entries.
-          }
-        }),
-      );
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, projects]);
 
   React.useEffect(() => {
     if (!error) return;

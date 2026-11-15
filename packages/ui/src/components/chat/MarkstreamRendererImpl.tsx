@@ -25,7 +25,6 @@ import {
 import { MARKSTREAM_CHAT_STREAM_PERFORMANCE } from './markstream/markstreamPerformance';
 import { matchDollarMath } from './markdown/markdownMath';
 import type { ToolPopupContent } from './message/types';
-import './markstream/markstreamTheme.css';
 
 // text / inline_code / link / code_block overrides register once here.
 ensureMarkstreamCustomComponents();

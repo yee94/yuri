@@ -18,6 +18,17 @@ export function useFontsReady(timeoutMs = 2500): boolean {
   const { uiFont } = useFontPreferences();
   const [ready, setReady] = React.useState(false);
 
+  // Hosted mobile may use index.html's external desktop splash. Native/mobile.html
+  // replace an in-root logo themselves; only the external layer needs dismissal.
+  React.useEffect(() => {
+    if (!ready) return;
+    const loading = document.getElementById('initial-loading');
+    if (!loading) return;
+    loading.classList.add('fade-out');
+    const timer = window.setTimeout(() => loading.remove(), 300);
+    return () => window.clearTimeout(timer);
+  }, [ready]);
+
   React.useEffect(() => {
     let cancelled = false;
     const markReady = () => {

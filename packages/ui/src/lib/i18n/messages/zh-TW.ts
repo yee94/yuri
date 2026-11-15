@@ -746,6 +746,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.task.shelf.settled': '已封存',
   'sessions.sidebar.task.empty': '沒有待處理的任務',
   'sessions.sidebar.task.unassigned': '未歸屬',
+  'sessions.sidebar.session.hover.differentBranch': '目前工作區已切換到其他分支：{branch}。',
   'sessions.sidebar.session.menu.settle': '封存',
   'sessions.sidebar.session.menu.unsettle': '取消封存',
   'sessions.sidebar.session.settle.error': '封存會話失敗',

@@ -999,6 +999,15 @@ Expected model:
 - successful file-mutating tools can issue a one-shot Git refresh hint
 - no root-level background Git polling
 
+Startup worktree discovery belongs to the shared topology coordinator; MobileApp
+does not run a second all-project force-refresh sweep. `gitApiHttp` shares its
+two-slot discovery budget across batch discovery, repository checks, primary-root
+reads, and worktree listings. Single readers join in-flight batches before reading
+the runtime-scoped TTL cache. Overlapping batches reuse completed entries. Batch
+failure releases the slot before bounded single-request fallback; failed directories
+remain unknown rather than being cached as non-repositories. A runtime switch
+prevents pending discovery from launching follow-up reads on the new runtime.
+
 ### PR
 
 Expected model:

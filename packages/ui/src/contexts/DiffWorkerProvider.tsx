@@ -77,30 +77,7 @@ const getWorkerPool = (style: WorkerPoolStyle): WorkerPoolManager | undefined =>
   return unifiedWorkerPool;
 };
 
-const WorkerPoolWarmup: React.FC<{
-  children: React.ReactNode;
-  renderTheme: { light: string; dark: string };
-}> = ({ children, renderTheme }) => {
-  const unifiedPool = useWorkerPool('unified');
-  const splitPool = useWorkerPool('split');
-
-  useEffect(() => {
-    if (unifiedPool) {
-      void unifiedPool.setRenderOptions({
-        theme: renderTheme,
-        lineDiffType: WORKER_POOL_CONFIG.unified.lineDiffType,
-      });
-    }
-    if (splitPool) {
-      void splitPool.setRenderOptions({
-        theme: renderTheme,
-        lineDiffType: WORKER_POOL_CONFIG.split.lineDiffType,
-      });
-    }
-  }, [renderTheme, splitPool, unifiedPool]);
-
-  return <>{children}</>;
-};
+const WorkerThemeContext = React.createContext<{ light: string; dark: string } | undefined>(undefined);
 
 export const DiffWorkerProvider: React.FC<DiffWorkerProviderProps> = ({ children }) => {
   const themeSystem = useOptionalThemeSystem();
@@ -130,13 +107,22 @@ export const DiffWorkerProvider: React.FC<DiffWorkerProviderProps> = ({ children
   );
 
   return (
-    <WorkerPoolWarmup renderTheme={renderTheme}>
+    <WorkerThemeContext.Provider value={renderTheme}>
       {children}
-    </WorkerPoolWarmup>
+    </WorkerThemeContext.Provider>
   );
 };
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useWorkerPool = (style: WorkerPoolStyle = 'unified'): WorkerPoolManager | undefined => {
-  return useMemo(() => getWorkerPool(style), [style]);
+  const renderTheme = React.useContext(WorkerThemeContext);
+  const pool = useMemo(() => getWorkerPool(style), [style]);
+  useEffect(() => {
+    if (!pool || !renderTheme) return;
+    void pool.setRenderOptions({
+      theme: renderTheme,
+      lineDiffType: WORKER_POOL_CONFIG[style].lineDiffType,
+    });
+  }, [pool, renderTheme, style]);
+  return pool;
 };

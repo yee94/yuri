@@ -733,6 +733,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.task.shelf.settled': '보관됨',
   'sessions.sidebar.task.empty': '처리할 작업이 없습니다',
   'sessions.sidebar.task.unassigned': '프로젝트 없음',
+  'sessions.sidebar.session.hover.differentBranch': '현재 작업 트리는 다른 브랜치인 {branch}에 있습니다.',
   'sessions.sidebar.session.menu.settle': '보관',
   'sessions.sidebar.session.menu.unsettle': '보관 해제',
   'sessions.sidebar.session.settle.error': '세션 보관 실패',

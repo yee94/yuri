@@ -105,8 +105,8 @@ it('local menu and refresh retain their original production path', async () => {
 it('production root passes explicit remote owner into auto-read while preserving bootstrap and leaf scopes', () => {
   expect(source).toContain('<MobileAutoReadProvider remote={remoteScope.enabled} remoteState={remoteScope.owner?.state}');
   expect(source).toContain('<RemoteProjectsBootstrap');
-  expect(source).toContain('<SelectedProjectHostBoundary><UnscopedChatView');
-  expect(source).toContain('<SelectedProjectHostBoundary><UnscopedDiffView');
+  expect(source).toContain('<SelectedProjectHostBoundary><React.Suspense fallback={null}><UnscopedChatView');
+  expect(source).toContain('<SelectedProjectHostBoundary><React.Suspense fallback={null}><UnscopedDiffView');
 });
 
 it('explicitly out-of-scope remote desktop explains the limitation without opening the retained Hub desktop', async () => {

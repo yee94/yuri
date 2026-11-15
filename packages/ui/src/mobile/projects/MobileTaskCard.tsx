@@ -115,10 +115,7 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions }: Tas
       <button
         type="button"
         data-mobile-press-feedback="soft"
-        className={cn(
-          'block w-full min-w-0 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]',
-          task.active && 'bg-interactive-selection',
-        )}
+        className="block w-full min-w-0 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
         style={{ touchAction: 'pan-y' }}
         onClick={handleClick}
         onPointerDown={handlePointerDown}
@@ -203,7 +200,7 @@ function MobileSettledLineImpl({ task, onSelect, onRestore }: SettledLineProps) 
         aria-label={t('sessions.sidebar.session.menu.unsettle')}
         onClick={handleRestore}
       >
-        <Icon name="restart" className="size-4" />
+        <Icon name="undo-2" className="size-4" />
       </Button>
     </div>
   );

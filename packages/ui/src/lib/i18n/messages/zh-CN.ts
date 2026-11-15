@@ -733,6 +733,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.task.shelf.settled': '已归档',
   'sessions.sidebar.task.empty': '没有待处理的任务',
   'sessions.sidebar.task.unassigned': '未归属',
+  'sessions.sidebar.session.hover.differentBranch': '当前工作区已切换到其他分支：{branch}。',
   'sessions.sidebar.session.menu.settle': '归档',
   'sessions.sidebar.session.menu.unsettle': '取消归档',
   'sessions.sidebar.session.settle.error': '归档会话失败',

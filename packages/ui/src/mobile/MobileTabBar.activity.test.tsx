@@ -73,3 +73,15 @@ test('loading badges yield to unread and stay off other tabs', async () => {
   expect(host.querySelector('[data-tab="assistant"] [data-assistant-unread-count]')?.textContent).toBe('4');
   expect(host.querySelector('[data-tab="scheduled"] [data-mobile-tab-activity="loading"]')).not.toBeNull();
 });
+
+test('web projects tab follows the title view without changing the native tab definition', async () => {
+  for (const [homeView, icon] of [['projects', 'folder-tree'], ['tasks', 'list-check-2'], ['projects', 'folder-tree']] as const) {
+    await act(async () => root.render(
+      <MobileTabBar activeTab="projects" homeView={homeView} onTabChange={() => undefined} />,
+    ));
+    expect(host.querySelector('[data-tab="projects"] use')?.getAttribute('href')).toBe(`#yuri-${icon}`);
+    expect(host.querySelector('[data-tab="projects"]')?.textContent).toContain('mobile.tabs.projects');
+  }
+  const { MOBILE_TABS } = await import('./mobileTabs');
+  expect(MOBILE_TABS.find((tab) => tab.id === 'projects')?.icon).toBe('folder-open');
+});

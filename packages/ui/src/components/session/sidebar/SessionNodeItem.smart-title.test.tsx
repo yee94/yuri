@@ -61,12 +61,13 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
-function Harness({ live = session, editing = true, indexed = session, children = [], duplicateRows = false }: {
+function Harness({ live = session, editing = true, indexed = session, children = [], duplicateRows = false, onRestore }: {
   live?: Session;
   editing?: boolean;
   indexed?: Session;
   children?: Array<{ session: Session; children: []; worktree: null }>;
   duplicateRows?: boolean;
+  onRestore?: (sessionId: string, settled: boolean) => void;
 }) {
   const [editingId, setEditingId] = React.useState<string | null>(editing ? session.id : null);
   const [expandedParents, setExpandedParents] = React.useState<Set<string>>(new Set());
@@ -115,12 +116,40 @@ function Harness({ live = session, editing = true, indexed = session, children =
     menuOpenSessionId={null}
     nodeStructureKey={session.id}
     liveSessionById={new Map([[session.id, live]])}
+    secondaryMeta={onRestore ? { slim: true, projectLabel: 'Project' } : undefined}
+    settledSessionIds={onRestore ? new Set([session.id]) : undefined}
+    setSessionSettled={onRestore}
   />;
   return <TooltipProvider>{duplicateRows ? <>
     <div data-test-section="pinned">{React.cloneElement(row, { renderContext: 'pinned' })}</div>
     <div data-test-section="project">{row}</div>
   </> : row}</TooltipProvider>;
 }
+
+test('archived task quick action restores with undo-2 instead of offering another archive or pin', async () => {
+  const restore = vi.fn();
+  root = createRoot(container);
+  await act(async () => root.render(<Harness editing={false} onRestore={restore} />));
+  const button = container.querySelector<HTMLButtonElement>('[aria-label="sessions.sidebar.session.menu.unsettle"]')!;
+  expect(button.querySelector('use')?.getAttribute('href')).toBe('#yuri-undo-2');
+  expect(container.querySelector('[aria-label="sessions.sidebar.session.menu.pin"]')).toBeNull();
+  expect(container.querySelector('[data-session-title] use[href="#yuri-folder-open"]')).not.toBeNull();
+  await act(async () => button.click());
+  expect(restore).toHaveBeenCalledExactlyOnceWith(session.id, false);
+});
+
+test('archived task details stay unmounted until keyboard focus opens the real row tooltip', async () => {
+  root = createRoot(container);
+  await act(async () => root.render(<Harness editing={false} onRestore={() => undefined} />));
+  expect(document.querySelector('[data-session-hover-details]')).toBeNull();
+  const title = container.querySelector<HTMLButtonElement>('[data-session-title]')!;
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    title.focus();
+  });
+  expect(document.querySelector('[data-session-hover-details]')?.textContent).toContain('Original title');
+  expect(document.querySelector('[data-session-hover-details]')?.textContent).toContain('Project');
+});
 
 test('AI title admission alone does not show title loading', async () => {
   root = createRoot(container);

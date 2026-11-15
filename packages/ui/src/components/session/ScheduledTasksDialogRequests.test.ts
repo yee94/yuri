@@ -237,7 +237,7 @@ describe('ScheduledTasksDialog queries', () => {
     expect(content).toContain('|| scheduledTasksDialogOpen');
     expect(content).toContain('if (scheduledTasksDialogOpen) {');
     expect(content).toContain("window.dispatchEvent(new Event('yuri:scheduled-tasks-close-request'));");
-    expect(content).toContain('<ScheduledTasksDialog />');
+    expect(content).toContain('<ScheduledTasksDialogHost />');
     // The phone tab hosts the workspace as a root page.
     expect(phoneShellContent).toContain('scheduled: <MobileScheduledTab');
     expect(content).toContain('<ScheduledTasksWorkspace');

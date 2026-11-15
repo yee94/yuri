@@ -733,6 +733,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.task.shelf.settled': 'アーカイブ済み',
   'sessions.sidebar.task.empty': '対応が必要なタスクはありません',
   'sessions.sidebar.task.unassigned': 'プロジェクトなし',
+  'sessions.sidebar.session.hover.differentBranch': '現在の作業ツリーは別のブランチ {branch} に切り替わっています。',
   'sessions.sidebar.session.menu.settle': 'アーカイブ',
   'sessions.sidebar.session.menu.unsettle': 'アーカイブを解除',
   'sessions.sidebar.session.settle.error': 'セッションのアーカイブに失敗しました',

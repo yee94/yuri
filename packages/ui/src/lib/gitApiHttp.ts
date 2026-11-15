@@ -64,6 +64,7 @@ const gitStatusSnapshots = new Map<string, { revision: string; value: GitStatus;
 type GitStatusResponseBody = (GitStatus & { revision?: string }) | { unchanged: true; revision: string };
 const gitRepoCache = new Map<string, { value: boolean; expiresAt: number }>();
 const gitRepoInFlight = new Map<string, Promise<boolean>>();
+const gitDiscoveryBatches = new Map<string, Promise<void>>();
 const gitPrimaryRootCache = new Map<string, { value: { root: string }; expiresAt: number }>();
 const gitPrimaryRootInFlight = new Map<string, Promise<{ root: string }>>();
 const gitWorktreesCache = new Map<string, { value: GitWorktreeInfo[]; expiresAt: number }>();
@@ -122,6 +123,9 @@ const getDiscoveryCacheKey = (directory: string): string => {
   const scope = `${getRuntimeGeneration()}\u0000${getRuntimeTransportIdentity()}`;
   if (scope !== discoveryCacheScope) {
     discoveryCacheScope = scope;
+    gitRepoCache.clear();
+    gitRepoInFlight.clear();
+    gitDiscoveryBatches.clear();
     gitPrimaryRootCache.clear();
     gitPrimaryRootInFlight.clear();
     gitWorktreesCache.clear();
@@ -184,8 +188,8 @@ const writeGitDiscoveryCaches = (
   isGitRepository: boolean,
   primaryRoot: string | null,
 ): void => {
-  const key = normalizeDirectoryKey(directory);
-  if (!key) return;
+  if (!normalizeDirectoryKey(directory)) return;
+  const key = getDiscoveryCacheKey(directory);
   const expiresAt = Date.now() + GIT_DISCOVERY_CACHE_TTL_MS;
   gitRepoCache.set(key, {
     value: isGitRepository,
@@ -228,15 +232,16 @@ export async function discoverGitRepositories(
   const now = Date.now();
   const missing: string[] = [];
   for (const directory of unique) {
-    const repoCached = gitRepoCache.get(directory);
-    const rootCached = gitPrimaryRootCache.get(getDiscoveryCacheKey(directory));
+    const key = getDiscoveryCacheKey(directory);
+    const repoCached = gitRepoCache.get(key);
+    const rootCached = gitPrimaryRootCache.get(key);
     if (
       repoCached && repoCached.expiresAt > now
-      && rootCached && rootCached.expiresAt > now
+      && (!repoCached.value || (rootCached && rootCached.expiresAt > now))
     ) {
       result.set(directory, {
         isGitRepository: repoCached.value,
-        primaryRoot: rootCached.value.root,
+        primaryRoot: rootCached?.value.root ?? null,
       });
       continue;
     }
@@ -271,49 +276,62 @@ export async function discoverGitRepositories(
   const discoverViaSingles = async (dirs: string[]): Promise<void> => {
     await Promise.all(dirs.map(async (directory) => {
       try {
-        const [isGitRepository, primary] = await Promise.all([
-          checkIsGitRepository(directory),
-          resolveGitPrimaryRoot(directory).then((value) => value.root).catch(() => directory),
-        ]);
+        const isGitRepository = await checkIsGitRepository(directory);
+        if (generation !== getRuntimeGeneration()) return;
+        const primary = isGitRepository ? (await resolveGitPrimaryRoot(directory)).root : null;
         if (generation === getRuntimeGeneration()) writeGitDiscoveryCaches(directory, isGitRepository, isGitRepository ? primary : null);
         result.set(directory, {
           isGitRepository,
           primaryRoot: isGitRepository ? primary : null,
         });
       } catch {
-        if (generation === getRuntimeGeneration()) writeGitDiscoveryCaches(directory, false, null);
-        result.set(directory, { isGitRepository: false, primaryRoot: null });
+        // An omitted/failed directory remains unknown; later demand may retry it.
       }
     }));
   };
 
+  const keys = missing.map(getDiscoveryCacheKey);
+  const existingBatches = [...new Set(keys.map(key => gitDiscoveryBatches.get(key)).filter(batch => batch !== undefined))];
+  if (existingBatches.length > 0) {
+    await Promise.allSettled(existingBatches);
+    if (generation !== getRuntimeGeneration()) return result;
+    return discoverGitRepositories(unique);
+  }
+  const batch = withGitDiscoveryNetworkSlot(async () => {
+    if (generation !== getRuntimeGeneration()) return;
+    const params = new URLSearchParams();
+    for (const directory of missing) {
+      params.append('directories', directory);
+    }
+    const base = getRuntimeUrlResolver().api(`${API_BASE}/discover`);
+    const qs = params.toString();
+    const url = qs
+      ? (base.includes('?') ? `${base}&${qs}` : `${base}?${qs}`)
+      : base;
+    const response = await runtimeFetch(url);
+    if (response.status === 501 || !response.ok) {
+      throw new Error(
+        `Batch git discover unavailable: ${response.status} ${response.statusText}`,
+      );
+    }
+    const payload = await response.json().catch(() => null);
+    const entries = Array.isArray(payload) ? payload : [];
+    if (entries.length === 0 && missing.length > 0) {
+      throw new Error('Batch git discover returned empty payload');
+    }
+    applyBatchEntries(entries);
+  });
+  for (const key of keys) gitDiscoveryBatches.set(key, batch);
   try {
-    await withGitDiscoveryNetworkSlot(async () => {
-      const params = new URLSearchParams();
-      for (const directory of missing) {
-        params.append('directories', directory);
-      }
-      const base = getRuntimeUrlResolver().api(`${API_BASE}/discover`);
-      const qs = params.toString();
-      const url = qs
-        ? (base.includes('?') ? `${base}&${qs}` : `${base}?${qs}`)
-        : base;
-      const response = await runtimeFetch(url);
-      if (response.status === 501 || !response.ok) {
-        throw new Error(
-          `Batch git discover unavailable: ${response.status} ${response.statusText}`,
-        );
-      }
-      const payload = await response.json().catch(() => null);
-      const entries = Array.isArray(payload) ? payload : [];
-      if (entries.length === 0 && missing.length > 0) {
-        throw new Error('Batch git discover returned empty payload');
-      }
-      applyBatchEntries(entries);
-    });
+    await batch;
   } catch {
     // Batch failed / 501 / network — fall back below.
+  } finally {
+    for (const key of keys) {
+      if (gitDiscoveryBatches.get(key) === batch) gitDiscoveryBatches.delete(key);
+    }
   }
+  if (generation !== getRuntimeGeneration()) return result;
 
   // Fill any directories the batch omitted or that never ran (after slot release
   // so single primary-root lookups do not nest under the batch slot).
@@ -326,7 +344,11 @@ export async function discoverGitRepositories(
 }
 
 export async function checkIsGitRepository(directory: string): Promise<boolean> {
-  const key = normalizeDirectoryKey(directory);
+  const key = getDiscoveryCacheKey(directory);
+  const generation = getRuntimeGeneration();
+  const batch = gitDiscoveryBatches.get(key);
+  if (batch) await batch.catch(() => undefined);
+  if (generation !== getRuntimeGeneration()) throw new DOMException('Git discovery runtime changed', 'AbortError');
   const now = Date.now();
   const cached = gitRepoCache.get(key);
   if (cached && cached.expiresAt > now) {
@@ -338,19 +360,20 @@ export async function checkIsGitRepository(directory: string): Promise<boolean> 
     return inFlight;
   }
 
-  const task = (async () => {
+  const task = withGitDiscoveryNetworkSlot(async () => {
+    if (generation !== getRuntimeGeneration()) throw new DOMException('Git discovery runtime changed', 'AbortError');
     const response = await runtimeFetch(buildUrl(`${API_BASE}/check`, directory));
     if (!response.ok) {
       throw new Error(`Failed to check git repository: ${response.statusText}`);
     }
     const data = await response.json();
     const isGitRepository = Boolean(data.isGitRepository);
-    gitRepoCache.set(key, {
+    if (generation === getRuntimeGeneration()) gitRepoCache.set(key, {
       value: isGitRepository,
       expiresAt: Date.now() + GIT_REPO_CHECK_CACHE_TTL_MS,
     });
     return isGitRepository;
-  })();
+  });
 
   gitRepoInFlight.set(key, task);
   try {
@@ -426,6 +449,9 @@ export async function getGitStatus(directory: string, options?: { mode?: 'light'
 export async function resolveGitPrimaryRoot(directory: string): Promise<{ root: string }> {
   const key = getDiscoveryCacheKey(directory);
   const generation = getRuntimeGeneration();
+  const batch = gitDiscoveryBatches.get(key);
+  if (batch) await batch.catch(() => undefined);
+  if (generation !== getRuntimeGeneration()) throw new DOMException('Git discovery runtime changed', 'AbortError');
   const now = Date.now();
   const cached = gitPrimaryRootCache.get(key);
   if (cached && cached.expiresAt > now) {
@@ -435,6 +461,7 @@ export async function resolveGitPrimaryRoot(directory: string): Promise<{ root: 
   if (inFlight) return inFlight;
 
   const task = withGitDiscoveryNetworkSlot(async () => {
+    if (generation !== getRuntimeGeneration()) throw new DOMException('Git discovery runtime changed', 'AbortError');
     const response = await runtimeFetch(buildUrl(`${API_BASE}/primary-root`, directory));
     if (!response.ok) {
       throw new Error(`Failed to resolve git primary root: ${response.statusText}`);

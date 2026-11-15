@@ -513,6 +513,7 @@ export const dict = {
   'sessions.sidebar.task.shelf.settled': 'Archivées',
   'sessions.sidebar.task.empty': 'Rien ne requiert votre attention',
   'sessions.sidebar.task.unassigned': 'Sans projet',
+  'sessions.sidebar.session.hover.differentBranch': 'Cet espace de travail est actuellement sur une autre branche : {branch}.',
   'sessions.sidebar.session.menu.settle': 'Archiver',
   'sessions.sidebar.session.menu.unsettle': 'Désarchiver',
   'sessions.sidebar.session.settle.error': 'Échec de l\'archivage de la session',

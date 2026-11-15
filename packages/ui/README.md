@@ -193,6 +193,12 @@ selection and raw editor/terminal text-selection palettes stay theme-owned.
 
 ## Startup logo geometry
 
+Hosted mobile also owns dismissal of `index.html`'s external `#initial-loading`
+layer: `apps/useFontsReady.ts` fades it after the font/appearance gate settles,
+including its existing timeout. This runs even when React starts after the HTML's
+one-shot fallback has already elapsed. Native and `mobile.html` keep their in-root
+logo replacement. `apps/useFontsReady.test.tsx` covers late boot and stalled fonts.
+
 The mobile HTML also includes the canonical 120 × 120 logo inside `#root` before
 JavaScript loads. React replaces it on first commit. GUI plugin discovery and
 installation wait for the usable shell and a paint opportunity; plugin loading
@@ -214,6 +220,22 @@ GUI revision checks, code downloads and installation stay silent, including fail
 diagnostics remain in plugin settings, and file previews own their local loading state.
 
 The full-text index startup screen keeps the same transparent 120 × 120 CSS-pixel logo at the viewport center as the desktop/web splash. Its progress ring is concentric with the logo; percentage, description, and background action occupy an independently scrolling area below it. The fullscreen dialog must not scale during entrance or exit, and progress/text changes must never reposition the logo.
+
+## Startup loading boundaries
+
+Phone home defers chat, Assistant, Settings, scheduled-task editors, files, changes,
+and remote desktop until their owning surface is visited. Tab and secondary-page
+Suspense boundaries keep the navigation shell mounted. Ordinary component wrappers
+hide lazy element types inside tab/page props from React development performance
+tracking, which can otherwise initialize unvisited pages while inspecting props.
+Desktop Settings and Multi Run mount on first open and stay mounted afterward.
+`ScheduledTasksDialogHost` retains mobile route restoration while the heavy dialog
+loads on first open; closing still belongs to the workspace's draft guard.
+
+Mobile settings hydration shares `runSettingsStartup` with other surfaces. The
+appearance stage releases the font gate, and autosave starts after hydration.
+`DiffWorkerProvider` supplies theme configuration without creating workers; the
+first mounted diff creates only its required unified or split pool.
 
 ## Add-project directory picker
 

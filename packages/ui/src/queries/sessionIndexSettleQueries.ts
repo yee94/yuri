@@ -10,7 +10,7 @@ import {
   type SessionIndexSnapshot,
 } from '@/lib/session-index-api';
 import { queryClient } from '@/lib/queryRuntime';
-import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import {
   readSessionIndexSnapshotQuery,
   writeSessionIndexSnapshotQuery,
@@ -89,6 +89,8 @@ type SettleVariables = {
   sessionId: string;
   nextSettled: boolean;
   transport: string;
+  generation: number;
+  onSuccess?: () => void;
 };
 
 type SettleContext = {
@@ -129,7 +131,7 @@ export const useSettledSessionIds = (): ReadonlySet<string> => (
  * Settle or un-settle a session via the Host index. The optimistic patch is
  * rolled back and surfaced as a toast when the write fails.
  */
-export const useSetSessionSettled = (): ((sessionId: string, nextSettled: boolean) => void) => {
+export const useSetSessionSettled = (): ((sessionId: string, nextSettled: boolean, options?: { onSuccess?: () => void }) => void) => {
   const client = useQueryClient();
   const mutation = useMutation<void, Error, SettleVariables, SettleContext>({
     mutationKey: ['sessionIndex', 'settle'],
@@ -141,6 +143,11 @@ export const useSetSessionSettled = (): ((sessionId: string, nextSettled: boolea
       previous: applyOptimisticSettle(client, transport, sessionId, nextSettled),
       transport,
     }),
+    onSuccess: (_data, variables) => {
+      if (variables.transport === getRuntimeTransportIdentity() && variables.generation === getRuntimeGeneration()) {
+        variables.onSuccess?.();
+      }
+    },
     onError: (error, variables, context) => {
       if (context?.previous) {
         writeSessionIndexSnapshotQuery(context.previous, { client, transport: context.transport, persist: false });
@@ -153,12 +160,13 @@ export const useSetSessionSettled = (): ((sessionId: string, nextSettled: boolea
     },
   });
 
-  return useEvent((sessionId: string, nextSettled: boolean) => {
+  return useEvent((sessionId: string, nextSettled: boolean, options?: { onSuccess?: () => void }) => {
     const id = sessionId.trim();
     if (!id) return;
     // Resolve transport at click time so a host switch cannot write against a stale cache key.
     const transport = getRuntimeTransportIdentity();
+    const generation = getRuntimeGeneration();
     if (!readSessionIndexSnapshotQuery(client, transport)) return;
-    mutation.mutate({ sessionId: id, nextSettled, transport });
+    mutation.mutate({ sessionId: id, nextSettled, transport, generation, onSuccess: options?.onSuccess });
   });
 };

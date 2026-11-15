@@ -2,7 +2,8 @@ import * as React from 'react';
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { useEvent } from '@reactuses/core';
 
-import { AssistantView } from '@/components/assistants/AssistantView';
+import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
+import { parseSidebarView, type SidebarView } from '@/components/session/sidebar/taskView';
 import { useI18n } from '@/lib/i18n';
 import { normalizePath } from '@/lib/pathNormalization';
 import {
@@ -12,11 +13,9 @@ import {
 } from '@/lib/nativeComposerCover';
 import { useSessionBtwStore } from '@/stores/useSessionBtwStore';
 import { useUIStore } from '@/stores/useUIStore';
+import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 
-import { MobileAssistantTab } from './assistant/MobileAssistantTab';
-import { MobileAssistantSettingsPage } from './assistant/MobileAssistantSettingsPage';
-import { MobileBtwPage } from './MobileBtwPage';
 import type { MobileBtwRoute, MobileParentSessionTarget } from './mobileNavigation';
 import type { MobileTabId } from './mobileTabs';
 import { MobileTabsRoot } from './MobileTabsRoot';
@@ -24,8 +23,33 @@ import { mobileBackNavigationCoordinator } from './mobileBackNavigation';
 import { MobileProjectsHomeContainer } from './projects';
 import type { MobileProjectsHomeProps } from './projects/MobileProjectsHome';
 import { MobileScheduledTab } from './scheduled/MobileScheduledTab';
-import { MobileSettingsTab } from './settings/MobileSettingsTab';
 import { acknowledgeMobileSessionMirror, registerPhoneShellMount, useMobileNavigationStore } from './useMobileNavigationStore';
+
+const LazyAssistantView = lazyWithChunkRecovery(() => import('@/components/assistants/AssistantView').then(m => ({ default: m.AssistantView })));
+const LazyMobileAssistantTab = lazyWithChunkRecovery(() => import('./assistant/MobileAssistantTab').then(m => ({ default: m.MobileAssistantTab })));
+const LazyMobileAssistantSettingsPage = lazyWithChunkRecovery(() => import('./assistant/MobileAssistantSettingsPage').then(m => ({ default: m.MobileAssistantSettingsPage })));
+const LazyMobileBtwPage = lazyWithChunkRecovery(() => import('./MobileBtwPage').then(m => ({ default: m.MobileBtwPage })));
+const LazyMobileSettingsTab = lazyWithChunkRecovery(() => import('./settings/MobileSettingsTab').then(m => ({ default: m.MobileSettingsTab })));
+
+// Pass ordinary component elements through the tab/page props. React's development
+// performance tracks inspect those props and initialize bare lazy element types.
+function AssistantView(props: React.ComponentProps<typeof LazyAssistantView>) {
+  return <LazyAssistantView {...props} />;
+}
+function MobileAssistantTab(props: React.ComponentProps<typeof LazyMobileAssistantTab>) {
+  return <LazyMobileAssistantTab {...props} />;
+}
+function MobileAssistantSettingsPage(props: React.ComponentProps<typeof LazyMobileAssistantSettingsPage>) {
+  return <LazyMobileAssistantSettingsPage {...props} />;
+}
+function MobileBtwPage(props: React.ComponentProps<typeof LazyMobileBtwPage>) {
+  return <LazyMobileBtwPage {...props} />;
+}
+function MobileSettingsTab(props: React.ComponentProps<typeof LazyMobileSettingsTab>) {
+  return <LazyMobileSettingsTab {...props} />;
+}
+
+const HOME_VIEW_STORAGE_KEY = 'yuri.mobile.homeView';
 
 export type MobilePhoneShellProps = {
   /** Opens the directory explorer so the user can add a project. */
@@ -89,6 +113,17 @@ export function MobilePhoneShell({
   className,
 }: MobilePhoneShellProps) {
   const { t } = useI18n();
+  const [homeView, setHomeView] = React.useState<SidebarView>(
+    () => parseSidebarView(getDeferredSafeStorage().getItem(HOME_VIEW_STORAGE_KEY)),
+  );
+  const handleHomeViewChange = useEvent((view: SidebarView) => {
+    setHomeView(view);
+    try {
+      getDeferredSafeStorage().setItem(HOME_VIEW_STORAGE_KEY, view);
+    } catch {
+      // Persistence is best effort; the in-memory selection already applied.
+    }
+  });
   const searchOpen = useUIStore((state) => state.isCommandPaletteOpen);
   const navigation = useMobileNavigationStore();
   const setActiveTabStore = useMobileNavigationStore((state) => state.setActiveTab);
@@ -241,6 +276,8 @@ export function MobilePhoneShell({
     () => ({
       projects: (
         <MobileProjectsHomeContainer
+          homeView={homeView}
+          onHomeViewChange={handleHomeViewChange}
           onOpenChat={openChat}
           onAddProject={onAddProject}
           onNewSession={handleNewSessionDraft}
@@ -254,7 +291,7 @@ export function MobilePhoneShell({
       scheduled: <MobileScheduledTab showHeader={false}>{scheduledTabBody}</MobileScheduledTab>,
       settings: <MobileSettingsTab instancesPage={instancesPage} />,
     }),
-    [openChat, openAssistant, handleNewSessionDraft, onAddProject, onScanQr, onSwitchInstance, onRemoteDesktop, instanceOptions, onEnableAssistants, instancesPage, scheduledTabBody],
+    [homeView, handleHomeViewChange, openChat, openAssistant, handleNewSessionDraft, onAddProject, onScanQr, onSwitchInstance, onRemoteDesktop, instanceOptions, onEnableAssistants, instancesPage, scheduledTabBody],
   );
 
   const secondaryKind = navigation.secondary?.kind ?? null;
@@ -342,6 +379,7 @@ export function MobilePhoneShell({
 
   return (
     <MobileTabsRoot
+      homeView={homeView}
       className={className}
       navigation={navigation}
       onTabChange={setActiveTab}

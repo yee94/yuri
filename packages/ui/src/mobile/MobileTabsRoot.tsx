@@ -3,6 +3,7 @@ import { useAssistantUnreadTotal, useAssistantWorking, useScheduledNavigationWor
 import { useEvent } from '@reactuses/core';
 
 import { Icon } from '@/components/icon/Icon';
+import type { SidebarView } from '@/components/session/sidebar/taskView';
 import type { IconName } from '@/components/icon/icons';
 import { useI18n } from '@/lib/i18n';
 import { useIosNativeUiEnabled } from '@/lib/iosNativeUi';
@@ -29,6 +30,7 @@ export type MobileSecondaryPage = {
 };
 
 export type MobileTabsRootProps = {
+  homeView?: SidebarView;
   tabs?: Partial<Record<MobileTabId, React.ReactNode>>;
   navigation: MobileNavigationState;
   onTabChange: (tab: MobileTabId) => void;
@@ -47,6 +49,7 @@ export type MobileTabsRootProps = {
  * running every tab's queries on cold start.
  */
 export function MobileTabsRoot({
+  homeView = 'projects',
   tabs,
   navigation,
   onTabChange,
@@ -221,7 +224,7 @@ export function MobileTabsRoot({
                   : 'pb-0',
               )}
             >
-              {visited ? (tabs?.[tab.id] ?? <MobileTabPlaceholder tab={tab.id} icon={tab.icon} />) : null}
+              {visited ? <React.Suspense fallback={null}>{tabs?.[tab.id] ?? <MobileTabPlaceholder tab={tab.id} icon={tab.icon} />}</React.Suspense> : null}
             </section>
           );
         })}
@@ -235,7 +238,7 @@ export function MobileTabsRoot({
             inert={topSecondaryPage || nativeTabBarAdopted ? true : undefined}
           >
             {showWebTabBar ? (
-              <MobileTabBar activeTab={selectedTab} onTabChange={handleTabChange} tabMarks={{
+              <MobileTabBar activeTab={selectedTab} homeView={homeView} onTabChange={handleTabChange} tabMarks={{
                 assistant: assistantMark === 'loading' ? 'loading' : null,
                 scheduled: scheduledMark === 'loading' ? 'loading' : null,
               }} />
@@ -266,7 +269,7 @@ export function MobileTabsRoot({
               active ? 'z-50' : 'z-40',
             )}
           >
-            {page.content}
+            <React.Suspense fallback={null}>{page.content}</React.Suspense>
           </div>
         );
       })}

@@ -29,8 +29,7 @@ import { parseRemoteProject } from '@/lib/remote-projects/types';
 import { openRemoteProjectDraft } from '@/router/openRemoteProjectSession';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
 import { useSetSessionSettled } from '@/queries/sessionIndexSettleQueries';
-import { SETTLED_SHELF_PAGE_SIZE, parseSidebarView, DEFAULT_SIDEBAR_VIEW, type SidebarView } from '@/components/session/sidebar/taskView';
-import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
+import { SETTLED_SHELF_PAGE_SIZE, type SidebarView } from '@/components/session/sidebar/taskView';
 import { syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isSessionSharingAvailable } from '@/sync/session-sharing-availability';
@@ -70,6 +69,8 @@ import {
 } from './mobileProjectsHomeContainerState';
 
 export type MobileProjectsHomeContainerProps = {
+  homeView: SidebarView;
+  onHomeViewChange: (view: SidebarView) => void;
   onOpenChat: (args: { sessionId: string; directory: string | null }) => void;
   onAddProject: () => void;
   /** Optional override for the header new-session button; defaults to opening
@@ -82,13 +83,13 @@ export type MobileProjectsHomeContainerProps = {
   className?: string;
 };
 
-const HOME_VIEW_STORAGE_KEY = 'yuri.mobile.homeView';
-
 /**
  * Data + action container for the mobile Projects home.
  * Presentational classes stay in MobileProjectsHome; this only maps stores and callbacks.
  */
 export function MobileProjectsHomeContainer({
+  homeView,
+  onHomeViewChange,
   onOpenChat,
   onAddProject,
   onNewSession,
@@ -128,20 +129,9 @@ export function MobileProjectsHomeContainer({
   const setWorktreeExpanded = useMobileSessionTreeStore((state) => state.setWorktreeExpanded);
   const togglePinnedSession = useTogglePinnedSession();
   const setSessionSettled = useSetSessionSettled();
-  const [homeView, setHomeViewState] = React.useState<SidebarView>(
-    () => parseSidebarView(getDeferredSafeStorage().getItem(HOME_VIEW_STORAGE_KEY) ?? DEFAULT_SIDEBAR_VIEW),
-  );
   const [settledOpen, setSettledOpen] = React.useState(false);
   const [settledLimit, setSettledLimit] = React.useState(SETTLED_SHELF_PAGE_SIZE);
   const taskModel = useMobileTaskViewModel(model, { enabled: homeView === 'tasks', settledLimit });
-  const handleHomeViewChange = useEvent((view: SidebarView) => {
-    setHomeViewState(view);
-    try {
-      getDeferredSafeStorage().setItem(HOME_VIEW_STORAGE_KEY, view);
-    } catch {
-      // Persistence is best effort; the in-memory selection already applied.
-    }
-  });
   const handleSettledOpenChange = useEvent((open: boolean) => {
     setSettledOpen(open);
     if (!open) setSettledLimit(SETTLED_SHELF_PAGE_SIZE);
@@ -702,7 +692,7 @@ export function MobileProjectsHomeContainer({
         onReorderSessions={handleReorderSessions}
         task={{
           view: homeView,
-          onViewChange: handleHomeViewChange,
+          onViewChange: onHomeViewChange,
           model: taskModel,
           settledOpen,
           onSettledOpenChange: handleSettledOpenChange,

@@ -14,6 +14,96 @@ import {
 } from '@/sync/sidebar-numbered-navigation';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
 
+test('archiving the focused task keeps the archive shelf closed and focuses the next visible task only after success', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');
+    const ast = ts.createSourceFile('SessionSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const statements: string[] = [];
+    const names = new Set(['handleTaskArchiveSuccess', 'handleSetTaskSessionSettled', 'rowSetSessionSettled', 'revealedSettledSessionRef']);
+    const visit = (node: ts.Node) => {
+        if (ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => names.has(declaration.name.getText(ast)))) {
+            statements.push(node.getText(ast));
+        }
+        if (ts.isExpressionStatement(node) && node.getText(ast).startsWith('React.useEffect(')
+            && /setTaskShelves/.test(node.getText(ast))) statements.push(node.getText(ast));
+        ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    const select = vi.fn();
+    const draft = vi.fn();
+    const mutation = vi.fn((_id: string, _settled: boolean, _options?: { onSuccess?: () => void }) => {});
+    let intent = {};
+    const compiled = ts.transpileModule(`return function Surface({ taskBuckets, currentSessionId = 'b', id = 'b', nextSettled = true, taskViewActive = true }) {
+        const taskViewAvailable = true, activeMainTab = 'chat', pinnedSessions = [], pinnedSessionIds = new Set();
+        const sessionOwnership = { bySessionId: new Map(['a', 'b', 'c'].map(id => [id, { projectId: 'project', scopeDirectory: '/repo' }])) };
+        const [taskShelves, setTaskShelves] = React.useState({ settledOpen: false, settledLimit: 30 });
+        const handleSessionSelect = select, openNewSessionDraft = draft;
+        ${statements.join('\n')}
+        return React.createElement('button', { 'data-open': String(taskShelves.settledOpen), onClick: () => rowSetSessionSettled(id, nextSettled) }, 'Archive');
+    }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    const Surface = new Function('React', 'useEvent', 'setSessionSettled', 'select', 'draft', 'getSessionSwitchIntent', 'cancelPendingSidebarVisualSelection', 'syncSidebarVisualSelection', 'SETTLED_SHELF_PAGE_SIZE', compiled)(
+        React, useEvent, mutation, select, draft, () => intent, vi.fn(), vi.fn(), 30,
+    );
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    const session = (id: string) => ({ id, directory: '/repo' });
+    const before = { active: ['a', 'b', 'c'].map(session), settled: [] };
+    const after = { active: ['a', 'c'].map(session), settled: [session('b')] };
+    const complete = async () => {
+        const options = mutation.mock.calls.at(-1)?.[2];
+        await act(async () => options?.onSuccess?.());
+    };
+    try {
+        await act(async () => root.render(<Surface taskBuckets={before} />));
+        await act(async () => host.querySelector('button')!.click());
+        expect(select).not.toHaveBeenCalled();
+        await act(async () => root.render(<Surface taskBuckets={after} />));
+        expect(host.querySelector('button')?.getAttribute('data-open')).toBe('false');
+        await complete();
+        expect(select).toHaveBeenCalledExactlyOnceWith('c', '/repo', 'project', 'project');
+
+        select.mockClear();
+        await act(async () => root.render(<Surface taskBuckets={before} />));
+        await act(async () => host.querySelector('button')!.click());
+        intent = {};
+        await complete();
+        expect(select).not.toHaveBeenCalled();
+
+        await act(async () => root.render(<Surface taskBuckets={before} id="a" />));
+        await act(async () => host.querySelector('button')!.click());
+        await complete();
+        expect(select).not.toHaveBeenCalled();
+
+        await act(async () => root.render(<Surface taskBuckets={after} nextSettled={false} />));
+        await act(async () => host.querySelector('button')!.click());
+        await complete();
+        expect(select).not.toHaveBeenCalled();
+
+        await act(async () => root.render(<Surface taskBuckets={before} currentSessionId="c" id="c" />));
+        await act(async () => host.querySelector('button')!.click());
+        await act(async () => root.render(<Surface taskBuckets={{ active: ['a', 'b'].map(session), settled: [session('c')] }} currentSessionId="c" id="c" />));
+        await complete();
+        expect(select).toHaveBeenCalledExactlyOnceWith('b', '/repo', 'project', 'project');
+
+        select.mockClear();
+        await act(async () => root.render(<Surface taskBuckets={before} />));
+        await act(async () => host.querySelector('button')!.click());
+        await act(async () => root.render(<Surface taskBuckets={after} currentSessionId="a" />));
+        await complete();
+        expect(select).not.toHaveBeenCalled();
+
+        await act(async () => root.render(<Surface taskBuckets={{ active: [session('b')], settled: [] }} />));
+        await act(async () => host.querySelector('button')!.click());
+        await act(async () => root.render(<Surface taskBuckets={{ active: [], settled: [session('b')] }} />));
+        await complete();
+        expect(draft).toHaveBeenCalledOnce();
+        expect(host.querySelector('button')?.getAttribute('data-open')).toBe('false');
+    } finally {
+        await act(async () => root.unmount());
+        vi.unstubAllGlobals();
+    }
+});
+
 test('sidebar does not depend on GitHub auth or PR discovery for its session tree', () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');
     const ast = ts.createSourceFile('SessionSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

@@ -733,6 +733,7 @@ export const dict = {
   'sessions.sidebar.task.shelf.settled': 'Archived',
   'sessions.sidebar.task.empty': 'Nothing needs your attention',
   'sessions.sidebar.task.unassigned': 'No project',
+  'sessions.sidebar.session.hover.differentBranch': 'This checkout is currently on {branch}, a different branch.',
   'sessions.sidebar.session.menu.settle': 'Archive',
   'sessions.sidebar.session.menu.unsettle': 'Unarchive',
   'sessions.sidebar.session.settle.error': 'Failed to archive session',

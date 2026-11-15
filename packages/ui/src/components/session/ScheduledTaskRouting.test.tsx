@@ -54,7 +54,8 @@ vi.mock('./ScheduledTaskEditorDialog', () => ({
   </div>,
 }));
 
-import { ScheduledTasksDialog, ScheduledTasksWorkspace } from './ScheduledTasksDialog';
+import { ScheduledTasksWorkspace } from './ScheduledTasksDialog';
+import { ScheduledTasksDialogHost as ScheduledTasksDialog } from './ScheduledTasksDialogHost';
 import { AssistantScheduleCard } from '@/components/assistants/AssistantScheduleCard';
 import { useUIStore } from '@/stores/useUIStore';
 import { buildSchedulePath } from '@/router/pathContract';

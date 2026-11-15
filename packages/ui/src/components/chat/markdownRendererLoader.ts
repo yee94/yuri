@@ -12,8 +12,9 @@ export const loadMarkdownRendererModule = () => {
 };
 
 export const preloadMarkdownRenderer = () => {
-  void loadMarkdownRendererModule().catch(() => undefined);
   if (readMarkstreamReactEnabled()) {
     preloadMarkstreamRenderer();
+  } else {
+    void loadMarkdownRendererModule().catch(() => undefined);
   }
 };

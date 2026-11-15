@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
-vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
+vi.mock('@/components/icon/Icon', () => ({ Icon: ({ name }: { name: string }) => <span data-test-icon={name} /> }));
 vi.mock('@/sync/session-ui-store', async () => {
   const { create } = await import('zustand');
   return { useSessionUIStore: create(() => ({ currentSessionId: null, getDirectoryForSession: () => null, setCurrentSession: vi.fn() })) };
@@ -17,8 +17,15 @@ vi.mock('@/queries/assistantQueries', () => ({
 vi.mock('@/lib/iosNativeUi', () => ({ useIosNativeUiEnabled: () => false }));
 vi.mock('./useNativeIosTabBar', () => ({ useNativeIosTabBar: () => 'web' }));
 vi.mock('@/lib/native-ios-composer-session', () => ({ nativeIosComposerSession: { shutdown: () => undefined } }));
-vi.mock('./projects', () => ({ MobileProjectsHomeContainer: ({ onRemoteDesktop }: { onRemoteDesktop?: () => void }) => (
-  onRemoteDesktop ? <button data-remote-desktop onClick={onRemoteDesktop}>Remote desktop</button> : null
+vi.mock('./projects', () => ({ MobileProjectsHomeContainer: ({ onRemoteDesktop, homeView, onHomeViewChange }: {
+  onRemoteDesktop?: () => void;
+  homeView: 'tasks' | 'projects';
+  onHomeViewChange: (view: 'tasks' | 'projects') => void;
+}) => (
+  <>
+    {onRemoteDesktop ? <button data-remote-desktop onClick={onRemoteDesktop}>Remote desktop</button> : null}
+    <button data-home-view={homeView} onClick={() => onHomeViewChange(homeView === 'tasks' ? 'projects' : 'tasks')}>View</button>
+  </>
 ) }));
 vi.mock('./assistant/MobileAssistantTab', () => ({ MobileAssistantTab: () => null }));
 vi.mock('./scheduled/MobileScheduledTab', () => ({ MobileScheduledTab: () => null }));
@@ -41,6 +48,7 @@ vi.mock('@/components/sections/assistants/AssistantsSettingsPage', () => ({
 import { MobilePhoneShell } from './MobilePhoneShell';
 import { useMobileNavigationStore } from './useMobileNavigationStore';
 import { mobileBackNavigationCoordinator } from './mobileBackNavigation';
+import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -78,6 +86,24 @@ describe('phone Assistant Settings route', () => {
     expect(useMobileNavigationStore.getState()).toMatchObject({ activeTab: 'projects', secondary: null });
   });
 
+  test('title view changes update the Web dock immediately and preserve the saved home view', async () => {
+    const storage = getDeferredSafeStorage();
+    const previous = storage.getItem('yuri.mobile.homeView');
+    storage.setItem('yuri.mobile.homeView', 'projects');
+    useMobileNavigationStore.getState().setActiveTab('projects');
+    try {
+      await act(async () => root.render(<MobilePhoneShell onAddProject={() => undefined} onEnableAssistants={() => undefined} renderChat={() => null} />));
+      expect(host.querySelector('[data-tab="projects"] [data-test-icon="folder-tree"]')).not.toBeNull();
+      await act(async () => host.querySelector<HTMLButtonElement>('[data-home-view]')!.click());
+      expect(host.querySelector('[data-home-view]')?.getAttribute('data-home-view')).toBe('tasks');
+      expect(host.querySelector('[data-tab="projects"] [data-test-icon="list-check-2"]')).not.toBeNull();
+      expect(storage.getItem('yuri.mobile.homeView')).toBe('tasks');
+    } finally {
+      if (previous === null) storage.removeItem('yuri.mobile.homeView');
+      else storage.setItem('yuri.mobile.homeView', previous);
+    }
+  });
+
   test.each(['header', 'system', 'gesture'] as const)('%s Back reveals the retained conversation directly', async (backKind) => {
     useMobileNavigationStore.getState().setActiveTab('settings');
     await act(async () => root.render(<MobilePhoneShell
@@ -86,18 +112,21 @@ describe('phone Assistant Settings route', () => {
       registerSecondaryBackHandler={registerBack}
       renderChat={() => null}
     />));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const settingsDraft = host.querySelector<HTMLInputElement>('[data-settings-draft]')!;
     settingsDraft.value = 'edited Settings draft';
     await act(async () => {
       useMobileNavigationStore.getState().setActiveTab('assistant');
       useMobileNavigationStore.getState().openAssistant('asst_1');
     });
+    await act(async () => { await vi.dynamicImportSettled(); });
     const conversation = host.querySelector<HTMLElement>('[data-conversation-active]')!;
     const conversationDraft = host.querySelector<HTMLInputElement>('[data-conversation-draft]')!;
     conversationDraft.value = 'edited conversation draft';
 
     for (let visit = 0; visit < 2; visit += 1) {
       await act(async () => host.querySelector<HTMLButtonElement>('[data-open-settings]')!.click());
+      await act(async () => { await vi.dynamicImportSettled(); });
       const pages = host.querySelectorAll<HTMLElement>('[data-mobile-secondary-page]');
       expect(pages).toHaveLength(2);
       expect(pages[0].getAttribute('inert')).not.toBeNull();
@@ -141,6 +170,7 @@ describe('phone Assistant Settings route', () => {
       registerSecondaryBackHandler={registerBack}
       renderChat={() => <button data-chat-back onClick={() => mobileBackNavigationCoordinator.requestAnimatedBack('root')}>Back</button>}
     />));
+    await act(async () => { await vi.dynamicImportSettled(); });
     const conversation = host.querySelector<HTMLElement>('[data-conversation-active]')!;
     const draft = host.querySelector<HTMLInputElement>('[data-conversation-draft]')!;
     draft.value = 'keep this draft';

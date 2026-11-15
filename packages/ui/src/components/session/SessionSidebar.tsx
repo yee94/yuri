@@ -31,7 +31,7 @@ import { useGitRepoStatusMap } from '@/stores/useGitStore';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
 import { NewWorktreeDialog } from './NewWorktreeDialog';
-import { ScheduledTasksDialog } from './ScheduledTasksDialog';
+import { ScheduledTasksDialogHost as ScheduledTasksDialog } from './ScheduledTasksDialogHost';
 import { ArchivedSessionsDialog } from '@/components/sections/yuri/ArchivedSessionsDialog';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -1801,7 +1801,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const taskViewAvailable = !mobileVariant && !isVSCode && !hideDirectoryControls && !showOnlyMainWorkspace;
   const taskViewActive = taskViewAvailable && sidebarView === "tasks" && !hasSessionSearchQuery;
 
-  const rowSetSessionSettled = taskViewAvailable ? setSessionSettled : undefined;
   const runStartTimes = useRunStartTimes(runningSessionIds, isVisible && taskViewAvailable);
 
   // Dragging rows in the active list only reorders them in memory. The order
@@ -1850,24 +1849,42 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     if (next) setTaskTransientOrder(next);
   });
 
-  // A session opened from outside the sidebar (URL, notification) that sits on
-  // the Settled shelf must be visible and selected: open the shelf and widen
-  // the page to it, once per selection.
-  const revealedSettledSessionRef = React.useRef<string | null>(null);
-  React.useEffect(() => {
-    if (!taskBuckets || !currentSessionId) {
-      revealedSettledSessionRef.current = null;
+  const handleTaskArchiveSuccess = useEvent((
+    sessionId: string,
+    preferredId: string | null,
+    intent: ReturnType<typeof getSessionSwitchIntent>,
+  ) => {
+    if (!taskViewActive || activeMainTab !== "chat" || currentSessionId !== sessionId || getSessionSwitchIntent() !== intent) return;
+    const remaining = [...pinnedSessions, ...(taskBuckets?.active ?? [])].filter((session) => session.id !== sessionId);
+    const next = remaining.find((session) => session.id === preferredId) ?? remaining[0];
+    if (!next) {
+      cancelPendingSidebarVisualSelection();
+      syncSidebarVisualSelection(null);
+      openNewSessionDraft();
       return;
     }
-    if (revealedSettledSessionRef.current === currentSessionId) return;
-    const index = taskBuckets.settled.findIndex((session) => session.id === currentSessionId);
-    if (index < 0) return;
-    revealedSettledSessionRef.current = currentSessionId;
-    setTaskShelves((shelves) => {
-      const settledLimit = Math.max(shelves.settledLimit, Math.ceil((index + 1) / SETTLED_SHELF_PAGE_SIZE) * SETTLED_SHELF_PAGE_SIZE);
-      return shelves.settledOpen && settledLimit === shelves.settledLimit ? shelves : { settledOpen: true, settledLimit };
+    const owner = sessionOwnership.bySessionId.get(next.id);
+    handleSessionSelect(
+      next.id,
+      owner?.scopeDirectory ?? normalizePath(next.directory ?? null),
+      owner?.projectId ?? null,
+      pinnedSessionIds.has(next.id) ? "pinned" : "project",
+    );
+  });
+  const handleSetTaskSessionSettled = useEvent((sessionId: string, nextSettled: boolean) => {
+    if (!nextSettled || !taskViewActive || currentSessionId !== sessionId) {
+      setSessionSettled(sessionId, nextSettled);
+      return;
+    }
+    const ordered = [...pinnedSessions, ...(taskBuckets?.active ?? [])];
+    const index = ordered.findIndex((session) => session.id === sessionId);
+    const next = ordered[index + 1] ?? ordered[index - 1];
+    const intent = getSessionSwitchIntent();
+    setSessionSettled(sessionId, true, {
+      onSuccess: () => handleTaskArchiveSuccess(sessionId, next?.id ?? null, intent),
     });
-  }, [currentSessionId, taskBuckets]);
+  });
+  const rowSetSessionSettled = taskViewAvailable ? handleSetTaskSessionSettled : undefined;
 
   const taskItems = React.useMemo(() => {
     if (!taskBuckets) return null;

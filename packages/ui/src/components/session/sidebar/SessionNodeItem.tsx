@@ -32,6 +32,7 @@ import { useViewportStore, viewportSessionKey } from '@/sync/viewport-store';
 import { DraggableSessionRow } from './sessionFolderDnd';
 import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
 import { TaskProjectBadge, TaskRunElapsed, type TaskProjectMark } from './TaskCardParts';
+import { SessionHoverDetails } from './SessionHoverDetails';
 import { nodeContainsSessionId, resolvedSessionRenderKey } from './sessionNodeItemUtils';
 import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './sessionNodeItemUtils';
 import type { SessionNode } from './types';
@@ -245,6 +246,7 @@ type QuickArchiveActionProps = {
   deleteLabel: string;
   /** Archived bucket: only hard-delete is available. */
   deleteOnly?: boolean;
+  restore?: boolean;
   buttonSizeClass: string;
   iconSizeClass: string;
   revealClassName?: string;
@@ -259,6 +261,7 @@ const QuickArchiveAction = React.memo(function QuickArchiveAction({
   archiveLabel,
   deleteLabel,
   deleteOnly = false,
+  restore = false,
   buttonSizeClass,
   iconSizeClass,
   revealClassName,
@@ -298,7 +301,7 @@ const QuickArchiveAction = React.memo(function QuickArchiveAction({
           onClick={handleClick}
           onKeyDown={(event) => event.stopPropagation()}
         >
-          <Icon name={showDelete ? 'delete-bin' : 'inbox-archive'} className={iconSizeClass} />
+          <Icon name={showDelete ? 'delete-bin' : restore ? 'undo-2' : 'inbox-archive'} className={iconSizeClass} />
         </button>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={4} className="rounded-md px-1.5 py-0.5 typography-micro">
@@ -392,7 +395,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   // Pinned-scope rows also host unlabeled in-progress sessions; only truly
   // pinned rows swap the quick action to unpin.
   const showQuickUnpinAction = renderContext === 'pinned' && pinnedSessionIds.has(node.session.id);
-  const showQuickPinAction = !showQuickUnpinAction && !archivedBucket && !mobileVariant;
+  const showQuickPinAction = !showQuickUnpinAction && !archivedBucket && !mobileVariant && !secondaryMeta?.slim;
   // Match typography-ui-label (~14px) so action icons align with the title text.
   const actionButtonSizeClass = 'h-5 w-5';
   const actionIconSizeClass = 'h-3.5 w-3.5';
@@ -560,6 +563,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   const sessionUpdatedLabel = formatSessionDateLabel(sessionTimestamp);
   const sessionCompactUpdatedLabel = formatSessionCompactDateLabel(sessionTimestamp);
   const [isContextMenuOpen, setIsContextMenuOpen] = React.useState(false);
+  const [hoverDetailsOpen, setHoverDetailsOpen] = React.useState(false);
   const isSessionMenuOpen = isContextMenuOpen;
   const isMultiRunLikeSession = React.useMemo(() => parseMultiRunSessionTitle(resolvedSession.title) !== null, [resolvedSession.title]);
   const [fusionDialogOpen, setFusionDialogOpen] = React.useState(false);
@@ -1222,7 +1226,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
       {!archivedBucket ? (
         archiveSettlesInPlace && isSettledSession ? (
           <Item className="[&>svg]:mr-1" onClick={() => setSessionSettled?.(session.id, false)}>
-            <Icon name="restart" className="mr-1 h-4 w-4" />
+            <Icon name="undo-2" className="mr-1 h-4 w-4" />
             {t('sessions.sidebar.session.menu.unsettle')}
           </Item>
         ) : (
@@ -1326,7 +1330,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
           <div className="flex min-w-0 flex-1 items-center">
               {/* Inherit sidebar TooltipProvider — no delayDuration here, so
                   Base UI grouping can hand the hover card between rows. */}
-              <Tooltip>
+              <Tooltip onOpenChange={setHoverDetailsOpen}>
                 <TooltipTrigger asChild>
                   <SessionRowTitle
                     type="button"
@@ -1364,6 +1368,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       </div>
                     ) : null}
                     <div className="flex w-full items-center min-w-0 flex-1 gap-1 overflow-hidden">
+                      {isSlimRow ? <TaskProjectBadge project={secondaryMeta?.project} /> : null}
                       <div
                         className={cn(
                           'block min-w-0 flex-1 truncate text-foreground',
@@ -1382,7 +1387,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                         </span>
                       ) : null}
                       {isSlimRow ? (
-                        <span className="shrink-0 text-[10px] leading-none tabular-nums text-muted-foreground/70">{sessionCompactUpdatedLabel}</span>
+                        <span className={cn('shrink-0 text-[10px] leading-none tabular-nums text-muted-foreground/70', cardStatusHiddenClass)}>{sessionCompactUpdatedLabel}</span>
                       ) : null}
                       {isAssistantSession ? <Icon name="ai-agent" className="size-3 shrink-0 text-muted-foreground" aria-label="Assistant" /> : null}
                       {pendingPermissionCount > 0 && !isCardRow ? (
@@ -1453,29 +1458,18 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                   sideOffset={8}
                   className="w-64 max-w-[min(16rem,calc(100vw-2rem))] px-3 py-2.5 text-left shadow-md"
                 >
-                  <div className="flex flex-col gap-1.5 text-left">
-                    <div className="flex items-start justify-between gap-3">
-                      {/* Hover card title: wrap (no truncate) so the full session name stays readable. */}
-                      <div className="min-w-0 flex-1 break-words typography-ui-label font-medium text-foreground">
-                        {sessionTitle}
-                      </div>
-                      <div className="flex-shrink-0 typography-meta text-muted-foreground">
-                        {sessionCompactUpdatedLabel}
-                      </div>
-                    </div>
-                    {hasSecondaryProjectLabel ? (
-                      <div className="flex min-w-0 items-center gap-1.5 typography-meta text-muted-foreground">
-                        <Icon name="folder-open" className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span className="truncate">{secondaryMeta?.projectLabel}</span>
-                      </div>
-                    ) : null}
-                    {hasSecondaryBranchLabel ? (
-                      <div className="flex min-w-0 items-center gap-1.5 typography-meta text-muted-foreground">
-                        <Icon name="git-branch" className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span className="truncate">{secondaryMeta?.branchLabel}</span>
-                      </div>
-                    ) : null}
-                  </div>
+                  {/* Hover card title: wrap (no truncate) so the full session name stays readable. */}
+                  {hoverDetailsOpen ? (
+                    <SessionHoverDetails
+                      session={resolvedSession}
+                      title={sessionTitle}
+                      time={sessionCompactUpdatedLabel}
+                      projectLabel={secondaryMeta?.projectLabel}
+                      project={secondaryMeta?.project}
+                      branch={node.worktree?.branch ?? secondaryMeta?.branchLabel}
+                      directory={sessionDirectory}
+                    />
+                  ) : null}
                 </TooltipContent>
                 ) : null}
               </Tooltip>
@@ -1558,7 +1552,8 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
               </Tooltip>
             ) : null}
             <QuickArchiveAction
-              archiveLabel={t('sessions.sidebar.bulkActions.archive')}
+              archiveLabel={t(archiveSettlesInPlace && isSettledSession ? 'sessions.sidebar.session.menu.unsettle' : 'sessions.sidebar.bulkActions.archive')}
+              restore={archiveSettlesInPlace && isSettledSession}
               deleteLabel={t('sessions.sidebar.bulkActions.delete')}
               deleteOnly={archivedBucket === true}
               buttonSizeClass={actionButtonSizeClass}

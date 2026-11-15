@@ -55,6 +55,10 @@ export const MainLayout: React.FC = () => {
     const setSettingsDialogOpen = useUIStore((state) => state.setSettingsDialogOpen);
     const isMultiRunLauncherOpen = useUIStore((state) => state.isMultiRunLauncherOpen);
     const setMultiRunLauncherOpen = useUIStore((state) => state.setMultiRunLauncherOpen);
+    const [settingsVisited, setSettingsVisited] = React.useState(isSettingsDialogOpen);
+    const [multiRunVisited, setMultiRunVisited] = React.useState(isMultiRunLauncherOpen);
+    if (isSettingsDialogOpen && !settingsVisited) setSettingsVisited(true);
+    if (isMultiRunLauncherOpen && !multiRunVisited) setMultiRunVisited(true);
     const { isMobile, isTablet } = useDeviceInfo();
     const bottomTerminalAutoClosedRef = React.useRef(false);
     const mobilePanelsResetRef = React.useRef(false);
@@ -577,16 +581,16 @@ export const MainLayout: React.FC = () => {
 
                     {/* Desktop settings: windowed dialog with blur */}
                     <React.Suspense fallback={null}>
-                        <SettingsWindow
+                        {settingsVisited && <SettingsWindow
                             open={isSettingsDialogOpen}
                             onOpenChange={setSettingsDialogOpen}
-                        />
+                        />}
                     </React.Suspense>
                     <React.Suspense fallback={null}>
-                        <MultiRunWindow
+                        {multiRunVisited && <MultiRunWindow
                             open={isMultiRunLauncherOpen}
                             onOpenChange={setMultiRunLauncherOpen}
-                        />
+                        />}
                     </React.Suspense>
                 </>
             )}

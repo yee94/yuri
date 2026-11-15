@@ -17,7 +17,8 @@ import { initializeLocale, I18nProvider } from '@/lib/i18n';
 import { initializeAppearancePreferences, syncDesktopSettings } from '@/lib/persistence';
 import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
 import { startTypographyWatcher } from '@/lib/typographyWatcher';
-import { preloadMarkdownRenderer } from '@/components/chat/markdownRendererLoader';
+import { runSettingsStartup } from '@/lib/settingsStartup';
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import { SessionAuthGate } from '@/components/auth/SessionAuthGate';
 import { OpenCodeUpgradeScreen } from '@/components/update/OpenCodeUpgradeScreen';
 import { QueryRuntimeProvider } from '@/lib/QueryRuntimeProvider';
@@ -27,28 +28,31 @@ import { useUIStore } from '@/stores/useUIStore';
 const initializeSharedPreferences = () => {
   initializeLocale();
 
-  void initializeAppearancePreferences().then(() => {
-    void Promise.all([
-      syncDesktopSettings(),
-      applyPersistedDirectoryPreferences(),
-    ]).catch((err) => {
-      console.error('[mobile-main] settings init failed:', err);
-    });
-
-    startAppearanceAutoSave();
-    startModelPrefsAutoSave();
-    startTypographyWatcher();
-  }).catch((err) => {
-    console.error('[mobile-main] appearance init failed:', err);
-  }).finally(() => {
-    // Persisted typography/appearance is now applied — release the splash gate so the
-    // first UI paint is already at its final sizes.
-    markAppBootReady();
+  void runSettingsStartup({
+    runtimeKey: getRuntimeKey(),
+    initializeAppearance: async () => {
+      try {
+        await initializeAppearancePreferences();
+      } finally {
+        // Persisted typography/appearance is now applied — release the splash gate so the
+        // first UI paint is already at its final sizes.
+        markAppBootReady();
+      }
+    },
+    syncSettings: syncDesktopSettings,
+    applyDirectory: applyPersistedDirectoryPreferences,
+    startWatchers: () => {
+      startAppearanceAutoSave();
+      startModelPrefsAutoSave();
+      startTypographyWatcher();
+    },
+    onError: (stage, error) => {
+      console.error(stage === 'appearance' ? '[mobile-main] appearance init failed:' : '[mobile-main] settings init failed:', error);
+    },
   });
 };
 
 export function renderMobileApp(apis: RuntimeAPIs) {
-  preloadMarkdownRenderer();
   initializeSharedPreferences();
 
   // Set isMobile synchronously before any component renders — MobileApp's useEffect

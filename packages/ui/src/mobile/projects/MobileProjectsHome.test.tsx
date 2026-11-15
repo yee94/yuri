@@ -9,6 +9,7 @@ import { renderToString } from 'react-dom/server';
 import { I18nProvider } from '@/lib/i18n';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useMobileProjectsHomeModel } from './useMobileProjectsHomeModel';
+import { MobileTaskCard } from './MobileTaskCard';
 
 import {
   MobileProjectsHome,
@@ -38,7 +39,7 @@ vi.mock('@/components/session/sidebar/hooks/useAlwaysVisibleSessionIds', async (
 }));
 vi.mock('@/sync/sync-context', () => ({
   useAllLiveSessions: () => fixtures.sessions,
-  useSessionActivity: () => false,
+  useSessionActivity: (id: string) => fixtures.running.has(id),
   useSessionPermissions: () => [],
   useSessionQuestions: () => [],
 }));
@@ -49,6 +50,32 @@ const homeSource = readFileSync(
 );
 
 const noop = () => undefined;
+
+test.each([
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+])('task cards share the same surface when selected=%s and running=%s', (active, running) => {
+  const id = 'task-surface';
+  if (running) fixtures.running.add(id);
+  try {
+    const host = document.createElement('div');
+    host.innerHTML = renderToString(<I18nProvider>
+      <MobileTaskCard
+        task={{ id, title: 'Task', projectLabel: 'Project', project: null, unread: false, pinned: false, active }}
+        runStartedAt={Date.now() - 60_000}
+        onSelect={noop}
+        onOpenActions={noop}
+      />
+    </I18nProvider>);
+    const main = host.querySelector('.yuri-mobile-floating-surface > button')!;
+    expect(main.className).not.toContain('bg-');
+    expect(Boolean(main.querySelector('.text-status-info'))).toBe(running);
+  } finally {
+    fixtures.running.delete(id);
+  }
+});
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
