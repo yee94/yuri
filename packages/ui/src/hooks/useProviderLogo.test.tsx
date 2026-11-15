@@ -32,6 +32,9 @@ describe('provider brand logos', () => {
         ['magpie-qoder', 'qoder'], ['magpie-trae', 'trae'],
         ['magpie/group/workbuddy', 'workbuddy'], ['MAGPIE-GROUP', 'magpie'], ['magpie-auto', 'magpie'],
         ['remote-magpie', 'magpie'],
+        ['magpie-remote-magpie%2Fcodex', 'openai'], ['magpie-remote-magpie%2Fzcode', 'zai-coding-plan'],
+        ['magpie-remote-magpie%2Fcursor', 'cursor'], ['magpie-remote-magpie%2Fgrok', 'xai'],
+        ['magpie-remote-magpie%2Fclaude-code%2Fvps-us', 'anthropic'], ['magpie-remote-magpie%2Fgroup', 'magpie'],
     ])('prefers a specific brand before Magpie for %s', (provider, asset) => {
         const html = renderToStaticMarkup(<Logo id={provider} />);
         expect(html).toBe(renderToStaticMarkup(<Logo id={asset} />));

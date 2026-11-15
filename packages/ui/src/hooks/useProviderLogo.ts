@@ -50,6 +50,10 @@ const buildLogoCandidates = (providerId: string | null | undefined) => {
         try { brandId = decodeURIComponent(magpie[1]); }
         catch { return fallback; }
     }
+    if (brandId && /%[0-9a-f]{2}/i.test(brandId)) {
+        try { brandId = decodeURIComponent(brandId); }
+        catch { /* keep the raw id; keyword matching still applies */ }
+    }
     const normalized = normalizeProviderId(brandId);
     if (!normalized) {
         return fallback;

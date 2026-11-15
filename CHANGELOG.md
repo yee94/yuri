@@ -4,6 +4,10 @@ Yuri 的版本更新记录。
 
 ## [Unreleased]
 
+## [0.3.3-beta.3] - 2026-11-15
+
+- 🖼️ 修复来自远程 Magpie 的 Provider 图标被统一识别成 Magpie 的问题：Codex、Cursor、ZCode、Grok、Claude、Qoder 等现在显示各自的品牌图标，只有 Group、Auto 等没有品牌的才使用 Magpie 图标。
+
 ## [0.3.3-beta.2] - 2026-11-15
 
 - 💬 对话过程展开后去掉左侧缩进和竖线，与正在推理时的内容保持对齐。
