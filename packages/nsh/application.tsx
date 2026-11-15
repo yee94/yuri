@@ -12,6 +12,7 @@ import {
   lifecycle,
   List,
   Overlay,
+  platform,
   safeArea,
   Scroll,
   setColorScheme,
@@ -19,6 +20,7 @@ import {
   Speech,
   Storage,
   Text,
+  token,
   untracked,
   View,
   windowSize,
@@ -39,9 +41,13 @@ import {
 } from "nsh/base";
 import { NativeSelect as Select } from './native-select';
 import { createChatChromeState, createNativeChatChrome } from './chat-chrome';
-import { NativeChatHeaderCollapse } from './chat-chrome-native';
+import { NativeChatHeaderCollapse, NativeChatHeaderEdge } from './chat-chrome-native';
+import { HEADER_FADE_LENGTH } from './outer-header-core';
+import { headerFadeStyle } from './outer-header';
+import { chatHeaderLayout } from './chat-header-layout';
+import { nextStreamingHeightFloor } from './streaming-height-floor';
 import { NativeComposerChrome } from './chat-chrome-surfaces';
-import { TabBar } from "nsh/mobile";
+import { NativeTabBar } from "./native-tab-bar";
 import { language, t } from "./i18n";
 import {
   id,
@@ -58,6 +64,8 @@ import {
 import { assistantPath, connectionSnapshotFrom, native, query, request, sessionPath } from "./runtime";
 import { createPageOperations } from './page-operations';
 import { attachmentFrom } from './attachments';
+import { NativeAttachmentCard } from './attachment-card';
+import { nativeAttachmentSource } from './attachment-presentation';
 import {
   app,
   createChat,
@@ -85,13 +93,15 @@ import { BlockingRequests } from "./blocking";
 import { Icon } from './Icon';
 import { YuriMark, YuriWordmark } from './branding';
 import { ChatModels } from './chat-models';
-import { ChatHeaderActions, NativeChatHeader, type ChatHeaderOption } from './chat-header';
+import { ChatHeaderActions, ChatHeaderAndroidBack, ChatHeaderAndroidFade, ChatHeaderAndroidTitle, NativeChatHeader, type ChatHeaderOption } from './chat-header';
 import { compileNativePrompt, magicCommand } from './composer';
 import { NativeCommandSuggestions } from './composer-controls';
 import { NativeComposerPress } from './native-composer-press';
 import { nativeComposerSurface } from './composer-surface';
+import { glassEdge } from './glass-surface';
 import { NativeInputMetadata } from './native-input-metadata';
 import { NativeComposerSpellcheck } from './native-composer-spellcheck';
+import { NativeComposerInlineChips } from './native-composer-inline-chips';
 import { createChatComposerCommands } from './chat-composer-commands';
 import { isNativeBtwCommand, type NativeCommandIntent } from './composer-command-router';
 import { createNativeBtwOwner, NativeBtwSheet } from './chat-btw';
@@ -128,6 +138,7 @@ import { NativeSessionSwitcherPage } from './session-switcher';
 import { projectsAttention } from './projects-attention';
 import { ScheduledHome, ScheduledTaskDetail } from './schedules';
 import { AssistantHome, AssistantDetails, AssistantSettings, assistantChatTarget } from './assistants';
+import { AssistantHeaderScrim, AssistantIdentity, AssistantTranscriptRow, AssistantWallpaper, assistantPanelShadow, assistantPanelStyle } from './assistants-workspace';
 import { SETTINGS_ENTRIES, SettingsHome, SettingsPage, type SettingsRoute, type SettingsCallbacks } from './settings';
 import { SettingsQuotaCredentialsPage } from './settings-quota-credentials';
 import type { QuotaCredentialProvider } from './settings-quota-credentials-core';
@@ -1225,7 +1236,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   const composerAnchor = signal<ViewRef | null>(null);
   const referenceKeyboard = createNativeReferenceKeyboard({
     active: () => props.target.kind === 'session' && current() && chat.active() && lifecycle() === 'active' && inputMode() === 'normal' && !recording(),
-    scope: () => chat.referenceScope, text: chat.draft,
+    scope: () => chat.referenceScope, text: chat.draft, references: chat.references,
     insert: (candidate, start, end) => chat.insertReference(candidate, start, end),
     chooseCommand: commandRouter.choose,
     commandOwner: operations.operation,
@@ -1314,7 +1325,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   });
   cleanup(endSpeech);
   const attachmentPicker = createAttachmentPick({ target: props.target, current: () => current() && chat.active() && lifecycle() === 'active', call: native,
-    busy: attaching.set,
+    busy: value => attaching.set(value),
     failed: (phase, failure, retirement) => {
       const code = String(failure ?? '');
       const message = t(code.includes('attachment_original_authorization_unavailable') ? 'chat.attachments.originalAuthorizationUnavailable'
@@ -1347,6 +1358,14 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
       nav.push({ kind: 'contact-attachment-preview', file: Object.freeze(snapshot), expectedHost: Object.freeze({ ...lane.scope }) });
     } catch { chat.error.set(t('common.unavailable')); }
   }
+  function previewMessageAttachment(file: Row) {
+    const lane = operations.operation();
+    if (!lane?.current() || !lane.scope || !chat.active()) return;
+    const source = nativeAttachmentSource(file, props.target, lane.scope.hostID, app.connection()?.url);
+    if (source.kind === 'contact') nav.push({ kind: 'contact-attachment-preview', file: Object.freeze(source.file), expectedHost: Object.freeze({ ...lane.scope }) });
+    else if (source.kind === 'file') openResourceFile(source.path, props.target.directory);
+    else if (source.kind === 'direct' && /^https?:/.test(source.src)) void run(async () => { if (!(await openUrl(source.src)).opened) throw new Error(t('mobile.files.error.readUnavailable')); });
+  }
   function openSelection() {
     if (props.target.kind === 'assistant') {
       const authority = headerSelection();
@@ -1358,6 +1377,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   function openNewSessionDraft() {
     nav.push({ kind: 'new-session', project: app.projects().find(project => resourceWithin(props.target.directory, project.path)), directory: props.target.directory });
   }
+  const contactBot = computed(() => app.bots().find(bot => bot.id === props.target.id) ?? { ...headerSelection(), id: props.target.id, name: props.target.title });
   async function openOptions(action: ChatHeaderOption) {
     if (!current() || !chat.active()) return;
     if (action === 'new-session') {
@@ -1373,17 +1393,27 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   }
   return (
     <NavPage
-      title={props.target.title}
+      title={props.target.kind === 'assistant' ? '' : props.target.title}
       hidesBottomBarWhenPushed
       headerTransparent
       headerBackTitle=""
       headerClass="text-foreground tint-foreground"
-      headerRight={<ChatHeaderActions native target={props.target} active={chat.active()} busy={chat.busy()} current={current} operation={operations.operation} autoRead={autoReadHeader()} onError={error => chat.error.set(String(error))} onOptions={action => { void run(() => openOptions(action)); }} />}
-      header={<NativeChatHeader target={props.target} active={chat.active()} busy={chat.busy()} current={current} operation={operations.operation} autoRead={autoReadHeader()} onBack={() => { if (current() && chat.active()) nav.pop(); }} onOptions={action => { void run(() => openOptions(action)); }} />}
+      headerBackVisible={platform.os !== 'android'}
+      headerLeft={platform.os === 'android' ? <ChatHeaderAndroidBack onPress={() => { if (current() && chat.active()) nav.pop(); }} /> : undefined}
+      headerTitle={platform.os === 'android' && props.target.kind === 'session' ? <ChatHeaderAndroidTitle title={props.target.title} /> : undefined}
+      headerRight={props.target.kind === 'session' ? <ChatHeaderActions native target={props.target} active={chat.active()} busy={chat.busy()} current={current} operation={operations.operation} autoRead={autoReadHeader()} onError={error => chat.error.set(String(error))} onOptions={action => { void run(() => openOptions(action)); }} /> : undefined}
+      header={props.target.kind === 'session' ? <NativeChatHeader target={props.target} active={chat.active()} busy={chat.busy()} current={current} operation={operations.operation} autoRead={autoReadHeader()} onBack={() => { if (current() && chat.active()) nav.pop(); }} onOptions={action => { void run(() => openOptions(action)); }} /> : <View class="h-11 justify-center px-4"><Button class="w-10 h-10 items-center justify-center" accessibilityLabel={t('header.actions.backAria')} onPress={() => nav.pop()}><Icon name="arrow-left-s" /></Button></View>}
       class="flex-1 bg-background"
     >
+      <If when={props.target.kind === 'assistant'}><AssistantWallpaper /></If>
       <NativeChatHeaderCollapse progress={chromeState().swap.progress} duration={chromeState().swap.phase === 'snapping' ? 240 : 0}
-        active={current() && chat.active() && lifecycle() === 'active'} accessible={false} accessibilityElementsHidden style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }} />
+        active={props.target.kind === 'session' && current() && chat.active() && lifecycle() === 'active'} accessible={false} accessibilityElementsHidden style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }} />
+      <NativeChatHeaderEdge color={String(token('background'))} fade={props.target.kind === 'session'} accessible={false} accessibilityElementsHidden style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }} />
+      <If when={platform.os !== 'ios' && props.target.kind === 'session'}><View testID="chat-header-fade" accessible={false} accessibilityElementsHidden style={{
+        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1, pointerEvents: 'none',
+        height: safeArea().top + chatHeaderLayout.top + chatHeaderLayout.contentHeight + HEADER_FADE_LENGTH,
+        ...headerFadeStyle(safeArea().top + chatHeaderLayout.top + chatHeaderLayout.contentHeight + HEADER_FADE_LENGTH, safeArea().top),
+      }} /></If>
       <NativeSpeechSettingsError speech={messageSpeech} />
       <NativeChatMcp directory={props.target.directory} active={chat.active()} open={mcpPanel()} onOpenChange={value => mcpPanel.set(value)} onCreate={() => { if (current() && chat.active()) nav.push({ kind: 'settings', route: { page: 'mcp', directory: props.target.directory, create: true } }); }} />
       <If when={chat.error()}>
@@ -1429,7 +1459,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
         onLoadMore={listHistoryEvents().onLoadMore}
         loadMoreThreshold={0.5}
         onLoadMoreAtStart={listHistoryEvents().onLoadMoreAtStart}
-        footer={() => <View style={{ minHeight: footerState().minHeight }}>
+        footer={() => <View style={{ minHeight: footerState().minHeight, paddingBottom: props.target.kind === 'assistant' ? 120 : 0 }}>
           <Each of={[footerState().naturalGeneration]} key={generation => String(generation)}>{() => {
             const natural = footer.captureNatural();
             return <View class="gap-2" ref={value => { if (natural.ref(value) && value) void natural.confirm(); }} onLayout={natural.onLayout}>
@@ -1445,10 +1475,14 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
       >
         {key => <If when={bodyRowsByKey().get(key())}>{(row) => {
           const item = () => row().tail;
+          const floor = signal(0);
+          const streaming = () => chat.streamingMessageIDs().has(item().id);
           return (
-          <View class={item().role === 'user' ? 'pt-2' : 'gap-2'}>
-            <If when={row().head.role === 'assistant' && !!turns().get(row().head.id)?.header}><NativeTurnHeader message={turnHeader(row())} modelName={turnModelName(turnHeader(row()))} identityKey={row().turn?.turnId} /></If>
-            <NativeTranscriptBody row={row()} live={chat.busy()} activityMaterialization={chat.activityMaterialization} autoRead={autoRead} autoReadScope={autoReadScope()} streaming={chat.streamingMessageIDs().has(row().tail.id)} collapsibleUserMessages={deviceChatPreferences()?.collapsibleUserMessages ?? null} renderCard={card => <ResourceCard card={card} />} target={props.target} current={() => current() && chat.active() && lifecycle() === 'active'}
+          <View class={item().role === 'user' ? 'pt-2' : 'gap-2'} style={streaming() && floor() > 0 ? { minHeight: floor() } : undefined}
+            onLayout={event => { const current = untracked(floor), next = nextStreamingHeightFloor(current, event.bounds.size.height, untracked(streaming)); if (next !== current) floor.set(next); }}>
+            <If when={props.target.kind === 'session' && row().head.role === 'assistant' && !!turns().get(row().head.id)?.header}><NativeTurnHeader message={turnHeader(row())} modelName={turnModelName(turnHeader(row()))} identityKey={row().turn?.turnId} /></If>
+            <AssistantTranscriptRow enabled={props.target.kind === 'assistant'} outgoing={row().head.role === 'user'} bot={props.target.kind === 'assistant' ? contactBot() : {}} active={chat.active()}>
+            <NativeTranscriptBody row={row()} contactBot={props.target.kind === 'assistant' ? contactBot() : undefined} live={chat.busy()} activityMaterialization={chat.activityMaterialization} autoRead={autoRead} autoReadScope={autoReadScope()} streaming={chat.streamingMessageIDs().has(row().tail.id)} collapsibleUserMessages={deviceChatPreferences()?.collapsibleUserMessages ?? null} renderCard={card => <ResourceCard card={card} contact={props.target.kind === 'assistant'} />} target={props.target} current={() => current() && chat.active() && lifecycle() === 'active'} onOpenAttachment={previewMessageAttachment} onOpenSkill={name => { if (current() && chat.active()) nav.push({ kind: 'settings', route: { page: 'skills.installed', entity: name, directory: props.target.directory } }); }}
               activityChoice={activityChoices()[row().turn?.turnId ?? row().key]} onToggleActivity={(turnID, expanded) => {
                 const present = new Set(bodyRows().map(entry => entry.turn?.turnId ?? entry.key));
                 activityChoices.set({ ...Object.fromEntries(Object.entries(activityChoices()).filter(([key]) => present.has(key))), [turnID]: expanded });
@@ -1461,7 +1495,8 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
                 changesSource.set({ kind: 'turn', directory: target.directory, sessionID: target.id, messageID, files, path: file.path });
               }}
             />
-            <If when={pendingHeaders().has(row().head.id)}><NativeTurnHeader message={turnHeader(row())} modelName={turnModelName(turnHeader(row()))} identityKey={row().turn?.turnId} /></If>
+            </AssistantTranscriptRow>
+            <If when={props.target.kind === 'session' && pendingHeaders().has(row().head.id)}><NativeTurnHeader message={turnHeader(row())} modelName={turnModelName(turnHeader(row()))} identityKey={row().turn?.turnId} /></If>
             <NativeTurnError row={row()} />
             <If when={nativeUserActionsVisible(row()) || !!turns().get(item().id)?.footer}><NativeMessageActions history={history} message={item} speech={messageSpeech} tps={turns().get(item().id)?.tps} duration={turns().get(item().id)?.duration} /></If>
           </View>
@@ -1474,6 +1509,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
         <If when={focusState()?.status === 'error'}><Button testID="history-focus-retry" class={quiet} onPress={() => { void messageFocus.retry(); }}><Text class="text-foreground">{t('chat.questionDelegate.retry')}</Text></Button></If>
       </View></If>
       <BlockingRequests chat={chat} />
+      <If when={props.target.kind === 'assistant'}><AssistantHeaderScrim><AssistantIdentity bot={contactBot()} active={chat.active()} onPress={openSelection} /></AssistantHeaderScrim></If>
       <NativeComposerChrome state={chromeState()} bottom={safeArea().bottom + 16} onHeight={value => composerHeight.set(value)} compact={<>
         <If when={props.target.kind === 'session'}><Button testID="compact-attach" class="size-8 items-center justify-center" disabled={attaching()} accessibilityLabel={t('chat.chatInput.actions.addAttachment')} onPress={chooseAttachment}><Icon name="attachment-2" size={20} /></Button></If>
         <Button testID="compact-edit" class="flex-1 min-w-0 min-h-11 justify-center" accessibilityLabel={t('chat.chatInput.placeholder.chatCompact')} onPress={editCompactDraft}><Text class={chat.draft().trim() ? 'text-foreground' : 'text-muted-foreground'} style={{ numberOfLines: 1, fontSize: 14 }}>{chat.draft().trim() || t('chat.chatInput.placeholder.chatCompact')}</Text></Button>
@@ -1501,37 +1537,15 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
         <View
           testID="composer-glass"
           ref={view => composerAnchor.set(view)}
-          style={{ ...nativeComposerSurface, ...nativeDensity().chat.composerSurface }}
+          style={{ ...nativeComposerSurface, ...glassEdge(), ...nativeDensity().chat.composerSurface, ...(props.target.kind === 'assistant' ? { ...assistantPanelStyle(), glassEffect: 'none' as const, backdropFilter: 'none', borderWidth: 0, boxShadow: assistantPanelShadow() } : {}) }}
           class="px-3 pt-1 pb-1"
         >
           <NativeDraftFeedback chat={chat} />
-          <Each of={chat.attachments()}>
-            {(attachment) => (
-              <View class="flex-row gap-2 items-center">
-                <If when={attachment().kind === 'contact'} else={<Text class="text-sm text-foreground flex-1">{attachment().name}</Text>}>
-                  <Button class={`${quiet} flex-1`} onPress={() => { const file = attachment(); if (file.kind === 'contact') previewAttachment(file); }}>
-                    <Text class="text-sm text-foreground">{attachment().name}</Text>
-                  </Button>
-                </If>
-                <Button
-                  class={quiet}
-                  accessibilityLabel={t("chat.chatInput.actions.attachCancel")}
-                  onPress={() =>
-                    chat.attachments.set(
-                      chat
-                        .attachments()
-                        .filter((file) => file !== attachment()),
-                    )
-                  }
-                >
-                  <Text class="text-muted-foreground">×</Text>
-                </Button>
-              </View>
-            )}
-          </Each>
+          <View class="flex-row flex-wrap gap-2"><Each of={chat.attachments()}>{attachment => <NativeAttachmentCard file={attachment()} target={props.target} compact current={() => current() && chat.active()} removeDisabled={chat.sending()} onOpen={() => { const file = attachment(); if (file.kind === 'contact') previewAttachment(file); else previewMessageAttachment(file); }} onRemove={() => chat.attachments.set(chat.attachments().filter(file => file !== attachment()))} />}</Each></View>
           <NativeInputMetadata ownerID="composer-glass" inputID="composer" label={t(inputMode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} active={chat.active() && lifecycle() === 'active'} />
           <NativeComposerSpellcheck ownerID="composer-glass" inputID="composer" />
           <NativeComposerPress ownerID="composer-glass" inputID="composer" />
+          <NativeComposerInlineChips ownerID="composer-glass" inputID="composer" textLength={chat.draft().length} references={chat.references()} active={chat.active() && lifecycle() === 'active'} />
           <Input
             testID="composer"
             accessibilityLabel={t(inputMode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')}
@@ -1549,10 +1563,10 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
             onSelectionChange={referenceKeyboard.onSelectionChange}
             onCompositionChange={referenceKeyboard.onCompositionChange}
             onChange={(e) => {
-              referenceKeyboard.beforeChange();
-              if (props.target.kind === 'session' && inputMode() === 'normal' && !chat.draft() && e.value.startsWith('!')) {
-                inputMode.set('shell'); chat.setDraftText(e.value.slice(1));
-              } else chat.setDraftText(e.value);
+              const value = referenceKeyboard.beforeChange(e.value);
+              if (props.target.kind === 'session' && inputMode() === 'normal' && !chat.draft() && value.startsWith('!')) {
+                inputMode.set('shell'); chat.setDraftText(value.slice(1));
+              } else chat.setDraftText(value);
               referenceKeyboard.refresh();
             }}
             placeholder={t(!recording() && ['inactive', 'session-authority-unknown'].includes(chat.sendAdmission()) ? 'mobile.connect.connecting' : inputMode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')}
@@ -1616,6 +1630,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
       </View>
       </View>
       </NativeComposerChrome>
+      <If when={platform.os === 'android' && props.target.kind === 'session'}><ChatHeaderAndroidFade /></If>
       <If when={props.target.kind === 'session'}><NativeChatTimeline open={timelineOpen()} operation={operations.operation()} onOpenChange={value => timelineOpen.set(value)} messages={chat.messages} messagesResolved={chat.messagesResolved} focusedMessageID={() => focusState()?.messageID ?? props.messageID ?? null} more={chat.more} olderLoading={chat.olderLoading} historyError={chat.historyError} loadOlder={chat.loadOlder} focusMessage={messageFocus.focus} resumeLatest={resumeLatest} messageOptions={history.props} /></If>
       <If when={!!btw()}><NativeBtwSheet owner={btw()!.owner} state={btw()!.state} active={btw()?.operation === operations.operation() && operations.current() && chat.active() && lifecycle() === 'active' && nav.routes().at(-1) === props.route} /></If>
       <If when={!!changesSource()}><NativeChangesSheet source={changesSource()!} open active={chat.active()} generationContext={changesGenerationContext()} diffLayoutPreference={nativeAppearance.current()?.diffLayoutPreference ?? null} onClose={() => changesSource.set(null)} onOpenPreview={(path, line) => { void run(async () => { changesSource.set(null); openResourceFile(path, props.target.directory, line); }); }} /></If>
@@ -1623,7 +1638,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
   );
 }
 
-function ResourceCard(props: { card: Row }) {
+function ResourceCard(props: { card: Row; contact?: boolean }) {
   const operations = createPageOperations();
   const current = operations.current,
     pending = signal(false);
@@ -1700,7 +1715,7 @@ function ResourceCard(props: { card: Row }) {
     if (valid()) pending.set(false);
   }
   return (
-    <View class="bg-card rounded-2xl p-4 gap-2">
+    <View class="bg-card rounded-2xl p-4 gap-2" style={props.contact ? { ...assistantPanelStyle(), borderRadius: 18, boxShadow: assistantPanelShadow() } : undefined}>
       <If when={props.card.type === "compaction"}>
         <Text class="text-sm text-muted-foreground">
           {text(props.card.status)}
@@ -1960,6 +1975,7 @@ function Home() {
       class="flex-1 bg-background"
       headerVisible={false}
     >
+      <If when={!!app.connection() && app.tab() === 1}><AssistantWallpaper /></If>
       <View class="flex-1" style={{ paddingTop: safeArea().top, paddingLeft: safeArea().left, paddingRight: safeArea().right }}>
       <If when={!app.connection()}>
         <View class="flex-1 p-6 justify-center gap-4">
@@ -1993,7 +2009,7 @@ function Home() {
             <If when={!!tourHistoryMonitor()}><View class="px-5 pb-2"><NativeHistoryImportTaskEntry controller={tourHistoryMonitor()!} active={nav.routes().length === 1 && app.tab() === 0} onOpen={() => { const history = tourHistoryMonitor(); if (history?.current()) nav.push({ kind: 'history-import-tasks', history }); }} /></View></If>
           </View>
           <If when={app.tab() === 1}>
-            <AssistantHome bottomInset={tabBarHeight()} active={nav.routes().length === 1 && app.tab() === 1} onOpenChat={openChat} onCreate={() => openBotEditor()} onEdit={bot => nav.push({ kind: 'assistant-details', bot })} onOpenSettings={() => nav.push({ kind: 'settings', route: { page: 'assistants' } })} />
+            <AssistantHome wallpaper={false} bottomInset={tabBarHeight()} active={nav.routes().length === 1 && app.tab() === 1} onOpenChat={openChat} onCreate={() => openBotEditor()} onEdit={bot => nav.push({ kind: 'assistant-details', bot })} onOpenSettings={() => nav.push({ kind: 'settings', route: { page: 'assistants' } })} />
           </If>
           <If when={app.tab() === 2}>
             <ScheduledHome bottomInset={tabBarHeight()} active={nav.routes().length === 1 && app.tab() === 2} onOpenAssistant={openChat} onCreate={() => openTaskEditor()} onEdit={item => openTaskEditor(item)} onOpenTask={item => nav.push({ kind: 'task', item })} onOpenSession={openChat} />
@@ -2005,17 +2021,16 @@ function Home() {
         </View>
       </If>
       </View>
-      <TabBar
+      <NativeTabBar
         testID="main-tabs"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: 'transparent' }}
-        onLayout={event => { const height = event.bounds.size.height; if (height > 0 && height !== tabBarHeight()) tabBarHeight.set(height); }}
+        onHeight={height => { if (height > 0 && height !== tabBarHeight()) tabBarHeight.set(height); }}
         selectedIndex={app.tab()}
-        onChange={(e) => app.tab.set(e.index)}
+        onChange={index => app.tab.set(index)}
         items={[
-          { title: t("mobile.tabs.projects"), icon: "folder" },
-          { title: t("mobile.tabs.assistant"), icon: "sparkles" },
-          { title: t("mobile.tabs.scheduled"), icon: "calendar" },
-          { title: t("mobile.tabs.settings"), icon: "gearshape" },
+          { title: t("mobile.tabs.projects"), icon: "folder", glyph: "folder" },
+          { title: t("mobile.tabs.assistant"), icon: "sparkles", glyph: "sparkling" },
+          { title: t("mobile.tabs.scheduled"), icon: "calendar", glyph: "calendar" },
+          { title: t("mobile.tabs.settings"), icon: "gearshape", glyph: "settings-3" },
         ]}
       />
     </NavPage>

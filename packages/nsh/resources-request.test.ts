@@ -60,6 +60,8 @@ function fixture(preloaded?: Record<string, unknown>) {
     './runtime-scope': scopeModule, './resources-request': { bindResourceRead, bindContactAttachmentRead, bindResourceStat }, './resources-model': model,
     './resources-watcher': { createResourceWatcher },
     './resource-svg': { ResourceSVGImage: 'NativeSVGImage' },
+    './resource-raster-presentation': { ResourceRasterPresentation: 'NativeRasterImage' },
+    './native-image-preview': { NativeContentImage: 'NativeContentImage' },
     './Icon': { Icon: 'Icon' },
     './resource-html-viewer': { ResourceHtmlViewer: 'HTMLViewer' },
     './resource-html-native': { ResourceHTMLView: 'HTMLNative', ResourceHTMLPresentationAnchor: 'HTMLPresentationAnchor' },
@@ -252,10 +254,14 @@ test.each([
     expect(text).toBeDefined();
     if (mime === 'text/markdown') expect(text.props.markdown).toBe(body.text);
     else expect(text.props.document).toEqual({ blocks: [{ type: 'codeBlock', code: body.text, language: 'txt' }] });
+  } else if (body.kind === 'image') {
+    const preview = f.nodes(node).find(value => value.type === 'NativeContentImage')!;
+    expect(preview.props.src).toBe(body.thumbnail);
+    const renderer = preview.props.renderImage as (fullscreen: boolean) => Node;
+    expect(renderer(true)).toMatchObject({ type: 'NativeRasterImage', props: { config: { lease: 'verified-contact-lease', expectedHost: scope(), active: true } } });
   } else {
     const preview = f.nodes(node).find(value => value.type === 'Button' && (value.props.testID === 'resource-media-preview' || JSON.stringify(value.children).includes('mobile.files.html.fullscreenAria')))!;
     expect(preview).toBeDefined();
-    if (body.kind === 'image') expect(f.nodes(node).find(value => value.type === 'Image')?.props.src).toBe(body.thumbnail);
     (preview.props.onPress as () => void)(); await flush();
     expect(f.call.mock.calls).toContainEqual(['resources.present', { lease: 'verified-contact-lease', action: 'preview' }]);
   }
@@ -279,6 +285,18 @@ test('contact Markdown supports inline raster data but cannot read relative/Host
   expect(html.nodes(htmlNode).some(value => ['resource-html-preview', 'resource-gui-preview'].includes(String(value.props.testID)))).toBe(false);
   expect(html.nodes(htmlNode).find(value => value.type === 'TextView')?.props.document).toMatchObject({ blocks: [{ type: 'codeBlock', code: '<script>unsafe()</script>' }] });
   await flush(); expect(f.call).not.toHaveBeenCalled(); expect(html.call).not.toHaveBeenCalled();
+});
+test('image retirement waits for the actual fullscreen dismissal before releasing its original lease', async () => {
+  const f = fixture({ kind: 'image', lease: 'held-original', size: 100, thumbnail: 'data:image/png;base64,YQ==' });
+  const node = f.mountContact(contactFile('photo.png', 'image/png'));
+  const preview = f.nodes(node).find(value => value.type === 'NativeContentImage')!;
+  let closed!: () => void;
+  const dismissal = new Promise<void>(resolve => { closed = resolve; });
+  (preview.props.retirementOwner as (owner: { close: () => Promise<void> }) => void)({ close: () => dismissal });
+  f.cleanups.forEach(fn => fn()); await flush();
+  expect(f.call.mock.calls).not.toContainEqual(['resources.release', { lease: 'held-original' }]);
+  closed(); await flush();
+  expect(f.call.mock.calls).toContainEqual(['resources.release', { lease: 'held-original' }]);
 });
 test('contact lifecycle cancels read IDs, releases late leases, and rejects old Host callbacks before effects', async () => {
   const f = fixture(), node = f.mountContact(contactFile()); f.refresh(node)();

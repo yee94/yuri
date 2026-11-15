@@ -158,7 +158,7 @@ import NativeShell
     private var playerStatus: NSKeyValueObservation?
     private var playbackFailureObserver: NSObjectProtocol?
     private var pendingRelease = Set<String>()
-    private var svgObservers: [String: [UUID: () -> Void]] = [:]
+    private var leaseObservers: [String: [UUID: () -> Void]] = [:]
     var makeSVGPreview: ((String, RuntimeHostScope) throws -> UIViewController)?
     private let folder: URL
     init(controller: UIViewController, capture: @escaping (RuntimeHostScope) throws -> ResourceTransport) throws {
@@ -202,22 +202,31 @@ import NativeShell
     @objc private func suspend() {
         generation += 1
         for task in reads.values { task.cancel() }
-        for key in Array(svgObservers.keys) { retireSVG(key) }
+        for key in Array(leaseObservers.keys) { retireLeaseObservers(key) }
         closePresentation(.failure(CancellationError()))
     }
-    /// Only opaque leases reach the SVG view. Contact descriptors are never paths.
-    func svgAsset(_ key: String, expectedHost: RuntimeHostScope) throws -> (url: URL, current: () -> Bool, observe: (@escaping () -> Void) -> (() -> Void)) {
-        guard let lease = leases[key], lease.kind == "svg", lease.expectedHost == expectedHost, lease.current() else { throw RuntimeHostScopeFailure.invalid }
+    /// Only opaque leases reach the image views. Contact descriptors are never paths.
+    /// The resolver returns an already verified private file plus a lease fence and
+    /// retirement observer; it has no Host read capability of its own.
+    private func imageAsset(_ key: String, kind: String, expectedHost: RuntimeHostScope) throws -> (url: URL, current: () -> Bool, observe: (@escaping () -> Void) -> (() -> Void)) {
+        guard let lease = leases[key], lease.kind == kind, lease.expectedHost == expectedHost, lease.current() else { throw RuntimeHostScopeFailure.invalid }
         let url = lease.url
         let current = { [weak self] in self?.leases[key]?.url == url && lease.current() }
         return (url, current, { [weak self] retire in
             guard let self, current() else { retire(); return {} }
-            let ticket = UUID(); self.svgObservers[key, default: [:]][ticket] = retire
-            return { [weak self] in self?.svgObservers[key]?.removeValue(forKey: ticket) }
+            let ticket = UUID(); self.leaseObservers[key, default: [:]][ticket] = retire
+            return { [weak self] in self?.leaseObservers[key]?.removeValue(forKey: ticket) }
         })
     }
-    private func retireSVG(_ key: String) {
-        let observers = svgObservers.removeValue(forKey: key) ?? [:]
+    func svgAsset(_ key: String, expectedHost: RuntimeHostScope) throws -> (url: URL, current: () -> Bool, observe: (@escaping () -> Void) -> (() -> Void)) {
+        try imageAsset(key, kind: "svg", expectedHost: expectedHost)
+    }
+    /// Raster originals never cross QuickJS: the view decodes the private lease in place.
+    func rasterAsset(_ key: String, expectedHost: RuntimeHostScope) throws -> (url: URL, current: () -> Bool, observe: (@escaping () -> Void) -> (() -> Void)) {
+        try imageAsset(key, kind: "image", expectedHost: expectedHost)
+    }
+    private func retireLeaseObservers(_ key: String) {
+        let observers = leaseObservers.removeValue(forKey: key) ?? [:]
         for retire in observers.values { retire() }
     }
     /// Copy the original bounded read once. Watcher lease adoption/release must not
@@ -262,11 +271,11 @@ import NativeShell
         return result
     }
     func close(_ key: String) {
-        retireSVG(key)
+        retireLeaseObservers(key)
         if key == presented { closePresentation(.failure(CancellationError())) }
     }
     func release(_ key: String) {
-        retireSVG(key)
+        retireLeaseObservers(key)
         if key == presented { pendingRelease.insert(key); return }
         guard let lease = leases.removeValue(forKey: key) else { return }
         lease.asset?.cancelLoading()
@@ -335,14 +344,25 @@ import NativeShell
             }
             if kind == "image" {
                 let data = response.data
-                let thumbnail = try await Task.detached(priority: .userInitiated) {
-                    guard let source = CGImageSourceCreateWithData(data as CFData, nil), let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 1024, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { throw NSError(domain: "Resources", code: 1, userInfo: [NSLocalizedDescriptionKey: "图片无法解码"]) }
-                    return UIImage(cgImage: image).jpegData(compressionQuality: 0.85)
+                let decoded = try await Task.detached(priority: .userInitiated) {
+                    guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { throw NSError(domain: "Resources", code: 1, userInfo: [NSLocalizedDescriptionKey: "图片无法解码"]) }
+                    let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+                    let pixelWidth = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
+                    let pixelHeight = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
+                    let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+                    let display = (5...8).contains(orientation) ? (width: pixelHeight, height: pixelWidth) : (width: pixelWidth, height: pixelHeight)
+                    guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 1024, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { throw NSError(domain: "Resources", code: 1, userInfo: [NSLocalizedDescriptionKey: "图片无法解码"]) }
+                    return (UIImage(cgImage: image).jpegData(compressionQuality: 0.85), display)
                 }.value
                 guard scope == generation, transport.isCurrent() else { throw CancellationError() }
-                guard let thumbnail else { throw failure("无法生成缩略图") }
+                guard let thumbnail = decoded.0 else { throw failure("无法生成缩略图") }
                 // Only a bounded, downsampled thumbnail crosses JS; original bytes stay native.
                 result["thumbnail"] = "data:image/jpeg;base64," + thumbnail.base64EncodedString()
+                // Optional intrinsic display size so a fullscreen owner can fit before decode.
+                if decoded.1.width > 0, decoded.1.height > 0 {
+                    result["width"] = decoded.1.width
+                    result["height"] = decoded.1.height
+                }
             }
             try Task.checkCancellation()
             if let contact = request.contact { try await contact.validateGeneration(current: transport.isCurrent, read: transport.read) }

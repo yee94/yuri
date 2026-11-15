@@ -31,7 +31,7 @@ function productionSources(directory = root): string[] {
 }
 function textViews(file: string) {
   const source = ts.createSourceFile(file, readFileSync(path.join(root, file), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const names = new Set(['TextView']);
+  const names = new Set(['TextView', 'NativeMessageText']);
   for (const statement of source.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== 'nsh/base') continue;
     const bindings = statement.importClause?.namedBindings;
@@ -52,14 +52,18 @@ function textViews(file: string) {
     // Render the actual production JSX props only. Components, lifecycle, routes,
     // event handlers and transport are never mounted or invoked by this harness.
     return (richMode = false, role: 'user' | 'assistant' = 'assistant') => new Script(code).runInNewContext({
-      TextView: 'TextView', h: (_type: unknown, props: Record<string, unknown>) => props,
+      TextView: 'TextView', NativeMessageText: 'TextView', h: (_type: unknown, props: Record<string, unknown>) => props,
       nativeCodeTextViewStyles, nativeChatTextStyle, nativeTranscriptMarkdownStyles,
       text: (value: unknown) => String(value ?? ''), record: (value: unknown) => value ?? {}, t: (key: string) => key,
       task: () => ({ execution: { prompt: 'task `inline`\n```ts\nconst task = 1\n```' } }),
       turn: () => ({ answer: 'BTW `inline`\n```ts\nconst btw = 1\n```' }),
       props: { card: { summary: 'summary `inline`', error: {} }, job: { id: 'job-fixture', status: 'failed' },
         part: { key: 'part-fixture', source: { type: 'text', text: 'body `inline`\n```ts\nconst body = 1\n```' } },
-        value: 'literal tool `output`', content: 'thought `inline`\n```ts\nconst thought = 1\n```' },
+        value: 'literal tool `output`', content: 'thought `inline`\n```ts\nconst thought = 1\n```',
+        body: { row: { messages: [] }, current: () => true, target: { kind: 'session', id: 's', directory: '/work' } },
+        styles: nativeCodeTextViewStyles(), selectable: true },
+      document: () => undefined, referenceContext: () => ({}), nativeMessageReferenceContext: () => ({}), renderImage: () => null,
+      contactStyles: () => nativeTranscriptMarkdownStyles(role), assistantContactTextStyle: () => nativeChatTextStyle(role), seed: () => '',
       route: { content: '# README\n```ts\nconst readme = 1\n```' },
       expanded: () => true, failure: () => ({ error: 'error first\nerror second\nerror third' }),
       content: () => file === 'resources.tsx' ? { text: 'resource `inline`\n```ts\nconst resource = 1\n```' } : 'content `inline`\n```ts\nconst content = 1\n```',
@@ -92,7 +96,7 @@ it('discovers every production TextView, including import aliases, and explicitl
   expect(Object.fromEntries(codeConsumers.map(({ file, renders }) => [file, renders.length]))).toEqual({
     'application.tsx': 3, 'chat-btw.tsx': 1, 'history-import.tsx': 1, 'resources.tsx': 1, 'schedules.tsx': 1, 'settings-archive.tsx': 2,
     'settings-collections.tsx': 1, 'settings-plugin-runtime.tsx': 1, 'settings-skill-files.tsx': 1,
-    'setup-tour.tsx': 1, 'transcript-body.tsx': 4, 'transcript-tools.tsx': 2,
+    'setup-tour.tsx': 1, 'transcript-body.tsx': 5, 'transcript-tools.tsx': 2, 'message-text.tsx': 1,
   });
   expect(textViews('settings-voice-test.tsx')).toHaveLength(1);
 });

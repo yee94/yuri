@@ -124,7 +124,7 @@ export async function stageNativeApplication({ root, workspaceRoot = repository,
       if (/\.[cm]?[jt]sx?$/.test(relative)) for (const specifier of runtimeImports(bytes.toString('utf8'), relative)) {
         if (native(specifier)) continue;
         if (specifier.startsWith('.')) queue.push(await resolveSource(absolute, specifier));
-        else if (specifier.startsWith('@/')) throw new Error('Unresolved alias in native runtime source');
+        else if (specifier.startsWith('@/')) throw new Error(`Unresolved alias in native runtime source: ${relative}: ${specifier}`);
         else pendingPackages.push(await installedPackage(specifier, absolute));
       }
     }

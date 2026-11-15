@@ -6,6 +6,8 @@ import { runtimeScopeFrom, sameRuntimeScope, type RuntimeScope } from './runtime
 import { bindContactAttachmentRead, bindResourceRead, bindResourceStat } from './resources-request';
 import { createResourceWatcher } from './resources-watcher';
 import { ResourceSVGImage } from './resource-svg';
+import { ResourceRasterPresentation } from './resource-raster-presentation';
+import { NativeContentImage } from './native-image-preview';
 import { Icon } from './Icon';
 import { ResourceHtmlViewer } from './resource-html-viewer';
 import { ResourceHTMLView, ResourceHTMLPresentationAnchor } from './resource-html-native';
@@ -156,6 +158,7 @@ function ResourcePreviewOwner(props: ResourcePreviewOwnerProps) {
   const content = signal<ResourceContent | null>(null), busy = signal(false), error = signal(''), source = signal(false);
   let cleanupLease = content()?.lease;
   const viewerOwner = id(), guiResolution = signal<ResourceHtmlGui>('preparing'), presenterReady = signal('');
+  let imageViewer: { close: () => Promise<void> } | undefined;
   let htmlController: ResourceHtmlViewerController | undefined;
   const presentationKey = (owner?: ResourceHtmlDialog) => owner ? `${viewerOwner}_${owner.generation}` : undefined;
   const html = () => !!fs() && /\.html?$/i.test(name());
@@ -170,7 +173,8 @@ function ResourcePreviewOwner(props: ResourcePreviewOwnerProps) {
   }
   const fence = resourceFence(epoch);
   let disposed = false, readAuthority = true, retirement: Promise<void> | undefined, retired = false;
-  const active = () => !disposed && readAuthority && generation === epoch() && sameRuntimeScope(expectedHost, app.runtimeScope()) && (props.kind === 'contact' ? props.active === true : props.active !== false) && lifecycle() === 'active';
+  const mediaActive = signal(true);
+  const active = () => !disposed && readAuthority && mediaActive() && generation === epoch() && sameRuntimeScope(expectedHost, app.runtimeScope()) && (props.kind === 'contact' ? props.active === true : props.active !== false) && lifecycle() === 'active';
   const connection = app.connection();
   const appearanceScope = connection ? Object.freeze({ hostID: connection.id, generation, url: connection.url }) : null;
   const guiState = signal<ResourceGuiState>({ preparing: false, matched: false, failed: false });
@@ -199,11 +203,11 @@ function ResourcePreviewOwner(props: ResourcePreviewOwnerProps) {
   function retire(): Promise<void> {
     if (retired) return Promise.resolve();
     if (retirement) return retirement;
-    readAuthority = false; watcher?.dispose(); fence.cancel(); cancelRead();
+    readAuthority = false; if (!disposed) mediaActive.set(false); watcher?.dispose(); fence.cancel(); cancelRead();
     if (!disposed) busy.set(false);
     const lease = cleanupLease;
     retirement = Promise.resolve().then(async () => {
-      await Promise.all([gui?.dispose(), webPreview?.close(), htmlController?.dispose(), lease ? native('resources.close', { lease }) : undefined]);
+      await Promise.all([gui?.dispose(), webPreview?.close(), htmlController?.dispose(), imageViewer?.close(), lease ? native('resources.close', { lease }) : undefined]);
       if (lease) await native('resources.release', { lease });
       cleanupLease = undefined; retired = true;
     }).catch(cause => { if (!disposed) error.set(String(cause)); throw cause; }).finally(() => { retirement = undefined; });
@@ -328,11 +332,18 @@ function ResourcePreviewOwner(props: ResourcePreviewOwnerProps) {
   const previewUnavailable = () => {
     const value = content();
     if (!value || contentSource !== sourceKey() || guiState().matched) return false;
-    // Text/source (including HTML) and SVG have their own display/error owners.
+    // Text/source (including HTML), SVG and raster images have their own display/error owners.
     // The generic native presenter capability does not describe those renderers.
-    if (value.kind === 'text' || value.kind === 'svg') return false;
+    if (value.kind === 'text' || value.kind === 'svg' || value.kind === 'image') return false;
     return value.kind === 'binary' || value.preview === 'unsupported';
   };
+  const rasterRenderer = computed(() => {
+    const value = content();
+    if (!value || value.kind !== 'image') return undefined;
+    return (fullscreen: boolean) => fullscreen
+      ? <ResourceRasterPresentation config={{ lease: value.lease, expectedHost, active: active() && content()?.lease === value.lease }} />
+      : <Image class="w-full h-full" style={{ objectFit: 'contain' }} src={value.thumbnail} />;
+  });
   return <View class="flex-1 gap-3">
     <Text class="text-lg font-semibold text-foreground">{name()}</Text>
     <If when={!html()}>{actions()}{status()}{renderSource()}</If>
@@ -353,7 +364,8 @@ function ResourcePreviewOwner(props: ResourcePreviewOwnerProps) {
           const config = Object.freeze({ owner: mount.owner, expectedHost, directory: file.directory, path: file.path, lease: original.lease, ...(key ? { presentationOwner: key } : {}) });
           return <ResourceHTMLView testID="resource-html-native" class="flex-1" config={config} onFailed={event => htmlController?.previewFailed(event.owner)} />;
         }} />
-    {content()?.kind === 'image' ? <Button class="flex-1" disabled={busy() || !resourceCanPreview(content()!)} onPress={() => void perform('preview')}><Image class="w-full h-64" src={content()?.thumbnail} /><Text class="text-foreground">{t('mobile.files.html.fullscreenAria')}</Text></Button> : null}
+    {content()?.kind === 'image' ? <NativeContentImage src={content()?.thumbnail ?? ''} label={name()} active={active() && contentSource === sourceKey()} current={active}
+      width={content()?.width} height={content()?.height} renderImage={rasterRenderer()} retirementOwner={owner => { imageViewer = owner; }} /> : null}
     {content()?.kind === 'svg' ? <View class="flex-1 gap-3"><ResourceSVGImage testID="resource-svg-image" class="w-full h-64" config={{ lease: content()!.lease, expectedHost, active: active() && contentSource === sourceKey() }} /><If when={resourceCanPreview(content()!)}><Button testID="resource-svg-preview" class={action} disabled={busy()} onPress={() => void perform('preview')}><Text class="text-foreground">{t('mobile.files.html.fullscreenAria')}</Text></Button></If></View> : null}
     {content() && ['pdf', 'video', 'audio'].includes(content()!.kind) && resourceCanPreview(content()!) ? <Button testID="resource-media-preview" class={action} disabled={busy()} onPress={() => void perform('preview')}><Text class="text-foreground">{t('mobile.files.html.viewPreviewAria')}</Text></Button> : null}
     {previewUnavailable() ? <Text testID="resource-preview-unavailable" class="text-muted-foreground">{t('mobile.files.error.readUnavailable')}</Text> : null}

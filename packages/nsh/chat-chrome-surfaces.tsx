@@ -2,6 +2,7 @@ import { signal, View, type JSX } from 'nsh';
 import type { ChatChromeState } from './chat-chrome';
 import { nativeComposerSurface } from './composer-surface';
 import { nativeDensity } from './appearance';
+import { glassEdge } from './glass-surface';
 
 /** Keep the expanded footprint: chrome motion must not resize the inverted List. */
 export function NativeComposerChrome(props: { state: ChatChromeState; bottom: number; children: JSX.Element; compact: JSX.Element; onHeight?: (height: number) => void }) {
@@ -16,7 +17,7 @@ export function NativeComposerChrome(props: { state: ChatChromeState; bottom: nu
       {props.children}
     </View>
     <View testID="chat-composer-compact" accessibilityElementsHidden={props.state.swap.progress < 1}
-      class="flex-row items-center gap-1 px-2" style={{ ...nativeComposerSurface, ...nativeDensity().chat.compact, position: 'absolute', left: '10%', width: '80%', height: 44, bottom: props.bottom, opacity: compact(), transform: [{ translateY: (1 - compact()) * 62 }], pointerEvents: props.state.swap.progress >= 1 ? 'auto' : 'none', transitionProperty: 'all', transitionDuration: duration() }}>
+      class="flex-row items-center gap-1 px-2" style={{ ...nativeComposerSurface, ...glassEdge(), ...nativeDensity().chat.compact, position: 'absolute', left: '10%', width: '80%', height: 44, bottom: props.bottom, opacity: compact(), transform: [{ translateY: (1 - compact()) * 62 }], pointerEvents: props.state.swap.progress >= 1 ? 'auto' : 'none', transitionProperty: 'all', transitionDuration: duration() }}>
       {props.compact}
     </View>
   </View>;

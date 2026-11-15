@@ -326,8 +326,12 @@ describe('application stable display and replaceable operation owners (no engine
     const native = async (name: string, body: Record<string, unknown>) => {
       nativeCalls.push({ name, body });
       if (name === 'runtime.pickAttachment') return pick.promise;
-      if (name === 'runtime.cancelAttachment' && Object.keys(body).sort().join(',') === 'expectedHost,requestId'
+      if (name === 'runtime.cancelAttachment' && Object.keys(body).sort().join(',') === (kind === 'assistant' ? 'assistantID,expectedHost,requestId' : 'expectedHost,requestId')
+        && (kind !== 'assistant' || body.assistantID === route.target.id)
         && body.requestId === nativeCalls[0].body.requestId && JSON.stringify(body.expectedHost) === JSON.stringify(nativeCalls[0].body.expectedHost)) return true;
+      if (name === 'runtime.acknowledgeAttachment' && kind === 'assistant' && body.descriptor === rawAttachment
+        && body.requestId === nativeCalls.filter(call => call.name === 'runtime.pickAttachment').at(-1)!.body.requestId
+        && JSON.stringify(body.expectedHost) === JSON.stringify(nativeCalls[0].body.expectedHost)) return true;
       throw new Error('unexpected_native:' + name);
     };
     const historyFactory = vi.fn(() => ({ props: () => ({}), Indicator: () => null,
@@ -410,11 +414,13 @@ describe('application stable display and replaceable operation owners (no engine
     expect(createChat).toHaveBeenCalledTimes(1); expect(mounted.chat).toBe(chat); expect(chat.visibleMessages()).toBe(messages);
     expect(mounted.bodyRows()).toBe(rows); expect(mounted.transcriptRef()).toBe(ref); expect(mounted.inputMode()).toBe('shell');
     expect(mounted.activityChoices()).toBe(choices); expect(mounted.headerSelection()).toBe(selection); expect(draft()).toBe('unsent selection'); expect(attachments()).toEqual([]);
-    expect(nativeCalls.map(call => call.name)).toEqual(['runtime.pickAttachment', 'runtime.cancelAttachment']);
+    expect(nativeCalls.map(call => call.name)).toEqual(['runtime.pickAttachment', 'runtime.cancelAttachment', 'runtime.cancelAttachment']);
     expect(nativeCalls[0].body).toMatchObject({ kind: 'files', expectedHost: { hostID: 'A', lease: 'lease-a' } });
     expect(Object.keys(nativeCalls[0].body).sort()).toEqual(kind === 'assistant' ? ['assistantID', 'expectedHost', 'kind', 'requestId'] : ['expectedHost', 'kind', 'requestId']);
     if (kind === 'assistant') expect(nativeCalls[0].body.assistantID).toBe('actual-bot');
-    expect(nativeCalls[1].body).toEqual({ requestId: nativeCalls[0].body.requestId, expectedHost: { hostID: 'A', lease: 'lease-a' } });
+    const cancelled = { requestId: nativeCalls[0].body.requestId, expectedHost: { hostID: 'A', lease: 'lease-a' }, ...(kind === 'assistant' ? { assistantID: route.target.id } : {}) };
+    expect(nativeCalls[1].body).toEqual(cancelled);
+    expect(nativeCalls[2].body).toEqual(cancelled);
     expect(attachmentSelections[0].adopt).not.toHaveBeenCalled(); expect(attachmentSelections[0].retire).toHaveBeenCalledTimes(1);
     expect(historyFactory.mock.calls[0][0].operation).toBe(mounted.operations.operation);
     expect(speechFactory.mock.calls[0][0].operation).toBe(mounted.operations.operation);
@@ -425,7 +431,7 @@ describe('application stable display and replaceable operation owners (no engine
     expect(attachmentSelections[1].adopt).toHaveBeenCalledExactlyOnceWith(rawAttachment);
     expect(attachmentSelections[1].retire).toHaveBeenCalledTimes(1);
     expect(attachments()).toEqual([rawAttachment]);
-    expect(nativeCalls[2].body.requestId).not.toBe(nativeCalls[0].body.requestId);
+    expect(nativeCalls.filter(call => call.name === 'runtime.pickAttachment').at(-1)!.body.requestId).not.toBe(nativeCalls[0].body.requestId);
     const nativeCount = nativeCalls.length, capture = captureAttachment.getMockImplementation()!;
     captureAttachment.mockImplementationOnce(() => ({ ...capture(), expectedHost: { hostID: 'A', lease: 'different-lease' } }));
     await mounted.attach('files');

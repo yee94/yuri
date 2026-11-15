@@ -40,6 +40,7 @@ import NativeShell
         guard let bar, Self.writers.object(forKey: bar) === self else { return }
         bar.layer.removeAllAnimations()
         bar.transform = .identity; bar.alpha = 1
+        NativeChatHeaderFade.mirror(bar: bar, progress: 0)
         bar.isUserInteractionEnabled = true; bar.accessibilityElementsHidden = false
         Self.writers.removeObject(forKey: bar); applied = nil
     }
@@ -59,6 +60,7 @@ import NativeShell
         let changes = {
             bar.transform = CGAffineTransform(translationX: 0, y: -(bar.bounds.height + 32) * progress)
             bar.alpha = 1 - progress
+            NativeChatHeaderFade.mirror(bar: bar, progress: progress)
         }
         bar.isUserInteractionEnabled = progress == 0
         bar.accessibilityElementsHidden = progress >= 1

@@ -67,7 +67,7 @@ it('bundles the new UI helper through only the shared pure modules, with no Reac
     const modules = JSON.parse(readFileSync(metafile, 'utf8')).inputs as Record<string, { imports: { original?: string; external?: boolean }[] }>;
     expect(Object.keys(modules).sort()).toEqual([
       'packages/nsh/chat-models-helpers.ts', 'packages/nsh/model.ts', 'packages/nsh/new-session-ui-helpers.ts',
-      'packages/ui/src/components/chat/mobileControlsUtils.ts', 'packages/ui/src/lib/draftStarters.ts', 'packages/ui/src/lib/modelDisplay.ts', 'packages/ui/src/lib/projectId.ts', 'packages/ui/src/lib/search/modelSearch.ts',
+      'packages/ui/src/components/chat/mobileControlsUtils.ts', 'packages/ui/src/lib/draftStarters.ts', 'packages/ui/src/lib/modelDisplay.ts', 'packages/ui/src/lib/modelIdentifier.ts', 'packages/ui/src/lib/projectId.ts', 'packages/ui/src/lib/search/modelSearch.ts',
     ]);
     expect(modules['packages/ui/src/lib/draftStarters.ts'].imports).toEqual([]);
     expect(modules['packages/ui/src/lib/projectId.ts'].imports).toEqual([]);
@@ -114,6 +114,11 @@ describe('Agent and favorite selection contracts', () => {
     expect(native.agentDraftSelection(selection, 'plan', agents, [])).toEqual({ ...selection, agent: 'plan' });
     expect(native.agentDraftSelection({}, 'build', agents, providers)).toEqual({ agent: 'build' });
   });
+  it('resolves the Web default cascade for an empty draft: settings, build, pinned model, first model', () => {
+    expect(native.defaultDraftSelection(agents, providers, { defaultAgent: 'plan', defaultModel: 'p/current#high' })).toEqual({ agent: 'plan', model: { providerID: 'p', id: 'current', variant: 'high' } });
+    expect(native.defaultDraftSelection(agents, providers, {})).toEqual({ agent: 'build', model: { providerID: 'p', id: 'pinned' } });
+    expect(native.defaultDraftSelection([], [], {})).toEqual({});
+  });
   it('cycles once on short press; opens after 500ms with no extra cycle on release', () => {
     vi.useFakeTimers(); const cycle = vi.fn(), open = vi.fn();
     const press = native.createAgentPress({ enabled: () => true, cycle, open, schedule: work => setTimeout(work, 500), cancelTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>) });
@@ -132,6 +137,31 @@ describe('Agent and favorite selection contracts', () => {
     expect(patch).toEqual({ favoriteModels: [{ providerID: 'p', modelID: 'current', variant: 'high' }, { providerID: 'other', modelID: 'x' }] });
     expect(native.favoriteDraftPatch({ ...settings, ...patch }, { providerID: 'p', modelID: 'current' }, selection)).toEqual({ favoriteModels: [{ providerID: 'other', modelID: 'x' }] });
     expect(settings.recentModels[0].variant).toBe('low'); expect(selection.model.id).toBe('current');
+  });
+  it('default cascade follows Web: opencode config, recent pick, big-pickle, and only then the first model', () => {
+    const agents = [{ name: 'build', mode: 'primary' }, { name: 'plan', mode: 'primary' }];
+    const providers = [{ id: 'beam', models: { 'beam-free': { id: 'beam-free' } } }, { id: 'opencode', models: { 'big-pickle': { id: 'big-pickle' } } }, { id: 'p', models: { mine: { id: 'mine' } } }];
+    expect(native.defaultDraftSelection(agents, providers, {}, { defaultAgent: 'plan', defaultModel: 'p/mine' })).toEqual({ agent: 'plan', model: { providerID: 'p', id: 'mine' } });
+    expect(native.defaultDraftSelection(agents, providers, { recentModels: [{ providerID: 'gone', modelID: 'x' }, { providerID: 'p', modelID: 'mine' }] })).toEqual({ agent: 'build', model: { providerID: 'p', id: 'mine' } });
+    expect(native.defaultDraftSelection(agents, providers, {})).toEqual({ agent: 'build', model: { providerID: 'opencode', id: 'big-pickle' } });
+    expect(native.defaultDraftSelection(agents, [providers[0]], {})).toEqual({ agent: 'build', model: { providerID: 'beam', id: 'beam-free' } });
+  });
+  it('draftModelLabel shows the catalog display name and falls back to the id until the catalog loads', () => {
+    const providers = [{ id: 'p', models: { m1: { id: 'm1', name: 'Model One' } } }];
+    expect(native.draftModelLabel(providers, { providerID: 'p', id: 'm1' })).toBe('Model One');
+    expect(native.draftModelLabel([], { providerID: 'p', id: 'm1' })).toBe('m1');
+    expect(native.draftModelLabel(providers, undefined)).toBe('');
+  });
+  it('agents are keyed by the wire id; the display label never reaches selection and legacy labels resolve', () => {
+    const rows = [{ id: 'plan', name: 'Plan', mode: 'primary' }, { id: 'build', name: 'Build', mode: 'primary' }].map(native.projectDraftAgent);
+    expect(rows.map(row => [row.name, row.displayName])).toEqual([['plan', 'Plan'], ['build', 'Build']]);
+    expect(native.projectDraftAgent(rows[0]!)).toEqual(rows[0]);
+    expect(native.findDraftAgent(rows, 'Plan')?.name).toBe('plan');
+    expect(native.findDraftAgent(rows, 'plan')?.name).toBe('plan');
+    expect(native.findDraftAgent(rows, 'missing')).toBeUndefined();
+    expect(native.defaultDraftSelection(rows, [], {}).agent).toBe('build');
+    expect(native.defaultDraftSelection(rows, [], { defaultAgent: 'Plan' }).agent).toBe('plan');
+    expect(native.draftAgentLabel(rows[1]!)).toBe('Build');
   });
   it('non-selected favorites preserve remembered recent variants rather than copying the current model effort', () => {
     expect(native.favoriteDraftPatch({ recentModels: [{ providerID: 'p', modelID: 'remembered', variant: 'low' }] }, { providerID: 'p', modelID: 'remembered' }, selection)).toEqual({ favoriteModels: [{ providerID: 'p', modelID: 'remembered', variant: 'low' }] });

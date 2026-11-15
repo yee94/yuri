@@ -242,7 +242,7 @@ public final class ResourceBridge {
     private final Map<String, CompletableFuture<?>> reads = new HashMap<>();
     private final Map<String, String> requests = new HashMap<>();
     private final Map<String, Presenter> presenters = new HashMap<>();
-    private final Map<String, Map<String, Runnable>> svgObservers = new HashMap<>();
+    private final Map<String, Map<String, Runnable>> leaseObservers = new HashMap<>();
     private int generation = 0;
     private String presented;
     private CompletableFuture<Object> completion;
@@ -286,7 +286,7 @@ public final class ResourceBridge {
                 reply.resolve(true);
                 return;
             }
-            // close() retires this exact presentation; the SVG watcher is retired by release.
+            // close() retires this exact presentation; image lease observers retire by release.
             if (key.equals(presented) && completion != null) closePresentation();
             reply.resolve(true);
         });
@@ -305,7 +305,7 @@ public final class ResourceBridge {
     private void suspend() {
         generation += 1;
         for (CompletableFuture<?> read : new ArrayList<>(reads.values())) read.cancel(true);
-        for (String key : new ArrayList<>(svgObservers.keySet())) retireSVG(key);
+        for (String key : new ArrayList<>(leaseObservers.keySet())) retireLeaseObservers(key);
         closePresentation();
     }
 
@@ -561,7 +561,12 @@ public final class ResourceBridge {
             }
             ImageView view = new ImageView(activity);
             view.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            view.setImageBitmap(BitmapFactory.decodeFile(lease.file.getAbsolutePath()));
+            // Decode the private original with the shared bounded sampler, never full size.
+            try {
+                view.setImageBitmap(ResourceRasterImageComponent.decode(lease.file).bitmap);
+            } catch (IOException undecodable) {
+                return message("无法显示此图片；可保存或分享原文件");
+            }
             return view;
         }
         if ("video".equals(lease.kind) || "audio".equals(lease.kind)) {
@@ -649,7 +654,7 @@ public final class ResourceBridge {
     // ------------------------------------------------------------- lease surface
 
     void release(String key) {
-        retireSVG(key);
+        retireLeaseObservers(key);
         if (key.equals(presented)) {
             pendingRelease.add(key);
             return;
@@ -661,33 +666,52 @@ public final class ResourceBridge {
     }
 
     /**
-     * Only opaque local leases reach the SVG view; contact descriptors never do.
+     * Only opaque local leases reach an image view; contact descriptors never do.
      * The resolver has no Host request capability of its own.
      */
     ResourceSVGImageComponent.Resolve svgResolver() {
         return new ResourceSVGImageComponent.Resolve() {
             @Override public ResourceSVGImageComponent.Asset resolve(String key, RuntimeHostScope expectedHost) throws Exception {
-                Lease lease;
-                synchronized (ResourceBridge.this) { lease = held.get(key); }
-                if (lease == null || !"svg".equals(lease.kind) || !lease.expectedHost.equals(expectedHost) || !lease.current()) {
-                    throw ResourceFailure.invalid();
-                }
+                Lease lease = imageLease(key, "svg", expectedHost);
                 return new ResourceSVGImageComponent.Asset(lease.file, lease.transport, null);
             }
 
             @Override public Runnable observe(String key, Runnable retire) {
-                return observeSvg(key, retire);
+                return observeLease(key, retire);
             }
         };
     }
 
-    Runnable observeSvg(String key, Runnable retire) {
+    /** Raster originals never cross QuickJS: the view decodes the private lease in place. */
+    ResourceRasterImageComponent.Resolve rasterResolver() {
+        return new ResourceRasterImageComponent.Resolve() {
+            @Override public ResourceRasterImageComponent.Asset resolve(String key, RuntimeHostScope expectedHost) throws Exception {
+                Lease lease = imageLease(key, "image", expectedHost);
+                return new ResourceRasterImageComponent.Asset(lease.file, lease.transport, null);
+            }
+
+            @Override public Runnable observe(String key, Runnable retire) {
+                return observeLease(key, retire);
+            }
+        };
+    }
+
+    private Lease imageLease(String key, String kind, RuntimeHostScope expectedHost) throws ResourceFailure {
+        Lease lease;
+        synchronized (this) { lease = held.get(key); }
+        if (lease == null || !kind.equals(lease.kind) || !lease.expectedHost.equals(expectedHost) || !lease.current()) {
+            throw ResourceFailure.invalid();
+        }
+        return lease;
+    }
+
+    Runnable observeLease(String key, Runnable retire) {
         final Map<String, Runnable> observers;
         synchronized (this) {
-            Map<String, Runnable> existing = svgObservers.get(key);
+            Map<String, Runnable> existing = leaseObservers.get(key);
             if (existing == null) {
                 existing = new HashMap<>();
-                svgObservers.put(key, existing);
+                leaseObservers.put(key, existing);
             }
             observers = existing;
         }
@@ -698,9 +722,9 @@ public final class ResourceBridge {
         };
     }
 
-    private void retireSVG(String key) {
+    private void retireLeaseObservers(String key) {
         Map<String, Runnable> observers;
-        synchronized (this) { observers = svgObservers.remove(key); }
+        synchronized (this) { observers = leaseObservers.remove(key); }
         if (observers == null) return;
         List<Runnable> copy;
         synchronized (observers) { copy = new ArrayList<>(observers.values()); }
@@ -864,6 +888,12 @@ public final class ResourceBridge {
                 String thumbnail = thumbnail(file);
                 if (thumbnail == null) throw new ResourceFailure("response", "无法生成缩略图");
                 result.put("thumbnail", thumbnail);
+                // Optional intrinsic display size so a fullscreen owner can fit before decode.
+                int[] display = ResourceRasterImageComponent.readDisplaySize(file);
+                if (display != null && display[0] > 0 && display[1] > 0) {
+                    result.put("width", display[0]);
+                    result.put("height", display[1]);
+                }
             }
             if (request.contact != null) request.contact.validateGeneration(transport);
             if (scope != generation || !transport.isCurrent()) throw new ResourceFailure("cancelled");

@@ -296,7 +296,9 @@ enum ResourceSVGImageDocument {
     }
 }
 
-struct ResourceSVGImageRequest: Equatable {
+/// Strict opaque lease config shared by the SVG and raster image surfaces. No
+/// path, base64 original or Host request capability can be expressed here.
+struct ResourceImageRequest: Equatable {
     let lease: String
     let expectedHost: RuntimeHostScope
     let active: Bool
@@ -308,13 +310,15 @@ struct ResourceSVGImageRequest: Equatable {
     }
 }
 
-/// Shared by pure state tests and UIKit's asynchronous rules/local-byte preparation.
-struct ResourceSVGImageLifetime {
-    private(set) var request: ResourceSVGImageRequest?
+typealias ResourceSVGImageRequest = ResourceImageRequest
+
+/// Shared by pure state tests and UIKit's asynchronous preparation.
+struct ResourceImageLifetime {
+    private(set) var request: ResourceImageRequest?
     private(set) var generation = 0
     private(set) var retired = false
     mutating func update(_ value: Any?) -> Bool {
-        let next = try? ResourceSVGImageRequest(value)
+        let next = try? ResourceImageRequest(value)
         guard next != request else { return false }
         request = next; retired = false; generation += 1; return true
     }
@@ -322,6 +326,8 @@ struct ResourceSVGImageLifetime {
     mutating func retire() { retired = true; stop() }
     func accepts(_ ticket: Int) -> Bool { ticket == generation && request?.active == true && !retired }
 }
+
+typealias ResourceSVGImageLifetime = ResourceImageLifetime
 
 struct ResourceSVGImagePresentation {
     enum Phase { case stopped, loading, decoding, ready, failed, expired }

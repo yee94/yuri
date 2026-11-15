@@ -2,6 +2,20 @@
 export const newSessionUIEntry = 'new-session-fixture.tsx';
 export const newSessionUIHost = 'tests/new-session-host.js';
 export const newSessionUIScenarios = {
+  attachments: [
+    'await app.press("id:new-session-fixture-open");',
+    'await app.waitFor("id:new-session-composer");',
+    'await app.type("id:new-session-composer", "Keep this local attachment draft");',
+    'app.onDialog(() => "Attach photos");',
+    'await app.press("id:new-session-attach");',
+    'await app.waitFor("text:fixture-note.txt");',
+    'await app.waitUntil(() => app.enabled("id:new-session-attach"));',
+    'expect(app.value("id:new-session-composer")).toBe("Keep this local attachment draft");',
+    'await app.back();',
+    'await app.press("id:new-session-fixture-open");',
+    'await app.waitFor("text:fixture-note.txt");',
+    'expect(app.value("id:new-session-composer")).toBe("Keep this local attachment draft");',
+  ],
   localDraft: [
     'await app.press("id:new-session-fixture-open");',
     'await app.waitFor("id:new-session-composer");',

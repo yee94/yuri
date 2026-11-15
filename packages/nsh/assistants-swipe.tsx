@@ -3,6 +3,7 @@ import { Button } from 'nsh/base';
 import { Icon } from './Icon';
 import { t } from './i18n';
 import { createAssistantSwipe } from './assistants-swipe-core';
+import { assistantPanelShadow, assistantPanelStyle } from './assistants-workspace';
 
 export function AssistantSwipeRow(props: {
   binding: unknown;
@@ -68,18 +69,20 @@ export function AssistantSwipeRow(props: {
     onPanResponderTerminationRequest: () => true,
     onShouldBlockNativeResponder: () => current() && !props.pinned,
   });
-  return <View class={props.pinned ? 'w-28 items-center gap-1 pt-1 pb-3' : 'overflow-hidden rounded-3xl border border-border'} testID={`assistant-row-${props.id}`} accessible role="button" accessibilityLabel={props.name} accessibilityState={{ disabled: props.disabled }} accessibilityActions={[{ name: 'activate' }, { name: 'menu', label: t('chat.timeline.actions.title') }]} onAccessibilityAction={accessibilityAction()}>
+  return <View class={props.pinned ? 'w-28 items-center gap-1 pt-1 pb-3' : 'rounded-[20px]'} style={props.pinned ? { alignSelf: 'center' } : { ...assistantPanelStyle(), boxShadow: assistantPanelShadow() }} testID={`assistant-row-${props.id}`} accessible role="button" accessibilityLabel={props.name} accessibilityState={{ disabled: props.disabled }} accessibilityActions={[{ name: 'activate' }, { name: 'menu', label: t('chat.timeline.actions.title') }]} onAccessibilityAction={accessibilityAction()}>
+    <View class={props.pinned ? 'w-full' : 'overflow-hidden rounded-[20px]'}>
     <If when={offset() < 0 && !props.pinned}>
       <View class="absolute right-0 top-0 bottom-0 flex-row" style={{ width: 128 }}>
         <Button testID={`assistant-swipe-edit-${props.id}`} class="flex-1 bg-secondary items-center justify-center gap-1" disabled={props.disabled} onPress={press(() => { if (props.pinned) return; touching = false; swipe.close(); props.onEdit(); })}><Icon name="edit" size={18} /><Text class="text-xs text-foreground">{t('assistants.menu.edit')}</Text></Button>
         <Button testID={`assistant-swipe-delete-${props.id}`} class="flex-1 bg-muted items-center justify-center gap-1" disabled={props.disabled} onPress={press(() => { if (props.pinned) return; touching = false; swipe.close(); props.onDelete(); })}><Icon name="delete-bin" size={18} /><Text class="text-xs text-destructive">{t('assistants.settings.delete')}</Text></Button>
       </View>
     </If>
-    <View {...pan.panHandlers} class={props.pinned ? 'items-center gap-1' : 'flex-row items-center bg-card min-h-19 px-4 py-3 gap-3'} style={{ transform: [{ translateX: offset() }] }}>
+    <View {...pan.panHandlers} class={props.pinned ? 'items-center gap-1' : 'flex-row items-center min-h-20 px-3 py-3.5 gap-3'} style={{ ...(props.pinned ? {} : assistantPanelStyle()), transform: [{ translateX: offset() }] }}>
       <View testID={`assistant-open-${props.id}`} class={props.pinned ? 'items-center gap-2 flex-1' : 'flex-row items-center gap-3 flex-1'} role="button" disabled={props.disabled} accessibilityLabel={props.name} onLongPress={press(() => { if (!touching || panned) return; swipe.suppress(); props.onMenu(); })} onPress={press(() => {
         const select = swipe.select(); touching = false;
         if (select) props.onOpen();
       })}>{props.children}</View>
+    </View>
     </View>
   </View>;
 }

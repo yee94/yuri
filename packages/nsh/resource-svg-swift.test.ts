@@ -34,7 +34,7 @@ extension NshComponent { public func setProp(_ name: String, _ value: Any?) {} }
  public func register(component: String, factory: @escaping @MainActor (NshComponentContext) -> any NshComponent) {}
 }`);
     run(['swiftc', ...flags, '-emit-module', '-module-name', 'NativeShell', stub, '-emit-module-path', path.join(temp, 'NativeShell.swiftmodule')]);
-    run(['swiftc', ...flags, '-I', temp, '-typecheck', ...['ios/RuntimeHostScope.swift', 'ios/ResourceBridge.swift', 'ios/ResourceWebPreviewBridge.swift', 'ios/ResourceWebPreviewView.swift', 'ios/ResourceSVGImageComponent.swift', 'tests/resource-svg-image/probe-request.swift', 'tests/resource-svg-image/uikit-main.swift'].map(file => path.join(root, file))]);
+    run(['swiftc', ...flags, '-I', temp, '-typecheck', ...['ios/RuntimeHostScope.swift', 'ios/ResourceBridge.swift', 'ios/ResourceWebPreviewBridge.swift', 'ios/ResourceWebPreviewView.swift', 'ios/ResourceSVGImageComponent.swift', 'ios/ResourceRasterImage.swift', 'ios/ResourceRasterImageComponent.swift', 'tests/resource-svg-image/probe-request.swift', 'tests/resource-svg-image/uikit-main.swift'].map(file => path.join(root, file))]);
     const dispatch = path.join(temp, 'BaseDispatch.swift');
     writeFileSync(dispatch, `import Foundation
 import WebKit

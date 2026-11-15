@@ -12,6 +12,15 @@ const deferred = <T>() => { let resolve!: (value: T) => void; const promise = ne
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
 describe('Host-authoritative native appearance mapping', () => {
+  it('resolves the indent rail as Web --tools-border at the rail opacity 0.4, falling back to the interactive border at 0.3', () => {
+    const theme = structuredClone(getThemeById('jetbrains-dark')!);
+    theme.colors.tools = { ...theme.colors.tools, border: '#3b3a39' };
+    expect(nativeToolThemeTokens(theme)).toMatchObject({ border: '#3b3a39', rail: '#3b3a3966' });
+    theme.colors.tools = { ...theme.colors.tools, border: undefined };
+    theme.colors.interactive.border = '#4d4c4a';
+    expect(nativeToolThemeTokens(theme)).toMatchObject({ border: '#4d4c4a4d', rail: '#4d4c4a1f' });
+  });
+
   it('resolves the same Web tools title blend, explicit description and icon tokens without expanding the Swift schema', async () => {
     const theme = structuredClone(getThemeById('jetbrains-dark')!);
     theme.colors.tools = { ...theme.colors.tools, title: '#e0e0e0', icon: '#123456', description: '#abcdefcc' };

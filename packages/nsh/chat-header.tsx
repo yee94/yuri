@@ -1,4 +1,4 @@
-import { cleanup, colorScheme, effect, Image, lifecycle, safeArea, Scroll, signal, Text, token, untracked, View, windowSize } from 'nsh';
+import { cleanup, colorScheme, effect, Image, lifecycle, platform, safeArea, Scroll, signal, Text, token, untracked, View, windowSize } from 'nsh';
 import { Button, Toggle } from 'nsh/base';
 import { Icon } from './Icon';
 import { t } from './i18n';
@@ -9,8 +9,10 @@ import { HeaderQuotaPanel } from './chat-header-quota-ui';
 import { formatContextTokens } from '../ui/src/mobile/chat/mobileContextUsage';
 import yuriDark from '../ui/src/lib/theme/themes/yuri-2-dark.json';
 import yuriLight from '../ui/src/lib/theme/themes/yuri-2-light.json';
-import { chatHeaderLayout, chatMetadataGeometry } from './chat-header-layout';
+import { chatHeaderFadeGeometry, chatHeaderLayout, chatMetadataGeometry } from './chat-header-layout';
+import { NativeChatHeaderPress } from './chat-chrome-native';
 import { ChatHeaderPopup } from './chat-header-popup';
+import { glassEdge } from './glass-surface';
 
 const circle = 'rounded-full bg-secondary border border-border items-center justify-center active:bg-accent';
 const circleSize = { width: chatHeaderLayout.button, height: chatHeaderLayout.button };
@@ -24,7 +26,25 @@ function contextColor(percentage?: number): string {
 }
 
 export function ChatHeaderBack(props: { onPress: () => void }) {
-  return <Button testID="chat-header-back" class={circle} style={circleSize} accessibilityLabel={t('header.actions.backAria')} onPress={props.onPress}><Icon name="arrow-left-s" size={20} /></Button>;
+  return <Button testID="chat-header-back" class={circle} style={{ ...circleSize, backdropFilter: 'blur(20px)', ...glassEdge() }} accessibilityLabel={t('header.actions.backAria')} onPress={props.onPress}><Icon name="arrow-left-s" size={20} /></Button>;
+}
+
+const androidGlassCircle = 40;
+
+/** Android system header: the same 40pt glass circle as the trailing actions, in place of the plain up arrow. */
+export function ChatHeaderAndroidBack(props: { onPress: () => void }) {
+  return <Button testID="chat-header-back" class="rounded-full items-center justify-center active:bg-accent" style={{ width: androidGlassCircle, height: androidGlassCircle, borderRadius: 999, backdropFilter: 'blur(20px)', ...glassEdge() }} accessibilityLabel={t('header.actions.backAria')} onPress={props.onPress}><Icon name="arrow-left-s" size={20} /></Button>;
+}
+
+/** Android system header title; the toolbar's default title size is too large next to the 40pt circles. */
+export function ChatHeaderAndroidTitle(props: { title: string }) {
+  return <Text testID="chat-header-title" class="font-semibold text-foreground" style={{ numberOfLines: 1, fontSize: 16 }}>{props.title}</Text>;
+}
+
+/** Paint over the transcript, below the system header slots; it never participates in layout or touch. */
+export function ChatHeaderAndroidFade() {
+  const geometry = () => chatHeaderFadeGeometry(safeArea().top);
+  return <View testID="android-chat-header-fade" accessible={false} accessibilityElementsHidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: geometry().height, opacity: geometry().opacity, pointerEvents: 'none', backgroundImage: `linear-gradient(to bottom, ${token('background')} 0%, ${token('background')} ${geometry().holdPercent}%, transparent 100%)` }} />;
 }
 
 export function ChatHeaderTitle(props: { title: string }) {
@@ -35,7 +55,7 @@ export function ChatHeaderTitle(props: { title: string }) {
 export type HeaderAutoRead = { preferred: boolean; available: boolean; onToggle: () => void };
 export function NativeChatHeader(props: { target: ChatTarget; active: boolean; busy: boolean; current: () => boolean; operation?: () => PageOperation | null; autoRead?: HeaderAutoRead; onBack: () => void; onOptions: (option: ChatHeaderOption) => void }) {
   const layout = chatHeaderLayout;
-  return <View testID="chat-header-root" class="shrink-0 bg-background" style={{ paddingTop: safeArea().top + layout.top, paddingLeft: Math.max(layout.edge, safeArea().left), paddingRight: Math.max(layout.edge, safeArea().right) }}>
+  return <View testID="chat-header-root" class={platform.os === 'android' ? 'shrink-0' : 'shrink-0 bg-background'} style={{ paddingTop: safeArea().top + layout.top, paddingLeft: Math.max(layout.edge, safeArea().left), paddingRight: Math.max(layout.edge, safeArea().right), pointerEvents: 'box-none' }}>
     <View testID="chat-header-row" class="flex-row items-center" style={{ height: layout.contentHeight, gap: layout.columnGap }}>
       <View class="items-start justify-center" style={{ width: layout.leadingColumn }}><ChatHeaderBack onPress={props.onBack} /></View>
       <View class="flex-1 min-w-0 items-center justify-center" style={{ paddingLeft: layout.titleInset, paddingRight: layout.titleInset }}><ChatHeaderTitle title={props.target.title} /></View>
@@ -80,15 +100,29 @@ export function ChatHeaderActions(props: { native?: boolean; target: ChatTarget;
     if (!busy) untracked(() => { void controller?.refresh(); });
   });
   function showMetadata(value: boolean) { if (current()) { open.set(value); if (value) { menu.set(false); void controller?.refresh(); void controller?.refreshQuotas(); } } }
+  // iOS 26 cancels a touch that begins on a bar-item view before `onPress`; the native owner reports the tap instead.
+  // Both routes toggle from the state at press-down and ignore each other within a press, so one tap toggles once.
+  const downState: Record<string, { open: boolean; menu: boolean; at: number; claimed: boolean }> = {};
+  const noteDown = (id: string) => { downState[id] = { open: open(), menu: menu(), at: Date.now(), claimed: false }; };
+  // One press-down is answered once, by whichever route arrives first.
+  const claimPress = (id: string) => { const down = downState[id]; if (down?.claimed) return false; if (down) down.claimed = true; return true; };
+  function setMenu(value: boolean) { if (current()) { menu.set(value); if (value) open.set(false); } }
+  function nativePress(id: string) {
+    if (!claimPress(id)) return;
+    const down = downState[id], fresh = !!down && Date.now() - down.at < 1500;
+    if (id === 'chat-header-metadata') showMetadata(!(fresh ? down.open : open()));
+    else if (id === 'chat-header-options') setMenu(!(fresh ? down.menu : menu()));
+  }
   function select(option: ChatHeaderOption) { if (current()) { menu.set(false); props.onOptions(option); } }
   const contextLabel = () => metadata().pending ? t('contextUsage.pending') : metadata().tokens === undefined ? t('common.unavailable') : `${formatContextTokens(metadata().tokens!)}/${metadata().limit === undefined ? '—' : formatContextTokens(metadata().limit!)}`;
   const percentage = () => metadata().tokens !== undefined && metadata().limit !== undefined && !metadata().pending ? `${(metadata().tokens! / metadata().limit! * 100).toFixed(1)}%` : '';
   const panel = () => chatMetadataGeometry(windowSize().width, windowSize().height, safeArea().top, safeArea().bottom);
   const buttonClass = () => props.native ? 'rounded-full items-center justify-center active:bg-accent' : circle;
-  const buttonSize = () => props.native ? { width: 32, height: 32 } : circleSize;
-  return <View class="flex-row items-center shrink-0" style={{ gap: chatHeaderLayout.actionGap, height: props.native ? 32 : chatHeaderLayout.button }}>
-    <If when={props.target.kind === 'session'}><ChatHeaderPopup native={props.native} anchorID="chat-header-metadata" current={current} onError={error => props.onError?.(error)} open={open()} placement="bottom" align="end" offset={panel().offset} margin={panel().margin} popupClass="bg-card rounded-[20px] p-2" popupStyle={{ width: panel().width, maxHeight: panel().maxHeight }}
-      onOpenChange={event => showMetadata(event.open)} trigger={onPress => <Button onPress={onPress} testID="chat-header-metadata" class={buttonClass()} style={buttonSize()} accessibilityLabel={t('mobile.header.openMetadataAria')}><ContextRing metadata={metadata()} /></Button>}>
+  const buttonSize = () => ({ ...(props.native ? { width: platform.os === 'android' ? 40 : 32, height: platform.os === 'android' ? 40 : 32 } : circleSize), borderRadius: 999, backdropFilter: 'blur(20px)', ...glassEdge() });
+  return <View class="flex-row items-center shrink-0" style={{ gap: chatHeaderLayout.actionGap, height: props.native ? (platform.os === 'android' ? 40 : 32) : chatHeaderLayout.button }}>
+    <If when={props.native && platform.os === 'ios'}><NativeChatHeaderPress onPress={event => { if ('id' in event) nativePress(event.id); }} accessible={false} accessibilityElementsHidden style={{ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }} /></If>
+    <If when={props.target.kind === 'session'}><ChatHeaderPopup native={props.native} anchorID="chat-header-metadata" current={current} onError={error => props.onError?.(error)} open={open()} placement="bottom" align="end" offset={panel().offset} margin={panel().margin} popupClass="bg-card rounded-[20px] p-2" popupStyle={{ width: panel().width, maxHeight: panel().maxHeight, backdropFilter: 'blur(20px)', ...glassEdge() }}
+      onOpenChange={event => showMetadata(event.open)} trigger={onPress => <Button onPressDown={() => noteDown('chat-header-metadata')} onPress={() => { if (platform.os !== 'ios' || claimPress('chat-header-metadata')) onPress?.(); }} testID="chat-header-metadata" class={buttonClass()} style={buttonSize()} accessibilityLabel={t('mobile.header.openMetadataAria')}><ContextRing metadata={metadata()} /></Button>}>
       <Scroll testID="chat-metadata-panel" style={{ maxHeight: panel().scrollMaxHeight }} contentClass="gap-1">
       <View class="flex-row items-center gap-3 px-3 py-3"><Icon name="git-branch" size={18} /><Text class="text-sm text-muted-foreground">{t('mobile.header.metadata.branch')}</Text><Text class="text-sm font-semibold text-foreground flex-1 text-right" style={{ numberOfLines: 1 }}>{metadata().branch || t(metadata().repository ? 'gitView.branch.detachedHead' : 'common.unavailable')}</Text></View>
       <View class="flex-row items-center gap-3 px-3 py-3"><ContextRing metadata={metadata()} /><Text class="text-sm text-muted-foreground">{t('mobile.header.metadata.context')}</Text><View class="flex-row flex-1 items-baseline justify-end gap-2"><Text class="text-sm font-semibold" style={{ color: contextColor(metadata().contextStale || metadata().pending || metadata().tokens === undefined || metadata().limit === undefined ? undefined : metadata().tokens! / metadata().limit!) }}>{percentage()}</Text><Text testID="chat-metadata-context" class="text-sm text-muted-foreground">{contextLabel()}</Text></View></View>
@@ -98,8 +132,8 @@ export function ChatHeaderActions(props: { native?: boolean; target: ChatTarget;
       <HeaderQuotaPanel snapshot={metadata().quota} onRefresh={() => { void controller?.refresh(true); void controller?.refreshQuotas(true); }} />
       </Scroll>
     </ChatHeaderPopup></If>
-    <ChatHeaderPopup native={props.native} anchorID="chat-header-options" current={current} onError={error => props.onError?.(error)} open={menu()} placement="bottom" align="end" offset={8} margin={16} popupClass="bg-card rounded-2xl border border-border" popupStyle={{ width: 220 }} onOpenChange={event => { if (current()) { menu.set(event.open); if (event.open) open.set(false); } }}
-      trigger={onPress => <Button onPress={onPress} testID="chat-header-options" class={buttonClass()} style={buttonSize()} accessibilityLabel={t('mobile.menu.titleAria')}><Icon name="more" size={20} /></Button>}>
+    <ChatHeaderPopup native={props.native} anchorID="chat-header-options" current={current} onError={error => props.onError?.(error)} open={menu()} placement="bottom" align="end" offset={8} margin={16} popupClass="bg-card rounded-2xl border border-border" popupStyle={{ width: 220, backdropFilter: 'blur(20px)', ...glassEdge() }} onOpenChange={event => { if (current()) { menu.set(event.open); if (event.open) open.set(false); } }}
+      trigger={onPress => <Button onPressDown={() => noteDown('chat-header-options')} onPress={() => { if (platform.os !== 'ios' || claimPress('chat-header-options')) onPress?.(); }} testID="chat-header-options" class={buttonClass()} style={buttonSize()} accessibilityLabel={t('mobile.menu.titleAria')}><Icon name="more" size={20} /></Button>}>
       <WorkspaceAction id="new-session" label={t('mobile.menu.newSession')} icon="chat-new" select={select} />
       <WorkspaceAction id="files" label={t('mobile.menu.files')} icon="file-text" select={select} />
       <WorkspaceAction id="changes" label={t('mobile.menu.changes')} icon="git-branch" dirty={metadata().dirty} select={select} />

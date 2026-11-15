@@ -1,6 +1,6 @@
 import { computed, effect, Scroll, signal, Text, token, untracked, View, windowSize, type JSX } from 'nsh';
 import { Button, TextView } from 'nsh/base';
-import { nativeAppearance, nativeAgentPaletteTokens, nativeChatSurfaceStyle, nativeChatTextStyle } from './appearance';
+import { nativeAppearance, nativeAgentPaletteTokens, nativeChatSurfaceStyle, nativeChatTextStyle, nativeToolRailStyle } from './appearance';
 import { t } from './i18n';
 import { record, text, type ChatTarget, type Row } from './model';
 import { Icon } from './Icon';
@@ -17,6 +17,11 @@ import { nativeReasoningPresentation } from './chat-preferences-core';
 import { NativeAgentAvatar } from './chat-identity';
 import { NativeFlipUpText, NativeShimmerText } from './text-motion';
 import type { ActivityMaterialization } from './transcript-materialization';
+import { AssistantTextBubble, assistantContactTextStyle } from './assistants-bubble';
+import { NativeMessageText, NativeMessageReference } from './message-text';
+import { nativeMessageReferenceContext } from './message-references';
+import { NativeAttachmentCard } from './attachment-card';
+import { isCodeSelectionFilePart } from '../ui/src/components/chat/attachmentCitations';
 
 type ProcessNode = Extract<NativeBodyNode, { kind: 'process' }>;
 type ToolGroupNode = Extract<NativeBodyNode, { kind: 'process' | 'skill' }>;
@@ -32,6 +37,9 @@ type BodyProps = Omit<NativeToolRowProps, 'tool' | 'onOpenDiff'> & {
   activityMaterialization?: ActivityMaterialization;
   onToggleActivity?: (turnID: string, expanded: boolean) => void;
   renderCard: (card: Row) => JSX.Element;
+  contactBot?: Row;
+  onOpenAttachment?: (file: Row) => void;
+  onOpenSkill?: (name: string) => void;
 };
 function summary(node: ProcessNode) {
   return PROCESS_TOOL_COUNT_ORDER.filter(key => node.counts[key] > 0).map(key => {
@@ -70,7 +78,7 @@ function ToolGroup(props: { node: ToolGroupNode; body: BodyProps }) {
       <DiffTotals added={diffs()?.added ?? 0} removed={diffs()?.removed ?? 0} />
       <View style={{ width: 14, height: 14, flexShrink: 0 }}><Icon name={expanded() ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></View>
     </Button>
-    <If when={expanded()}><View class="ml-2 pl-3 border-l border-border gap-1 pt-1">
+    <If when={expanded()}><View class="ml-2 pl-3 border-l gap-1 pt-1" style={nativeToolRailStyle()}>
       <Each of={props.node.parts} key={part => part.key}>{part => <Tool part={part()} body={props.body} />}</Each>
     </View></If>
   </View>;
@@ -113,7 +121,7 @@ function CollapsibleReasoning(props: { part: NativeBodyPart; body: BodyProps; co
       <NativeShimmerText class="text-muted-foreground" active={streaming()} text={t(streaming() || expanded() ? 'chat.reasoningTrace.thinking' : 'chat.reasoningTrace.thought')} style={nativeChatTextStyle('meta')} current={props.body.current} />
       <If when={!streaming() && !expanded()}><Text class="text-muted-foreground flex-1" style={{ ...nativeChatTextStyle('meta'), minWidth: 0, numberOfLines: 1 }}>{preview()}</Text></If>
     </Button>
-    <If when={expanded()}><View class="ml-2 pl-3 border-l border-border pt-0.5 pb-1">
+    <If when={expanded()}><View class="ml-2 pl-3 border-l pt-0.5 pb-1" style={nativeToolRailStyle()}>
       <If when={streaming()} else={<Scroll style={{ maxHeight: 320 }}>{body()}</Scroll>}>{body()}</If>
     </View></If>
   </View></If>;
@@ -125,7 +133,7 @@ function collapsePreference(props: BodyProps): boolean | null {
   if (!snapshot || !('collapsibleUserMessages' in snapshot)) return null;
   return typeof snapshot.collapsibleUserMessages === 'boolean' ? snapshot.collapsibleUserMessages : null;
 }
-function UserText(props: { part: NativeBodyPart; enabled: boolean; current: () => boolean; onClamp: UserClamp }) {
+function UserText(props: { part: NativeBodyPart; body: BodyProps; enabled: boolean; current: () => boolean; onClamp: UserClamp }) {
   const choice = signal<{ key: string; expanded: boolean } | null>(null);
   const measured = signal<{ key: string; source: string; height: number } | null>(null);
   const expanded = () => props.enabled && choice()?.key === props.part.key && choice()!.expanded;
@@ -142,7 +150,10 @@ function UserText(props: { part: NativeBodyPart; enabled: boolean; current: () =
   });
   return <View style={{ position: 'relative', paddingBottom: expanded() ? 12 : 0 }}>
     <View testID={`user-text-viewport-${props.part.key}`} style={{ maxHeight: clamped() ? limit() : undefined, overflow: clamped() ? 'hidden' : 'visible' }}>
-      <TextView testID={`body-part-${props.part.key}`} markdown={text(props.part.source.text)} selectable links="open" options={{ streaming: true }}
+      <NativeMessageText testID={`body-part-${props.part.key}`} markdown={text(props.part.source.text)} selectable links="open" options={{ streaming: true }}
+        referenceContext={nativeMessageReferenceContext(props.body.row.messages.find(message => message.id === props.part.messageID) ? nativeMessageEntry(props.body.row.messages.find(message => message.id === props.part.messageID)!).parts : [], text(props.part.source.text))}
+        onOpenSkill={props.body.onOpenSkill}
+        renderImage={image => <NativeAttachmentCard file={{ type: 'file', url: image.src, filename: image.alt, mime: 'image/*' }} target={props.body.target} current={props.current} />}
         class="text-foreground" style={{ ...nativeChatTextStyle('user'), flexShrink: 0 }} styles={nativeTranscriptMarkdownStyles('user', clamped())}
         onLayout={event => measured.set({ key: props.part.key, source: text(props.part.source.text), height: event.bounds.size.height })}
         codeBlockActions={[{ id: 'copy' }]} />
@@ -158,34 +169,67 @@ function UserText(props: { part: NativeBodyPart; enabled: boolean; current: () =
     </Button></If>
   </View>;
 }
-function Part(props: { part: NativeBodyPart; body: BodyProps; inActivity: boolean; filesHidden: boolean; onClamp: UserClamp }) {
+function AttachmentPart(props: { part: NativeBodyPart; body: BodyProps }) {
+  const slim = () => props.part.source.slim === true;
+  const ids = () => [props.part.messageID];
+  const fill = () => props.body.activityMaterialization?.state(ids());
+  effect(() => {
+    if (slim() && props.body.current() && props.body.activityMaterialization) untracked(() => {
+      void props.body.activityMaterialization?.request(ids(), { automatic: true });
+    });
+  });
+  return <If when={slim()} else={<NativeAttachmentCard file={props.part.source} target={props.body.target} current={props.body.current} onOpen={props.body.onOpenAttachment ? () => props.body.onOpenAttachment?.(props.part.source) : undefined} />}>
+    <View testID="message-attachment-materializing" class="w-full rounded-xl bg-secondary items-center justify-center gap-2" style={{ height: text(props.part.source.mime).startsWith('image/') ? 160 : 44 }}>
+      <Text class="text-xs text-muted-foreground">{t(fill()?.loading ? 'common.loading' : 'mobile.files.error.readUnavailable')}</Text>
+      <If when={!fill()?.loading && !!props.body.activityMaterialization}><Button class="min-h-8 px-2" onPress={() => { if (props.body.current()) void props.body.activityMaterialization?.request(ids()); }}><Text class="text-xs text-foreground">{t('chat.questionDelegate.retry')}</Text></Button></If>
+    </View>
+  </If>;
+}
+function Part(props: { part: NativeBodyPart; body: BodyProps; inActivity: boolean; filesHidden: boolean; onClamp: UserClamp; joinedBefore?: boolean; joinedAfter?: boolean }) {
   const role = () => nativeMessageRole(props.body.row.head) === 'user' ? 'user' as const : 'assistant' as const;
+  const contact = () => props.body.target.kind === 'assistant';
+  const seed = () => text(props.body.contactBot?.avatarSeed) || props.body.target.id;
+  const contactStyles = () => ({ ...nativeTranscriptMarkdownStyles(role()), root: assistantContactTextStyle(role() === 'user', seed()), paragraph: { marginTop: 0, marginBottom: 7 } });
+  const referenceContext = computed(() => nativeMessageReferenceContext(props.body.row.messages.flatMap(message => nativeMessageEntry(message).parts), text(props.part.source.text)));
+  const renderImage = (image: { src: string; alt?: string }) => <NativeAttachmentCard file={{ type: 'file', url: image.src, filename: image.alt, mime: 'image/*' }} target={props.body.target} current={props.body.current} />;
+  const createdAt = () => {
+    const source = props.body.row.messages.find(message => message.id === props.part.messageID);
+    const time = source?.time?.created ?? source?.contextRaw?.createdAt;
+    return typeof time === 'number' && Number.isFinite(time) ? time : undefined;
+  };
   return <View>
     <If when={props.part.source.type === 'reasoning'}><Reasoning part={props.part} body={props.body} inActivity={props.inActivity} /></If>
     <If when={props.part.source.type === 'text'}>
+      <If when={contact()} else={
       <View class={role() === 'user' ? 'items-end' : ''}>
         <View class={role() === 'user' ? 'bg-chat-user rounded-xl px-3 py-1.5' : ''}
           style={role() === 'user' ? { ...nativeChatSurfaceStyle('user'), width: 'max-content', maxWidth: Math.max(0, windowSize().width - 24) * .85 } : undefined}>
-          <If when={role() === 'user'} else={<TextView testID={`body-part-${props.part.key}`} markdown={text(props.part.source.text)} selectable links="open" options={{ streaming: true }}
+          <If when={role() === 'user'} else={<NativeMessageText testID={`body-part-${props.part.key}`} markdown={text(props.part.source.text)} selectable links="open" options={{ streaming: true }} renderImage={renderImage}
             class={props.part.source.type === 'reasoning' ? 'text-muted-foreground' : 'text-foreground'}
             style={nativeChatTextStyle(role())} styles={nativeTranscriptMarkdownStyles(role())} codeBlockActions={[{ id: 'copy' }]} />}>
-            <UserText part={props.part} enabled={collapsePreference(props.body) === true} current={props.body.current} onClamp={props.onClamp} />
+            <UserText part={props.part} body={props.body} enabled={collapsePreference(props.body) === true} current={props.body.current} onClamp={props.onClamp} />
           </If>
         </View>
       </View>
+      }><AssistantTextBubble outgoing={role() === 'user'} seed={seed()} createdAt={createdAt()} joinedBefore={props.joinedBefore} joinedAfter={props.joinedAfter}>
+        <NativeMessageText testID={`body-part-${props.part.key}`} markdown={text(props.part.source.text)} selectable links="open" options={{ streaming: true }} referenceContext={role() === 'user' ? referenceContext() : undefined} onOpenSkill={props.body.onOpenSkill} renderImage={renderImage} style={{ ...assistantContactTextStyle(role() === 'user', seed()), width: '100%', flexShrink: 0 }} styles={contactStyles()} codeBlockActions={[{ id: 'copy' }]} />
+      </AssistantTextBubble></If>
     </If>
     <If when={props.part.source.type === 'tool'}><Tool part={props.part} body={props.body} /></If>
     <If when={props.part.source.type === 'card' || props.part.source.type === 'compaction'}>{props.body.renderCard(props.part.source)}</If>
-    <If when={props.part.source.type === 'file' && !(role() === 'user' && props.filesHidden)}><View class="bg-card rounded-xl p-3">
-      <Text class="text-foreground" style={nativeChatTextStyle('meta')}>{text(props.part.source.name) || text(props.part.source.filename) || t('chat.chatInput.fileFallback')}</Text>
-      <Text class="text-muted-foreground" style={nativeChatTextStyle('meta')}>{text(props.part.source.mime)}</Text>
-    </View></If>
+    <If when={props.part.source.type === 'file' && !isCodeSelectionFilePart({ filename: text(props.part.source.filename), mime: text(props.part.source.mime) }) && !(role() === 'user' && props.filesHidden)}><AttachmentPart part={props.part} body={props.body} /></If>
+    <If when={props.part.source.type === 'skill'}><NativeMessageReference decoration={{ kind: 'skill', label: text(props.part.source.name) || text(props.part.source.id), icon: 'book-open', className: '', skillName: text(props.part.source.name) || text(props.part.source.id) }} onOpenSkill={props.body.onOpenSkill} /></If>
   </View>;
 }
 function Nodes(props: { nodes: NativeBodyNode[]; body: BodyProps; inActivity?: boolean; filesHidden?: boolean; onClamp?: UserClamp }) {
+  const joins = computed(() => {
+    if (props.body.target.kind !== 'assistant') return new Map<string, { before: boolean; after: boolean }>();
+    const isText = (node?: NativeBodyNode) => node?.kind === 'part' && node.part.source.type === 'text';
+    return new Map(props.nodes.map((node, index) => [node.key, { before: isText(props.nodes[index - 1]), after: isText(props.nodes[index + 1]) }]));
+  });
   return <Each of={props.nodes} key={node => node.key}>{node => <View>
     <If when={node().kind !== 'part'}><ToolGroup node={node() as ToolGroupNode} body={props.body} /></If>
-    <If when={node().kind === 'part'}><Part part={(node() as Extract<NativeBodyNode, { kind: 'part' }>).part} body={props.body} inActivity={props.inActivity === true} filesHidden={props.filesHidden === true} onClamp={(key, value) => props.onClamp?.(key, value)} /></If>
+    <If when={node().kind === 'part'}><Part part={(node() as Extract<NativeBodyNode, { kind: 'part' }>).part} body={props.body} inActivity={props.inActivity === true} filesHidden={props.filesHidden === true} joinedBefore={joins().get(node().key)?.before} joinedAfter={joins().get(node().key)?.after} onClamp={(key, value) => props.onClamp?.(key, value)} /></If>
   </View>}</Each>;
 }
 /** One body owner per real assistant run; content order and source identities remain authoritative. */
@@ -241,7 +285,7 @@ export function NativeTranscriptBody(props: BodyProps) {
         <If when={!plan().locked && plan().compaction}><View testID={`body-activity-arrow-${props.row.key}`} style={{ width: 14, height: 14, flexShrink: 0 }}><Icon name={expanded() ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></View></If>
       </Button>
       </If>
-      <If when={expanded() && plan().activity.length > 0}><View class={plan().locked ? 'gap-2' : 'ml-2 pl-3 border-l border-border gap-2'}><Nodes nodes={plan().activity} body={props} inActivity /></View></If>
+      <If when={expanded() && plan().activity.length > 0}><View class={plan().locked ? 'gap-2' : 'ml-2 pl-3 border-l gap-2'} style={plan().locked ? undefined : nativeToolRailStyle()}><Nodes nodes={plan().activity} body={props} inActivity /></View></If>
       <If when={expanded() && (fill()?.loading || fill()?.failed || fill()?.empty)}><View testID={`activity-fill-${props.row.key}`} role={fill()?.failed ? 'alert' : undefined} class="min-h-9 ml-5 flex-row items-center gap-2">
         <If when={fill()?.loading} else={<If when={fill()?.failed} else={<Text class="text-muted-foreground" style={nativeChatTextStyle('meta')}>{t('chat.toolOutputDialog.noOutputProduced')}</Text>}>
           <Text class="text-destructive flex-1" style={nativeChatTextStyle('meta')}>{t('chat.activity.outputLoadFailed')}</Text>

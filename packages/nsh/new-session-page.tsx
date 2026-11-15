@@ -6,6 +6,7 @@ import { pickerPreferences, pickerSheetHeight } from './chat-models-helpers';
 import { NativeCommandSuggestions } from './composer-controls';
 import { NativeComposerPress } from './native-composer-press';
 import { nativeComposerSurface } from './composer-surface';
+import { glassEdge } from './glass-surface';
 import { createNativeComposerCommandRouter } from './composer-command-router';
 import { createNativeReferenceKeyboard } from './composer-reference-keyboard-native';
 import { NativeReferencePicker } from './composer-references-controls';
@@ -21,13 +22,15 @@ import { NativeNewSessionModal } from './new-session-modal';
 import { NativeNewSessionInputAX } from './new-session-native-owners';
 import { NativeInputMetadata } from './native-input-metadata';
 import { NativeComposerSpellcheck } from './native-composer-spellcheck';
+import { NativeComposerInlineChips } from './native-composer-inline-chips';
 import { native } from './runtime';
 import { app, captureHostRequest, reportOwnedError } from './state';
 import { createAttachmentPick } from './attachment-pick';
+import { NativeAttachmentCard } from './attachment-card';
 import { getAgentDisplayName, getCycledPrimaryAgentName } from '../ui/src/components/chat/mobileControlsUtils';
 import { LONG_PRESS_MS, LONG_PRESS_MOVE_PX } from '../ui/src/lib/touch-gestures/tap';
 import { createNewSessionCatalog } from './new-session-selection';
-import { agentDraftSelection, closestStarter, createAgentPress, getBuiltInStarter, globalStarterRefs, moveStarter, projectStarterConfig, projectStarterLocation, resolveStarters, sanitizeStarterRefs, STARTER_TRASH, starterKey, starterOptions, starterShifts, type DraftStarterRef, type StarterGroup, type StarterItem, type StarterRect } from './new-session-ui-helpers';
+import { agentDraftSelection, closestStarter, defaultDraftSelection, draftModelLabel, findDraftAgent, createAgentPress, getBuiltInStarter, globalStarterRefs, moveStarter, projectStarterConfig, projectStarterLocation, resolveStarters, sanitizeStarterRefs, STARTER_TRASH, starterKey, starterOptions, starterShifts, type DraftStarterRef, type StarterGroup, type StarterItem, type StarterRect } from './new-session-ui-helpers';
 
 type Ownership = ReturnType<typeof createNativeNewSessionOwnership>;
 const action = 'min-h-11 px-3 py-2 rounded-xl bg-secondary active:bg-accent disabled:opacity-40 items-center justify-center';
@@ -50,7 +53,12 @@ export function NativeNewSessionPage(props: NativeNewSessionPageProps) {
   const current = () => alive && props.active && lifecycle() === 'active';
   const ownership = signal<Ownership | null>(null), switching = signal(false), error = signal(''), starterGesture = signal(false);
   function open(project?: Project, directory?: string) {
-    try { ownership.set(createNativeNewSessionOwnership({ project, directory, active: current, deviceChatPreferences: props.deviceChatPreferences })); }
+    try {
+      const next = createNativeNewSessionOwnership({ project, directory, active: current, deviceChatPreferences: props.deviceChatPreferences });
+      ownership.set(next);
+      // A receipt left in `installed` by an interrupted handoff would freeze Agent/Model forever.
+      void next.owner.ready.then(() => next.owner.phase() === 'installed' && !next.transferred() ? next.owner.discardStale() : false).catch(() => {});
+    }
     catch { error.set(t('common.unavailable')); }
   }
   open(props.project, props.directory);
@@ -92,9 +100,11 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
   let pendingProject: { project: Project | undefined; directory: string } | undefined;
   const current = () => alive && props.active() && owner.current() && !props.switching();
   const attachmentPicker = createAttachmentPick({ target: { kind: 'session', id: 'new-session-draft' }, current, call: native,
-    busy: attaching.set, receive: attachment => owner.setAttachments([...owner.durable.attachments(), attachment]),
+    busy: value => attaching.set(value), receive: attachment => owner.setAttachments([...owner.durable.attachments(), attachment]),
     failed: (phase, failure, retirement) => { if (alive) error.set(newSessionText('operationFailed')); if (phase === 'cancel' && retirement) reportOwnedError(failure, retirement, 'chat.attachments.retirementPending'); } });
   const selectionEnabled = () => current() && owner.phase() === 'draft' && !owner.submitting();
+  const catalog = createNewSessionCatalog(owner.directory, () => alive && owner.current(), request, app.runtimeScope() ? JSON.stringify(app.runtimeScope()) : undefined);
+  const modelName = () => draftModelLabel(catalog.providers(), owner.selection().model);
   let publishedSelection: string | undefined;
   effect(() => {
     if (!props.onSelection || !current()) { publishedSelection = undefined; return; }
@@ -125,7 +135,7 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
     notify: notice => error.set(t(notice === 'session-required' ? 'chat.btw.sessionRequired' : notice === 'plain-text-required' ? 'chat.btw.plainTextRequired' : 'common.unavailable')),
     submitPass: presetText => { void submit(presetText); },
   });
-  const keyboard = createNativeReferenceKeyboard({ active: () => current() && !panel() && mode() === 'normal' && !recording(), scope: () => owner.durable.scope, text: owner.durable.draft, insert: owner.insertReference,
+  const keyboard = createNativeReferenceKeyboard({ active: () => current() && !panel() && mode() === 'normal' && !recording(), scope: () => owner.durable.scope, text: owner.durable.draft, references: owner.durable.references, insert: owner.insertReference,
     chooseCommand: commandRouter.choose,
     commandActions: () => ['new', 'model', 'compact'],
     commandOwner: owner.operation,
@@ -137,7 +147,7 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
     if (current()) return;
     panel.set(null); keyboard.dismiss(); stopSpeech(); void owner.durable.flush().catch(() => {});
   });
-  cleanup(() => { alive = false; stopSpeech(); attachmentPicker.dispose(); });
+  cleanup(() => { alive = false; stopSpeech(); attachmentPicker.dispose(); catalog.dispose(); });
   async function perform(work: () => Promise<unknown>) {
     if (!current() || pending()) return;
     pending.set(true); error.set('');
@@ -210,19 +220,20 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
       </Scroll>
       <View class="px-3 pt-2" style={{ ...nativeDensity().chat.composerOuter, paddingBottom: keyboardFrame().height > 0 ? 'calc(env(keyboard-inset-height) + 12px)' : 'calc(env(safe-area-inset-bottom) + 16px)' }}>
         <View class="mb-1.5 px-0.5 flex-row items-center gap-1.5"><Button testID="new-session-project" class="h-[26px] px-1.5 flex-row items-center gap-1.5 rounded-lg active:bg-accent disabled:opacity-40" style={{ maxWidth: '46%' }} hitSlop={8} disabled={!selectionEnabled()} accessibilityLabel={`${owner.project.name || t('sessions.scheduledTasks.dialog.error.chooseProjectFirst')}${owner.directory ? ` ${owner.directory}` : ''}`} onPress={() => { Keyboard.dismiss(); panel.set('project'); }}><View style={{ opacity: 0.8 }}><Icon name="folder" size={14} /></View><Text class="text-foreground" style={{ fontSize: 11, lineHeight: 14, fontWeight: '500', opacity: 0.8, flexShrink: 1, numberOfLines: 1 }}>{owner.project.name || t('sessions.scheduledTasks.dialog.error.chooseProjectFirst')}</Text></Button></View>
-        <View testID="new-session-composer-glass" ref={node => anchor.set(node)} class="px-3 pt-1 pb-1" style={{ ...nativeComposerSurface, ...nativeDensity().chat.composerSurface }}>
-          <Each of={owner.durable.attachments()}>{attachment => <View class="flex-row items-center gap-2"><Text class="flex-1 text-sm text-foreground">{attachment().name}</Text><Button testID={`new-session-remove-attachment-${attachment().name}`} class="min-h-10 min-w-10 items-center justify-center" disabled={!current() || owner.submitting()} accessibilityLabel={t('chat.chatInput.actions.attachCancel')} onPress={() => owner.setAttachments(owner.durable.attachments().filter(file => file !== attachment()))}><Icon name="close" size={16} /></Button></View>}</Each>
+        <View testID="new-session-composer-glass" ref={node => anchor.set(node)} class="px-3 pt-1 pb-1" style={{ ...nativeComposerSurface, ...glassEdge(), ...nativeDensity().chat.composerSurface }}>
+          <View class="flex-row flex-wrap gap-2"><Each of={owner.durable.attachments()}>{attachment => <NativeAttachmentCard file={attachment()} target={{ kind: 'session', id: 'new-session-draft', title: '', directory: owner.directory }} compact current={current} removeDisabled={owner.submitting()} removeTestID={`new-session-remove-attachment-${attachment().name}`} onRemove={() => owner.setAttachments(owner.durable.attachments().filter(file => file !== attachment()))} />}</Each></View>
           <NativeInputMetadata ownerID="new-session-composer-glass" inputID="new-session-composer" label={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} active={current() && !panel()} />
           <NativeComposerSpellcheck ownerID="new-session-composer-glass" inputID="new-session-composer" />
           <NativeComposerPress ownerID="new-session-composer-glass" inputID="new-session-composer" />
-          <Input testID="new-session-composer" accessibilityLabel={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} ref={keyboard.ref} class="min-h-[52px] max-h-36 py-[10px] text-foreground" style={{ ...nativeChatTextStyle('composer'), ...nativeDensity().chat.input, backgroundColor: 'transparent', borderWidth: 0 }} multiline readonly={recording() || !current()} value={owner.durable.draft()} selectedRange={keyboard.selectedRange()} onFocus={keyboard.onFocus} onBlur={keyboard.onBlur} submitBehavior={keyboard.submitBehavior()} onSubmit={keyboard.onSubmit} onSelectionChange={keyboard.onSelectionChange} onCompositionChange={keyboard.onCompositionChange} onChange={event => { keyboard.beforeChange(); if (!owner.durable.draft() && mode() === 'normal' && event.value.startsWith('!')) { mode.set('shell'); owner.setDraftText(event.value.slice(1)); } else owner.setDraftText(event.value); keyboard.refresh(); }} placeholder={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} />
+          <NativeComposerInlineChips ownerID="new-session-composer-glass" inputID="new-session-composer" textLength={owner.durable.draft().length} references={owner.durable.references()} active={current()} />
+          <Input testID="new-session-composer" accessibilityLabel={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} ref={keyboard.ref} class="min-h-[52px] max-h-36 py-[10px] text-foreground" style={{ ...nativeChatTextStyle('composer'), ...nativeDensity().chat.input, backgroundColor: 'transparent', borderWidth: 0 }} multiline readonly={recording() || !current()} value={owner.durable.draft()} selectedRange={keyboard.selectedRange()} onFocus={keyboard.onFocus} onBlur={keyboard.onBlur} submitBehavior={keyboard.submitBehavior()} onSubmit={keyboard.onSubmit} onSelectionChange={keyboard.onSelectionChange} onCompositionChange={keyboard.onCompositionChange} onChange={event => { const value = keyboard.beforeChange(event.value); if (!owner.durable.draft() && mode() === 'normal' && value.startsWith('!')) { mode.set('shell'); owner.setDraftText(value.slice(1)); } else owner.setDraftText(value); keyboard.refresh(); }} placeholder={t(mode() === 'shell' ? 'chat.chatInput.placeholder.shell' : 'chat.chatInput.placeholder.chatCompact')} />
           <View class="min-h-10 flex-row items-center gap-1.5" style={nativeDensity().chat.actions}>
             <Button testID="new-session-attach" class="size-8 rounded-full items-center justify-center active:bg-accent disabled:opacity-40" hitSlop={6} disabled={!current() || attaching() || mode() === 'shell'} accessibilityLabel={t('chat.chatInput.actions.addAttachment')} onPress={() => { void attach(); }}><View style={{ opacity: 0.8 }}><Icon name="attachment-2" size={18} /></View></Button>
             <Button testID="new-session-dictate" class="size-8 rounded-full items-center justify-center active:bg-accent disabled:opacity-40" hitSlop={6} disabled={!current() || owner.submitting()} accessibilityLabel={t('chat.dictation.start')} onPress={() => { void dictate(); }}><View style={{ opacity: recording() ? 1 : 0.8 }}><Icon name={recording() ? 'stop' : 'mic'} size={18} /></View></Button>
             <If when={mode() === 'shell'}><Button testID="new-session-normal-mode" class="min-h-10 px-1" accessibilityLabel={t('settings.common.actions.cancel')} onPress={() => mode.set('normal')}><Text class="text-xs text-foreground">! ×</Text></Button></If>
             <View class="flex-1" />
-            <NativeNewSessionAgent owner={owner} active={selectionEnabled} onOpen={() => { Keyboard.dismiss(); panel.set('agent'); }} onError={() => error.set(newSessionText('operationFailed'))} />
-            <Button testID="new-session-model" class="max-w-36 flex-row items-center gap-1 rounded-lg active:bg-accent disabled:opacity-40" style={{ height: 26 }} hitSlop={6} disabled={!selectionEnabled()} accessibilityLabel={`${owner.selection().model?.id || t('chat.modelControls.selectModel')}${owner.selection().model?.variant ? ` ${owner.selection().model?.variant}` : ''}`} onPress={() => { Keyboard.dismiss(); panel.set('model'); }}><If when={!!owner.selection().model}><NativeModelLogo modelID={owner.selection().model?.id} providerID={owner.selection().model?.providerID} size={16} /></If><Text class="text-foreground" style={{ fontSize: 11, lineHeight: 14, fontWeight: '500', opacity: 0.8, maxWidth: 96, flexShrink: 1, numberOfLines: 1 }}>{owner.selection().model?.id || t('chat.modelControls.selectModel')}</Text><If when={!!owner.selection().model?.variant}><Text class="text-muted-foreground" style={{ fontSize: 11, lineHeight: 14, flexShrink: 1, numberOfLines: 1 }}>{owner.selection().model?.variant}</Text></If></Button>
+            <NativeNewSessionAgent owner={owner} catalog={catalog} active={selectionEnabled} onOpen={() => { Keyboard.dismiss(); panel.set('agent'); }} onError={() => error.set(newSessionText('operationFailed'))} />
+            <Button testID="new-session-model" class="max-w-36 flex-row items-center gap-1 rounded-lg active:bg-accent disabled:opacity-40" style={{ height: 26 }} hitSlop={6} disabled={!selectionEnabled()} accessibilityLabel={`${modelName() || t('chat.modelControls.selectModel')}${owner.selection().model?.variant ? ` ${owner.selection().model?.variant}` : ''}`} onPress={() => { Keyboard.dismiss(); panel.set('model'); }}><If when={!!owner.selection().model}><NativeModelLogo modelID={owner.selection().model?.id} providerID={owner.selection().model?.providerID} size={16} /></If><Text class="text-foreground" style={{ fontSize: 11, lineHeight: 14, fontWeight: '500', opacity: 0.8, maxWidth: 96, flexShrink: 1, numberOfLines: 1 }}>{modelName() || t('chat.modelControls.selectModel')}</Text><If when={!!owner.selection().model?.variant}><Text class="text-muted-foreground" style={{ fontSize: 11, lineHeight: 14, flexShrink: 1, numberOfLines: 1 }}>{owner.selection().model?.variant}</Text></If></Button>
             <NativeComposerSend hasContent={hasContent()} inFlight={owner.submitting()} disabled={!current() || owner.status() === 'loading' || owner.durable.status() !== 'ready' || pending() || attaching() || recording() || !owner.directory || !hasContent() && owner.phase() === 'draft' || owner.creationUnknown()} onPress={() => { void submit(); }} />
           </View>
         </View>
@@ -241,13 +252,25 @@ function NewSessionBody(props: { ownership: Ownership; active: () => boolean; pr
   </View>;
 }
 
-function NativeNewSessionAgent(props: { owner: Ownership['owner']; active: () => boolean; onOpen: () => void; onError: () => void }) {
+function NativeNewSessionAgent(props: { owner: Ownership['owner']; catalog: ReturnType<typeof createNewSessionCatalog>; active: () => boolean; onOpen: () => void; onError: () => void }) {
   const request = captureHostRequest();
   let alive = true, wasActive = false, labelTimer: ReturnType<typeof setTimeout> | undefined, origin: { x: number; y: number } | undefined;
   const current = () => alive && props.active() && props.owner.current();
-  const catalog = createNewSessionCatalog(props.owner.directory, () => alive && props.owner.current(), request), pending = signal(false), labelVisible = signal(false);
+  const catalog = props.catalog, pending = signal(false), labelVisible = signal(false);
   const primaryAgents = computed(() => catalog.agents().map(agent => ({ name: text(agent.name), mode: agent.mode === 'primary' ? 'primary' as const : agent.mode === 'all' ? 'all' as const : undefined })));
-  async function load() { await catalog.load('agent'); if (current() && !catalog.error()) await catalog.load('model'); }
+  async function applyDefaults() {
+    const selection = props.owner.selection();
+    // Selections saved before agent projection hold the display label ("Plan"); the server needs the id.
+    const stored = selection.agent ? findDraftAgent(catalog.agents(), selection.agent) : undefined, canonical = stored && text(stored.name) !== selection.agent ? text(stored.name) : undefined;
+    if (!current() || (selection.agent && selection.model && !canonical) || props.owner.phase() !== 'draft' || props.owner.submitting() || catalog.error() || !catalog.agents().length) return;
+    const defaults = defaultDraftSelection(catalog.agents(), catalog.providers(), catalog.preferences(), catalog.opencode());
+    // Fill only what is missing; a remembered/explicit pick always wins.
+    const agent = canonical ?? selection.agent ?? defaults.agent, model = selection.model ?? defaults.model;
+    const next = { ...(agent ? { agent } : {}), ...(model ? { model } : {}) };
+    if (!next.agent && !next.model) return;
+    try { await props.owner.select(next); } catch { /* A concurrent explicit pick wins; the next load retries. */ }
+  }
+  async function load() { await catalog.load('agent'); if (current() && !catalog.error()) await catalog.load('model'); if (current() && !catalog.error()) await catalog.loadOpencode(); await applyDefaults(); }
   async function cycle() {
     if (!current() || pending()) return;
     pending.set(true);
@@ -266,7 +289,7 @@ function NativeNewSessionAgent(props: { owner: Ownership['owner']; active: () =>
   }
   const press = createAgentPress({ enabled: () => current() && !pending(), cycle: () => { void cycle(); }, open: props.onOpen, schedule: work => setTimeout(work, LONG_PRESS_MS), cancelTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>) });
   effect(() => { if (!props.active()) { wasActive = false; press.cancel(); labelVisible.set(false); if (labelTimer) clearTimeout(labelTimer); labelTimer = undefined; } else if (!wasActive) { wasActive = true; void load(); } });
-  cleanup(() => { alive = false; press.cancel(); catalog.dispose(); if (labelTimer) clearTimeout(labelTimer); });
+  cleanup(() => { alive = false; press.cancel(); if (labelTimer) clearTimeout(labelTimer); });
   return <View class="flex-row items-center" onTouchStartCapture={event => { origin = { x: event.pageX, y: event.pageY }; }} onTouchMoveCapture={event => { if (event.touches.length > 1 || origin && Math.hypot(event.pageX - origin.x, event.pageY - origin.y) > LONG_PRESS_MOVE_PX) press.cancel(); }} onTouchCancel={press.cancel} onMouseLeave={press.cancel}>
     <Button testID="new-session-agent" class="rounded-lg flex-row items-center active:bg-accent disabled:opacity-40" style={{ height: 26 }} hitSlop={6} disabled={!props.active() || pending()} accessibilityLabel={props.owner.selection().agent ? getAgentDisplayName(primaryAgents(), props.owner.selection().agent) : t('chat.modelControls.selectAgent')} onPressDown={press.down} onPressUp={press.up} onPress={press.press}>
       <View class="items-center justify-center" style={{ width: 24, height: 26 }}><If when={!!props.owner.selection().agent} else={<Icon name="user" size={16} />}><NativeAgentAvatar name={props.owner.selection().agent} size={16} /></If></View>

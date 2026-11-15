@@ -2,7 +2,7 @@ export type ResourceEntry = { name: string; path: string; isDirectory: boolean; 
 export type ResourceKind = 'text' | 'svg' | 'image' | 'pdf' | 'video' | 'audio' | 'binary';
 export type ResourcePreview = 'quicklook' | 'avkit' | 'svg-image' | 'unsupported';
 export type ResourceStat = { size: number; mtimeMs: number; isBinary: boolean };
-export type ResourceContent = { kind: ResourceKind; preview?: ResourcePreview; previewError?: string; text?: string; thumbnail?: string; lease: string; size: number; stat?: ResourceStat };
+export type ResourceContent = { kind: ResourceKind; preview?: ResourcePreview; previewError?: string; text?: string; thumbnail?: string; width?: number; height?: number; lease: string; size: number; stat?: ResourceStat };
 export const RESOURCE_TEXT_LIMIT = 1_000_000;
 export const RESOURCE_BINARY_LIMIT = 25 * 1024 * 1024;
 /** Format admission is not codec support: Swift must probe the protected local asset. */

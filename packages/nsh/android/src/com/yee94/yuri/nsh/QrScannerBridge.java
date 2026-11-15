@@ -6,10 +6,8 @@ import com.longbridge.nsh.NshHostReply;
 import com.longbridge.nsh.NshView;
 
 /**
- * {@code camera.scan}: resolves a scanned pairing link, or null when the user cancels.
- *
- * <p>Rejects with {@code camera_scan_unsupported} because no QR decoder is bundled: see
- * {@link QrScanner}. One scan at a time; the caller owns the camera dialog's lifetime.
+ * {@code camera.scan}: resolves a scanned pairing link, or rejects when the user cancels or
+ * denies the camera. One scan at a time; the caller owns the camera dialog's lifetime.
  */
 public final class QrScannerBridge {
     private final Activity activity;

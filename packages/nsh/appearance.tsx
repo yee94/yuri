@@ -1,4 +1,4 @@
-import { cleanup, colorScheme, computed, effect, host, lifecycle, setColorScheme, signal, untracked, type TextStyle, type ViewStyle } from 'nsh';
+import { cleanup, colorScheme, computed, effect, host, lifecycle, setColorScheme, signal, token, untracked, type TextStyle, type ViewStyle } from 'nsh';
 import type { SemanticTypographyKey } from '../ui/src/lib/typography';
 import { app, captureHostRequest, epoch } from './state';
 import { bindRequest, native } from './runtime';
@@ -47,6 +47,8 @@ export const nativeTimeFormat = (): NativeTimeFormatPreference | null => nativeA
 /** Read-only JS palette from the same Host snapshot; deliberately not part of the Swift override schema. */
 export const nativeAgentPaletteTokens = (): Readonly<Record<string, string>> => nativeAppearance.current()?.agentAvatarTokens[colorScheme()] ?? {};
 export const nativeToolPaletteTokens = () => nativeAppearance.current()?.toolTokens[colorScheme()];
+/** Web's indent rail beside expanded Activity/tool rows (`--tools-border` at 40%); falls back to the plain border before a Host snapshot. */
+export const nativeToolRailStyle = () => ({ borderLeftColor: nativeToolPaletteTokens()?.rail ?? String(token('border')) });
 /** Same root snapshot and Host fence as typography; no independent settings read. */
 export const nativeDensity = computed(() => nativeLayoutDensity(nativeAppearance.current()?.padding));
 /** Pure read of the already applied canonical appearance; no preview GET or Host write. */

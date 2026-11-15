@@ -63,3 +63,5 @@ Vitest 负责协议、状态与 UI smoke 测试。UI smoke 通过 NSH CLI 驱动
 Chat 当前按同一真实会话逐区还原，不能用协议测试或成功构建代替视觉、键盘和手势验收。最新证据与已知差异见 [CHAT-VALIDATION.md](./CHAT-VALIDATION.md)；最初的全量源码审计保留在 [PARITY.md](./PARITY.md)。
 
 消息分组与 Activity 现直接消费 Web 的纯 turn projection，模型 header 的身份与目录格式化、连续 Skill 和 Thought 折叠规则也共用纯逻辑。`NSH_PARITY_IOS=1` 可运行生产组件的 UIKit 整理/分段/pending-header 专项；这仍不等于动画及真实会话逐帧验收完成。
+
+输入框引用通过独立原生装饰桥绘制，消息引用复用 Web detector；图片附件和 Markdown 图片共用全屏预览及原生缩放/平移。UIKit 输入图标证据见 [inline chips carrier](./tests/composer-inline-chips-uikit/README.md)，图片手势、来源动画和设备未验范围见 [预览验证](./NATIVE-IMAGE-PREVIEW-VALIDATION.md)。

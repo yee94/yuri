@@ -202,6 +202,8 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
   const setDraftText = (value: string) => { if (!current()) return false; durable.setDraftText(value); return true; };
   const setAttachments = (value: Attachment[]) => { if (!current()) return false; durable.attachments.set(value.map(file => ({ ...file }))); return true; };
   const insertReference = (...args: Parameters<typeof durable.insertReference>) => { if (!current()) return false; durable.insertReference(...args); return true; };
+  /** The server reports an unset variant as "default"; both mean the model's default effort. */
+  const variantOf = (value: unknown) => { const variant = text(value); return variant === 'default' ? '' : variant; };
   async function configure(target: ChatTarget, selection: NativeNewSessionSelection, captured: PageOperation, readOnly: boolean) {
     const request = captured.request;
     // A newly created session is idle. Apply the captured selection once, before
@@ -224,7 +226,7 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
     const authority = record(unwrap(await request(`/api/session/${encodeURIComponent(target.id)}?${query(directory)}`)));
     assertCurrent(captured);
     const model = record(authority.model);
-    if (authority.id !== target.id || selection.agent && authority.agent !== selection.agent || selection.model && (model.id !== selection.model.id || model.providerID !== selection.model.providerID || text(model.variant) !== text(selection.model.variant))) throw new Error('new-session-selection-not-confirmed');
+    if (authority.id !== target.id || selection.agent && authority.agent !== selection.agent || selection.model && (model.id !== selection.model.id || model.providerID !== selection.model.providerID || variantOf(model.variant) !== variantOf(selection.model.variant))) throw new Error('new-session-selection-not-confirmed');
   }
   function submit(sendOptions: Pick<SendOptions, 'inputMode'> & { presetText?: string } = {}): Promise<NativeNewSessionHandoff | null> {
     if (submitFlight) return submitFlight;
@@ -334,6 +336,26 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
     knownCreated.set(null);
     status.set('ready'); error.set('');
   }
+  /** Explicit page-level recovery for an `installed` receipt whose handoff never reached `complete`
+   *  (app killed, Chat never confirmed). Resets to draft keeping the selection and returns the
+   *  unconfirmed text to the composer so nothing is lost. Never runs implicitly on open. */
+  async function discardStale() {
+    const captured = captureOperation(false);
+    await restoration; assertCurrent(captured);
+    const value = receipt();
+    if (value.phase !== 'installed' || submitting()) return false;
+    const pending = durable.pendingSend();
+    if (pending) {
+      if (!durable.draft().trim() && !durable.attachments().length) {
+        durable.setDocument({ text: pending.text, references: [], scope: durable.scope });
+        durable.attachments.set(pending.files.map(file => ({ ...file })));
+      }
+      durable.pendingSend.set(null); await durable.flush(); assertCurrent(captured);
+    }
+    await write({ version: 1, revision: value.revision, phase: 'draft', selection: value.selection }, captured);
+    knownCreated.set(null); status.set('ready'); error.set('');
+    return true;
+  }
   async function retryStorage() {
     restoration = Promise.all([durable.retry(), !hydrated ? restore() : Promise.resolve()]).then(() => {});
     await restoration; status.set('ready'); error.set('');
@@ -380,7 +402,7 @@ export function openNativeNewSession(options: { project?: Project; directory?: s
     selection: () => selectionFrom(receipt().selection),
     phase: () => receipt().phase, target: () => { const value = receipt(); return value.phase === 'created' || value.phase === 'installed' ? { ...value.target } : null; },
     creationUnknown: () => receipt().phase === 'creating' && !knownCreated(), inputID: () => { const value = receipt(); return value.phase === 'draft' ? durable.pendingSend()?.id : value.inputID; },
-    setDraftText, setAttachments, insertReference, select, submit, complete, retryStorage, recoverCreatedSession, close };
+    setDraftText, setAttachments, insertReference, select, submit, complete, discardStale, retryStorage, recoverCreatedSession, close };
 }
 
 export type NativeNewSessionOwner = ReturnType<typeof openNativeNewSession>;

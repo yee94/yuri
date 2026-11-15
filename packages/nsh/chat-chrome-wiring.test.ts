@@ -11,7 +11,7 @@ test('visible expanded composer controls keep touch admission while chrome begin
   const declaration = file.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'NativeComposerChrome')!;
   const output = ts.transpileModule(declaration.getText(file), { compilerOptions: { jsx: ts.JsxEmit.React, module: ts.ModuleKind.CommonJS } }).outputText;
   const exports: { NativeComposerChrome?: (props: unknown) => { children: Array<{ props: { style: { opacity: number; pointerEvents: string } } }> } } = {};
-  vm.runInNewContext(output, { exports, View: 'View', nativeComposerSurface: {}, nativeDensity: () => nativeLayoutDensity(), signal: (value: unknown) => Object.assign(() => value, { set: () => {} }), React: { createElement: (_type: unknown, props: unknown, ...children: unknown[]) => ({ props, children }) } });
+  vm.runInNewContext(output, { exports, View: 'View', nativeComposerSurface: {}, glassEdge: () => ({}), nativeDensity: () => nativeLayoutDensity(), signal: (value: unknown) => Object.assign(() => value, { set: () => {} }), React: { createElement: (_type: unknown, props: unknown, ...children: unknown[]) => ({ props, children }) } });
   const result = exports.NativeComposerChrome!({ state: { swap: { progress: .1, phase: 'dragging' } }, bottom: 0 });
   expect(result.children[0].props.style.opacity).toBeGreaterThan(.5);
   expect(result.children[0].props.style.pointerEvents).not.toBe('none');

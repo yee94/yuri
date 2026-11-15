@@ -37,12 +37,15 @@ export function createHost({ hostID = 'new-session-fixture', lease = 'new-sessio
   }
   // These engine scenarios finish through the real handoff/prompt path. An
   // "admitted" result is impossible if the captured session selection is wrong.
+  // The page fills a missing draft selection from this fixture's catalog and
+  // settings (`build` + the recent `fixture/claude-model`), so a submission that
+  // never opened the pickers still carries that captured default.
   function assertSubmission(session, body) {
     const expected = {
       'Send captured configuration': { agent: 'plan', model: { providerID: 'fixture', id: 'gpt-model', variant: 'high' } },
-      'Cycle primary catalog': { agent: 'plan' },
-      'Long press preserves Build': { agent: 'build' },
-      'Favorites preserve captured selection': { model: { providerID: 'fixture', id: 'gpt-model', variant: 'low' } },
+      'Cycle primary catalog': { agent: 'plan', model: { providerID: 'fixture', id: 'claude-model' } },
+      'Long press preserves Build': { agent: 'build', model: { providerID: 'fixture', id: 'claude-model' } },
+      'Favorites preserve captured selection': { agent: 'build', model: { providerID: 'fixture', id: 'gpt-model', variant: 'low' } },
     }[body.text];
     if (!expected) return;
     const actual = { ...(session.agent ? { agent: session.agent } : {}), ...(session.model ? { model: session.model } : {}) };

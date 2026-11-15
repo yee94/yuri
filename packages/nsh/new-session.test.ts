@@ -288,6 +288,19 @@ describe('native new-session durable draft and handoff', () => {
     const nextChat = await mountChat(resumed); const next = await import('./new-session'); expect(await next.sendNewSessionHandoff(nextChat, resumed)).toBe(false);
     expect(creates()).toHaveLength(1); expect(requests().filter(input => input.path.includes('/command?') && input.method === 'POST')).toHaveLength(1);
   });
+  it('a server-reported "default" variant confirms a selection that has no variant', async () => {
+    const draft = await open(); await draft.ready; await draft.select({ agent: 'Plan', model: { providerID: 'p', id: 'm' } }); draft.setDraftText('hi');
+    const base = handle;
+    handle = (path, method, body) => path.startsWith('/api/session/created?') && authority.model ? { ...authority, model: { ...(authority.model as Row), variant: 'default' } } : base(path, method, body);
+    expect(await draft.submit()).toBeTruthy(); expect(draft.phase()).toBe('installed');
+  });
+  it('discardStale unfreezes an interrupted installed receipt, keeping selection and returning unsent text', async () => {
+    const draft = await open(); await draft.ready; await draft.select({ agent: 'Plan' }); draft.setDraftText('hh'); await draft.submit(); await draft.close();
+    const reopened = await open(); await reopened.ready; expect(reopened.phase()).toBe('installed');
+    expect(await reopened.discardStale()).toBe(true);
+    expect(reopened.phase()).toBe('draft'); expect(reopened.selection().agent).toBe('Plan'); expect(reopened.durable.draft()).toBe('hh'); expect(reopened.durable.pendingSend()).toBeNull();
+    await expect(reopened.select({ agent: 'Build' })).resolves.toBeUndefined(); expect(creates()).toHaveLength(1);
+  });
   it('source cleanup interrupted after admission is resumed by exact authority, not a missing-pending guess', async () => {
     const draft = await open(); await draft.ready; draft.setDraftText('accepted before source cleanup'); const token = (await draft.submit())!;
     const chat = await mountChat(token), api = await import('./new-session'); expect(await api.sendNewSessionHandoff(chat, token)).toBe(true); await draft.close();

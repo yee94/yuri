@@ -16,7 +16,7 @@ function run(command, args) {
 }
 run(nsh, ['build', 'packages/nsh/native-chrome-fixture.tsx', '--release', '--out', path.join(app, 'nsh')]);
 const sdk = run('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-path']);
-run('xcrun', ['swiftc', '-swift-version', '5', '-O', '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator', '-F', path.join(dist, 'embed/ios/NativeShell.xcframework/ios-arm64-simulator'), '-framework', 'NativeShell', '-framework', 'UIKit', '-framework', 'Foundation', '-lc++', '-lz', '-lsqlite3', ...['tests/native-chrome-uikit.swift', 'ios/SheetPresentation.swift', 'ios/ChatHeaderCollapse.swift', 'ios/DatePicker.swift'].map(file => path.join(root, file)), '-o', path.join(app, 'NativeChromeQA')]);
+run('xcrun', ['swiftc', '-swift-version', '5', '-O', '-sdk', sdk, '-target', 'arm64-apple-ios15.0-simulator', '-F', path.join(dist, 'embed/ios/NativeShell.xcframework/ios-arm64-simulator'), '-framework', 'NativeShell', '-framework', 'UIKit', '-framework', 'Foundation', '-lc++', '-lz', '-lsqlite3', ...['tests/native-chrome-uikit.swift', 'ios/SheetPresentation.swift', 'ios/ChatHeaderCollapse.swift', 'ios/ChatHeaderEdge.swift', 'ios/DatePicker.swift'].map(file => path.join(root, file)), '-o', path.join(app, 'NativeChromeQA')]);
 await writeFile(path.join(app, 'Info.plist'), JSON.stringify({ CFBundleIdentifier: identifier, CFBundleExecutable: 'NativeChromeQA', CFBundleName: 'NativeChromeQA', CFBundleDisplayName: 'Native Chrome QA', CFBundlePackageType: 'APPL', CFBundleShortVersionString: '1.0', CFBundleVersion: '1', MinimumOSVersion: '15.0', UIDeviceFamily: [1, 2], UILaunchScreen: {} }));
 run('plutil', ['-convert', 'xml1', path.join(app, 'Info.plist')]);
 run('codesign', ['--force', '--sign', '-', app]);

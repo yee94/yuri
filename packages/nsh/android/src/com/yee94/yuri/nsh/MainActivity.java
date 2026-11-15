@@ -85,8 +85,10 @@ public final class MainActivity extends Activity {
     @Override
     protected void onPause() {
         visible = false;
-        if (handlers != null) handlers.setForeground(false);
-        if (runtime != null) runtime.setForeground(false);
+        if (!ForegroundHold.held()) {
+            if (handlers != null) handlers.setForeground(false);
+            if (runtime != null) runtime.setForeground(false);
+        }
         super.onPause();
     }
 

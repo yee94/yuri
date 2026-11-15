@@ -80,6 +80,9 @@ function fixture(instrument = false) {
     './i18n': { t: (key: string) => key }, './Icon': { Icon: 'Icon' }, './model': model,
     './state': { app, epoch: generation }, './assistants-core': core,
     './assistants-swipe-core': { createAssistantSwipe }, './assistants-avatar-live': { AssistantAvatar: 'Avatar' },
+    './assistants-workspace': { AssistantWallpaper: 'Wallpaper', assistantPanelStyle: () => ({}), assistantPanelShadow: () => 'none' },
+    './outer-header': { OuterHeader: 'OuterHeader', createOuterHeaderCollapse: () => ({ onScroll() {} }), outerHeaderOverlap: { marginTop: -56 } },
+    './outer-header-core': { OUTER_HEADER_EXPANDED: 56 },
     './tests/assistants-list-pointer/trace': { recordPage: (event: string) => trace.push('page/' + event), recordRow: (event: string, pinned: () => boolean) => trace.push((pinned() ? 'pinned/' : 'normal/') + event) },
     './assistants-details': {}, './assistants-settings': {},
     './page-operations': { createPageOperations: () => ({ ...operation, capture: () => operation, onRetire() {} }) },
@@ -382,23 +385,22 @@ describe('production AssistantHome recycled cell callbacks (Node/VM, no engine)'
     };
     const label = caption(pinned, name), lineage = pinned.ancestors(label);
     expect(label.props.class).not.toContain('flex-1');
-    expect(label.props.class).toBe('text-base font-semibold text-foreground');
-    expect(label.props.style).toEqual({ width: '100%', minWidth: 0, textAlign: 'center', numberOfLines: 1, textOverflow: 'ellipsis' });
-    expect(lineage.at(-1)?.props.style).toEqual({ width: '100%', minWidth: 0 });
+    expect(label.props.class).toBe('font-medium text-foreground');
+    expect(label.props.style).toEqual({ width: '100%', minWidth: 0, fontSize: 14, lineHeight: 20, textAlign: 'center', numberOfLines: 1, textOverflow: 'ellipsis' });
     // Web's max-w-28 tile (112) minus its two px-2 insets (8 each).
-    expect(lineage.at(-2)?.props.style).toEqual({ width: 96, minWidth: 0, maxWidth: 96 });
+    expect(lineage.at(-1)?.props.style).toEqual({ width: 96, minWidth: 0, maxWidth: 96 });
     expect(label.props.adjustsFontSizeToFit).not.toBe(true);
     expect(label.children.map(read => read())).toEqual([name]);
     const ordinary = caption(normal, name);
-    expect(ordinary.props.class).toBe('flex-1 text-base font-semibold text-foreground');
-    expect(ordinary.props.style).toEqual({ numberOfLines: 1 });
-    expect(normal.ancestors(ordinary).at(-2)?.props.style).toBeUndefined();
+    expect(ordinary.props.class).toBe('font-semibold text-foreground');
+    expect(ordinary.props.style).toEqual({ width: '100%', minWidth: 0, fontSize: 15, lineHeight: 24, textAlign: 'left', numberOfLines: 1, textOverflow: 'ellipsis' });
+    expect(normal.ancestors(ordinary).at(-1)?.props.class).toBe('flex-1 gap-1');
     const updated = name + ' updated 💫';
     await f.load([{ ...first, name: updated, pinnedAt: null, latestMessagePreview: { createdAt: 100 } }, second]);
     const recycled = caption(pinned, updated);
-    expect(recycled.props.class).toBe('flex-1 text-base font-semibold text-foreground');
-    expect(recycled.props.style).toEqual({ numberOfLines: 1 });
-    expect(pinned.ancestors(recycled).at(-2)?.props.style).toBeUndefined();
+    expect(recycled.props.class).toBe('font-semibold text-foreground');
+    expect(recycled.props.style).toEqual(ordinary.props.style);
+    expect(pinned.ancestors(recycled).at(-1)?.props.class).toBe('flex-1 gap-1');
     expect(recycled.children.map(read => read())).toEqual([updated]);
     expect(f.counts()).toEqual({ children: 2, components: 2 });
   });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { access, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -101,6 +101,11 @@ function associatedDomains() {
   return domains;
 }
 
+// The only third-party library: zxing core decodes QR frames. Pinned by hash, not fetched at build time.
+const zxing = path.join(packageRoot, 'android/libs/zxing-core-3.5.3.jar');
+const zxingSha256 = '8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82';
+if (createHash('sha256').update(await readFile(zxing)).digest('hex') !== zxingSha256) throw new Error('zxing-core-3.5.3.jar does not match its pinned sha256');
+
 const out = path.join(packageRoot, '.nsh/out');
 const work = path.join(out, `android-${randomUUID()}`);
 const apk = path.join(out, 'YuriNative.apk');
@@ -174,14 +179,14 @@ try {
   const runtimeClasses = path.join(aarDir, 'classes.jar');
   await access(runtimeClasses);
   run(javac, ['--release', '17', '-Xlint:-options', '-encoding', 'UTF-8',
-    '-cp', `${androidJar}${path.delimiter}${runtimeClasses}`, '-d', classes, ...sources]);
+    '-cp', [androidJar, runtimeClasses, zxing].join(path.delimiter), '-d', classes, ...sources]);
 
   // 5. Dex our classes together with the AAR's runtime classes.
   const ourJar = path.join(work, 'app-classes.jar');
   run(jar, ['cf', ourJar, '-C', classes, '.']);
   const dex = path.join(work, 'dex');
   await mkdir(dex, { recursive: true });
-  run(tool('d8'), ['--release', '--min-api', '28', '--lib', androidJar, '--output', dex, runtimeClasses, ourJar]);
+  run(tool('d8'), ['--release', '--min-api', '28', '--lib', androidJar, '--output', dex, runtimeClasses, zxing, ourJar]);
   const dexFiles = (await readdir(dex)).filter(name => /^classes\d*\.dex$/.test(name)).sort();
   if (!dexFiles.length) throw new Error('d8 produced no dex files');
 

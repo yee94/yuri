@@ -6,6 +6,28 @@ import { expect, test } from "vitest";
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const cli = process.env.NSH_BIN || "nsh";
 
+test('native chat attachment menu adopts photos and files without losing the draft or signal receiver', () => {
+  const steps = [
+    'await app.waitFor("text:Native conversation");',
+    'await app.press("text:Native conversation");',
+    'await app.waitFor("text:Hello from the native engine");',
+    'await app.type("id:composer", "Keep this attachment draft");',
+    'app.onDialog(() => "Cancel");',
+    'await app.press("label:Add attachment >> nth=1");',
+    'app.onDialog(() => "Attach photos");',
+    'await app.press("label:Add attachment >> nth=1");',
+    'await app.waitFor("label:synthetic-attachment-1.png");',
+    'expect(app.value("id:composer")).toBe("Keep this attachment draft");',
+    'app.onDialog(() => "Attach files");',
+    'await app.press("label:Add attachment >> nth=1");',
+    'await app.waitFor("text:synthetic-attachment-2.txt");',
+    'expect(app.value("id:composer")).toBe("Keep this attachment draft");',
+  ].join('\n');
+  const result = spawnSync(cli, ['test', 'App.tsx', '--web-host', 'tests/host.js'], { cwd: directory, input: steps, encoding: 'utf8', timeout: 45_000 });
+  expect(result.error, result.stdout + result.stderr).toBeUndefined();
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+}, 60_000);
+
 test("native engine opens a real TSX chat and sends through the native boundary", () => {
   const steps = [
     'await app.waitFor("text:Native conversation");',

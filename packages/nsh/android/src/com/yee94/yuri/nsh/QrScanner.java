@@ -17,6 +17,7 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -30,11 +31,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * QR scan entry built on {@code android.hardware.camera2} + {@code ImageReader}, because
- * CameraX, ML Kit and zxing would all be new dependencies. No QR decoder is bundled, so
- * {@link #scan} rejects with {@code camera_scan_unsupported} instead of opening a camera it
- * cannot decode with; installing a {@link Decoder} enables the full pipeline. Camera
- * start/stop is serialized and never begins after cancellation, matching iOS.
+ * QR scan entry built on {@code android.hardware.camera2} + {@code ImageReader}; frames are
+ * decoded by zxing core ({@link QrZxingDecoder}). Like iOS, a first scan asks for the camera
+ * permission and continues into the scanner once it is granted. Camera start/stop is
+ * serialized and never begins after cancellation; the dialog and the result always run on the
+ * UI thread.
  */
 public final class QrScanner {
     /** Decodes one QR code from the luma plane of a YUV_420_888 frame, or null. */
@@ -47,27 +48,59 @@ public final class QrScanner {
         void complete(String value, String failure);
     }
 
-    private static volatile Decoder decoder;
+    private static final int PERMISSION_REQUEST = 0x5953;
+    private static final Decoder DECODER = new QrZxingDecoder();
+    private static final Object LOCK = new Object();
+    private static PendingPermission permission;
 
     private QrScanner() {}
 
-    public static void setDecoder(Decoder value) { decoder = value; }
+    private static final class PendingPermission {
+        final Activity activity;
+        final Result result;
 
-    public static boolean supported() { return decoder != null; }
+        PendingPermission(Activity activity, Result result) {
+            this.activity = activity;
+            this.result = result;
+        }
+    }
 
     public static void scan(Activity activity, Result result) {
-        Decoder current = decoder;
-        if (current == null) {
-            result.complete(null, "camera_scan_unsupported");
+        NativeHandlers.post(() -> begin(activity, result));
+    }
+
+    private static void begin(Activity activity, Result result) {
+        if (activity.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            new Session(activity, DECODER, result).start();
             return;
         }
-        if (activity.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            // The activity owns the permission callback; JS retries after the user grants it.
-            activity.requestPermissions(new String[] {Manifest.permission.CAMERA}, 0x5952);
-            result.complete(null, "camera_permission_required");
-            return;
+        synchronized (LOCK) {
+            if (permission != null) {
+                result.complete(null, "camera_scan_busy");
+                return;
+            }
+            permission = new PendingPermission(activity, result);
         }
-        new Session(activity, current, result).start();
+        try {
+            activity.requestPermissions(new String[] {Manifest.permission.CAMERA}, PERMISSION_REQUEST);
+        } catch (RuntimeException failure) {
+            onRequestPermissionsResult(PERMISSION_REQUEST, new int[0]);
+        }
+    }
+
+    /** MainActivity.onRequestPermissionsResult handoff; returns whether this scanner owned the request. */
+    public static boolean onRequestPermissionsResult(int requestCode, int[] grantResults) {
+        if (requestCode != PERMISSION_REQUEST) return false;
+        PendingPermission pending;
+        synchronized (LOCK) {
+            pending = permission;
+            permission = null;
+        }
+        if (pending == null) return true;
+        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (granted) new Session(pending.activity, DECODER, pending.result).start();
+        else pending.result.complete(null, "camera_permission_denied");
+        return true;
     }
 
     private static final class Session {
@@ -78,10 +111,13 @@ public final class QrScanner {
         private final Handler handler;
         private final Dialog dialog;
         private final SurfaceView preview;
+        private final FrameLayout container;
         private CameraDevice device;
         private CameraCaptureSession capture;
         private ImageReader reader;
-        private boolean finished;
+        private volatile boolean finished;
+        /** Touched only on the camera thread: an in-flight open still needs its callback to close the device. */
+        private boolean opening;
 
         Session(Activity activity, Decoder decoder, Result result) {
             this.activity = activity;
@@ -90,7 +126,7 @@ public final class QrScanner {
             thread.start();
             handler = new Handler(thread.getLooper());
             preview = new SurfaceView(activity);
-            FrameLayout container = new FrameLayout(activity);
+            container = new FrameLayout(activity);
             container.addView(preview, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
             Button cancel = new Button(activity);
@@ -98,7 +134,7 @@ public final class QrScanner {
             FrameLayout.LayoutParams cancelParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             cancelParams.gravity = Gravity.TOP | Gravity.START;
-            cancelParams.setMargins(48, 48, 0, 0);
+            cancelParams.setMargins(48, 48 + statusBarHeight(activity), 0, 0);
             container.addView(cancel, cancelParams);
             cancel.setOnClickListener(view -> finish(null));
             dialog = new Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
@@ -106,14 +142,34 @@ public final class QrScanner {
             dialog.setOnCancelListener(ignored -> finish(null));
         }
 
+        private static int statusBarHeight(Activity activity) {
+            int id = activity.getResources().getIdentifier("status_bar_height", "dimen", "android");
+            return id > 0 ? activity.getResources().getDimensionPixelSize(id) : 0;
+        }
+
         void start() {
             dialog.show();
             preview.getHolder().addCallback(new SurfaceHolder.Callback() {
-                @Override public void surfaceCreated(SurfaceHolder holder) { open(holder.getSurface()); }
+                @Override public void surfaceCreated(SurfaceHolder holder) { handler.post(() -> open(holder.getSurface())); }
 
                 @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { }
 
                 @Override public void surfaceDestroyed(SurfaceHolder holder) { finish(null); }
+            });
+        }
+
+        /** Camera2 delivers display-oriented frames to a SurfaceView; fit its aspect instead of stretching. */
+        private void fitPreview(android.util.Size size) {
+            NativeHandlers.post(() -> {
+                if (finished) return;
+                DisplayMetrics metrics = activity.getResources().getDisplayMetrics();
+                boolean portrait = metrics.heightPixels >= metrics.widthPixels;
+                float shownWidth = portrait ? size.getHeight() : size.getWidth();
+                float shownHeight = portrait ? size.getWidth() : size.getHeight();
+                float scale = Math.min(metrics.widthPixels / shownWidth, metrics.heightPixels / shownHeight);
+                FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                    Math.round(shownWidth * scale), Math.round(shownHeight * scale), Gravity.CENTER);
+                preview.setLayoutParams(params);
             });
         }
 
@@ -133,20 +189,34 @@ public final class QrScanner {
                     .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
                 android.util.Size size = map == null ? null : pickSize(map.getOutputSizes(ImageFormat.YUV_420_888));
                 if (size == null) { finish(null); return; }
+                fitPreview(size);
                 reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), ImageFormat.YUV_420_888, 2);
                 reader.setOnImageAvailableListener(this::onFrame, handler);
+                opening = true;
                 manager.openCamera(cameraID, new CameraDevice.StateCallback() {
                     @Override public void onOpened(CameraDevice camera) {
+                        opening = false;
                         device = camera;
                         if (finished) { close(); return; }
                         createCapture(previewSurface);
                     }
 
-                    @Override public void onDisconnected(CameraDevice camera) { camera.close(); finish(null); }
+                    @Override public void onDisconnected(CameraDevice camera) {
+                        opening = false;
+                        camera.close();
+                        finish(null);
+                        close();
+                    }
 
-                    @Override public void onError(CameraDevice camera, int error) { camera.close(); finish(null); }
+                    @Override public void onError(CameraDevice camera, int error) {
+                        opening = false;
+                        camera.close();
+                        finish(null);
+                        close();
+                    }
                 }, handler);
             } catch (CameraAccessException | SecurityException | IllegalArgumentException failure) {
+                opening = false;
                 finish(null);
             }
         }
@@ -169,6 +239,7 @@ public final class QrScanner {
                 CaptureRequest.Builder builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                 builder.addTarget(previewSurface);
                 builder.addTarget(reader.getSurface());
+                builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
                 device.createCaptureSession(surfaces, new CameraCaptureSession.StateCallback() {
                     @Override public void onConfigured(CameraCaptureSession session) {
                         capture = session;
@@ -188,33 +259,39 @@ public final class QrScanner {
         }
 
         private void onFrame(ImageReader source) {
-            Image image = source.acquireLatestImage();
+            Image image;
+            try {
+                image = source.acquireLatestImage();
+            } catch (IllegalStateException closed) {
+                return;
+            }
             if (image == null) return;
             String value = null;
             try {
-                Image.Plane plane = image.getPlanes()[0];
-                ByteBuffer buffer = plane.getBuffer();
-                byte[] luma = new byte[buffer.remaining()];
-                buffer.get(luma);
-                value = decoder.decode(luma, image.getWidth(), image.getHeight(), plane.getRowStride());
+                if (!finished) {
+                    Image.Plane plane = image.getPlanes()[0];
+                    ByteBuffer buffer = plane.getBuffer();
+                    byte[] luma = new byte[buffer.remaining()];
+                    buffer.get(luma);
+                    value = decoder.decode(luma, image.getWidth(), image.getHeight(), plane.getRowStride());
+                }
             } catch (Exception ignored) {
                 // A single undecodable frame is not a scan failure.
             } finally {
                 image.close();
             }
-            if (value != null) {
-                String scanned = value;
-                handler.post(() -> finish(scanned));
-            }
+            if (value != null) finish(value);
         }
 
+        /** Camera teardown stays on the camera thread; the dialog and the result return to the UI thread. */
         private void finish(String value) {
             if (finished) return;
             finished = true;
-            close();
-            dialog.dismiss();
-            thread.quitSafely();
-            result.complete(value, value == null ? "camera_scan_cancelled" : null);
+            handler.post(this::close);
+            NativeHandlers.post(() -> {
+                dialog.dismiss();
+                result.complete(value, value == null ? "camera_scan_cancelled" : null);
+            });
         }
 
         private void close() {
@@ -225,6 +302,7 @@ public final class QrScanner {
             }
             if (device != null) { device.close(); device = null; }
             if (reader != null) { reader.close(); reader = null; }
+            if (!opening) thread.quitSafely();
         }
     }
 }

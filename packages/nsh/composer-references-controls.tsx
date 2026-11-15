@@ -8,6 +8,7 @@ import { referenceDescriptionStyle, referenceHighlightColor, referencePanelMetri
 import type { NativeReferenceKeyboard } from './composer-reference-keyboard-native';
 import type { ReferenceKeyboardOwner } from './composer-reference-keyboard';
 import { nativeAutocompleteSurface } from './composer-surface';
+import { glassEdge } from './glass-surface';
 
 export function NativeAutocompleteRowText(props: { value: string; query: string; color?: string; description?: boolean; path?: boolean }) {
   const color = () => props.color ?? referenceHighlightColor(nativeAppearance.current()?.cssVars[colorScheme()], nativeAppearance.current()?.themeIDs[colorScheme()], colorScheme() === 'dark');
@@ -60,11 +61,11 @@ export function NativeReferencePicker(props: {
     search.update(scope, props.query || '', props.open, props.currentSessionID);
   });
   return <If when={props.open}>
-    <View testID="reference-picker" style={{ ...nativeAutocompleteSurface, paddingVertical: referenceRowDensity.panelPadding }}>
+    <View testID="reference-picker" style={{ ...nativeAutocompleteSurface, ...glassEdge(), paddingVertical: referenceRowDensity.panelPadding }}>
       <If when={state().busy && !state().rows.length}><Text class="px-3 py-2 text-xs text-muted-foreground">{t('common.loading')}</Text></If>
       <If when={state().failed}><Button testID="reference-retry" class="min-h-8 px-3 py-1" onPress={() => retry.set(retry() + 1)}><Text class="text-xs text-destructive">{t('common.unavailable')} · {t('chat.questionDelegate.retry')}</Text></Button></If>
       <If when={!!state().rows.length}>
-        <List testID="reference-mixed-list" ref={node => listRef.set(node)} keyboardDismissMode="none" viewabilityConfig={{ itemVisibleThreshold: 1 }} onViewableItemsChange={info => { visible = new Set(info.viewableItems.filter(item => item.isViewable).map(item => item.key)); }} each={state().rows} keyExtractor={row => row.presentation.id} style={{ height: referencePanelMetrics(state().rows, windowSize().height, props.maxHeight).listHeight }}>{item =>
+        <List testID="reference-mixed-list" ref={node => listRef.set(node)} keyboardDismissMode="none" keyboardShouldPersistTaps="always" viewabilityConfig={{ itemVisibleThreshold: 1 }} onViewableItemsChange={info => { visible = new Set(info.viewableItems.filter(item => item.isViewable).map(item => item.key)); }} each={state().rows} keyExtractor={row => row.presentation.id} style={{ height: referencePanelMetrics(state().rows, windowSize().height, props.maxHeight).listHeight }}>{item =>
           // NSH 0.4 Button does not forward focusable; a pressable native row must not take Input focus.
           <View testID={`reference-result-${item().candidate.kind}-${item().candidate.value}`} role="button" accessible focusable={false} accessibilityState={{ selected: props.keyboard?.state().id === item().presentation.id }} class="rounded-lg active:bg-accent" style={{ minHeight: referenceRowDensity.minHeight, marginHorizontal: referenceRowDensity.marginHorizontal, paddingHorizontal: referenceRowDensity.paddingHorizontal, paddingVertical: referenceRowDensity.paddingVertical }} onPress={() => { if (props.keyboard) props.keyboard.choose(item().presentation.id); else props.onChoose?.(item().candidate); }}>
             <View class="flex-row items-center" style={{ gap: referenceRowDensity.gap }}>

@@ -24,7 +24,8 @@ bun run --cwd packages/nsh android:build
 
 产物：`packages/nsh/.nsh/out/YuriNative.apk`（debug keystore 自动生成于
 `~/.android/debug.keystore`）。构建证据：`.nsh/out/android-evidence.json`。
-脚本直接调用 SDK 工具，无 Gradle、无 Kotlin、无第三方依赖。
+脚本直接调用 SDK 工具，无 Gradle、无 Kotlin。
+二维码解码是唯一经明确授权引入的第三方库：`libs/zxing-core-3.5.3.jar`，构建脚本离线校验固定 SHA-256 后参与 javac/d8；不在构建时下载。Camera2 提供帧，`QrZxingDecoder` 只识别 QR，不将二维码内容写入日志。
 
 APK 内容：`classes.dex`（本包 Java + `nsh.aar` 的 `classes.jar`）、
 `lib/<abi>/libnsh.so`（来自 `jni/`，store 不压缩）、`assets/nsh`（TSX bundle）、
@@ -93,13 +94,20 @@ Passkey 的 RP 校验读取 manifest meta-data
 
 ## 明确 unsupported / 受限项
 
+附件 bridge 的 runtime invalidation 仅取消当前选择，保留可重试回执和线程；真正销毁 Activity 时由 `shutdown()` 关闭线程。`NativeHandlers` 即便已经收到过失效通知，也必须逐次取消附件旧操作。系统文件选择器的结果与启动失败释放 presentation hold，取消后的操作不能上传；上传仍校验原始 Host scope。`android-attachment-lifecycle.test.ts` 联编实际 `AttachmentBridge`，用 Android/NSH 测试替身验证重复失效后的重开、取消不上传、过期结果拒绝与文件单次上传；这不等于真机系统选择器或真实 Host 上传验收。
+
+Header 的 context/菜单在 Android 使用渲染树 Popover，自带触摸遮罩，不依赖 UIKit bar-slot anchor。Header、Tab、输入区域与候选的玻璃降级共用 `../glass-surface.ts`，深浅色与 Web mobile.css 的玻璃参数一致；iOS 仍使用系统材质。最新 APK 的实际阴影裁剪、Tab 尺寸与 context 触摸需要真机验证。
+
 | 能力 | 原因 |
 | --- | --- |
-| 下载/内置 Web 字体应用 | Android `Typeface.createFromFile` 的实例无法被 NSH 的 family-name token 解析，WOFF2 也不是 Typeface 格式；任何非 `system-ui`/`monospace` 都投影为 `fontStatus: "unsupported"` 并列入 `unsupportedFonts` |
+| 下载/内置 Web 字体应用 | Android `Typeface.createFromFile` 的实例无法被 NSH 的 family-name token 解析，WOFF2 也不是 Typeface 格式；显式 UI/代码字体选择中非 `system-ui`/`monospace` 的请求仍投影为 `fontStatus: "unsupported"` 并列入 `unsupportedFonts`；主题继承字体按下述角色回退 |
 | `appearance.apply` 的强制深浅色 | 无 AndroidX 时框架没有强制 `uiMode` 的公开 API；`mode` 仍严格校验，并由 TSX `setColorScheme` 应用，原生 chrome 跟随系统 |
 | `yuri.input.metadata`、`yuri.composer.spellcheck`、`yuri.composer.press`、`yuri.chat.headerCollapse` | 见上表；组件发 `unsupported` 事件，不伪造成功 |
-| 附件 Host 传输 | `AttachmentBridge` 的传输/原始授权在 `RuntimeBridge`。后者实现 `AttachmentRuntime` 后附件可用；未实现时五个附件调用明确失败 `attachment_runtime_unavailable`（当前状态） |
 | APNs 推送注册 | 无 FCM 依赖；`NotificationBridge` 负责本地 admission/receipt |
+
+主题继承的已知 renderer 字体按固定 catalog 的 sans/mono 角色使用实际应用的系统字体；例如系统 UI/代码字体配合 JetBrains 主题时，正文使用系统 monospace，不因主题默认值弹出启动字体警告。用户显式选择无法应用的 UI/代码字体、未知 renderer family 仍返回真实 `unsupported`；未把系统回退冒充为已加载原始字体。`android-font-defaults.test.ts` 将实际 Host 外观投影交给生产 Java owner，覆盖启动、重试、Host 更换、主题 sans/mono 与显式不支持选择。
+
+这条启动误报修正已在连接的 Android 真机上覆盖安装并冷启动复验：应用 UI hierarchy 可读且未检测到字体警告文案。该检查只覆盖此次启动提示，不代表自定义字体字形、下载或注册能力已经支持。
 
 ## 测试
 

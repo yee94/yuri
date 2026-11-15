@@ -1,4 +1,6 @@
 import { Scroll, signal, Text, View } from 'nsh';
+import { createOuterHeaderCollapse, OuterHeader, outerHeaderOverlap } from './outer-header';
+import { OUTER_HEADER_EXPANDED } from './outer-header-core';
 import { nativeDensity } from './appearance';
 import { Button, Input, NavPage } from 'nsh/base';
 import { Icon } from './Icon';
@@ -61,8 +63,10 @@ export function SettingsHome(props: SettingsCallbacks & { showTitle?: boolean; b
   const groups = ['connection', 'personalization', 'workspace', 'opencode', 'content', 'system'] as const;
   const visible = () => SETTINGS_ENTRIES.filter(entry => t(entry.title).toLocaleLowerCase().includes(search().trim().toLocaleLowerCase()));
   const matches = () => searchSettingsFields(search(), t);
-  return <Scroll class="flex-1 bg-background" contentClass="p-5 gap-6 pb-10" contentStyle={{ ...nativeDensity().pages.settingsHome, paddingBottom: (props.bottomInset ?? 0) + 40 }}>
-    <If when={props.showTitle !== false}><Text class="text-3xl font-semibold text-foreground">{t('settings.view.home.title')}</Text></If>
+  const headerCollapse = createOuterHeaderCollapse();
+  return <View class="flex-1 bg-background">
+    <If when={props.showTitle !== false}><OuterHeader title={t('settings.view.home.title')} collapse={headerCollapse} /></If>
+    <Scroll class="flex-1" style={props.showTitle !== false ? outerHeaderOverlap : undefined} onScroll={headerCollapse.onScroll} contentClass="p-5 gap-6 pb-10" contentStyle={{ ...nativeDensity().pages.settingsHome, paddingTop: nativeDensity().pages.settingsHome.paddingTop + (props.showTitle !== false ? OUTER_HEADER_EXPANDED : 0), paddingBottom: (props.bottomInset ?? 0) + 40 }}>
     <Input testID="settings-search" class="min-h-12 px-3 rounded-xl bg-card text-foreground" value={search()} onChange={e => search.set(e.value)} placeholder={t('settings.view.search.placeholder')} />
     <If when={!visible().length && !matches().length}><Text class="text-muted-foreground">{t('settings.view.search.noResults')}</Text></If>
     <If when={matches().length > 0}><View class="bg-card rounded-2xl px-3"><Each of={matches()}>{item => <Button testID={`settings-search-${item().id}`} class="min-h-12 py-3 gap-1 active:bg-accent" onPress={() => props.onOpen({ page: item().page, target: item().id })}>
@@ -81,7 +85,8 @@ export function SettingsHome(props: SettingsCallbacks & { showTitle?: boolean; b
         }</Each>
       </View>
     </View>}</Each>
-  </Scroll>;
+    </Scroll>
+  </View>;
 }
 
 /** Render inside the application's NavStack; route.entity opens the third level. */

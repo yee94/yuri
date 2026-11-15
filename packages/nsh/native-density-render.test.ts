@@ -22,6 +22,7 @@ function load(file: string, padding: number) {
     if (id === './Icon') return { Icon: 'Icon' };
     if (id === './state' || id === './settings-protocol') return {};
     if (id === './composer-surface') return { nativeComposerSurface: { glassEffect: 'regular' } };
+    if (id === './glass-surface') return { glassEdge: () => ({}) };
     throw new Error('Unexpected density render dependency: ' + id);
   } });
   return exports;

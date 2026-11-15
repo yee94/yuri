@@ -32,3 +32,10 @@ export function chatMetadataGeometry(width: number, height: number, topInset: nu
   const maxHeight = Math.max(0, Math.min(contentHeight * .72, contentHeight - top - margin));
   return { margin, offset, width: Math.max(0, width - margin * 2), top, contentHeight, maxHeight, scrollMaxHeight: Math.max(0, maxHeight - 16) };
 }
+
+/** Same 85% background / 28pt fading edge as the iOS ChatHeaderEdge owner. */
+export function chatHeaderFadeGeometry(topInset: number) {
+  const solid = Math.max(0, topInset) + chatHeaderLayout.top + chatHeaderLayout.contentHeight;
+  const height = solid + 28;
+  return { height, holdPercent: Math.min(100, (Math.max(0, topInset) + height * .35) / height * 100), opacity: .85 };
+}

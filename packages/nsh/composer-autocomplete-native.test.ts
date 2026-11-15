@@ -4,10 +4,11 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-function run(steps: string[], ios = false) {
-  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'composer-autocomplete-fixture.tsx', ...(ios ? ['--target', 'ios'] : [])], { cwd: directory, encoding: 'utf8', timeout: 90_000, input: ['await app.waitFor("id:autocomplete-input");', ...steps].join('\n') });
+function run(steps: string[], ios = false, trace = false) {
+  const result = spawnSync(process.env.NSH_BIN || 'nsh', ['test', 'composer-autocomplete-fixture.tsx', ...(ios ? ['--target', 'ios'] : []), ...(trace ? ['--trace'] : [])], { cwd: directory, encoding: 'utf8', timeout: 90_000, input: ['await app.waitFor("id:autocomplete-input");', ...steps].join('\n') });
   expect(result.error, result.stdout + result.stderr).toBeUndefined();
   expect(result.status, result.stdout + result.stderr).toBe(0);
+  return result.stdout + result.stderr;
 }
 test('production slash adapter handles Tab, tap, soft Enter, no-match Enter, tail preservation and @ switching', () => run([
   'await app.press("id:model");', 'await app.waitFor("id:command-model");',
@@ -25,6 +26,25 @@ test('production slash adapter handles Tab, tap, soft Enter, no-match Enter, tai
   'await app.press("id:model");', 'await app.waitFor("id:command-model");', 'await app.press("id:command-model");',
   'expect(app.value("id:autocomplete-input")).toBe("");',
 ]), 100_000);
+test('both candidate lists tell the native renderer to deliver taps without dismissing the focused editor', () => {
+  const trace = run([
+    'await app.press("id:mention-empty");',
+    'await app.waitFor("id:reference-result-agent-reviewer");',
+    'await app.press("id:reference-result-agent-reviewer");',
+    'expect(app.value("id:autocomplete-input")).toBe("@reviewer ");',
+    'expect(app.texts()).toContain("slash:0 refs:1");',
+    'await app.press("id:model");',
+    'await app.waitFor("id:command-model");',
+    'await app.press("id:command-model");',
+    'expect(app.value("id:autocomplete-input")).toBe("");',
+  ], false, true);
+  // Headless presses bypass UIKit/Android keyboard dismissal. Check the real mount policy too.
+  for (const testID of ['reference-mixed-list', 'command-list']) {
+    const id = trace.match(new RegExp(`ViewProps \\{ id: (\\d+),[^\\n]*test_id: Some\\("${testID}"\\)`))?.[1];
+    expect(id, `Missing native list ${testID}`).toBeDefined();
+    expect(new RegExp(`ScrollBehavior \\{ id: ${id},[^\\n]*keyboard_taps: Always`).test(trace), `${testID} must preserve keyboard taps`).toBe(true);
+  }
+}, 100_000);
 test('closed/open/closed 300-entry catalog has zero enumeration on 50 ordinary edits and retry is explicit', () => run([
   'await app.type("id:autocomplete-input", "ordinary");',
   'for (let i=0;i<50;i++) await app.type("id:autocomplete-input", "x");',
@@ -54,6 +74,8 @@ test('slash releases keys and candidates during composition, selection, blur, Ho
   'await app.keyboard.press("enter");', 'expect(app.value("id:autocomplete-input")).toBe("/mo");', 'expect(app.shows("id:command-suggestions")).toBe(false);',
 ]), 100_000);
 test.skipIf(process.env.NSH_COMPOSER_IOS !== '1')('UIKit production glass input and both anchored candidates', () => run([
+  'await app.press("id:mention-empty");', 'await app.waitFor("id:reference-result-agent-reviewer");',
+  'await app.press("id:reference-result-agent-reviewer");', 'expect(app.value("id:autocomplete-input")).toBe("@reviewer ");',
   'await app.press("id:model");', 'await app.waitFor("id:command-model");',
   'await app.screenshot("../../.scratch/nsh/chat-frames/composer-slash-uikit.png");',
   'await app.press("id:command-model");', 'expect(app.value("id:autocomplete-input")).toBe("");',

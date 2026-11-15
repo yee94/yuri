@@ -1,6 +1,7 @@
-import { cleanup, effect, host, lifecycle, List, Scroll, signal, Text, untracked, View, type JSX } from 'nsh';
+import { cleanup, effect, host, lifecycle, List, Scroll, signal, Text, untracked, View, type JSX, type ScrollEvent } from 'nsh';
 import { AlertDialog, Button, Input, NavPage, TextView } from 'nsh/base';
 import { Icon } from './Icon';
+import { createOuterHeaderCollapse, OuterHeader } from './outer-header';
 import { t } from './i18n';
 import { nativeCodeTextViewStyles, nativeDensity } from './appearance';
 import { record, runtimeEventFrom, text, type ChatTarget, type Row } from './model';
@@ -150,7 +151,7 @@ function RunCard(props: { run: ScheduledTaskRun; now: number; current: () => boo
   </View>;
 }
 
-function History(props: { identity?: TaskIdentity; header?: JSX.Element; onOpenSession: (target: ChatTarget) => void; active?: boolean; bottomInset?: number }) {
+function History(props: { identity?: TaskIdentity; header?: JSX.Element; onScroll?: (event: ScrollEvent) => void; onOpenSession: (target: ChatTarget) => void; active?: boolean; bottomInset?: number }) {
   const history = createScheduledHistory(props.identity);
   const active = () => history.current() && props.active !== false && lifecycle() === 'active', now = signal(Date.now());
   effect(() => { const visible = active(); untracked(() => { if (visible) void history.load(); else history.suspend(); }); });
@@ -161,7 +162,7 @@ function History(props: { identity?: TaskIdentity; header?: JSX.Element; onOpenS
     return () => clearInterval(timer);
   });
   observeRuns(active, () => { void history.load(); });
-  return <List testID="scheduled-history" class="flex-1" contentClass="px-[18px] pt-4 pb-8 gap-4" contentStyle={{ ...nativeDensity().pages.scheduledHistory, paddingBottom: (props.bottomInset ?? 0) + 32 * nativeDensity().scale }} each={history.runs()} keyExtractor={run => run.id}
+  return <List testID="scheduled-history" class="flex-1" onScroll={props.onScroll} contentClass="px-[18px] pt-4 pb-8 gap-4" contentStyle={{ ...nativeDensity().pages.scheduledHistory, paddingBottom: (props.bottomInset ?? 0) + 32 * nativeDensity().scale }} each={history.runs()} keyExtractor={run => run.id}
     refreshing={history.loading()} onRefresh={() => { void history.load(); }}
     header={() => <View class="gap-3">{props.header}<If when={!!history.error()}><View class="gap-2">
       <Text role="alert" class="text-sm text-destructive">{history.runs().length ? t('sessions.scheduledTasks.history.error.more') : t('sessions.scheduledTasks.history.error.title')}</Text>
@@ -212,9 +213,10 @@ function ScopedHome(props: ScheduledHomeProps) {
   const openHistory = (item: Row) => { if (!catalog.current()) return; historyTask.set(item); view.set('history'); };
   effect(() => { const visible = active(); untracked(() => { if (visible) void catalog.load(); else catalog.suspend(); }); });
   observeRuns(active, () => { void catalog.load(); });
+  const headerCollapse = createOuterHeaderCollapse();
   return <View class="flex-1 bg-background">
-    <View class="px-[18px] pt-5 gap-7">
-      <View class="flex-row items-center gap-3"><Text role="header" class="flex-1 font-semibold text-foreground" style={{ fontSize: 32 }}>{t('sessions.scheduledTasks.dialog.title')}</Text><If when={!!props.onOpenAssistant && active()}><ScheduleAssistant onOpen={target => props.onOpenAssistant?.(target)} current={active} /></If></View>
+    <OuterHeader title={t('sessions.scheduledTasks.dialog.title')} collapse={headerCollapse} paddingHorizontal={18} titleSize={32} overlay={false}><If when={!!props.onOpenAssistant && active()}><ScheduleAssistant onOpen={target => props.onOpenAssistant?.(target)} current={active} /></If></OuterHeader>
+    <View class="px-[18px] pt-2 gap-7">
       <View role="tablist" accessibilityLabel={t('sessions.scheduledTasks.workspace.views.aria')} class="flex-row rounded-full border border-border/30 bg-card p-1 shadow-sm">
         <Button testID="scheduled-tasks-tab" role="tab" selected={view() === 'tasks'} class="flex-1 min-h-10 flex-row gap-2 items-center justify-center rounded-full selected:bg-accent active:bg-accent" onPress={() => view.set('tasks')}><Icon name="calendar-schedule" size={16} /><Text class="text-sm font-semibold text-muted-foreground">{t('sessions.scheduledTasks.workspace.views.tasks')}</Text></Button>
         <Button testID="scheduled-history-tab" role="tab" selected={view() === 'history'} class="flex-1 min-h-10 flex-row gap-2 items-center justify-center rounded-full selected:bg-accent active:bg-accent" onPress={() => { historyTask.set(null); view.set('history'); }}><Icon name="history" size={16} /><Text class="text-sm font-semibold text-muted-foreground">{t('sessions.scheduledTasks.workspace.views.history')}</Text></Button>
@@ -225,7 +227,7 @@ function ScopedHome(props: ScheduledHomeProps) {
       </View></If>
       <If when={view() === 'tasks'}><Input testID="scheduled-search" class="p-3 rounded-xl bg-card text-foreground" value={search()} onChange={event => search.set(event.value)} placeholder={t('sessions.scheduledTasks.workspace.search.placeholder')} accessibilityLabel={t('sessions.scheduledTasks.workspace.search.placeholder')} /></If>
     </View>
-    <If when={view() === 'tasks'}><Scroll testID="scheduled-tasks" class="flex-1" contentClass="px-[18px] pt-5 pb-8 gap-4" contentStyle={{ ...nativeDensity().pages.scheduledTasks, paddingBottom: (props.bottomInset ?? 0) + 32 * nativeDensity().scale }} refreshing={catalog.loading()} onRefresh={() => { void catalog.load(); }}>
+    <If when={view() === 'tasks'}><Scroll testID="scheduled-tasks" class="flex-1" onScroll={headerCollapse.onScroll} contentClass="px-[18px] pt-5 pb-8 gap-4" contentStyle={{ ...nativeDensity().pages.scheduledTasks, paddingBottom: (props.bottomInset ?? 0) + 32 * nativeDensity().scale }} refreshing={catalog.loading()} onRefresh={() => { void catalog.load(); }}>
       <Feedback catalog={catalog} />
       <If when={filtered().length === 0}><Text class="py-6 text-sm text-muted-foreground">{catalog.loading() ? t('sessions.scheduledTasks.dialog.loading') : catalog.loaded() ? t(!app.projects().length ? 'sessions.scheduledTasks.dialog.project.empty' : search().trim() ? 'sessions.scheduledTasks.workspace.search.noResults' : 'sessions.scheduledTasks.dialog.empty.noTasks') : ''}</Text></If>
       <Each of={filtered()} key={taskKey}>{item => <View class={`${card} flex-row items-center px-2`}>
@@ -238,7 +240,7 @@ function ScopedHome(props: ScheduledHomeProps) {
       </View>}</Each>
       <Button class={quiet} accessibilityLabel={t('mcpDropdown.actions.refreshAria')} disabled={catalog.loading()} onPress={() => { void catalog.load(); }}><Icon name="refresh" size={16} /></Button>
     </Scroll></If>
-    <If when={view() === 'history'}><Each of={[historyTask()]} key={item => item ? taskKey(item) : 'global'}>{selected => <History bottomInset={props.bottomInset} active={active()} identity={selected() ? taskIdentity(selected()!) : undefined} onOpenSession={props.onOpenSession} header={<If when={!!selected()}><Button class={action} accessibilityLabel={t('sessions.scheduledTasks.history.filter.clearAria')} onPress={() => historyTask.set(null)}><Text class="text-foreground">{text(record(selected()?.task).name)} · {t('sessions.scheduledTasks.history.filter.clearAria')}</Text></Button></If>} />}</Each></If>
+    <If when={view() === 'history'}><Each of={[historyTask()]} key={item => item ? taskKey(item) : 'global'}>{selected => <History bottomInset={props.bottomInset} onScroll={headerCollapse.onScroll} active={active()} identity={selected() ? taskIdentity(selected()!) : undefined} onOpenSession={props.onOpenSession} header={<If when={!!selected()}><Button class={action} accessibilityLabel={t('sessions.scheduledTasks.history.filter.clearAria')} onPress={() => historyTask.set(null)}><Text class="text-foreground">{text(record(selected()?.task).name)} · {t('sessions.scheduledTasks.history.filter.clearAria')}</Text></Button></If>} />}</Each></If>
   </View>;
 }
 

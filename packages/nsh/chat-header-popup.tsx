@@ -1,4 +1,4 @@
-import { cleanup, effect, Overlay, signal, untracked, windowSize, type Bounds, type JSX } from 'nsh';
+import { cleanup, effect, Overlay, platform, signal, untracked, windowSize, type Bounds, type JSX } from 'nsh';
 import { Popover, type PopoverProps } from 'nsh/base';
 import { native } from './runtime';
 
@@ -13,11 +13,12 @@ type Props = Pick<PopoverProps, 'open' | 'placement' | 'align' | 'offset' | 'mar
 /** UIKit bar slots have their own layout root. Their authoritative surface bounds
  * come from UIKit, not NSH's slot-local layout coordinates. */
 export function ChatHeaderPopup(props: Props) {
+  const systemAnchor = props.native === true && platform.os !== 'android';
   const anchor = signal<Bounds | null>(null);
   let revision = 0;
   cleanup(() => { revision++; });
   effect(() => {
-    if (!props.native) return;
+    if (!systemAnchor) return;
     const open = props.open;
     windowSize();
     const operation = ++revision;
@@ -36,7 +37,7 @@ export function ChatHeaderPopup(props: Props) {
     });
   });
   const close = (reason: 'pressOutside' | 'cancel') => props.onOpenChange?.({ open: false, reason });
-  return <If when={props.native} else={<Popover open={props.open} placement={props.placement} align={props.align} offset={props.offset} margin={props.margin} popupClass={props.popupClass} popupStyle={props.popupStyle} onOpenChange={props.onOpenChange} trigger={props.trigger()}>{props.children}</Popover>}>
+  return <If when={systemAnchor} else={<Popover open={props.open} placement={props.placement} align={props.align} offset={props.offset} margin={props.margin} popupClass={props.popupClass} popupStyle={props.popupStyle} onOpenChange={props.onOpenChange} trigger={props.trigger()}>{props.children}</Popover>}>
     {props.trigger(() => props.onOpenChange?.({ open: !props.open, reason: 'triggerPress' }))}
     <If when={props.open && !!anchor()}><Overlay anchor={anchor()} placement={props.placement} align={props.align} offset={props.offset} margin={props.margin} class={props.popupClass ?? undefined} style={props.popupStyle} onPressOutside={() => close('pressOutside')} onCancel={() => close('cancel')}>{props.children}</Overlay></If>
   </If>;

@@ -10,8 +10,9 @@ import java.util.Set;
 /**
  * One selected appearance's font projection, independent of palette ownership
  * (iOS NativeFontOwner.swift). Android cannot apply App fonts, so every
- * non-system request resolves to an explicit `unsupported` projection rather
- * than a silent fallback; the ticket still advances so retry is observable.
+ * explicitly selected non-system request resolves to an `unsupported`
+ * projection. Catalog fonts inherited from a theme use the corresponding
+ * Android system role; the ticket still advances so retry is observable.
  */
 public final class NativeFontOwner {
     public static final class Projection {
@@ -140,6 +141,9 @@ public final class NativeFontOwner {
             String bundled = registry.bundledMono();
             if (bundled != null) return bundled;
         }
+        // Theme renderer defaults do not select a downloadable UI/code face.
+        // Preserve mono/sans intent using the actual applied Android role.
+        if (definition != null) return "mono".equals(definition.kind) ? projection.mono : projection.ui;
         // A renderer family never creates a CDN URL or initiates a download.
         unsupported.add(name);
         return projection.ui;

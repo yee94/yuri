@@ -28,7 +28,7 @@ function Fixture() {
   const seed = (text: string, cursor = text.length) => { keyboard.beforeChange(); doc.set({ text, references: [] }); input?.focus(); keyboard.onFocus(); input?.setSelection(cursor); keyboard.onSelectionChange({ start: cursor, end: cursor }); };
   async function request(path: string) {
     if (path.startsWith('/api/fs/find?')) return { data: [{ path: 'src/neutral.ts', type: 'file' }] };
-    if (path.startsWith('/api/agent?')) return { data: [{ name: 'reviewer' }] };
+    if (path.startsWith('/api/agent?')) return { data: [{ name: 'reviewer', description: 'Review changes in the current workspace' }, { name: 'explorer', description: 'Explore the workspace source code' }] };
     return { data: [] };
   }
   return <View class="flex-1 bg-background justify-end px-3 gap-2" style={{ paddingBottom: Math.max(keyboardFrame().height, safeArea().bottom) + 8 }}>
@@ -39,6 +39,7 @@ function Fixture() {
       <Button testID="model" onPress={() => seed('/mo')}><Text>Model</Text></Button>
       <Button testID="middle" onPress={() => seed('/mo\nKEEP', 2)}><Text>Middle</Text></Button>
       <Button testID="mention" onPress={() => seed('@src')}><Text>Mention</Text></Button>
+      <Button testID="mention-empty" onPress={() => seed('@')}><Text>Empty mention</Text></Button>
       <Button testID="ordinary" onPress={() => seed('ordinary')}><Text>Ordinary</Text></Button>
       <Button testID="failure" onPress={() => fail.set(!fail())}><Text>Failure</Text></Button>
       <Button testID="host" onPress={() => host.set('other')}><Text>Host</Text></Button>

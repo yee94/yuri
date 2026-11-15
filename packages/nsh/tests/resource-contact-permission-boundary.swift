@@ -17,7 +17,7 @@ import Foundation
     private var pendingRelease = Set<String>()
     private(set) var shows = 0, lastKey: String?
     private func failure(_ message: String) -> Error { RuntimeHostScopeFailure.invalid }
-    private func retireSVG(_ key: String) {}
+    private func retireLeaseObservers(_ key: String) {}
     private func closePresentation(_ result: Result<Any?, Error>) {}
     private func show(key: String, lease: Lease, action: String, controller: UIViewController, id: UUID) async throws -> Any? {
         shows += 1; lastKey = key; return ["completed": false]

@@ -18,12 +18,15 @@ import { createProjectsOrderGesture, type ProjectsOrderGeometry, type ProjectsOr
 import { createProjectsSessionDrag, type ProjectsSessionGeometry, type ProjectsSessionDragProjection, type ProjectsOrderScroll } from './projects-order-touch';
 import { projectHomeDivider, projectHomeDensityGeometry, projectHomeGeometry as geometry, projectHomeSurface, worktreeFormLayout } from './projects-presentation';
 import { nativeAppearance, nativeChatTextStyle, nativeDensity } from './appearance';
+import { createOuterHeaderCollapse, OuterHeader, outerHeaderOverlap } from './outer-header';
+import { OUTER_HEADER_EXPANDED } from './outer-header-core';
 import { nativeProjectHomeSummaries } from './projects-summary';
 import { WorktreeBranchPicker } from './projects-worktree-picker';
 import { buildProjectMenuItems } from '../ui/src/mobile/sessionMenuModel';
 import type { IconName } from '../ui/src/components/icon/icons';
 import { createWorktreeForm } from './projects-worktree-form';
 import { normalizeBranchName, slugifyWorktreeName } from '../ui/src/lib/worktrees/worktreeNames';
+import { glassEdge } from './glass-surface';
 
 export interface ProjectsNavigation {
   active?: boolean;
@@ -754,7 +757,7 @@ function WorktreeRow(props: { project: Project; tree: Worktree; controller: Cont
       </View></If>
       <View ref={node => { headerRef = node; props.geometry?.set(props.tree.path, node); }} {...pan.panHandlers} class={props.home ? 'flex-row items-center bg-transparent' : 'flex-row items-center bg-card'} style={{ transform: [{ translateX: offset() }], height: props.home ? homeGeometry().worktreeHeight : nativeDensity().forms.worktree.minHeight, ...(props.home && props.expanded ? { borderBottomWidth: 1, borderColor: projectHomeDivider(token('foreground'), colorScheme() === 'dark') } : {}) }}>
         <If when={!!gesture}><View testID={`project-worktree-drag-${props.tree.path}`} {...gesture?.handlers} class="min-w-11 min-h-11 items-center justify-center" accessibilityLabel={t('mobile.projectEdit.dragWorktreeAria', { label: props.tree.branch || props.tree.name })}><Icon name="drag-move-2" size={15} /></View></If>
-        <View class="flex-1" onLongPress={() => { suppress = true; void menu(); }}><Button testID={`project-worktree-${props.tree.path}`} class={props.home ? 'flex-1 flex-row items-center gap-1.5 px-2.5 py-1.5' : `flex-1 flex-row gap-2 ${quiet}`} style={props.home ? { minHeight: homeGeometry().worktreeHeight, paddingHorizontal: 10 * nativeDensity().scale, paddingVertical: 6 * nativeDensity().scale, gap: 6 * nativeDensity().scale } : { ...nativeDensity().forms.quiet, ...nativeDensity().forms.inline }} onPress={() => { if (suppress) { suppress = false; return; } if (offset()) { offset.set(0); return; } props.onSelect(); }}><Icon name="git-branch" size={props.home ? 14 : 15} /><Text class="flex-1 text-foreground" style={{ numberOfLines: 1, fontSize: props.home ? 12 : 14 }}>{props.tree.branch || props.tree.name}</Text><If when={props.expanded !== undefined}><Text class="text-muted-foreground" style={{ fontSize: props.home ? 11 : 12 }}>{sessionCount(props.controller.byDirectory().get(props.tree.path)?.length ?? 0)}</Text><Icon name={props.expanded ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></If></Button></View>
+        <View class="flex-1" onLongPress={() => { suppress = true; void menu(); }}><Button testID={`project-worktree-${props.tree.path}`} class={props.home ? 'flex-1 flex-row items-center gap-1.5 px-2.5 py-1.5' : `flex-1 flex-row gap-2 ${quiet}`} style={props.home ? { minHeight: homeGeometry().worktreeHeight, paddingHorizontal: 10 * nativeDensity().scale, paddingVertical: 6 * nativeDensity().scale, gap: 6 * nativeDensity().scale } : { ...nativeDensity().forms.quiet, ...nativeDensity().forms.inline }} onPress={() => { if (suppress) { suppress = false; return; } if (offset()) { offset.set(0); return; } props.onSelect(); }}><Icon name="git-branch" size={props.home ? 14 : 15} /><Text class={props.home ? 'flex-1 font-semibold text-foreground' : 'flex-1 text-foreground'} style={{ numberOfLines: 1, ...(props.home ? geometry.title : { fontSize: 14 }) }}>{props.tree.branch || props.tree.name}</Text><If when={props.expanded !== undefined}><Text class="text-muted-foreground" style={{ fontSize: props.home ? 11 : 12 }}>{sessionCount(props.controller.byDirectory().get(props.tree.path)?.length ?? 0)}</Text><Icon name={props.expanded ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></If></Button></View>
         <Button class={props.home ? 'w-9 h-9 items-center justify-center' : quiet} style={props.home ? { width: homeGeometry().action, height: homeGeometry().action } : nativeDensity().forms.quiet} accessibilityLabel={t('sessions.sidebar.project.actions.projectMenu')} onPress={() => { void menu(); }}><Icon name="more-2" size={props.home ? 14 : 16} /></Button>
       </View>
     </View>
@@ -868,8 +871,8 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
   }
   return <View class={props.home ? 'overflow-hidden' : 'overflow-hidden rounded-xl'} style={props.home && props.divider ? { borderBottomWidth: 1, borderColor: projectHomeDivider(token('foreground'), colorScheme() === 'dark') } : undefined}>
     <If when={offset() < 0}><View class="absolute right-0 top-0 bottom-0 flex-row" style={{ width: 112 }}>
-      <Button class="flex-1 bg-secondary items-center justify-center gap-1" disabled={props.controller.pending().includes(props.row.id)} onPress={() => mutate('pin')}><Icon name="pushpin" size={17} /><Text class="text-xs text-foreground">{pinLabel()}</Text></Button>
-      <Button class="flex-1 bg-muted items-center justify-center gap-1" disabled={props.controller.pending().includes(props.row.id)} onPress={() => mutate('archive')}><Icon name="archive" size={17} /><Text class="text-xs text-destructive">{t('sessions.sidebar.bulkActions.archive')}</Text></Button>
+      <Button class="bg-accent items-center justify-center" style={{ width: 56, gap: 3 }} disabled={props.controller.pending().includes(props.row.id)} onPress={() => mutate('pin')}><Icon name="pushpin" size={18} /><Text class="font-medium text-foreground" style={{ fontSize: 10, lineHeight: 12 }}>{pinLabel()}</Text></Button>
+      <Button class="bg-destructive items-center justify-center" style={{ width: 56, gap: 3 }} disabled={props.controller.pending().includes(props.row.id)} onPress={() => mutate('archive')}><Icon name="archive" size={18} /><Text class="font-medium text-destructive-foreground" style={{ fontSize: 10, lineHeight: 12 }}>{t('sessions.sidebar.bulkActions.archive')}</Text></Button>
     </View></If>
     <View {...pan.panHandlers} class={props.home ? 'flex-row items-center bg-transparent' : `flex-row items-center min-h-12 ${props.controller.attention().currentSessionID === props.row.id ? 'bg-accent' : 'bg-card'}`} style={{ transform: [{ translateX: offset() }], minHeight: props.home ? homeGeometry().rowHeight : nativeDensity().forms.session.minHeight }}>
       <View testID={`project-session-touch-${props.dragScope ?? 'plain'}-${props.row.id}`} class="flex-1"
@@ -898,15 +901,21 @@ function SessionRow(props: { row: ProjectSession; controller: Controller; onOpen
   </View>;
 }
 
+const paginationStyle = (divider: boolean) => ({
+  minHeight: homeGeometry().rowHeight, paddingLeft: 36 * nativeDensity().scale, paddingRight: 10 * nativeDensity().scale,
+  paddingVertical: 6 * nativeDensity().scale, gap: 7 * nativeDensity().scale,
+  ...(divider ? { borderTopWidth: 1, borderColor: projectHomeDivider(token('foreground'), colorScheme() === 'dark') } : {}),
+});
+
 function DirectoryRows(props: { directory: string; controller: Controller; scroll: ProjectsScroll; onOpenChat: ProjectsNavigation['onOpenChat']; home?: boolean; embedded?: boolean }) {
   const count = () => props.controller.visibleCount(props.directory);
   const rows = () => props.controller.byDirectory().get(props.directory) ?? [];
   const visible = () => rows().filter((row, index) => index < count() || props.controller.running().includes(row.id) || props.controller.attention().currentSessionID === row.id);
   return <View class={props.home ? 'gap-0' : 'gap-1'} style={props.home ? !props.embedded ? homeGroupStyle() : undefined : nativeDensity().forms.rowGap}>
     <Each of={[props.directory]}>{scope => <ProjectsSessionGroup controller={props.controller} scope={scope()} rows={visible} scroll={props.scroll} onOpen={props.onOpenChat} home={props.home} />}</Each>
-    <If when={count() > 3 && rows().length > 3}><Button testID={`projects-fewer-${props.directory}`} class={quiet} style={nativeDensity().forms.quiet} onPress={() => props.controller.showFewer(props.directory)}><Text class="text-sm text-muted-foreground">{t('sessions.sidebar.group.showFewer')}</Text></Button></If>
+    <If when={count() > 3 && rows().length > 3}><Button testID={`projects-fewer-${props.directory}`} class={props.home ? 'flex-row items-center' : quiet} style={props.home ? paginationStyle(rows().length > 0) : nativeDensity().forms.quiet} onPress={() => props.controller.showFewer(props.directory)}><Text class={props.home ? 'flex-1 font-medium text-muted-foreground' : 'text-sm text-muted-foreground'} style={props.home ? { numberOfLines: 1, fontSize: 12, lineHeight: 16 } : undefined}>{t('sessions.sidebar.group.showFewer')}</Text><If when={!!props.home}><Icon name="arrow-up-s" size={16} /></If></Button></If>
     <If when={rows().length > count() || props.controller.buckets()[props.directory]?.hasMore || !props.controller.buckets()[props.directory]}>
-      <Button testID={`projects-more-${props.directory}`} class={quiet} style={nativeDensity().forms.quiet} disabled={props.controller.pending().includes(props.directory)} onPress={() => props.controller.showMore(props.directory)}><Text class="text-sm text-muted-foreground">{props.controller.pending().includes(props.directory) ? t('common.loading') : t('sessions.sidebar.group.showMore')}</Text></Button>
+      <Button testID={`projects-more-${props.directory}`} class={props.home ? 'flex-row items-center' : quiet} style={props.home ? paginationStyle(rows().length > 0 && !(count() > 3 && rows().length > 3)) : nativeDensity().forms.quiet} disabled={props.controller.pending().includes(props.directory)} onPress={() => props.controller.showMore(props.directory)}><Text class={props.home ? 'flex-1 font-medium text-muted-foreground' : 'text-sm text-muted-foreground'} style={props.home ? { numberOfLines: 1, fontSize: 12, lineHeight: 16 } : undefined}>{props.controller.pending().includes(props.directory) ? t('common.loading') : t('sessions.sidebar.group.showMore')}</Text><If when={!!props.home}><Icon name="arrow-right-s" size={16} /></If></Button>
     </If>
   </View>;
 }
@@ -990,22 +999,22 @@ export function ProjectsHome(props: ProjectsHomeProps) {
       if (controller.current() && started === epoch() && options.some(option => option.id === selected.action && !option.disabled && !option.active)) props.onSwitchInstance?.(selected.action!);
     }
   }
+  const headerCollapse = createOuterHeaderCollapse();
   return <View class="flex-1 bg-background">
-    <Scroll testID="projects-home-scroll" ref={scroll.ref} onScroll={scroll.onScroll} onTouchStartCapture={scroll.onTouchStartCapture} onScrollDragStart={scroll.onScrollDragStart} scrollEventThrottle={16} scrollable={!scroll.dragging()} class="flex-1" contentStyle={{ paddingBottom: props.bottomInset ?? 0 }} refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); }}>
+    <OuterHeader title={t('mobile.sessions.section.projects')} collapse={headerCollapse} maxWidth={452} paddingHorizontal={homeGeometry().pageInset + 4 * nativeDensity().scale}>
+        <Button testID="projects-open-search" class="w-10 h-10 rounded-full items-center justify-center" style={{ ...projectHomeSurface, ...glassEdge() }} accessibilityLabel={t('mobile.sessions.searchAria')} onPress={() => { if (props.onOpenSearch) props.onOpenSearch(); else { searching.set(true); void controller.search(term()); } }}><Icon name="search" size={18} /></Button>
+        <Button testID="projects-open-menu" class="w-10 h-10 rounded-full items-center justify-center" style={{ ...projectHomeSurface, ...glassEdge() }} accessibilityLabel={t('mobile.projects.menu.label')} onPress={() => { void addMenu(); }}><Icon name="add" size={20} /></Button>
+    </OuterHeader>
+    <Scroll testID="projects-home-scroll" ref={scroll.ref} onScroll={event => { scroll.onScroll(event); headerCollapse.onScroll(event); }} onTouchStartCapture={scroll.onTouchStartCapture} onScrollDragStart={scroll.onScrollDragStart} scrollEventThrottle={16} scrollable={!scroll.dragging()} class="flex-1" style={outerHeaderOverlap} contentStyle={{ paddingTop: OUTER_HEADER_EXPANDED, paddingBottom: props.bottomInset ?? 0 }} refreshing={controller.loading()} onRefresh={() => { void controller.refresh(); }}>
       <View style={{ maxWidth: 452, width: '100%', alignSelf: 'center' }}>
       <View ref={scroll.contentRef} onLayout={scroll.onContentLayout} class="pb-6" style={{ paddingHorizontal: homeGeometry().pageInset, paddingBottom: 24 * nativeDensity().scale, gap: homeGeometry().pageGap }}>
-      <View class="flex-row items-center gap-3 pt-3 pb-1 px-1" style={{ gap: 12 * nativeDensity().scale, paddingTop: 12 * nativeDensity().scale, paddingBottom: 4 * nativeDensity().scale, paddingHorizontal: 4 * nativeDensity().scale }}>
-        <Text class="flex-1 text-3xl font-bold text-foreground">{t('mobile.sessions.section.projects')}</Text>
-        <Button testID="projects-open-search" class="w-10 h-10 rounded-full items-center justify-center" style={projectHomeSurface} accessibilityLabel={t('mobile.sessions.searchAria')} onPress={() => { if (props.onOpenSearch) props.onOpenSearch(); else { searching.set(true); void controller.search(term()); } }}><Icon name="search" size={18} /></Button>
-        <Button testID="projects-open-menu" class="w-10 h-10 rounded-full items-center justify-center" style={projectHomeSurface} accessibilityLabel={t('mobile.projects.menu.label')} onPress={() => { void addMenu(); }}><Icon name="add" size={20} /></Button>
-      </View>
        <If when={controller.error()}><View><Text class="text-sm text-destructive px-2">{controller.error()}</Text><Button class={quiet} onPress={() => { void controller.refresh(); }}><Text class="text-foreground">{t('layout.browserProvider.retry')}</Text></Button></View></If>
       <If when={controller.notice()}><Text class="text-sm text-muted-foreground px-2">{controller.notice()}</Text></If>
        <If when={controller.deleteBatches().length > 0 || controller.archiveFailures().length > 0 || controller.undoRows().length > 0}><ArchiveUndo controller={controller} onOpenArchivedSessions={props.onOpenArchivedSessions} /></If>
        <If when={controller.remoteDeletes().length > 0}><RemoteDeleteRetries controller={controller} /></If>
-      <If when={special().length > 0}><View testID="projects-pinned-card" style={projectHomeSurface}>
+      <If when={special().length > 0}><View testID="projects-pinned-card" style={{ ...projectHomeSurface, ...glassEdge() }}>
         <Button class="flex-row items-center" style={{ minHeight: homeGeometry().headerHeight, padding: homeGeometry().headerInset, gap: homeGeometry().headerGap }} onPress={() => pinnedClosed.set(!pinnedClosed())}>
-          <View class="rounded-full items-center justify-center" style={{ width: homeGeometry().icon, height: homeGeometry().icon, glassEffect: 'regular' }}><Icon name="pushpin" size={homeGeometry().glyph} /></View>
+          <View class="rounded-full items-center justify-center" style={{ width: homeGeometry().icon, height: homeGeometry().icon, glassEffect: 'regular', ...glassEdge() }}><Icon name="pushpin" size={homeGeometry().glyph} /></View>
           <View class="flex-1 gap-1"><Text class="font-semibold text-foreground" style={geometry.title}>{t('mobile.sessions.section.pinned')}</Text><Text class="text-muted-foreground" style={geometry.meta}>{sessionCount(special().length)}</Text></View><Icon name={pinnedClosed() ? 'arrow-right-s' : 'arrow-down-s'} size={14} />
         </Button>
         <If when={!pinnedClosed()}><View style={{ paddingHorizontal: homeGeometry().groupsInset, paddingTop: homeGeometry().groupsTop, paddingBottom: homeGeometry().groupsBottom, gap: homeGeometry().groupGap }}>
@@ -1015,10 +1024,10 @@ export function ProjectsHome(props: ProjectsHomeProps) {
       </View></If>
       <Each of={app.projects()}>{project => {
         let suppressToggle = false;
-        return <View testID={`projects-card-${project().id}`} style={projectHomeSurface}>
+        return <View testID={`projects-card-${project().id}`} style={{ ...projectHomeSurface, ...glassEdge() }}>
         <View class="flex-row items-center" style={{ minHeight: homeGeometry().headerHeight }} onLongPress={() => { suppressToggle = true; void projectMenu(project()); }}>
           <Button testID={`projects-toggle-${project().id}`} class="flex-1 flex-row items-center" style={{ minHeight: homeGeometry().headerHeight, padding: homeGeometry().headerInset, gap: homeGeometry().headerGap }} onPressDown={() => { suppressToggle = false; }} onPress={() => { if (suppressToggle) { suppressToggle = false; return; } toggle(project()); }}>
-            <View class="rounded-full items-center justify-center" style={{ width: homeGeometry().icon, height: homeGeometry().icon, glassEffect: 'regular' }}><Icon name="code-box" size={homeGeometry().glyph} /></View>
+            <View class="rounded-full items-center justify-center" style={{ width: homeGeometry().icon, height: homeGeometry().icon, glassEffect: 'regular', ...glassEdge() }}><Icon name="code-box" size={homeGeometry().glyph} /></View>
             <View class="flex-1 gap-1"><View class="flex-row items-center gap-2"><Text class="flex-1 font-semibold text-foreground" style={{ ...geometry.title, numberOfLines: 1 }}>{project().name}</Text><If when={props.activeProjectId === project().id}><View class="w-2 h-2 rounded-full bg-success" accessibilityLabel={t('mobile.sessions.activeProjectAria')} /></If></View>
               <Text class="text-muted-foreground" style={{ ...geometry.meta, numberOfLines: 1 }}>{[sessionCount(projectSummaries().get(project().id)?.count ?? 0) + (projectSummaries().get(project().id)?.partial ? '+' : ''), relative(projectSummaries().get(project().id)?.latest ?? 0), projectPathHint(project().path)].filter(Boolean).join(' · ')}</Text>
             </View><Icon name={collapsed().includes(project().id) ? 'arrow-right-s' : 'arrow-down-s'} size={14} />

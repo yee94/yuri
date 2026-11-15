@@ -96,7 +96,7 @@ export function nativeThemeTokens(raw: Theme): Record<string, string> {
 
 /** Resolves cssGenerator's tools title color-mix and description alpha for UIKit. */
 export function nativeToolThemeTokens(raw: Theme) {
-  const { surface, tools, status } = withBaseTextFloor(raw).colors;
+  const { surface, tools, status, interactive } = withBaseTextFloor(raw).colors;
   function rgba(color: string) {
     if (!/^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i.test(color)) throw new Error('Native tool appearance requires hexadecimal semantic colors');
     const value = color.slice(1), hex = value.length <= 4 ? [...value].map(char => char + char).join('') : value;
@@ -107,8 +107,11 @@ export function nativeToolThemeTokens(raw: Theme) {
   const mixed = hex([0, 1, 2].map(index => alpha ? (title[index] * title[3] + muted[index] * muted[3]) / (2 * alpha) : 0).concat(alpha * 255));
   const icon = tools?.icon || surface.mutedForeground;
   const description = tools?.description || hex(muted.slice(0, 3).concat(0.6 * 255));
+  // cssGenerator `--tools-border`, then Web's `opacity-40` on the indent rail (a bar cannot take opacity here: it is a container's border).
+  const border = tools?.border || hex(rgba(interactive.border).slice(0, 3).concat(0.3 * 255)), [r, g, b, a] = rgba(border);
+  const rail = hex([r, g, b, a * 255 * 0.4]);
   rgba(icon); rgba(description);
-  return { icon, title: mixed, description, error: status.error };
+  return { icon, title: mixed, description, error: status.error, border, rail };
 }
 
 /** Only a successful Host snapshot may choose defaults; missing themes remain a failure. */

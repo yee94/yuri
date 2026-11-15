@@ -111,7 +111,7 @@ describe('native picker AX container props contract (source only, not UIKit)', (
       ['Button', 'new-session-effort-favorite-fixture-gpt-model'],
       ['Button', 'new-session-favorite-favorite-fixture-gpt-model'],
       ['NativeSheetSearch', 'new-session-selection-search'], ['Button', 'new-session-catalog-retry'],
-      ['Button', 'new-session-selection-default'], ['Button', 'new-session-provider-fixture'],
+      ['Button', 'new-session-provider-fixture'],
       ['Button', 'new-session-agent-build'],
     ]);
   });
@@ -155,7 +155,7 @@ describe('new-session composer selection notification (no native engine)', () =>
     const readSelection = vi.fn(() => selection);
     const untracked = vi.fn((work: () => void) => work());
     const factory = componentClosures('new-session-page.tsx', 'NewSessionBody', '', {
-      ...basePorts, createAttachmentPick, createNativeComposerCommandRouter, native: () => { throw new Error('Notification must not pick attachments'); }, captureHostRequest: () => request, untracked, effect: (work: () => void) => effects.push(work), cleanup: (work: () => void) => cleanups.push(work), createNativeReferenceKeyboard: () => ({}),
+      ...basePorts, createAttachmentPick, createNativeComposerCommandRouter, native: () => { throw new Error('Notification must not pick attachments'); }, captureHostRequest: () => request, untracked, effect: (work: () => void) => effects.push(work), cleanup: (work: () => void) => cleanups.push(work), createNativeReferenceKeyboard: () => ({}), createNewSessionCatalog: () => ({ providers: () => [], dispose: vi.fn() }),
     });
     factory({ ownership: { owner: { directory, current: () => currentHost, selection: readSelection, durable: { draft } } }, active: () => active, switching: () => switching, onSelection: publish });
     return { run: effects[0], dispose: cleanups[0], publish, request, draft, readSelection, untracked,

@@ -70,6 +70,8 @@ import NativeShell
         NativeSheetPresentation.install(on: surface)
         NativeDatePicker.install(on: surface)
         NativeChatHeaderCollapse.install(on: surface)
+        NativeChatHeaderEdge.install(on: surface)
+        NativeChatHeaderPress.install(on: surface)
         view.addSubview(surface); surface.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([surface.topAnchor.constraint(equalTo: view.topAnchor), surface.bottomAnchor.constraint(equalTo: view.bottomAnchor), surface.leadingAnchor.constraint(equalTo: view.leadingAnchor), surface.trailingAnchor.constraint(equalTo: view.trailingAnchor)])
         do {
@@ -145,6 +147,12 @@ import NativeShell
                     return ResourceSVGImageAsset(url: asset.url, current: asset.current, observeRetirement: asset.observe)
                 }
                 ResourceSVGImageFactory.install(on: surface, resolve: svgResolve)
+                let rasterResolve: ResourceRasterImageFactory.Resolve = { [weak resources] lease, expectedHost in
+                    guard let resources else { throw CancellationError() }
+                    let asset = try resources.rasterAsset(lease, expectedHost: expectedHost)
+                    return ResourceRasterImageAsset(url: asset.url, current: asset.current, observeRetirement: asset.observe)
+                }
+                ResourceRasterImageFactory.install(on: surface, resolve: rasterResolve)
                 resources.makeSVGPreview = { lease, expectedHost in
                     try ResourceSVGImageFactory.controller(lease: lease, expectedHost: expectedHost, resolve: svgResolve)
                 }
@@ -247,6 +255,7 @@ import NativeShell
             NativeInputMetadataOwner.install(on: surface)
             NativeComposerSpellcheck.install(on: surface)
             NativeComposerPress.install(on: surface)
+            NativeComposerInlineChips.install(on: surface)
             guard let bundle = Bundle.main.url(forResource: "bundle", withExtension: "nshc", subdirectory: "nsh") else { throw NativeFailure.message("未找到原生应用资源") }
             try surface.loadBundle(at: bundle)
         } catch {

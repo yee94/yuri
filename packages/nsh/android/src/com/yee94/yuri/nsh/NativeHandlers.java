@@ -57,6 +57,7 @@ public final class NativeHandlers {
     private SpeechPlaybackBridge speech;
     private GuiPluginPreviewBridge guiPreview;
     private boolean installed;
+    private AttachmentBridge attachments;
     private boolean invalidated;
     private boolean foreground = true;
 
@@ -93,13 +94,17 @@ public final class NativeHandlers {
         add(new NewSessionPickerBridge(activity, leases, view));
         add(new NativeInputMetadataBridge(activity, leases, view));
         add(new NativeComposerSpellcheckBridge(activity, leases, view));
-        add(new AttachmentBridge(activity, leases, view));
+        add(new ComposerInlineChipBridge(activity, leases, view));
+        attachments = new AttachmentBridge(activity, leases, view);
+        add(attachments);
         add(reflective(new TerminalBridge(activity, leases, view)));
         add(reflective(new RemoteDesktopBridge(activity, leases, view)));
         add(new PasskeyBridge(activity, leases, view));
         notifications = new NotificationBridge(activity, leases, view);
         add(notifications);
-        add(reflective(new AuthorizationCacheCleanupBridge(activity, leases, view)));
+        if (runtime instanceof RuntimeBridge) {
+            add(reflective(new AuthorizationCacheCleanupBridge(activity, (RuntimeBridge) runtime, view)));
+        }
         speech = new SpeechPlaybackBridge(activity, leases, view);
         add(reflective(speech));
         VoiceRecognitionBridge voice = new VoiceRecognitionBridge(activity, leases, view);
@@ -129,6 +134,7 @@ public final class NativeHandlers {
         ResourceHTMLComponents.installView(view, web);
         ResourceHTMLComponents.installPresentationAnchor(view, resources);
         ResourceSVGImageComponent.install(view, resources.svgResolver());
+        ResourceRasterImageComponent.install(view, resources.rasterResolver());
 
         guiPreview = new GuiPluginPreviewBridge(activity, leases, view);
         try {
@@ -201,6 +207,7 @@ public final class NativeHandlers {
     /** Shutdown: retire every bridge, then release the speech owner's audio resources. */
     public void shutdown() {
         invalidate();
+        if (attachments != null) attachments.shutdown();
         if (speech != null) {
             try {
                 speech.release();
@@ -211,6 +218,7 @@ public final class NativeHandlers {
     }
 
     public void invalidate() {
+        if (attachments != null) attachments.invalidate();
         if (invalidated) return;
         invalidated = true;
         for (Bridge bridge : bridges) {
@@ -239,6 +247,7 @@ public final class NativeHandlers {
     /** MainActivity.onRequestPermissionsResult handoff for the notification owner. */
     public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         boolean owned = VoiceRecognitionPermissions.dispatch(requestCode, permissions, grantResults);
+        if (QrScanner.onRequestPermissionsResult(requestCode, grantResults)) owned = true;
         if (notifications != null && notifications.onRequestPermissionsResult(requestCode, grantResults)) owned = true;
         return owned;
     }

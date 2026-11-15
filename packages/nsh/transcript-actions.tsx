@@ -70,7 +70,7 @@ export function NativeMessageActions(props: { history: ReturnType<typeof createN
   }
   return <View class="gap-2">
     <View testID={`history-actions-${message().id}-${message().role}`} class={message().role === 'user' ? 'flex-row justify-end gap-2' : 'flex-row items-center gap-2'}>
-      <If when={message().role === 'user' && !!message().time?.created}><NativeUserTimestamp created={message().time!.created!} /></If>
+      <If when={options().target.kind === 'session' && message().role === 'user' && !!message().time?.created}><NativeUserTimestamp created={message().time!.created!} /></If>
       <If when={message().role !== 'user' && !!(message().text || message().error)}>
         <Button testID={`history-copy-${message().id}`} class={iconAction} hitSlop={10} accessibilityLabel={copied() ? t('chat.messageBody.shellCommand.copied') : t('chat.messageBody.actions.copyMessage')} disabled={disabled()} onPress={() => { void perform(async captured => { await Clipboard.writeText(message().text || message().error); if (captured.scope.current()) copied.set(true); }); }}><Icon name={copied() ? 'check' : 'file-copy'} size={16} /></Button>
       </If>

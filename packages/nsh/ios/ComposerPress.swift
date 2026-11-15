@@ -17,20 +17,35 @@ import NativeShell
     override func layoutSubviews() { super.layoutSubviews(); changed?() }
 }
 
-@MainActor private final class ComposerPressWatch: UIView {
+/// Passive observer attached to the editor. A covering subview would win hit-testing and
+/// starve UITextView's own focus/selection recognizers, so this never intercepts touches.
+@MainActor private final class ComposerPressWatch: UIGestureRecognizer, UIGestureRecognizerDelegate {
     var pressed: ((Bool) -> Void)?
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+
+    override init(target: Any?, action: Selector?) {
+        super.init(target: target, action: action)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+        delegate = self
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesBegan(touches, with: event)
         pressed?(true)
     }
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesEnded(touches, with: event)
         pressed?(false)
+        state = .failed
     }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         super.touchesCancelled(touches, with: event)
         pressed?(false)
+        state = .failed
     }
+
+    nonisolated func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 }
 
 @MainActor private final class ComposerPressOwner: NshComponent {
@@ -65,14 +80,10 @@ import NativeShell
         releaseWatch()
         editor = found
         card = configCard(of: found, ownerID: config.ownerID)
-        let cover = ComposerPressWatch(frame: found.bounds)
-        cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        cover.backgroundColor = .clear
-        cover.isAccessibilityElement = false
-        cover.accessibilityElementsHidden = true
-        cover.pressed = { [weak self] pressed in self?.setPressed(pressed) }
-        found.addSubview(cover)
-        watch = cover
+        let observer = ComposerPressWatch(target: nil, action: nil)
+        observer.pressed = { [weak self] pressed in self?.setPressed(pressed) }
+        found.addGestureRecognizer(observer)
+        watch = observer
     }
 
     private func resolve(_ config: NativeComposerSpellcheckConfig) -> UITextView? {
@@ -105,7 +116,7 @@ import NativeShell
     private func releaseWatch() {
         down = false
         card?.transform = .identity
-        watch?.removeFromSuperview()
+        if let watch { editor?.removeGestureRecognizer(watch) }
         watch = nil
         editor = nil
         card = nil

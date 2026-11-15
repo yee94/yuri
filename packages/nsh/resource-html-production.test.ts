@@ -77,6 +77,7 @@ function production(options: { targetLine?: number; route?: 'files' | 'preview';
     './runtime': { native, bindRequest: () => request }, './state': { app: { runtimeScope: receipt, connection }, epoch: () => 1 },
     './runtime-scope': scopes, './resources-request': requests, './resources-model': model, './resources-watcher': { createResourceWatcher },
     './resource-svg': { ResourceSVGImage: 'NativeSVG' }, './resource-html-native': { ResourceHTMLView: 'HTMLNative', ResourceHTMLPresentationAnchor: 'HTMLAnchor' },
+    './resource-raster-presentation': { ResourceRasterPresentation: 'NativeRaster' }, './native-image-preview': { NativeContentImage: 'NativeContentImage' },
     './Icon': { Icon: 'Icon' },
     './resource-html-viewer-state': { createResourceHtmlViewer: (input: Parameters<typeof createResourceHtmlViewer>[0]) => { controller = createResourceHtmlViewer(input); return controller; } },
     './resource-retirement': { createResourceRouteExit },
@@ -293,10 +294,15 @@ for (const contact of [false, true]) test(`${contact ? 'contact' : 'file'} sourc
   expect(f.nodes().some(node => node.type === 'Text' && node.children.some(child => typeof child === 'function' && String(child()).includes('synthetic_permission_denied')))).toBe(true);
 });
 
-for (const kind of ['binary', 'image', 'pdf', 'video', 'audio'] as const) test(`${kind} without a dedicated renderer retains the true unsupported native fallback`, async () => {
+for (const kind of ['binary', 'pdf', 'video', 'audio'] as const) test(`${kind} without a dedicated renderer retains the true unsupported native fallback`, async () => {
   const f = production({ path: '/fixture/unsupported.dat', targetLine: 1, content: { kind, preview: 'unsupported' } }); await flush();
   expect(f.nodes().some(node => node.props.testID === 'resource-preview-unavailable')).toBe(true);
   expect(f.nodes().some(node => node.props.testID === 'resource-media-preview')).toBe(false);
+});
+test('raster images use their dedicated native renderer independently of generic system presenter support', async () => {
+  const f = production({ path: '/fixture/photo.png', content: { kind: 'image', preview: 'unsupported', thumbnail: 'data:image/png;base64,YQ==' } }); await flush();
+  expect(f.nodes().some(node => node.props.testID === 'resource-preview-unavailable')).toBe(false);
+  expect(f.find('NativeContentImage')).toBeDefined();
 });
 
 test('exact native anchor completion, not Dialog.open removal, owns the fullscreen lifetime', async () => {

@@ -6,6 +6,7 @@ import type { ReferenceScope } from './composer-references';
 import type { NativeReferenceKeyboard } from './composer-reference-keyboard-native';
 import { nativeCommandRows, type NativeCommandContext } from './composer-commands-model';
 import { nativeAutocompleteSurface } from './composer-surface';
+import { glassEdge } from './glass-surface';
 import { referenceDescriptionStyle, referencePanelMetrics, referenceRowDensity, referenceTitleStyle } from './composer-references-presentation';
 import { NativeAutocompleteRowText } from './composer-references-controls';
 import { Icon } from './Icon';
@@ -38,10 +39,10 @@ export function NativeCommandSuggestions(props: {
     const state = props.keyboard.commandState(), list = ref();
     if (state.id && list && !visible.has(state.id)) untracked(() => list.scrollToIndex({ index: state.index, animated: false, viewPosition: .5 }));
   });
-  return <View testID="command-suggestions" style={{ ...nativeAutocompleteSurface, paddingVertical: 4 }}>
+  return <View testID="command-suggestions" style={{ ...nativeAutocompleteSurface, ...glassEdge(), paddingVertical: 4 }}>
     <If when={failure()}><Button testID="command-retry" class="min-h-8 px-3 py-1" onPress={() => { if (!flight) { attempted = false; retry.set(retry() + 1); } }}><Text class="text-xs text-destructive">{t('common.unavailable')} · {t('chat.questionDelegate.retry')}</Text></Button></If>
     <If when={loading() && !rows().length}><Text class="px-3 py-2 text-xs text-muted-foreground">{t('common.loading')}</Text></If>
-    <List testID="command-list" ref={node => ref.set(node)} keyboardDismissMode="none" each={rows()} keyExtractor={row => row.presentation.id}
+    <List testID="command-list" ref={node => ref.set(node)} keyboardDismissMode="none" keyboardShouldPersistTaps="always" each={rows()} keyExtractor={row => row.presentation.id}
       style={{ height: referencePanelMetrics(rows(), windowSize().height, props.maxHeight).listHeight }}
       viewabilityConfig={{ itemVisibleThreshold: 1 }} onViewableItemsChange={info => { visible = new Set(info.viewableItems.filter(item => item.isViewable).map(item => item.key)); }}>{row =>
       <View testID={`command-${row().command.name}`} role="button" accessible focusable={false} accessibilityState={{ selected: props.keyboard.commandState().id === row().presentation.id }}

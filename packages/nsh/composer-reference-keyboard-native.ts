@@ -1,5 +1,5 @@
 import { cleanup, computed, effect, keymap, signal, untracked, type InputRef } from 'nsh';
-import { sameReferenceScope, type ReferenceCandidate, type ReferenceScope } from './composer-references';
+import { normalizeNativeReferenceDeletion, sameReferenceScope, type NativeReference, type ReferenceCandidate, type ReferenceScope } from './composer-references';
 import { createAutocompleteKeyboard, createReferenceKeyboard, type ReferenceKeyboardContext, type ReferenceKeyboardState } from './composer-reference-keyboard';
 import { resolveComposerAutocompleteTrigger } from '../ui/src/lib/composer-autocomplete/trigger';
 import { shouldSubmitCommandOnSelection, type NativeCommandRow, type NativeSlashCommand, type NativeComposerAction } from './composer-commands-model';
@@ -9,6 +9,7 @@ export function createNativeReferenceKeyboard(options: {
   active: () => boolean;
   scope: () => ReferenceScope;
   text: () => string;
+  references?: () => readonly NativeReference[];
   insert: (candidate: ReferenceCandidate, start: number, end: number) => boolean;
   chooseCommand?: (command: NativeSlashCommand, submit: boolean, context: ReferenceKeyboardContext) => boolean | void;
   commandActions?: () => readonly NativeComposerAction[];
@@ -89,6 +90,16 @@ export function createNativeReferenceKeyboard(options: {
     cleanup(() => { unbind?.(); unbind = undefined; });
   });
   cleanup(() => { unbind?.(); unbind = undefined; core.clear(); commandCore.clear(); });
+  function beforeChange(): void;
+  function beforeChange(value: string): string;
+  function beforeChange(value?: string): string | void {
+    const deletion = value !== undefined && !composing()
+      ? normalizeNativeReferenceDeletion({ text: options.text(), references: [...options.references?.() ?? []] }, value) : null;
+    selectedRange.set(deletion ? { start: deletion.caret } : undefined);
+    caret.set(deletion ? { start: deletion.caret, end: deletion.caret } : null);
+    dismissed.set(null);
+    return deletion?.text ?? value;
+  }
   return {
     trigger, state, commandTrigger, commandState, commandCore, selectedRange, core, refresh, dismiss,
     ref: (node: InputRef) => { input = node; },
@@ -96,7 +107,7 @@ export function createNativeReferenceKeyboard(options: {
     onBlur: () => { focused.set(false); refresh(); },
     onCompositionChange: (event: { composing: boolean }) => { composing.set(event.composing); refresh(); },
     onSelectionChange: (range: { start: number; end: number }) => { selectedRange.set(undefined); caret.set(range); refresh(); },
-    beforeChange: () => { selectedRange.set(undefined); caret.set(null); dismissed.set(null); },
+    beforeChange,
     onSubmit: () => { currentCore().key('enter'); refresh(); },
     submitBehavior: () => editing() ? 'submit' as const : 'newline' as const,
     choose: (id: string) => { const accepted = core.choose(id); refresh(); return accepted; },

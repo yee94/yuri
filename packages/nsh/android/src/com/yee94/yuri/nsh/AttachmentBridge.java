@@ -96,6 +96,12 @@ public final class AttachmentBridge implements NativeHandlers.Bridge, NativeHand
         final CompletableFuture<Uri> picked = new CompletableFuture<>();
         volatile boolean cancelled;
         volatile AttachmentRuntime.Operation operation;
+        volatile ForegroundHold.Token hold;
+
+        void releaseHold() {
+            ForegroundHold.Token value = hold;
+            if (value != null) value.release();
+        }
 
         Session(String requestID, String kind, HostLease.Scope expected) {
             this.requestID = requestID;
@@ -146,6 +152,10 @@ public final class AttachmentBridge implements NativeHandlers.Bridge, NativeHand
 
     @Override
     public void invalidate() {
+        cancelSession();
+    }
+
+    public void shutdown() {
         invalidated = true;
         cancelSession();
         worker.shutdownNow();
@@ -169,6 +179,7 @@ public final class AttachmentBridge implements NativeHandlers.Bridge, NativeHand
             current = session;
         }
         if (current == null) return true;
+        current.releaseHold();
         if (resultCode == Activity.RESULT_OK && data != null && data.getData() != null) {
             current.picked.complete(data.getData());
         } else {
@@ -272,6 +283,7 @@ public final class AttachmentBridge implements NativeHandlers.Bridge, NativeHand
             if (invalidated) throw new Cancelled();
             if (session != null) throw new Failure("请先关闭当前选择窗口");
             HostLease.Scope expected = scope(args.get("expectedHost"));
+            host.validateAttachmentHost(expected);
             Object requestValue = args.get("requestId");
             if (!(requestValue instanceof String)) throw new AttachmentUploadPolicy.Failure(AttachmentUploadPolicy.Failure.INVALID);
             String requestID = (String) requestValue;
@@ -331,6 +343,7 @@ public final class AttachmentBridge implements NativeHandlers.Bridge, NativeHand
                 throw failure;
             }
         } finally {
+            next.releaseHold();
             synchronized (lock) {
                 if (session == next) session = null;
             }
@@ -345,9 +358,12 @@ public final class AttachmentBridge implements NativeHandlers.Bridge, NativeHand
         CompletableFuture<Void> launched = new CompletableFuture<>();
         NativeHandlers.post(() -> {
             try {
+                if (invalidated || next.cancelled) throw new Cancelled();
+                next.hold = new ForegroundHold.Token();
                 activity.startActivityForResult(intent, REQUEST);
                 launched.complete(null);
-            } catch (RuntimeException error) {
+            } catch (Exception error) {
+                next.releaseHold();
                 launched.completeExceptionally(error);
             }
         });

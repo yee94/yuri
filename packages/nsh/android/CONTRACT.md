@@ -40,7 +40,7 @@ public final class XxxBridge {
 ## 分工（每个 Agent 独占自己的文件，不跨界改动）
 
 ### Agent 1 `core-runtime`
-`ConnectionStore`、`RuntimeHostScope`/`RuntimeHostAuthority`、`RuntimeBridge`（含 `HostLease` 实现、配对、密码登录、URL/重定向/大小限制、SSE）、`RelayTunnel`（P-256/HKDF/AES-GCM，用 `javax.crypto`/`java.security`）、`SessionMessageStream`(+Direct)、`AuthorizationCacheCleanup`(+Bridge)、`connection-editor`、`QRScanner`/`camera.scan`（用 CameraX 不可用时用 `Intent` 到系统扫码不可行，则提供基于 `android.hardware.camera2`+`ImageReader` 的自写 QR 解码入口并在不可用时 reject；不得新增依赖）。
+`ConnectionStore`、`RuntimeHostScope`/`RuntimeHostAuthority`、`RuntimeBridge`（含 `HostLease` 实现、配对、密码登录、URL/重定向/大小限制、SSE）、`RelayTunnel`（P-256/HKDF/AES-GCM，用 `javax.crypto`/`java.security`）、`SessionMessageStream`(+Direct)、`AuthorizationCacheCleanup`(+Bridge)、`connection-editor`、`QRScanner`/`camera.scan`（Camera2 + ImageReader；二维码解码使用用户明确授权的 zxing core 3.5.3，固定 jar/SHA-256、离线编译；其它依赖仍须明确授权）。
 文件前缀：`ConnectionStore*`、`RuntimeHost*`、`RuntimeBridge*`、`RelayTunnel*`、`SessionMessageStream*`、`AuthorizationCache*`、`ConnectionEditor*`、`QrScanner*`。
 
 ### Agent 2 `shell-app`

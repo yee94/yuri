@@ -93,7 +93,12 @@ export function messagesFrom(payload: unknown, contact: boolean, limit = contact
   const body = record(payload);
   const rows = contact ? body.messages : body.data;
   if (!Array.isArray(rows)) throw new Error('Invalid message page');
-  const messages = list(rows).map(messageFrom).filter((m): m is Message => !!m && !!m.id);
+  const generation = contact && typeof body.generation === 'number' && Number.isSafeInteger(body.generation) && body.generation >= 0 ? body.generation : undefined;
+  const messages = list(rows).map(row => {
+    if (generation === undefined) return messageFrom(row);
+    const stamp = (parts: unknown) => list(parts).map(part => part.type === 'file' && typeof part.attachmentID === 'string' && part.generation === undefined ? { ...part, generation } : part);
+    return messageFrom({ ...row, ...(Array.isArray(row.parts) ? { parts: stamp(row.parts) } : {}), ...(Array.isArray(row.content) ? { content: stamp(row.content) } : {}), ...(Array.isArray(row.files) ? { files: stamp(row.files) } : {}) });
+  }).filter((m): m is Message => !!m && !!m.id);
   if (!contact) messages.reverse();
   if (contact) messages.sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const cursor = contact ? text(body.nextCursor) || null : text(record(body.cursor).next) || text(body.cursor) || null;

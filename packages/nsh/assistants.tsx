@@ -3,12 +3,15 @@ import { AlertDialog, Button, Input } from 'nsh/base';
 import { nativeDensity } from './appearance';
 import { t } from './i18n';
 import { Icon } from './Icon';
-import { record, runtimeEventFrom, text, type ChatTarget, type Row } from './model';
+import { runtimeEventFrom, text, type ChatTarget, type Row } from './model';
 import { app, epoch } from './state';
 import { createPageOperations } from './page-operations';
 import { assistantContacts, assistantPreview, assistantRequest, markAssistantCatalogRead, mutateAssistant, readAssistantSnapshot, snapshotBots, type AssistantFence } from './assistants-core';
 import { AssistantSwipeRow } from './assistants-swipe';
 import { AssistantAvatar } from './assistants-avatar-live';
+import { createOuterHeaderCollapse, OuterHeader, outerHeaderOverlap } from './outer-header';
+import { OUTER_HEADER_EXPANDED } from './outer-header-core';
+import { AssistantWallpaper } from './assistants-workspace';
 
 export { AssistantDetails } from './assistants-details';
 export { AssistantSettings } from './assistants-settings';
@@ -22,6 +25,7 @@ export type AssistantHomeProps = {
   onOpenSettings?: () => void;
   active?: boolean;
   bottomInset?: number;
+  wallpaper?: boolean;
 };
 export function AssistantHome(props: AssistantHomeProps) {
   const operations = createPageOperations(() => props.active !== false && app.tab() === 1);
@@ -122,32 +126,27 @@ export function AssistantHome(props: AssistantHomeProps) {
       if (!fence.current()) return;
     });
   }
-  function relative(bot: Row) {
-    const timestamp = record(bot.latestMessagePreview).createdAt;
-    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return '';
-    const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
-    if (minutes < 1) return t('common.relative.justNow');
-    if (minutes < 60) return t('common.relative.minutesAgoShort', { count: minutes });
-    if (minutes < 1440) return t('common.relative.hoursAgoShort', { count: Math.floor(minutes / 60) });
-    return t('common.relative.daysAgoShort', { count: Math.floor(minutes / 1440) });
-  }
   function card(entry: () => { bot: Row; pinned: boolean }) {
     const bot = () => entry().bot, pinned = () => entry().pinned;
     return <AssistantSwipeRow binding={entry()} generation={epoch()} id={text(bot().id)} name={text(bot().name)} pinned={pinned()} disabled={busy() || !fence.current()} revealed={revealed()} onReveal={id => revealed.set(id)} onOpen={() => props.onOpenChat(assistantChatTarget(bot()))} onEdit={() => props.onEdit(bot())} onDelete={() => { const current = bot(); void perform(() => remove(current)); }} onMenu={() => { void menu(bot()); }}>
-        <View class="items-center justify-center">
+        <View class="items-center justify-center" style={{ flexShrink: 0 }}>
           <AssistantAvatar bot={bot()} size={pinned() ? 64 : 44} active={foreground() && visibleIDs().has(text(bot().id))} />
           <If when={bot().working === true || !!bot().activeContactTurn}><View class="absolute bottom-0 right-0 w-2 h-2 bg-primary rounded-full" accessibilityLabel={t('assistants.contact.working')} /></If>
+          <If when={pinned() && Number(bot().unreadCount) > 0}><View class="absolute -top-1 -right-1 rounded-full bg-primary min-w-5 px-1 items-center justify-center" accessibilityLabel={t('assistants.unread.label', { count: Number(bot().unreadCount) })}><Text class="text-xs text-primary-foreground">{Number(bot().unreadCount) > 99 ? '99+' : String(bot().unreadCount)}</Text></View></If>
         </View>
         <View class={pinned() ? 'items-center gap-1' : 'flex-1 gap-1'} style={pinned() ? { width: 96, minWidth: 0, maxWidth: 96 } : undefined}>
-          <View class="flex-row items-center gap-2" style={pinned() ? { width: '100%', minWidth: 0 } : undefined}><Text class={pinned() ? 'text-base font-semibold text-foreground' : 'flex-1 text-base font-semibold text-foreground'} style={pinned() ? { width: '100%', minWidth: 0, textAlign: 'center', numberOfLines: 1, textOverflow: 'ellipsis' } : { numberOfLines: 1 }}>{text(bot().name)}</Text><If when={!pinned() && !!relative(bot())}><Text class="text-xs text-muted-foreground">{relative(bot())}</Text></If></View>
-          <If when={!pinned()}><Text class="text-xs text-muted-foreground" style={{ numberOfLines: 1 }}>{assistantPreview(bot(), t)}</Text></If>
+          <Text class={pinned() ? 'font-medium text-foreground' : 'font-semibold text-foreground'} style={{ width: '100%', minWidth: 0, fontSize: pinned() ? 14 : 15, lineHeight: pinned() ? 20 : 24, textAlign: pinned() ? 'center' : 'left', numberOfLines: 1, textOverflow: 'ellipsis' }}>{text(bot().name)}</Text>
+          <If when={!pinned()}><Text class="text-xs text-muted-foreground" style={{ numberOfLines: 1, textOverflow: 'ellipsis', lineHeight: 16 }}>{assistantPreview(bot(), t)}</Text></If>
         </View>
-        <If when={Number(bot().unreadCount) > 0}><View class="rounded-full bg-primary min-w-5 px-1 items-center justify-center" accessibilityLabel={t('assistants.unread.label', { count: Number(bot().unreadCount) })}><Text class="text-xs text-primary-foreground">{Number(bot().unreadCount) > 99 ? '99+' : String(bot().unreadCount)}</Text></View></If>
+        <If when={!pinned() && Number(bot().unreadCount) > 0}><View class="rounded-full bg-primary min-w-5 px-1 items-center justify-center" accessibilityLabel={t('assistants.unread.label', { count: Number(bot().unreadCount) })}><Text class="text-xs text-primary-foreground">{Number(bot().unreadCount) > 99 ? '99+' : String(bot().unreadCount)}</Text></View></If>
     </AssistantSwipeRow>;
   }
-  return <View class="flex-1 bg-background" testID="assistant-home">
-    <View class="flex-row items-center px-5 pt-5 pb-8 gap-2">
-      <Text class="flex-1 text-3xl font-bold text-foreground">{t('assistants.title')}</Text>
+  const headerCollapse = createOuterHeaderCollapse();
+  // Search, errors and the disabled guide sit in flow under the header; the list then stays below them, not under the header.
+  const hasNotice = () => searching() || !!error() || capability()?.supported === false || enabled() === false;
+  return <View class="flex-1" testID="assistant-home">
+    <If when={props.wallpaper !== false}><AssistantWallpaper /></If>
+    <OuterHeader title={t('assistants.title')} collapse={headerCollapse} overlay={!hasNotice()}>
       <Button testID="assistant-toggle-search" class={small} accessibilityLabel={t('chat.timeline.searchPlaceholder')} onPress={() => searching.set(!searching())}><Icon name="search" /></Button>
       <If when={app.bots().some(bot => Number(bot.unreadCount) > 0)}><Button class={small} disabled={busy()} accessibilityLabel={t('assistants.unread.markAll')} onPress={() => { void perform(async fence => {
         const failed = await markAssistantCatalogRead(fence, app.bots());
@@ -157,11 +156,11 @@ export function AssistantHome(props: AssistantHomeProps) {
         if (failed) throw new Error(t('assistants.unread.markAllFailed'));
       }); }}><Icon name="check-double" /></Button></If>
       <Button class={small} disabled={capability()?.supported !== true || enabled() !== true} accessibilityLabel={t('assistants.settings.create')} onPress={props.onCreate}><Icon name="add" /></Button>
-    </View>
+    </OuterHeader>
     <If when={searching()}><Input testID="assistant-search" class="mx-5 mb-4 p-3 bg-secondary rounded-xl text-foreground" value={search()} onChange={event => search.set(event.value)} accessibilityLabel={t('chat.timeline.searchPlaceholder')} placeholder={t('chat.timeline.searchPlaceholder')} /></If>
     <If when={!!error()}><View class="px-5 pb-3 gap-2"><Text class="text-destructive">{error()}</Text><Button onPress={() => { void load(); }}><Text class="text-foreground">{t('assistants.actions.retry')}</Text></Button></View></If>
     <If when={capability()?.supported === false || enabled() === false}><View class="mx-5 p-5 rounded-3xl bg-card gap-3"><Icon name="ai-agent" size={32} /><Text class="text-xl text-foreground">{t(capability()?.supported === false ? 'assistants.state.unsupportedTitle' : 'assistants.guide.disabledTitle')}</Text><Text class="text-muted-foreground">{t(capability()?.supported === false ? 'assistants.state.unsupportedDescription' : 'assistants.guide.disabledDescription')}</Text><If when={capability()?.supported === true && !!props.onOpenSettings}><Button onPress={props.onOpenSettings}><Text class="text-foreground">{t('assistants.guide.enableAction')}</Text></Button></If></View></If>
-    <List testID="assistant-catalog" class="flex-1" contentClass="px-5 gap-3 pb-8" contentStyle={{ ...nativeDensity().pages.assistantCatalog, paddingBottom: (props.bottomInset ?? 0) + 32 * nativeDensity().scale }} each={entries()} keyExtractor={entry => text(entry.bot.id)} refreshing={loading()} onRefresh={() => { revealed.set(null); void load(); }} onViewableItemsChange={info => {
+    <List testID="assistant-catalog" class="flex-1" style={hasNotice() ? undefined : outerHeaderOverlap} onScroll={headerCollapse.onScroll} contentClass="px-5 gap-3 pb-8" contentStyle={{ ...nativeDensity().pages.assistantCatalog, gap: 10 * nativeDensity().scale, paddingTop: hasNotice() ? 0 : OUTER_HEADER_EXPANDED, paddingBottom: (props.bottomInset ?? 0) + 32 * nativeDensity().scale }} each={entries()} keyExtractor={entry => text(entry.bot.id)} refreshing={loading()} onRefresh={() => { revealed.set(null); void load(); }} onViewableItemsChange={info => {
       const next = new Set(info.viewableItems.filter(item => item.isViewable).map(item => text(item.item.bot.id)));
       if (next.size !== visibleIDs().size || [...next].some(id => !visibleIDs().has(id))) visibleIDs.set(next);
     }} viewabilityConfig={{ itemVisibleThreshold: 0.01 }}

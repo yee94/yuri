@@ -8,9 +8,9 @@ import { nativeMultiFileEntries, nativeToolDescription, nativeToolDetails, nativ
 import { toolIconSpec } from '../ui/src/components/chat/message/parts/toolIconModel';
 import { formatToolInput, resolveToolDisplayName } from '../ui/src/lib/toolHelpers';
 import { NativeAgentAvatar } from './chat-identity';
-import { NativeCharacterFadeText, NativeFadeInText, NativeShimmerText } from './text-motion';
+import { NativeAnimatedNumber, NativeCharacterFadeText, NativeFadeInText, NativeShimmerText } from './text-motion';
 import { Icon } from './Icon';
-import { nativeChatTextStyle, nativeToolPaletteTokens } from './appearance';
+import { nativeChatTextStyle, nativeToolPaletteTokens, nativeToolRailStyle } from './appearance';
 import { nativeTranscriptMarkdownStyles } from './transcript-body-markdown';
 
 export type NativeToolRowProps = {
@@ -113,7 +113,7 @@ export function NativeToolRow(props: NativeToolRowProps) {
         <If when={taskBusy()} else={<NativeCharacterFadeText class={failed() ? 'text-destructive font-medium' : 'text-muted-foreground font-medium'} style={{ ...rowStyle(), color: failed() ? palette()?.error : palette()?.title, flexShrink: 0 }} text={title()} current={current} />}>
           <NativeShimmerText class={failed() ? 'text-destructive font-medium' : 'text-muted-foreground font-medium'} active text={title()} style={{ ...rowStyle(), color: failed() ? palette()?.error : palette()?.title, flexShrink: 0 }} current={current} />
         </If>
-        <If when={shell() && !!nativeToolDuration(details().start, details().end, active() ? now() : undefined)}><Text testID={`tool-duration-${String(props.tool.id || details().name)}`} class="text-muted-foreground" style={{ ...rowStyle(), opacity: .8 }}>{nativeToolDuration(details().start, details().end, active() ? now() : undefined)}</Text></If>
+        <If when={shell() && !!nativeToolDuration(details().start, details().end, active() ? now() : undefined)}><NativeAnimatedNumber testID={`tool-duration-${String(props.tool.id || details().name)}`} class="text-muted-foreground" style={{ ...rowStyle(), color: token('muted-foreground'), opacity: .8 }} text={nativeToolDuration(details().start, details().end, active() ? now() : undefined)} active={active()} current={current} /></If>
         <If when={multi().length > 0} else={<NativeFadeInText class="text-muted-foreground flex-1" style={{ ...rowStyle(), color: palette()?.description, numberOfLines: 1 }} text={nativeToolDescription(details(), props.target.directory)} current={current} />}>
           <Each of={multi()} key={entry => entry.path}>{entry => <View class="flex-row items-center gap-1" style={{ maxWidth: '100%', flexShrink: 1, minWidth: 0 }}>
             <Text class="text-muted-foreground" style={{ ...rowStyle(), color: palette()?.description, flexShrink: 1, minWidth: 0, numberOfLines: 1 }}>{entry().name}</Text>
@@ -127,7 +127,7 @@ export function NativeToolRow(props: NativeToolRowProps) {
       <If when={navigation() && details().task}><Button testID={`tool-details-${String(props.tool.id || details().name)}`} class="min-h-0 h-6 w-6 items-center justify-center rounded-lg active:bg-accent" hitSlop={8} accessibilityLabel={t('chat.toolPart.output')} disabled={!current()} onPress={() => expanded.set(!expanded())}><Icon name={expanded() ? 'arrow-down-s' : 'arrow-right-s'} size={14} /></Button></If>
     </View>
     <If when={expanded()}>
-      <If when={shell()}><View selectable class="ml-2 pl-3 border-l border-border py-1 gap-0.5">
+      <If when={shell()}><View selectable class="ml-2 pl-3 border-l py-1 gap-0.5" style={nativeToolRailStyle()}>
         <If when={!!details().command || !!details().streamingInput}><Scroll class="max-h-60">
           <Text testID={`tool-shell-input-${String(props.tool.id || details().name)}`} class="text-muted-foreground" style={shellStyle()}>{details().command || details().streamingInput}</Text>
         </Scroll></If>
@@ -148,7 +148,7 @@ export function NativeToolRow(props: NativeToolRowProps) {
         <If when={!!props.onOpenDiff && !!(file().patch || file().before !== undefined || file().after !== undefined)}><Button class={action} disabled={!current()} onPress={() => navigate(() => props.onOpenDiff?.(file(), props.target, details().files))}><Text class="text-foreground">{t('chat.toolPart.openFileDiff')}</Text></Button></If>
       </View>
     </View>}</Each>
-      <Scroll style={{ maxHeight: Math.max(0, windowSize().height - safeArea().top - safeArea().bottom) * .4 }} contentClass="ml-2 pl-3 border-l border-border py-1 gap-2">
+      <Scroll style={{ maxHeight: Math.max(0, windowSize().height - safeArea().top - safeArea().bottom) * .4 }} contentClass="ml-2 pl-3 border-l py-1 gap-2" contentStyle={nativeToolRailStyle()}>
         <If when={!navigation() && !details().todos.length && !details().task && Object.keys(details().input).length > 0}><Text class="text-muted-foreground italic" style={{ ...rowStyle(), opacity: .7 }}>{typeof details().input.content === 'string' ? text(details().input.content) : formatToolInput(details().input, details().name)}</Text></If>
         <If when={!!details().streamingInput}><RawToolText value={details().streamingInput} /></If>
         <Each of={details().todos}>{todo => <Text class="text-sm text-foreground">{todo().status === 'completed' ? '✓ ' : todo().status === 'in_progress' ? '◉ ' : '○ '}{String(todo().content || '')}</Text>}</Each>
@@ -159,7 +159,7 @@ export function NativeToolRow(props: NativeToolRowProps) {
       </Scroll>
       </If>
     </If>
-    <If when={navigation() && !details().task && !!details().error}><View selectable class="ml-2 pl-3 border-l border-border py-1"><Text class="text-destructive" style={rowStyle()}>{details().error}</Text></View></If>
+    <If when={navigation() && !details().task && !!details().error}><View selectable class="ml-2 pl-3 border-l py-1" style={nativeToolRailStyle()}><Text class="text-destructive" style={rowStyle()}>{details().error}</Text></View></If>
     <If when={!!failure()}><Text class="text-sm text-destructive">{failure()}</Text></If>
   </View>;
 }

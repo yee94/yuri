@@ -1,5 +1,5 @@
-import { cleanup, createMotion, effect, lifecycle, reduceMotion, signal, Text, untracked, View, type TextStyle } from 'nsh';
-import { CHARACTER_FADE_DURATION, SHIMMER_DURATION, characterFadeDelay, characterFadePlan, characterFadeTotal, flipPlan, FLIP_DURATION } from './text-motion-model';
+import { cleanup, computed, createAnimatedValue, createMotion, effect, lifecycle, reduceMotion, ShaderEffect, signal, Text, token, untracked, View, type TextStyle } from 'nsh';
+import { CHARACTER_FADE_DURATION, SHIMMER_DURATION, SHIMMER_SOURCE, characterFadeDelay, characterFadePlan, characterFadeTotal, flipPlan, FLIP_DURATION, numberCells } from './text-motion-model';
 
 /** Motions only while the app is on screen and the user allows motion. */
 const active = () => lifecycle() === 'active' && !reduceMotion();
@@ -7,11 +7,9 @@ const active = () => lifecycle() === 'active' && !reduceMotion();
 /**
  * Web renders live labels with a highlight sweeping across the glyphs
  * (`animate-text-shimmer`, 1.7s linear infinite, `background-clip: text`).
- * Native text cannot clip a gradient to its glyphs, so the nearest lossless
- * form is one label at the same 1.7s cadence: its opacity rises and falls
- * between the base colour and the highlight colour. One native opacity motion,
- * no extra text node, no geometry change, and it never restarts on unrelated
- * state updates.
+ * The original Text supplies the glyph alpha, layout and accessibility. Only
+ * the gradient position moves on the native animation graph; text updates do
+ * not restart the sweep. Settled labels do not mount a shader source.
  */
 export function NativeShimmerText(props: {
   text: string;
@@ -23,32 +21,80 @@ export function NativeShimmerText(props: {
   /** Host generation / chat fence, so a retired row never animates. */
   current?: () => boolean;
 }) {
-  const motion = createMotion({ initial: { opacity: 1 } });
+  const progress = createAnimatedValue(0);
+  const on = () => props.active && active() && (props.current?.() ?? true);
   effect(() => {
-    const on = props.active && lifecycle() === 'active' && !reduceMotion() && (props.current?.() ?? true);
-    if (!on) {
-      motion.stop();
-      motion.opacity.set(1);
+    if (!on()) {
+      progress.set(0);
       return;
     }
-    void motion.play({
-      keyframes: [{ offset: 0, opacity: 0.45 }, { offset: 0.5, opacity: 1 }, { offset: 1, opacity: 0.45 }],
+    void progress.keyframes([0, 1], {
       duration: SHIMMER_DURATION,
-      easing: 'easeInOut',
+      easing: 'linear',
       iterations: 'infinite',
     });
-    return motion.stop;
+    return () => { void progress.stop(); };
   });
-  cleanup(motion.stop);
-  return <Text testID={props.testID} class={props.class} style={{ ...props.style, opacity: motion.opacity }}>{props.text}</Text>;
+  cleanup(() => { void progress.stop(); });
+  return <ShaderEffect source={on() ? SHIMMER_SOURCE : undefined} progress={progress}
+    uniforms={{ base: props.style?.color ?? token('muted-foreground'), highlight: token('foreground') }}
+    style={{ minWidth: props.style?.minWidth, maxWidth: props.style?.maxWidth, flexShrink: props.style?.flexShrink ?? 1 }}>
+    <Text testID={props.testID} class={props.class} style={props.style}>{props.text}</Text>
+  </ShaderEffect>;
+}
+
+/** Stable place-value cells: 9→10 retains the units cell instead of remounting it. */
+export function NativeAnimatedNumber(props: {
+  text: string;
+  active: boolean;
+  class?: string;
+  style?: TextStyle;
+  testID?: string;
+  current?: () => boolean;
+}) {
+  const cells = computed(() => numberCells(props.text));
+  return <View testID={props.testID} class={props.class} accessibilityLabel={props.text} accessible
+    style={{ position: 'relative', overflow: 'hidden', flexShrink: 0, opacity: props.style?.opacity }}>
+    <Text accessibilityElementsHidden style={{ ...props.style, opacity: 0, fontVariant: ['tabular-nums'], lineHeight: lineHeight(props.style) }}>{props.text}</Text>
+    <View accessibilityElementsHidden style={{ position: 'absolute', top: 0, left: 0, flexDirection: 'row', alignItems: 'center' }}>
+      <Each of={cells()} key={cell => cell.key}>{cell => <NumberCell text={cell().text} digit={cell().digit}
+        active={props.active} style={props.style} current={props.current} />}</Each>
+    </View>
+  </View>;
+}
+
+function NumberCell(props: { text: string; digit: boolean; active: boolean; style?: TextStyle; current?: () => boolean }) {
+  const enter = createMotion();
+  const x = createAnimatedValue(0);
+  let position: number | undefined;
+  const on = () => props.active && active() && (props.current?.() ?? true);
+  effect(() => {
+    if (!on()) { enter.reset(); x.set(0); }
+  });
+  cleanup(() => { enter.stop(); void x.stop(); });
+  return <View accessibilityElementsHidden style={{ position: 'relative', opacity: enter.opacity, transform: [{ translateX: x }, { translateY: enter.translateY }] }}
+    onLayout={event => {
+      const next = event.bounds.origin.x;
+      if (position !== undefined && next !== position && on()) {
+        x.set(position - next);
+        void x.timing(0, { duration: FLIP_DURATION, easing: 'easeOut' });
+      } else if (position === undefined && on()) {
+        void enter.play({ keyframes: [{ opacity: 0, translateY: props.digit ? lineHeight(props.style) : 0 }, { opacity: 1, translateY: 0 }], duration: FLIP_DURATION, easing: 'easeOut' });
+      }
+      position = next;
+    }}>
+    <If when={props.digit} else={<Text style={{ ...props.style, opacity: 1, lineHeight: lineHeight(props.style) }}>{props.text}</Text>}>
+      <NativeFlipUpText text={props.text} active={on()} style={{ ...props.style, opacity: 1, fontVariant: ['tabular-nums'] }} current={props.current} />
+    </If>
+  </View>;
 }
 
 /**
  * Web FlipUpText (components/chat/message/parts/FlipUpText.tsx): the previous
  * summary slides up and fades out while the new one slides in from below
  * (280ms ease-out). Streamed summaries change faster than 280ms, so a running
- * flip is never restarted: it keeps the outgoing text and shows the newest text
- * the moment it lands, as the Web `displayed` state does.
+ * flip is never restarted: it keeps both moving layers stable and coalesces
+ * pending updates to one latest target for the next transition.
  */
 export function NativeFlipUpText(props: {
   text: string;
@@ -62,37 +108,42 @@ export function NativeFlipUpText(props: {
   const state = signal<{ shown: string; outgoing: string | null }>({ shown: props.text, outgoing: null });
   const out = createMotion({ initial: { opacity: 1 } }), incoming = createMotion({ initial: { opacity: 0 } });
   let generation = 0;
-  effect(() => {
-    const next = props.text;
-    const active = props.active && lifecycle() === 'active' && !reduceMotion() && (props.current?.() ?? true);
-    untracked(() => {
-      const value = state();
-      const plan = flipPlan(value.shown, next, active, value.outgoing !== null);
-      if (plan === 'hold') return;
-      if (plan === 'replace') {
-        generation++;
-        out.stop();
-        incoming.stop();
-        state.set({ shown: next, outgoing: null });
-        return;
-      }
-      if (plan === 'defer') {
-        // Keep the outgoing text and the running motions: only the newest value lands.
-        state.set({ shown: next, outgoing: value.outgoing });
-        return;
-      }
-      state.set({ shown: next, outgoing: value.shown });
-      const id = ++generation;
-      const height = lineHeight(props.style);
-      void Promise.all([
-        out.play({ keyframes: [{ offset: 0, translateY: 0, opacity: 1 }, { offset: 1, translateY: -height, opacity: 0 }], duration: FLIP_DURATION, easing: 'easeOut' }),
-        incoming.play({ keyframes: [{ offset: 0, translateY: height, opacity: 0 }, { offset: 1, translateY: 0, opacity: 1 }], duration: FLIP_DURATION, easing: 'easeOut' }),
-      ]).then(([finished]) => {
-        if (id !== generation || !finished.finished) return;
-        const latest = state();
-        if (latest.outgoing !== null) state.set({ shown: latest.shown, outgoing: null });
+  let latest = props.text;
+  const enabled = () => props.active && active() && (props.current?.() ?? true);
+  function update(next: string, animate: boolean) {
+    latest = next;
+    const value = state();
+    const plan = flipPlan(value.shown, next, animate, value.outgoing !== null);
+    if (plan === 'hold' || plan === 'defer') return;
+    if (plan === 'replace') {
+      generation++;
+      out.stop();
+      incoming.stop();
+      state.set({ shown: next, outgoing: null });
+      return;
+    }
+    const height = lineHeight(props.style);
+    // Backwards-fill values are committed with the layers, avoiding a stale
+    // end frame from the preceding flip when the same cells are reused.
+    out.opacity.set(1); out.translateY.set(0);
+    incoming.opacity.set(0); incoming.translateY.set(height);
+    state.set({ shown: next, outgoing: value.shown });
+    const id = ++generation;
+    void Promise.all([
+      out.play({ keyframes: [{ offset: 0, translateY: 0, opacity: 1 }, { offset: 1, translateY: -height, opacity: 0 }], duration: FLIP_DURATION, easing: 'easeOut' }),
+      incoming.play({ keyframes: [{ offset: 0, translateY: height, opacity: 0 }, { offset: 1, translateY: 0, opacity: 1 }], duration: FLIP_DURATION, easing: 'easeOut' }),
+    ]).then(results => {
+      if (id !== generation || results.some(result => !result.finished)) return;
+      untracked(() => {
+        state.set({ shown: state().shown, outgoing: null });
+        update(latest, enabled());
       });
     });
+  }
+  effect(() => {
+    const next = props.text;
+    const animate = enabled();
+    untracked(() => update(next, animate));
   });
   cleanup(() => {
     generation++;

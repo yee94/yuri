@@ -380,8 +380,21 @@ public final class ResourcesPreviewTest {
             check("svg byte limit", expectedFailure.code.equals("limit"));
         }
 
-        check("plugin asset entry", GuiPluginPreviewScope.assetPath("/index.html"));
-        check("plugin asset files", GuiPluginPreviewScope.assetPath("/assets/entry.js"));
+        check("raster edge cap", ResourceRasterImageComponent.maximumPixel(8000, 1000) == 4096);
+        check("raster no upscale", ResourceRasterImageComponent.maximumPixel(3000, 2000) == 3000);
+        int rasterSquare = ResourceRasterImageComponent.maximumPixel(12000, 12000);
+        check("raster square budget", rasterSquare > 0 && rasterSquare <= 4096
+                && (long) rasterSquare * rasterSquare <= ResourceRasterImageComponent.MAX_PIXEL_COUNT);
+        check("raster default budget", ResourceRasterImageComponent.maximumPixel(0, 0)
+                == ResourceRasterImageComponent.MAX_PIXEL_SIZE);
+        int[] rasterRotated = ResourceRasterImageComponent.displaySize(4000, 3000, 6);
+        check("raster exif swap", rasterRotated[0] == 3000 && rasterRotated[1] == 4000);
+        int[] rasterUpright = ResourceRasterImageComponent.displaySize(4000, 3000, 1);
+        check("raster upright size", rasterUpright[0] == 4000 && rasterUpright[1] == 3000);
+        int[] rasterUnknown = ResourceRasterImageComponent.displaySize(0, 0, 6);
+        check("raster unknown bounds", rasterUnknown[0] == 0 && rasterUnknown[1] == 0);
+
+        check("plugin asset entry", GuiPluginPreviewScope.assetPath("/index.html"));        check("plugin asset files", GuiPluginPreviewScope.assetPath("/assets/entry.js"));
         check("plugin asset outside", !GuiPluginPreviewScope.assetPath("/other.js"));
         check("plugin asset url", GuiPluginPreviewScope.asset("yuri-plugin://owner/assets/a.js", "owner").equals("/assets/a.js"));
         expectInvalid("plugin asset query", () -> GuiPluginPreviewScope.asset("yuri-plugin://owner/assets/a.js?x=1", "owner"));

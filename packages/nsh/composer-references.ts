@@ -43,6 +43,24 @@ export function editNativeReferences(document: ReferenceDocument, next: string):
   return { text: next, references: rebased.filter(ref => (!ref.start || /\s/.test(next[ref.start - 1])) && (ref.end === next.length || /\s/.test(next[ref.end]))) };
 }
 
+/** Expand an actual Input deletion to whole referenced runs; ordinary edits remain literal. */
+export function normalizeNativeReferenceDeletion(document: ReferenceDocument, next: string): { text: string; caret: number } | null {
+  const before = document.text;
+  if (!document.references.length || next.length >= before.length) return null;
+  let start = 0, oldEnd = before.length, newEnd = next.length;
+  while (start < newEnd && before[start] === next[start]) start++;
+  while (oldEnd > start && newEnd > start && before[oldEnd - 1] === next[newEnd - 1]) { oldEnd--; newEnd--; }
+  if (newEnd !== start) return null;
+  let from = start, to = oldEnd;
+  for (const ref of document.references) {
+    if (ref.start < oldEnd && ref.end > start && before.slice(ref.start, ref.end) === ref.display) {
+      from = Math.min(from, ref.start); to = Math.max(to, ref.end);
+    }
+  }
+  if (from === start && to === oldEnd) return null;
+  return { text: before.slice(0, from) + before.slice(to), caret: from };
+}
+
 export function insertNativeReference(document: ReferenceDocument, candidate: ReferenceCandidate, start = document.text.length, end = start): ReferenceDocument {
   validateNativeReferences(document);
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > document.text.length) throw new Error('native-reference-range');

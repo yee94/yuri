@@ -5,6 +5,7 @@ export function assertFixtureRequestScope(input, runtimeScope) {
 }
 export function createHost() {
   let sent = false;
+  let attachmentPicks = 0;
   let selectedModel = { id: 'Native test model', providerID: 'fixture' };
   let selectedAgent = 'build';
   const runtimeScope = { hostID: 'fixture', lease: 'synthetic-chat-lease' };
@@ -32,6 +33,12 @@ export function createHost() {
           ],
         };
       if (name === "runtime.stop" || name === "runtime.stream") return true;
+      if (name === 'runtime.pickAttachment') {
+        assertFixtureRequestScope(input, runtimeScope);
+        const name = `synthetic-attachment-${++attachmentPicks}.${input.kind === 'images' ? 'png' : 'txt'}`;
+        return { uri: `file:///synthetic/${name}`, name, mime: input.kind === 'images' ? 'image/png' : 'text/plain' };
+      }
+      if (name === 'runtime.cancelAttachment') return true;
       if (name !== "runtime.request")
         throw new Error("Unexpected native call: " + name);
       const path = input.path;

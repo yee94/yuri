@@ -64,7 +64,7 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
   const imports: Record<string, unknown> = {
     nsh: { keymap: { bind: () => () => {} }, signal: source, computed: (work: () => unknown) => work, untracked: (work: () => unknown) => work(), token: (name: string) => name, cleanup: (work: () => void) => callbacks.push(work), effect: (work: () => void) => { effects.push(work); work(); }, lifecycle, platform: { os: 'ios' }, nativeComponent: (name: string, spec: unknown) => {
       if (name !== 'yuri.sheet.presentation') throw new Error(`Unexpected native leaf ${name}`);
-      expect(spec).toEqual({ props: ['generation', 'detents', 'initialDetent', 'viewportDetents', 'dismissible'], events: ['ready', 'opened', 'dismissed', 'cancel'] });
+      expect(spec).toEqual({ props: ['generation', 'detents', 'initialDetent', 'viewportDetents', 'dismissible', 'diagnostic'], events: ['ready', 'opened', 'dismissed', 'cancel'] });
       return name;
     }, keyboardFrame: () => ({ height: keyboardHeight(), duration: 0 }), safeArea: () => ({ top: 0, bottom: 0 }), windowSize: () => ({ width: 390, height: 844 }), Keyboard: { dismiss: () => {} }, Speech: { available: async () => false }, Scroll: 'Scroll', Text: 'Text', View: 'View', Overlay: 'Overlay' },
     'nsh/base': { Button: 'Button', Input: 'Input', NavPage: 'NavPage', Sheet: 'Sheet', Dialog: 'Dialog', AlertDialog: { show: attachment?.choose ?? (async () => ({ action: 'cancel' })) } },
@@ -72,7 +72,7 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
     '../ui/src/components/chat/mobileControlsUtils': mobileControls, '../ui/src/lib/touch-gestures/tap': touchGestures, './new-session-ui-helpers': starters,
     './new-session-selection': { createNewSessionCatalog: (directory: string, current: () => boolean) => selection.createNewSessionCatalog(directory, current, uiRequest) },
     './composer-controls': { NativeCommandSuggestions: 'CommandSuggestions' }, './composer-reference-keyboard-native': { createNativeReferenceKeyboard: (options: Parameters<typeof createNativeReferenceKeyboard>[0]) => { commandPorts.push(options); return keyboard; } }, './composer-references-controls': { NativeReferencePicker: 'ReferencePicker' },
-    './composer-surface': await import('./composer-surface'), './composer-commands-model': await import('./composer-commands-model'),
+    './composer-surface': await import('./composer-surface'), './glass-surface': { glassEdge: () => ({}) }, './composer-commands-model': await import('./composer-commands-model'),
     './composer-command-router': await import('./composer-command-router'),
     './attachment-pick': await import('./attachment-pick'),
     './composer-send': { NativeComposerSend: (props: Node['props']) => h('Button', { ...props, testID: 'send' }) }, './Icon': { Icon: 'Icon' }, './i18n': { t: (key: string) => key }, './model': model,
@@ -80,6 +80,9 @@ async function pageFixture(uiResponse: (path: string, method?: string, body?: un
     './new-session-copy': { newSessionText: (key: string) => key }, './new-session-models': { NativeNewSessionModels: 'Models' }, './runtime': { native: attachment?.call ?? (async () => null), request: uiRequest }, './state': { ...state, captureHostRequest: () => uiRequest },
     './new-session-native-owners': { NativeNewSessionPresentation: 'NativePresentation', NativeNewSessionInputAX: 'NativeInputAX' },
     './native-input-metadata': { NativeInputMetadata: 'NativeInputMetadata' }, './native-composer-spellcheck': { NativeComposerSpellcheck: 'NativeComposerSpellcheck' },
+    './native-composer-press': { NativeComposerPress: 'NativeComposerPress' },
+    './native-composer-inline-chips': { NativeComposerInlineChips: 'NativeComposerInlineChips' },
+    './attachment-card': { NativeAttachmentCard: 'AttachmentCard' },
   };
   const sourceFile = readFileSync(fileURLToPath(new URL('./new-session-page.tsx', import.meta.url)), 'utf8');
   // Observe the actual production expressions lazily, as NSH's signal-bound

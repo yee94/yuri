@@ -8,6 +8,7 @@ import {
   characterFadePlan,
   characterFadeTotal,
   flipPlan,
+  numberCells,
 } from './text-motion-model';
 
 describe('text motion timings follow the Web animations', () => {
@@ -47,6 +48,26 @@ describe('flipPlan', () => {
 
   it('abandons a running flip when the group settles', () => {
     expect(flipPlan('Read 1 file', 'Read 2 files', false, true)).toBe('replace');
+    expect(flipPlan('Read 1 file', 'Read 1 file', false, true)).toBe('replace');
+  });
+});
+
+describe('formatted duration place identities', () => {
+  it('retains units and tenths when an integer grows from one to two digits', () => {
+    const before = numberCells('9.9s'), after = numberCells('10.0s');
+    expect(after.find(cell => cell.key === before[0].key)?.text).toBe('0');
+    expect(after.find(cell => cell.key === before[2].key)?.text).toBe('0');
+    expect(after.filter(cell => !before.some(old => old.key === cell.key)).map(cell => cell.text)).toEqual(['1']);
+  });
+  it('keeps seconds attached to seconds when minutes appear, and removes tenths', () => {
+    const before = numberCells('59.9s'), after = numberCells('1m 0s');
+    expect(after.find(cell => cell.key === before[1].key)?.text).toBe('0');
+    expect(after.find(cell => cell.key === before[0].key)).toBeUndefined();
+    expect(after.find(cell => cell.key === before[3].key)).toBeUndefined();
+    expect(new Set(after.map(cell => cell.key)).size).toBe(after.length);
+  });
+  it.each(['', '9s', '10.0s', '1m 0s', '59m 59s', '1:00', '-1.5', '等待 9 秒', '20%'])('retains the existing display format %s', value => {
+    expect(numberCells(value).map(cell => cell.text).join('')).toBe(value);
   });
 });
 

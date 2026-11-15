@@ -1,6 +1,8 @@
 import { BUILTIN_STARTERS, DEFAULT_GLOBAL_STARTERS, getBuiltInStarter, normalizeStarterLabel, sanitizeStarterRefs, starterKey, type DraftStarterRef } from '../ui/src/lib/draftStarters';
 import { createProjectIdFromPath } from '../ui/src/lib/projectId';
+import { parseModelIdentifier } from '../ui/src/lib/modelIdentifier';
 import { resolveAgentModelSelection } from '../ui/src/components/chat/mobileControlsUtils';
+import { getModelDisplayName } from '../ui/src/lib/modelDisplay';
 import { list, record, text, type Row } from './model';
 import type { NativeNewSessionSelection } from './new-session';
 import { modelRefs, preferenceUpdate, sameModel, type ModelRef } from './chat-models-helpers';
@@ -90,6 +92,54 @@ export function agentDraftSelection(selection: NativeNewSessionSelection, agent:
   return { agent, ...(next.providerID && next.modelID ? { model: { providerID: next.providerID, id: next.modelID, ...(!dropChangedVariant || !changed ? selection.model?.variant !== undefined ? { variant: selection.model.variant } : {} : {}) } } : {}) };
 }
 
+/** Web `resolveDefaultAgentModelSelection` fallback cascade (without remembered picks): settings agent → build → first primary; settings model → agent-pinned model → first model. */
+/** Mirrors Web `resolveDefaultAgentModelSelection` (useConfigStore). Native has no per-project
+ *  "last user pick" unit, so the synced `recentModels[0]` stands in just before the last-resort
+ *  "first available" model; it never overrides an explicit default. */
+/** Wire agent rows carry `id` (machine key the server expects) and `name` (display label). Like Web's
+ *  `projectAgent`, make `name` the selection/send key and keep the label as `displayName`. */
+export function projectDraftAgent(row: Row): Row {
+  const id = text(row.id) || text(row.name);
+  return { ...row, id, name: id, displayName: text(row.displayName) || text(row.name) || id };
+}
+export const draftAgentLabel = (row: Row) => { const label = text(row.displayName) || text(row.name); return label.charAt(0).toUpperCase() + label.slice(1); };
+/** Exact key, then id, then display label (legacy persisted selections stored the label). */
+export function findDraftAgent(agents: Row[], key: string | undefined): Row | undefined {
+  if (!key) return undefined;
+  return agents.find(row => text(row.name) === key) ?? agents.find(row => text(row.id) === key) ?? agents.find(row => text(row.displayName) === key);
+}
+
+export function defaultDraftSelection(agents: Row[], providers: Row[], settings: Row, opencode: { defaultAgent?: string; defaultModel?: string } = {}): NativeNewSessionSelection {
+  const primary = agents.filter(agent => text(agent.name));
+  const named = (name: string) => findDraftAgent(primary, name);
+  const agent = named(text(settings.defaultAgent)) ?? named(text(opencode.defaultAgent)) ?? named('build') ?? primary[0];
+  const models = (provider: Row) => Array.isArray(provider.models) ? list(provider.models) : Object.values(record(provider.models)).map(record);
+  const exists = (providerID: string, modelID: string) => providers.some(provider => text(provider.id) === providerID && models(provider).some(model => text(model.id) === modelID));
+  let model: { providerID: string; id: string; variant?: string } | undefined;
+  const parsed = parseModelIdentifier(settings.defaultModel);
+  if (parsed) {
+    const variant = parsed.variant ?? (text(settings.defaultVariant) || undefined);
+    model = { providerID: parsed.providerId, id: parsed.modelId, ...(variant ? { variant } : {}) };
+  }
+  const pinned = record(agent?.model);
+  if (!model && text(pinned.providerID) && text(pinned.modelID) && exists(text(pinned.providerID), text(pinned.modelID))) {
+    model = { providerID: text(pinned.providerID), id: text(pinned.modelID), ...(text(agent?.variant) ? { variant: text(agent?.variant) } : {}) };
+  }
+  const configured = parseModelIdentifier(opencode.defaultModel);
+  if (!model && configured) model = { providerID: configured.providerId, id: configured.modelId, ...(configured.variant ? { variant: configured.variant } : {}) };
+  if (!model) {
+    const recent = modelRefs(settings.recentModels).find(ref => exists(ref.providerID, ref.modelID));
+    if (recent) model = { providerID: recent.providerID, id: recent.modelID, ...(recent.variant ? { variant: recent.variant } : {}) };
+  }
+  if (!model && exists('opencode', 'big-pickle')) model = { providerID: 'opencode', id: 'big-pickle' };
+  if (!model) {
+    const provider = providers.find(row => models(row).length > 0);
+    const first = provider && models(provider)[0];
+    if (provider && first) model = { providerID: text(provider.id), id: text(first.id) };
+  }
+  return { ...(agent ? { agent: text(agent.name) } : {}), ...(model ? { model } : {}) };
+}
+
 export function favoriteDraftPatch(settings: Row, entry: ModelRef, selection: NativeNewSessionSelection): Row {
   const selected = { providerID: selection.model?.providerID ?? '', modelID: selection.model?.id ?? '' };
   const variant = sameModel(entry, selected) ? selection.model?.variant : modelRefs(settings.favoriteModels).find(ref => sameModel(ref, entry))?.variant ?? modelRefs(settings.recentModels).find(ref => sameModel(ref, entry))?.variant;
@@ -106,4 +156,13 @@ export function createAgentPress(port: { enabled: () => boolean; cycle: () => vo
     press() { up(); if (!suppressed && port.enabled()) port.cycle(); suppressed = true; },
     cancel() { up(); suppressed = true; },
   };
+}
+
+/** Display name for a draft model ref from the loaded provider catalog; falls back to the raw id until it loads. */
+export function draftModelLabel(providers: Row[], model: { providerID: string; id: string } | undefined): string {
+  if (!model) return '';
+  const provider = providers.find(row => text(row.id) === model.providerID);
+  const rows = !provider ? [] : Array.isArray(provider.models) ? list(provider.models) : Object.values(record(provider.models)).map(record);
+  const row = rows.find(item => text(item.id) === model.id);
+  return row ? getModelDisplayName(row, model.id, { maxLength: 40 }) : model.id;
 }

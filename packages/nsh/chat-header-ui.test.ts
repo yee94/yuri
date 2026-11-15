@@ -62,10 +62,11 @@ test('Chat delegates back/title to the system navigation bar and puts only conte
   const source = readFileSync(path.join(directory, 'application.tsx'), 'utf8').split('function Chat(props:')[1].split('function ResourceCard(')[0];
   expect(source).not.toContain('headerVisible={false}');
   expect(source).not.toContain('headerBackVisible={false}');
-  expect(source).toContain('headerRight={<ChatHeaderActions');
-  expect(source).toContain('header={<NativeChatHeader');
+  expect(source).toContain("headerRight={props.target.kind === 'session' ? <ChatHeaderActions");
+  expect(source).toContain("header={props.target.kind === 'session' ? <NativeChatHeader");
   expect(source).toContain('<NativeChatHeader');
-  expect(source).not.toContain('headerLeft=');
+  expect(source).not.toMatch(/headerLeft=\{(?!platform\.os === 'android')/);
+  expect(source).toContain("headerBackVisible={platform.os !== 'android'}");
   expect(source).not.toContain('headerRightSymbol');
   for (const action of ['new-session', 'files', 'changes', 'mcp', 'selection', 'refresh', 'auto-read', 'remote-desktop']) expect(source).toContain(`action === '${action}'`);
   const header = readFileSync(path.join(directory, 'chat-header.tsx'), 'utf8');
