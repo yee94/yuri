@@ -80,15 +80,18 @@ test('three-action rail uses the measured full width and closes after the added 
     act(() => root.render(<Row id="three" onOpen={onOpen} onEdit={vi.fn()} onDelete={vi.fn()} onRead={onRead} />));
     const rail = container.querySelector<HTMLElement>('.yuri-mobile-session-actions')!;
     const main = container.querySelector('[data-main]')!;
-    Object.defineProperty(rail, 'offsetWidth', { value: 168 });
+    Object.defineProperty(rail, 'offsetWidth', { value: 192 });
     expect(rail.style.getPropertyValue('--yuri-mobile-session-action-count')).toBe('3');
     expect(rail.querySelectorAll('button')).toHaveLength(3);
+    for (const button of rail.querySelectorAll('button')) {
+      expect(button.className).toContain('has-[>svg]:px-1');
+    }
     for (const [type, x] of [['pointerdown', 240], ['pointermove', 20], ['pointerup', 20]] as const) {
       act(() => main.dispatchEvent(new PointerEvent(type, {
         bubbles: true, cancelable: true, pointerId: 1, button: 0, pointerType: 'touch', clientX: x, clientY: 0,
       })));
     }
-    expect(rail.style.transform).toBe('translate3d(calc(100% + -168px), 0, 0)');
+    expect(rail.style.transform).toBe('translate3d(calc(100% + -192px), 0, 0)');
     expect(rail.getAttribute('aria-hidden')).toBe('false');
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="Read"]')!.click());
     expect(onRead).toHaveBeenCalledOnce();

@@ -7,6 +7,16 @@ import ts from "typescript"
 import { Button } from "./button"
 
 describe("Button", () => {
+  test("solid destructive actions use an opaque error plate and white content without changing tinted actions", () => {
+    const solid = Button({ variant: "destructiveSolid", children: "Archive" }).props.className
+    expect(solid).toContain("bg-[var(--solid-destructive-background)]")
+    expect(solid).toContain("text-[var(--solid-destructive-foreground)]")
+    expect(solid).not.toContain("dark:bg-")
+    const tinted = Button({ variant: "destructive", children: "Delete" }).props.className
+    expect(tinted).toContain("text-[var(--status-error)]")
+    expect(tinted).not.toContain("--solid-destructive-foreground")
+  })
+
   test("mode chips stay borderless and neutral while exposing selection", () => {
     for (const pressed of [false, true]) {
       const element = Button({ variant: "chip", "aria-pressed": pressed, children: "Mode" })

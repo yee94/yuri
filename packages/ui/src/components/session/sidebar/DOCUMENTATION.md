@@ -39,7 +39,8 @@ Inbox task rows retain three operation entrances. Left swipe reuses
 `useMobileSwipeActions` / `MobileSwipeActionRail` in left-to-right order:
 Mark read/unread, Pin/Unpin, task Archive. The first action uses compact Read/Unread
 copy with the full localized accessible name and a neutral solid button plate;
-Pin retains the selection-tone plate and Archive the destructive tint. Labels
+Pin retains the selection-tone plate; Archive uses the shared solid red destructive
+plate with white icon and text, matching project-tree session swipe actions. Labels
 stay single-line with ellipsis for longer locales. Read actions share `useSessionReadMenuAction` with the half-sheet,
 including its narrow per-session subscription, Host writes and failure feedback;
 the callbacks route through the same home/container mutations as the full menu,

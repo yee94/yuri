@@ -145,6 +145,7 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
           label: t('sessions.sidebar.bulkActions.archive'),
           icon: 'inbox-archive',
           destructive: true,
+          variant: 'destructiveSolid',
           onClick: () => onArchive(task.id),
         },
       ]} />

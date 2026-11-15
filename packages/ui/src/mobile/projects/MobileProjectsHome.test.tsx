@@ -18,6 +18,7 @@ import {
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useMobileProjectsHomeModel } from './useMobileProjectsHomeModel';
 import { MobileTaskCard } from './MobileTaskCard';
+import { MobileSessionRow } from './MobileSessionRow';
 
 import {
   MobileProjectsHome,
@@ -62,6 +63,18 @@ const homeSource = readFileSync(
 );
 
 const noop = () => undefined;
+
+test('project session swipe archive shares the solid red plate and white content', () => {
+  const host = document.createElement('div');
+  host.innerHTML = renderToString(<I18nProvider>
+    <MobileSessionRow session={{ id: 'project-archive', title: 'Session' }}
+      onSelect={noop} onPin={noop} onArchive={noop} onOpenActions={noop} />
+  </I18nProvider>);
+  const [pin, archive] = host.querySelectorAll<HTMLButtonElement>('.yuri-mobile-session-action');
+  expect(pin.className).toContain('bg-interactive-selection');
+  expect(archive.className).toContain('bg-[var(--solid-destructive-background)]');
+  expect(archive.className).toContain('text-[var(--solid-destructive-foreground)]');
+});
 
 test.each([
   [false, false],
@@ -312,7 +325,8 @@ test('task swipe read action shares Host state, reflects external updates and ne
     expect(buttons[0].className).toContain('bg-[var(--surface-muted)]');
     expect(buttons[0].className).not.toContain('bg-interactive-selection');
     expect(buttons[1].className).toContain('bg-interactive-selection');
-    expect(buttons[2].className).toContain('text-[var(--status-error)]');
+    expect(buttons[2].className).toContain('bg-[var(--solid-destructive-background)]');
+    expect(buttons[2].className).toContain('text-[var(--solid-destructive-foreground)]');
     expect(readAction().querySelector('span')!.className).toContain('truncate');
     expect(readAction().getAttribute('aria-label')).toBe('Mark as unread');
     expect(readAction().querySelector('use')?.getAttribute('href')).toBe('#yuri-mail');

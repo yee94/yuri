@@ -922,7 +922,7 @@
   --yuri-mobile-entity-meta-size: 0.75rem;
   --yuri-mobile-entity-meta-line-height: 0.9375rem;
   --yuri-mobile-session-row-height: calc(2.5rem * var(--padding-scale, 1));
-  --yuri-mobile-session-actions-width: 6.25rem;
+  --yuri-mobile-session-actions-width: 8rem;
   --yuri-mobile-worktree-action-width: 3.125rem;
   display: flex;
   flex-direction: column;
@@ -979,6 +979,7 @@
 }
 
 .yuri-mobile-task-card {
+  --yuri-mobile-session-actions-width: 8rem;
   --yuri-mobile-entity-title-size: 0.875rem;
   --yuri-mobile-entity-title-line-height: 1.25rem;
   --yuri-mobile-task-action-width: 2.25rem;

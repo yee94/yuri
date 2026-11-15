@@ -124,7 +124,7 @@ function MobileSessionRowImpl({
           session foreground follows the finger to the left. */}
       <MobileSwipeActionRail swipe={swipe} actions={[
         { label: pinLabel, icon: session.pinned ? 'unpin' : 'pushpin', onClick: () => onPin(session) },
-        { label: t('sessions.sidebar.bulkActions.archive'), icon: 'archive', destructive: true, onClick: () => onArchive(session) },
+        { label: t('sessions.sidebar.bulkActions.archive'), icon: 'archive', destructive: true, variant: 'destructiveSolid', onClick: () => onArchive(session) },
       ]} />
 
       {/* The entire solid foreground translates as one slab, including time

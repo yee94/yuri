@@ -41,6 +41,12 @@ const buttonVariants = cva(
           TINT_DESTRUCTIVE,
           "focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
         ),
+        destructiveSolid: [
+          "bg-[var(--solid-destructive-background)] text-[var(--solid-destructive-foreground)] border-0",
+          "hover:bg-[color-mix(in_srgb,var(--solid-destructive-background)_90%,var(--surface-background))]",
+          "active:bg-[color-mix(in_srgb,var(--solid-destructive-background)_80%,var(--surface-background))]",
+          "focus-visible:ring-destructive/40",
+        ].join(" "),
         neutral: SOLID_PRIMARY,
         outline: SOLID_PRIMARY,
         mobileGlass:

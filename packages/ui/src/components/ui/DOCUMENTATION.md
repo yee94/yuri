@@ -156,7 +156,10 @@ dividers. Command execution, availability and error state belong to the caller.
 `useMobileSwipeActions.ts` and `MobileSwipeActionRail.tsx` own the homepage session and Assistant contact trailing
 action rail and gesture controller. Each action keeps half the configured two-action
 width; the total rail width follows the action count (two for project-tree sessions
-and contacts, three for inbox tasks). Touch/pen intent locks after 10px; vertical
+and contacts, three for inbox tasks). Task and project-tree actions are 64px wide
+with 4px inline padding (including icon buttons), keeping the compact 10px
+Cancel-pin label fully visible in Chinese. Contact widths remain unchanged.
+Touch/pen intent locks after 10px; vertical
 intent yields to scrolling, horizontal movement clamps to the measured rail width,
 and release snaps at 35%. Mouse drags and long holds never reveal actions. A shared
 reveal event closes other rows; cancelled gestures restore their starting offset.
@@ -164,8 +167,14 @@ Consumers retain their own foreground content and business actions. Pointer move
 only update the active row, read geometry once at gesture start, and add no requests.
 Session reorder disables swipe through the existing drag context.
 Action descriptors may supply a shared Button `variant` and a full `ariaLabel`
-when compact visible copy is used. Otherwise the existing selection/destructive
-recipes remain unchanged. Visible labels stay single-line and ellipsize.
+when compact visible copy is used. Task and project-tree Archive actions use the
+shared `Button` `destructiveSolid` variant: opaque saturated red fill with white
+icons and labels in both themes. Other destructive actions retain the tinted
+`destructive` recipe; pin/read appearances are unchanged.
+The solid variant uses the shared `--solid-destructive-background` and
+`--solid-destructive-foreground` action tokens, independent of pale theme error
+text colors.
+Visible labels stay single-line and ellipsize.
 Inbox task rows also reuse this rail/controller, composing it with
 `mobileLongPress.ts` to open the existing session half-sheet on long press or
 three-dot click. Horizontal intent cancels the hold timer; opening the sheet

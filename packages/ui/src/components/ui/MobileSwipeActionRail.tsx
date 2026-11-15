@@ -33,7 +33,7 @@ export function MobileSwipeActionRail({ swipe, actions }: {
   >
     {actions.map((action) => <Button
       key={action.ariaLabel ?? action.label} type="button" variant={action.variant ?? (action.destructive ? 'destructive' : 'secondary')}
-      className={cn('yuri-mobile-session-action h-full flex-col rounded-none border-0 px-1',
+      className={cn('yuri-mobile-session-action h-full flex-col rounded-none border-0 px-1 has-[>svg]:px-1',
         !action.destructive && !action.variant && 'bg-interactive-selection text-interactive-selection-foreground hover:bg-interactive-active')}
       aria-label={action.ariaLabel ?? action.label} tabIndex={revealed ? 0 : -1}
       onClick={() => { closeActions(); action.onClick(); }}
