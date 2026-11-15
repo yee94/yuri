@@ -326,6 +326,14 @@ describe('settings helpers', () => {
     expect(response.collapsibleThinkingBlocks).toBe(true);
   });
 
+  it('accepts only known sidebar views', () => {
+    const helpers = createTestHelpers();
+    expect(helpers.sanitizeSettingsUpdate({ sidebarView: ' tasks ' }).sidebarView).toBe('tasks');
+    expect(helpers.sanitizeSettingsUpdate({ sidebarView: 'projects' }).sidebarView).toBe('projects');
+    expect(helpers.sanitizeSettingsUpdate({ sidebarView: 'kanban' }).sidebarView).toBeUndefined();
+    expect(helpers.sanitizeSettingsUpdate({ sidebarView: 1 }).sidebarView).toBeUndefined();
+  });
+
   it('projects the bounded bootstrap settings allowlist', () => {
     const helpers = createTestHelpers();
     const maxUrl = `https://stt.example.test/${'u'.repeat(4096 - 'https://stt.example.test/'.length)}`;

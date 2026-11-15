@@ -33,6 +33,7 @@ export type ActivityRenderMode = 'collapsed' | 'summary';
 export type SessionRetentionAction = 'archive' | 'delete';
 export type TimeFormatPreference = 'auto' | '12h' | '24h';
 export type WeekStartPreference = 'auto' | 'sunday' | 'monday';
+export type SidebarViewPreference = 'tasks' | 'projects';
 export type DesktopWindowControlsPosition = 'auto' | 'left' | 'right';
 export type FileEditorKeymap = 'default' | 'vim';
 /** Mobile OTA channel preference. null = follow the build-time baked channel. */
@@ -876,6 +877,7 @@ interface UIStore {
   showSubagentTaskDetails: boolean;
   timeFormatPreference: TimeFormatPreference;
   weekStartPreference: WeekStartPreference;
+  sidebarView: SidebarViewPreference;
   desktopWindowControlsPosition: DesktopWindowControlsPosition;
   userMessageRenderingMode: UserMessageRenderingMode;
   collapsibleUserMessages: boolean;
@@ -1065,6 +1067,7 @@ interface UIStore {
   setShowSubagentTaskDetails: (value: boolean) => void;
   setTimeFormatPreference: (value: TimeFormatPreference) => void;
   setWeekStartPreference: (value: WeekStartPreference) => void;
+  setSidebarView: (value: SidebarViewPreference) => void;
   setDesktopWindowControlsPosition: (value: DesktopWindowControlsPosition) => void;
   setUserMessageRenderingMode: (value: UserMessageRenderingMode) => void;
   setCollapsibleUserMessages: (value: boolean) => void;
@@ -1243,6 +1246,7 @@ export const useUIStore = create<UIStore>()(
         showSubagentTaskDetails: false,
         timeFormatPreference: 'auto',
         weekStartPreference: 'auto',
+        sidebarView: 'projects',
         desktopWindowControlsPosition: 'auto',
         userMessageRenderingMode: 'markdown',
         collapsibleUserMessages: true,
@@ -2744,6 +2748,9 @@ export const useUIStore = create<UIStore>()(
         setWeekStartPreference: (value) => {
           set({ weekStartPreference: value });
         },
+        setSidebarView: (value) => {
+          set({ sidebarView: value });
+        },
         setDesktopWindowControlsPosition: (value) => {
           set({ desktopWindowControlsPosition: value });
         },
@@ -3070,6 +3077,7 @@ export const useUIStore = create<UIStore>()(
           showSubagentTaskDetails: state.showSubagentTaskDetails,
           timeFormatPreference: state.timeFormatPreference,
           weekStartPreference: state.weekStartPreference,
+          sidebarView: state.sidebarView,
           desktopWindowControlsPosition: state.desktopWindowControlsPosition,
           userMessageRenderingMode: state.userMessageRenderingMode,
           collapsibleUserMessages: state.collapsibleUserMessages,

@@ -165,14 +165,16 @@ Session reorder disables swipe through the existing drag context.
 # Desktop picker dialogs
 
 Desktop compact search/list surfaces use `DialogContent presentation="picker"`.
-This opt-in owns the global-search glass recipe, shared theme-token scrim, top-offset
+This opt-in owns the global-search glass recipe, shared black translucent scrim, top-offset
 position, radius and viewport bound. Ordinary `DialogContent` remains unchanged
 for confirmations, editors, Settings forms, permission flows and content viewers.
 Do not apply picker geometry globally or remove warnings needed to decide safely.
 
-`picker-dialog.css` owns `yuri-picker-backdrop`: 55% of `--surface-overlay`,
-fading over 180ms (disabled under reduced motion). All picker dialogs, including
-desktop global search, use this same scrim rather than local transparent overrides.
+`picker-dialog.css` owns `yuri-picker-backdrop`: it only sets a 180ms fade
+(disabled under reduced motion) and inherits the black translucent scrim of
+`DialogOverlay` (`bg-black/50 dark:bg-black/75`), not a theme surface token. All
+picker dialogs, including desktop global search, use this same scrim rather than
+local transparent overrides.
 Ordinary dialogs and mobile sheet/page backdrops retain their existing recipes.
 
 The add-project directory picker additionally uses a 180ms fade and 320ms scale

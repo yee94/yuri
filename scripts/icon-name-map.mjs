@@ -284,6 +284,8 @@ export const ICON_NAME_MAP = {
   "lightbulb": { lucide: "lightbulb", fill: false },
   "link-unlink-m": { lucide: "unlink", fill: false },
   "list-check-2": { lucide: "list-checks", fill: false },
+  "folder-tree": { lucide: "folder-tree", fill: false },
+  "moon": { lucide: "moon", fill: false },
   "list-check-3": { lucide: "list-todo", fill: false },
   "list-unordered": { lucide: "list", fill: false },
   "loader": { lucide: "loader", fill: false },

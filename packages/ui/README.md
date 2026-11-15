@@ -527,6 +527,8 @@ The saved panel width and draft remain unchanged by automatic collapse. Decision
 use the requested width, not the filled panel width, to avoid resize feedback loops.
 Split width changes do not animate through unreadable intermediate widths. Phone,
 native-mobile and the separate VS Code layout retain their existing behavior.
+Closing the preview releases its reserved width and restores the mounted conversation
+even while the workspace reports a temporary zero width.
 
 ## File preview fallback
 

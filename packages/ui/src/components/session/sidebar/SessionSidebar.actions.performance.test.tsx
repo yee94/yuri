@@ -182,7 +182,7 @@ test('collapsing the sidebar retains pinned and in-progress shortcut targets unt
         ts.forEachChild(node, visit);
     };
     visit(ast);
-    const compiled = ts.transpileModule(`return function Surface({ isVisible, visiblePinnedNavigationTargets, visibleProjectNavigationTargets, activate }) {
+    const compiled = ts.transpileModule(`return function Surface({ isVisible, visiblePinnedNavigationTargets, visibleProjectNavigationTargets, activate, taskViewActive = false, taskNavigationTargets = [] }) {
         const mobileVariant = false;
         const handleNumberedSidebarSessionActivate = activate;
         const isProjectSessionsSyncing = false, currentSessionId = 'running';
@@ -226,6 +226,14 @@ test('collapsing the sidebar retains pinned and in-progress shortcut targets unt
         activate.mockClear();
         expect(activateSidebarNumberedSession(2)).toBe(true);
         expect(activate).toHaveBeenCalledExactlyOnceWith(projects[0]);
+
+        // The task view publishes its own visible order to Mod+1…9 and next/previous session.
+        const tasks = [target('project', 'task-a'), target('project', 'task-b')];
+        await act(async () => root.render(<Surface isVisible visiblePinnedNavigationTargets={pinned.slice(0, 1)} visibleProjectNavigationTargets={projects} activate={activate} taskViewActive taskNavigationTargets={tasks} />));
+        expect(publishAdjacent).toHaveBeenLastCalledWith({ pinned: pinned.slice(0, 1), project: tasks });
+        activate.mockClear();
+        expect(activateSidebarNumberedSession(2)).toBe(true);
+        expect(activate).toHaveBeenCalledExactlyOnceWith(tasks[0]);
     } finally {
         await act(async () => root.unmount());
         expect(activateSidebarNumberedSession(1)).toBe(false);

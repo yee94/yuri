@@ -154,7 +154,7 @@ type ProjectNode = {
   latestActivity: number;
 };
 
-const findExactWorktreeMatch = (
+export const findExactWorktreeMatch = (
   project: ProjectMeta,
   normalizedDirectory: string,
 ): WorktreeMetadata | null => (
@@ -189,6 +189,7 @@ export type MobileProjectsHomeModel = {
   sessionById: Map<string, Session>;
   projectMetaById: Map<string, ProjectMeta>;
   allSessions: Session[];
+  ownership: ReturnType<typeof createSessionOwnershipIndex>;
   /** True when project has secondary worktrees (affects page size). */
   projectHasWorktrees: (projectId: string) => boolean;
   getBucketRootCount: (projectId: string, bucketKey: string) => number;
@@ -670,6 +671,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
     sessionById,
     projectMetaById,
     allSessions: sessions,
+    ownership,
     projectHasWorktrees,
     getBucketRootCount,
     getBucketVisibleCount,

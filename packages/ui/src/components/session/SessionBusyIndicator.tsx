@@ -15,11 +15,14 @@ interface SessionBusyIndicatorProps {
   /** Outer size in px (default 14, matching PC SessionNodeItem ring). */
   size?: number;
   className?: string;
+  /** Moving arc colour; defaults to the neutral muted tone. */
+  arcColor?: string;
 }
 
 export const SessionBusyIndicator: React.FC<SessionBusyIndicatorProps> = ({
   size = 14,
   className,
+  arcColor = 'var(--surface-muted-foreground)',
 }) => {
   const strokeWidth = 1.5;
   const radius = (size - strokeWidth) / 2;
@@ -51,7 +54,7 @@ export const SessionBusyIndicator: React.FC<SessionBusyIndicatorProps> = ({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="var(--surface-muted-foreground)"
+          stroke={arcColor}
           strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={`${arc} ${circumference - arc}`}

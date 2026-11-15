@@ -537,6 +537,27 @@ describe('file reference failure lifecycle', () => {
     expect(activeFilePath()).toBe('/repo/A.ts');
   });
 
+  test.each([1200, 0])('closing the last expanded preview tab restores the mounted conversation with measured workspace width %s', async (measuredWidth) => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200);
+    harness.files.readFile.mockResolvedValue({ content: 'file content' });
+    await open('/repo/A.ts');
+    await act(async () => reactRoot.render(<ChatWorkspace header={<header>Session</header>}><textarea data-composer defaultValue="unsent draft" /></ChatWorkspace>));
+    const main = host.querySelector<HTMLElement>('[data-primary-chat]')!;
+    const composer = host.querySelector<HTMLTextAreaElement>('[data-composer]')!;
+    await clickButton('contextPanel.actions.expandPanel');
+    expect(main.style.display).toBe('none');
+    const workspace = host.querySelector<HTMLElement>('[data-chat-area]')!;
+    await act(async () => harness.resizeObservers.get(workspace)?.([
+      { contentRect: { width: measuredWidth } } as ResizeObserverEntry,
+    ], {} as ResizeObserver));
+    await clickButton('contextPanel.tab.closeTabAria');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo']).toMatchObject({ isOpen: false, tabs: [] });
+    expect(main.style.display).not.toBe('none');
+    expect(main.inert).toBe(false);
+    expect(host.querySelector('[data-composer]')).toBe(composer);
+    expect(composer.value).toBe('unsent draft');
+  });
+
   test('drag fullscreen and button fullscreen share layout, restore controls and preserve drafts without per-move store writes', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
       if (!this.hasAttribute('data-context-panel')) return 1200;

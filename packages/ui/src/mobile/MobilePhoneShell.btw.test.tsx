@@ -38,6 +38,8 @@ vi.mock('./assistant/MobileAssistantTab', () => ({ MobileAssistantTab: () => nul
 vi.mock('./scheduled/MobileScheduledTab', () => ({ MobileScheduledTab: () => null }));
 vi.mock('./settings/MobileSettingsTab', () => ({ MobileSettingsTab: () => null }));
 vi.mock('@/components/assistants/AssistantView', () => ({ AssistantView: () => null }));
+// The side conversation body has its own tests (BtwPanel.test.tsx); this file only checks navigation.
+vi.mock('@/components/layout/BtwPanel', () => ({ BtwPanel: () => <div data-btw-composer><textarea /></div> }));
 
 import { MobilePhoneShell } from './MobilePhoneShell';
 import { isPhoneBtwScopeOpen, pushPhoneBtw, useMobileNavigationStore } from './useMobileNavigationStore';

@@ -5,7 +5,7 @@ import { useEvent } from '@reactuses/core';
 import { cn } from '@/lib/utils';
 
 export type MobileTabPageHeaderProps = {
-  title: string;
+  title: ReactNode;
   eyebrow?: string;
   trailing?: ReactNode;
   className?: string;

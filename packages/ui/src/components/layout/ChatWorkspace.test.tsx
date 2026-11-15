@@ -101,6 +101,26 @@ it('does not rerender for 50 resize events that stay on the same side of the thr
     expect(main().style.display).not.toBe('none');
 });
 
+it('restores the conversation when the preview closes before a positive workspace measurement returns', async () => {
+    await act(async () => root.render(<ChatWorkspace><textarea defaultValue="unsent draft" /></ChatWorkspace>));
+    const input = host.querySelector('textarea')!;
+    await reserve(Infinity);
+    expect(main().style.display).toBe('none');
+    await resize(0);
+    expect(main().style.display).toBe('none');
+    await reserve(0);
+    expect(main().style.display).not.toBe('none');
+    expect(main().inert).toBe(false);
+    expect(host.querySelector('textarea')).toBe(input);
+    expect(input.value).toBe('unsent draft');
+    await reserve(Infinity);
+    expect(main().style.display).not.toBe('none');
+    await resize(1000);
+    expect(main().style.display).toBe('none');
+    await reserve(0);
+    expect(main().style.display).not.toBe('none');
+});
+
 it('keeps the conversation header and terminal inside the primary column, beside the full-height preview', async () => {
     await act(async () => root.render(<ChatWorkspace header={<header>Session tools</header>} footer={<section data-terminal>Terminal</section>}><textarea defaultValue="draft" /></ChatWorkspace>));
     const header = host.querySelector('header')!;

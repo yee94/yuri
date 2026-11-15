@@ -93,7 +93,7 @@ test('renders built-in Magpie guidance and developer metadata for tools; Magpie 
   expect(document.body.textContent).toContain(en['tour.magpieDescription']);
   expect(document.body.textContent).toContain(en['tour.recommended']);
   expect(document.body.textContent).not.toContain('opencode-magpie-plugin');
-  expect(document.querySelector('img[alt="Magpie"]')).not.toBeNull();
+  expect(document.querySelector('[role="img"][aria-label="Magpie"]')).not.toBeNull();
   await click('Save and continue');
   expect(fixture.savePlugins.mock.calls[0][0]).toEqual(['opencode-magpie-plugin']);
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(1);

@@ -125,13 +125,17 @@ export const applySessionIndexEvent = (service, event, observedAt = Date.now(), 
       : (payload.data?.info && typeof payload.data.info === 'object' ? payload.data.info : {});
     if (info.role !== 'user' || typeof info.sessionID !== 'string') return false;
     const activityAt = typeof info.time?.created === 'number' ? info.time.created : observedAt;
-    return service.touchActivity(info.sessionID, activityAt);
+    const activityChanged = service.touchActivity(info.sessionID, activityAt);
+    const settleCleared = service.clearSettleOverride?.(info.sessionID) ?? false;
+    return activityChanged || settleCleared;
   }
 
   if (baseType === 'session.inbox.enqueued') {
     const data = payload.data ?? properties;
     if (data.item?.type !== 'user' || typeof data.sessionID !== 'string') return false;
-    return service.touchActivity(data.sessionID, data.item.time?.created ?? payload.created ?? observedAt);
+    const activityChanged = service.touchActivity(data.sessionID, data.item.time?.created ?? payload.created ?? observedAt);
+    const settleCleared = service.clearSettleOverride?.(data.sessionID) ?? false;
+    return activityChanged || settleCleared;
   }
 
   if (baseType.startsWith('session.execution.') || baseType === 'session.retry.scheduled') {

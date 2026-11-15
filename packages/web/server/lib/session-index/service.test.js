@@ -10,14 +10,18 @@ import { createSessionIndexSyncRuntime } from './sync-runtime.js';
 
 const tempDirectories = [];
 
-const createService = (runtimeRef) => {
+const createService = (runtimeRef, options = {}) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-session-index-'));
   tempDirectories.push(directory);
   return createSessionIndexService({
     dbPath: path.join(directory, 'session-index.sqlite'),
     getRuntimeConfig: () => ({ apiBaseUrl: runtimeRef.value }),
+    now: () => 0,
+    ...options,
   });
 };
+
+const DAY = 24 * 60 * 60 * 1000;
 
 const session = (id, updated, directory = '/repo') => ({
   id,
@@ -701,6 +705,126 @@ describe('Electron session index', () => {
       updated: 10,
     });
     service.close();
+  });
+
+  describe('settle projection', () => {
+    const setup = () => {
+      const clock = { value: 1000 * DAY };
+      const service = createService({ value: 'http://runtime-a.test' }, { now: () => clock.value });
+      return { clock, service };
+    };
+    const settledOf = (service, id) => service.snapshot().directories
+      .flatMap((directory) => directory.sessions).find((item) => item.id === id)?.time.settled;
+
+    it('settles sessions older than the baseline and keeps later ones active until the cooldown', () => {
+      const { clock, service } = setup();
+      service.replaceDirectory({ directory: '/repo', sessions: [session('old', clock.value - DAY)], cursor: null, hasMore: false });
+      expect(settledOf(service, 'old')).toBe(clock.value);
+
+      clock.value += DAY;
+      service.upsert(session('fresh', clock.value));
+      expect(settledOf(service, 'fresh')).toBeUndefined();
+
+      clock.value += 6 * DAY;
+      expect(settledOf(service, 'fresh')).toBeUndefined();
+      clock.value += DAY;
+      expect(settledOf(service, 'fresh')).toBe(clock.value);
+      service.close();
+    });
+
+    it('brings an old session back to active when it gets new activity', () => {
+      const { clock, service } = setup();
+      service.replaceDirectory({ directory: '/repo', sessions: [session('old', clock.value - DAY)], cursor: null, hasMore: false });
+      expect(settledOf(service, 'old')).toBeDefined();
+      clock.value += DAY;
+      service.touchActivity('old', clock.value);
+      expect(settledOf(service, 'old')).toBeUndefined();
+      service.close();
+    });
+
+    it('honors manual settle and un-settle, and clears them on user activity', () => {
+      const { clock, service } = setup();
+      service.replaceDirectory({ directory: '/repo', sessions: [session('a', clock.value + 10)], cursor: null, hasMore: false });
+      expect(settledOf(service, 'a')).toBeUndefined();
+
+      expect(service.setSettled('a')).toBe(true);
+      expect(settledOf(service, 'a')).toBe(clock.value);
+
+      clock.value += 30 * DAY;
+      expect(service.clearSettled('a')).toBe(true);
+      expect(settledOf(service, 'a')).toBeUndefined();
+      clock.value += 30 * DAY;
+      expect(settledOf(service, 'a')).toBeUndefined();
+
+      expect(service.clearSettleOverride('a')).toBe(true);
+      expect(settledOf(service, 'a')).toBeDefined();
+      expect(service.clearSettleOverride('a')).toBe(false);
+      service.close();
+    });
+
+    it('clamps the configured cooldown to 1..90 days', () => {
+      const clock = { value: 1000 * DAY };
+      let days = 0;
+      const service = createService({ value: 'http://runtime-a.test' }, { now: () => clock.value, getSettleAfterDays: () => days });
+      service.replaceDirectory({ directory: '/repo', sessions: [session('a', clock.value + 1)], cursor: null, hasMore: false });
+      clock.value += 2 * DAY;
+      expect(settledOf(service, 'a')).toBeDefined();
+      days = 1000;
+      expect(settledOf(service, 'a')).toBeUndefined();
+      clock.value += 90 * DAY;
+      expect(settledOf(service, 'a')).toBeDefined();
+      service.close();
+    });
+
+    it('never archives, unpins or fabricates archive state, and survives newest-20 eviction', () => {
+      const { clock, service } = setup();
+      service.replaceDirectory({ directory: '/repo', sessions: [session('a', clock.value + 1)], cursor: null, hasMore: false });
+      service.setPinned('a', 5);
+      service.setSettled('a');
+      const row = service.snapshot().directories[0].sessions[0];
+      expect(row.time).toMatchObject({ pinned: 5, settled: clock.value });
+      expect(row.time.archived).toBeUndefined();
+
+      const newer = Array.from({ length: 20 }, (_, index) => session(`n${index}`, clock.value + 100 - index));
+      service.replaceDirectory({ directory: '/repo', sessions: newer, cursor: null, hasMore: true, now: 3000 });
+      expect(service.snapshot().directories[0].sessions.some((item) => item.id === 'a')).toBe(false);
+      expect(service.snapshot().pinnedSessionIds).toEqual(['a']);
+      service.upsert(session('a', clock.value + 2000));
+      const restored = service.snapshot().directories[0].sessions.find((item) => item.id === 'a');
+      expect(restored?.time.settled).toBe(clock.value);
+      service.close();
+    });
+
+    it('drops the override when the session is removed', () => {
+      const { clock, service } = setup();
+      service.replaceDirectory({ directory: '/repo', sessions: [session('a', clock.value + 1)], cursor: null, hasMore: false });
+      service.setSettled('a');
+      service.remove('a');
+      service.upsert(session('a', clock.value + 5));
+      expect(settledOf(service, 'a')).toBeUndefined();
+      service.close();
+    });
+
+    it('keeps the baseline across reopen so old sessions do not reset', () => {
+      const clock = { value: 1000 * DAY };
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-session-index-'));
+      tempDirectories.push(directory);
+      const open = () => createSessionIndexService({
+        dbPath: path.join(directory, 'session-index.sqlite'),
+        getRuntimeConfig: () => ({ apiBaseUrl: 'http://runtime-a.test' }),
+        now: () => clock.value,
+      });
+      const first = open();
+      first.replaceDirectory({ directory: '/repo', sessions: [session('a', clock.value - 1)], cursor: null, hasMore: false });
+      first.snapshot();
+      first.close();
+      clock.value += DAY;
+      const second = open();
+      second.upsert(session('b', clock.value));
+      expect(settledOf(second, 'a')).toBe(1000 * DAY);
+      expect(settledOf(second, 'b')).toBeUndefined();
+      second.close();
+    });
   });
 
   it('rescues pinned_at across replaceDirectory rebuilds', () => {

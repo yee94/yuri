@@ -112,7 +112,8 @@ describe('file mention search — Yuri catalog', () => {
   test('input-store ranks the sync module ahead of its test and does not leak dotfiles', () => {
     const ranked = rank('input-store');
     expect(ranked[0]).toBe('packages/ui/src/sync/input-store.ts');
-    expect(ranked[1]).toBe('packages/ui/src/sync/input-store.test.ts');
+    // Sibling modules such as remote-input-store.ts may rank between the two.
+    expect(ranked.slice(0, 4)).toContain('packages/ui/src/sync/input-store.test.ts');
     expect(ranked).not.toContain('.env');
     expect(ranked).not.toContain('.nvmrc');
   });

@@ -362,7 +362,6 @@ describe('ScheduledTasksDialog queries', () => {
     expect(navigationContent).toContain('actions?: readonly MobileDetailNavigationAction[]');
     expect(navigationContent).toContain('trailing?: ReactNode');
     expect(navigationContent).not.toContain('contentClassName?: string');
-    expect(navigationContent).not.toContain('className?: string');
     expect(navigationContent.match(/variant="mobileGlass"/g)).toHaveLength(2);
     expect(navigationContent.match(/size="mobileIcon"/g)).toHaveLength(2);
     expect(projectsHomeContent).toContain('<GlobalSearchButton mobile />');

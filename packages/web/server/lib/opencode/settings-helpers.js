@@ -590,6 +590,12 @@ export const createSettingsHelpers = (dependencies) => {
         result.weekStartPreference = mode;
       }
     }
+    if (typeof candidate.sidebarView === 'string') {
+      const mode = candidate.sidebarView.trim();
+      if (mode === 'tasks' || mode === 'projects') {
+        result.sidebarView = mode;
+      }
+    }
     if (typeof candidate.chatRenderMode === 'string') {
       const mode = candidate.chatRenderMode.trim();
       if (mode === 'sorted' || mode === 'live') {

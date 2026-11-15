@@ -683,6 +683,7 @@ export interface SettingsPayload {
   showExpandedBashTools?: boolean;
   showSubagentTaskDetails?: boolean;
   chatRenderMode?: 'sorted' | 'live';
+  sidebarView?: 'tasks' | 'projects';
   messageStreamTransport?: 'auto' | 'ws' | 'sse';
   activityRenderMode?: 'collapsed' | 'summary';
   showSplitAssistantMessageActions?: boolean;

@@ -28,6 +28,9 @@ import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { parseRemoteProject } from '@/lib/remote-projects/types';
 import { openRemoteProjectDraft } from '@/router/openRemoteProjectSession';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
+import { useSetSessionSettled } from '@/queries/sessionIndexSettleQueries';
+import { SETTLED_SHELF_PAGE_SIZE, parseSidebarView, DEFAULT_SIDEBAR_VIEW, type SidebarView } from '@/components/session/sidebar/taskView';
+import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
 import { syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isSessionSharingAvailable } from '@/sync/session-sharing-availability';
@@ -52,6 +55,7 @@ import {
   type MobileRowActionCallbacks,
   type MobileRowActionTarget,
 } from './MobileRowActionsSheet';
+import { useMobileTaskViewModel } from './useMobileTaskViewModel';
 import {
   getParentId,
   getSessionDirectory,
@@ -77,6 +81,8 @@ export type MobileProjectsHomeContainerProps = {
   instanceOptions?: MobileProjectsHomeProps['instanceOptions'];
   className?: string;
 };
+
+const HOME_VIEW_STORAGE_KEY = 'yuri.mobile.homeView';
 
 /**
  * Data + action container for the mobile Projects home.
@@ -121,6 +127,29 @@ export function MobileProjectsHomeContainer({
   const setProjectExpanded = useMobileSessionTreeStore((state) => state.setProjectExpanded);
   const setWorktreeExpanded = useMobileSessionTreeStore((state) => state.setWorktreeExpanded);
   const togglePinnedSession = useTogglePinnedSession();
+  const setSessionSettled = useSetSessionSettled();
+  const [homeView, setHomeViewState] = React.useState<SidebarView>(
+    () => parseSidebarView(getDeferredSafeStorage().getItem(HOME_VIEW_STORAGE_KEY) ?? DEFAULT_SIDEBAR_VIEW),
+  );
+  const [settledOpen, setSettledOpen] = React.useState(false);
+  const [settledLimit, setSettledLimit] = React.useState(SETTLED_SHELF_PAGE_SIZE);
+  const taskModel = useMobileTaskViewModel(model, { enabled: homeView === 'tasks', settledLimit });
+  const handleHomeViewChange = useEvent((view: SidebarView) => {
+    setHomeViewState(view);
+    try {
+      getDeferredSafeStorage().setItem(HOME_VIEW_STORAGE_KEY, view);
+    } catch {
+      // Persistence is best effort; the in-memory selection already applied.
+    }
+  });
+  const handleSettledOpenChange = useEvent((open: boolean) => {
+    setSettledOpen(open);
+    if (!open) setSettledLimit(SETTLED_SHELF_PAGE_SIZE);
+  });
+  const handleShowMoreSettled = useEvent(() => setSettledLimit((limit) => limit + SETTLED_SHELF_PAGE_SIZE));
+  const handleRestoreTask = useEvent((sessionId: string) => {
+    setSessionSettled(sessionId, false);
+  });
   const pinnedSessionIds = usePinnedSessionIds();
   const archiveSessions = useSessionUIStore((state) => state.archiveSessions);
   const updateSessionTitle = useSessionUIStore((state) => state.updateSessionTitle);
@@ -219,6 +248,10 @@ export function MobileProjectsHomeContainer({
     onOpenChat({ sessionId: session.id, directory });
   });
 
+  const handleSelectTask = useEvent((sessionId: string) => {
+    handleSelectSession({ id: sessionId, title: '' });
+  });
+
   const handlePinSession = useEvent((session: MobileSessionTreeNode) => {
     if (isPaginationNodeId(session.id)) return;
     togglePinnedSession(session.id);
@@ -226,6 +259,13 @@ export function MobileProjectsHomeContainer({
 
   const handleArchiveSession = useEvent(async (session: MobileSessionTreeNode) => {
     if (isPaginationNodeId(session.id)) return;
+    if (homeView === 'tasks') {
+      setSessionSettled(session.id, true);
+      toast.success(t('sessions.sidebar.session.archive.success'), {
+        action: { label: t('sessions.sidebar.undo'), onClick: () => setSessionSettled(session.id, false) },
+      });
+      return;
+    }
     const ids = collectSessionTreeIds(session.id);
     const { archivedIds, failedIds } = await archiveSessions(ids);
     if (archivedIds.length > 0) {
@@ -275,6 +315,10 @@ export function MobileProjectsHomeContainer({
     if (!raw) return;
     setActionTarget({ kind: 'session', session: raw });
     setActionsOpen(true);
+  });
+
+  const handleOpenTaskActions = useEvent((sessionId: string) => {
+    handleOpenSessionActions({ id: sessionId, title: '' });
   });
 
   const handleToggleProject = useEvent((project: MobileProjectHomeItem) => {
@@ -656,6 +700,17 @@ export function MobileProjectsHomeContainer({
         }}
         onOpenSessionActions={handleOpenSessionActions}
         onReorderSessions={handleReorderSessions}
+        task={{
+          view: homeView,
+          onViewChange: handleHomeViewChange,
+          model: taskModel,
+          settledOpen,
+          onSettledOpenChange: handleSettledOpenChange,
+          onShowMoreSettled: handleShowMoreSettled,
+          onSelectTask: handleSelectTask,
+          onOpenTaskActions: handleOpenTaskActions,
+          onRestoreTask: handleRestoreTask,
+        }}
       />
 
       <MobileRowActionsSheet

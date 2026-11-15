@@ -688,7 +688,8 @@ describe("busy inbox queue / steer / cancel (ticket 07)", () => {
     expect(chatInput).toContain("setSteeringMessageIDs")
     expect(chatInput).toContain("cancelUnpromotedInboxItem")
     expect(chatInput).toContain("steerSessionInbox")
-    expect(chatInput).toContain("queueSessionInbox")
+    // Queue-from-chip lives in the remote container; the local composer only steers or cancels.
+    expect(readHere("../components/chat/RemoteChatContainer.tsx")).toContain("queueSessionInbox")
     expect(wiring).toMatch(/delivery\?:\s*'steer'\s*\|\s*'queue'/)
   })
 })

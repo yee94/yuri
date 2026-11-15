@@ -123,6 +123,33 @@ Pin and unpin use `POST` / `DELETE`
 Snapshots include `pinnedSessionIds` plus `time.pinned` on any matching
 summary row.
 
+## Settled state
+
+"Settled" (已搁置) is a task-view shelf, independent of archive: it never writes
+`metadata.yuri.archive`, never removes the summary and never clears the pin.
+Two tables sit beside `session_pin` and, like it, are not dropped by a schema
+rebuild: `session_settle` (per runtime and session, override `settled` or `active`
+plus the write time) and `session_settle_baseline` (one timestamp per runtime,
+written once when the runtime is first observed, at service open or first
+snapshot). No rows are backfilled.
+
+Snapshot rows expose `time.settled` (a timestamp) only when settled. Projection
+order: an override wins (`settled` → settled, `active` → not settled); with no
+override, a session whose `activity_updated_at` predates the baseline is settled,
+and a later one is settled once idle for the cooldown (default 7 days, clamped to
+1..90 through `getSettleAfterDays`). The clock is read at snapshot time, so there is
+no server timer. The projection ignores live state on purpose: the client overlays
+running sessions and pending questions/permissions, and a stale persisted `busy`
+must not keep an old session active.
+
+`POST` / `DELETE` `/api/yuri/session-index/session/:id/settle` write the `settled`
+and `active` overrides, then `publishChange()`. Manual un-settle therefore holds the
+session active until its next real activity. A user `message.updated` or user
+`session.inbox.enqueued` event clears the override in `event-ingest.js`; assistant
+completion and idle events do not. `remove` (delete or archive) drops the override.
+For Remote Projects the state lives only in the Hub's index, following the pin
+precedent.
+
 List snapshots (`GET /api/yuri/session-index` and the `POST /sync`
 response body) share one Host projection: committed Host metadata is merged,
 Host-archived rows and pins are dropped, and metadata no list consumer reads is

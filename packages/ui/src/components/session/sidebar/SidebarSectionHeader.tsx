@@ -12,6 +12,8 @@ type SidebarSectionHeaderProps = {
   onToggle?: () => void;
   expanded?: boolean;
   className?: string;
+  /** Replaces the text label (e.g. the Tasks / Projects view switch). */
+  titleSlot?: React.ReactNode;
 };
 
 /**
@@ -25,6 +27,7 @@ export function SidebarSectionHeader({
   onToggle,
   expanded,
   className,
+  titleSlot,
 }: SidebarSectionHeaderProps) {
   const titleClassName = 'typography-micro font-normal tracking-wide text-muted-foreground/80';
 
@@ -32,11 +35,15 @@ export function SidebarSectionHeader({
     <div
       className={cn(
         'group/section flex w-full items-center gap-1 px-2',
-        isFirst ? 'pt-1 pb-1' : 'pt-4 pb-1',
+        // The view switch is a 28px control, not a micro label: tighter top gap,
+        // a little more room before the first row.
+        titleSlot ? (isFirst ? 'pt-1 pb-1.5' : 'pt-3 pb-1.5') : isFirst ? 'pt-1 pb-1' : 'pt-4 pb-1',
         className,
       )}
     >
-      {onToggle ? (
+      {titleSlot ? (
+        <div className="flex min-w-0 flex-1 items-center">{titleSlot}</div>
+      ) : onToggle ? (
         <button
           type="button"
           onClick={onToggle}

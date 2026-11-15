@@ -49,6 +49,18 @@ describe('session index event ingest', () => {
     expect(service.updateStatus).toHaveBeenLastCalledWith('ses_native', 'idle', 20);
     expect(service.touchActivity).toHaveBeenLastCalledWith('ses_native', 20);
   });
+  it('clears a settle override only on user input, not on assistant completion', () => {
+    const service = { touchActivity: vi.fn(() => false), updateStatus: vi.fn(() => false), clearSettleOverride: vi.fn(() => true) };
+    const user = { payload: { type: 'message.updated', properties: { info: { role: 'user', sessionID: 'ses_a', time: { created: 5 } } } } };
+    const assistant = { payload: { type: 'message.updated', properties: { info: { role: 'assistant', sessionID: 'ses_a' } } } };
+    expect(applySessionIndexEvent(service, assistant, 30)).toBe(false);
+    expect(service.clearSettleOverride).not.toHaveBeenCalled();
+    expect(applySessionIndexEvent(service, user, 30)).toBe(true);
+    expect(service.clearSettleOverride).toHaveBeenCalledWith('ses_a');
+    service.clearSettleOverride.mockClear();
+    expect(applySessionIndexEvent(service, { payload: { type: 'session.idle', properties: { sessionID: 'ses_a' } } }, 30)).toBe(false);
+    expect(service.clearSettleOverride).not.toHaveBeenCalled();
+  });
   it('takes moved ownership from native data rather than the old event envelope directory', () => {
     const service = { move: vi.fn(() => true) };
     expect(applySessionIndexEvent(service, { directory: '/old', payload: {

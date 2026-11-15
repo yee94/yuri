@@ -5,6 +5,15 @@ const require = createRequire(import.meta.url);
 
 const SCHEMA_VERSION = 6;
 const MAX_ROOT_SESSIONS = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_SETTLE_AFTER_DAYS = 7;
+export const MIN_SETTLE_AFTER_DAYS = 1;
+export const MAX_SETTLE_AFTER_DAYS = 90;
+
+const clampSettleAfterDays = (value) => {
+  if (!Number.isFinite(value)) return DEFAULT_SETTLE_AFTER_DAYS;
+  return Math.min(MAX_SETTLE_AFTER_DAYS, Math.max(MIN_SETTLE_AFTER_DAYS, Math.trunc(value)));
+};
 const HIDDEN_SESSION_TITLES = new Set(['smartfetch-secondary']);
 const BACKGROUND_SESSION_TITLE = /^\[(?:Scheduled|Assistant|yuri-llm)\]/;
 
@@ -100,7 +109,13 @@ const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirec
   };
 };
 
-export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => null, resolveDirectory = (value) => value } = {}) => {
+export const createSessionIndexService = ({
+  dbPath,
+  getRuntimeConfig = () => null,
+  resolveDirectory = (value) => value,
+  getSettleAfterDays = () => DEFAULT_SETTLE_AFTER_DAYS,
+  now = () => Date.now(),
+} = {}) => {
   if (typeof dbPath !== 'string' || !dbPath.trim()) return null;
 
   const normalizeDirectory = (value) => {
@@ -183,6 +198,17 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
       session_id TEXT NOT NULL,
       pinned_at INTEGER NOT NULL,
       PRIMARY KEY (runtime_key, session_id)
+    );
+    CREATE TABLE IF NOT EXISTS session_settle (
+      runtime_key TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      override TEXT NOT NULL CHECK (override IN ('settled', 'active')),
+      settled_at INTEGER NOT NULL,
+      PRIMARY KEY (runtime_key, session_id)
+    );
+    CREATE TABLE IF NOT EXISTS session_settle_baseline (
+      runtime_key TEXT PRIMARY KEY,
+      baseline_at INTEGER NOT NULL
     );
   `);
   const sessionSummaryColumns = new Set(
@@ -384,6 +410,24 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     SET pinned_at = ?
     WHERE runtime_key = ? AND session_id = ?
   `);
+  const readSettleOverrides = db.prepare('SELECT session_id AS id, override, settled_at AS settledAt FROM session_settle WHERE runtime_key = ?');
+  const upsertSettle = db.prepare(`
+    INSERT INTO session_settle(runtime_key, session_id, override, settled_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(runtime_key, session_id) DO UPDATE SET override = excluded.override, settled_at = excluded.settled_at
+  `);
+  const deleteSettle = db.prepare('DELETE FROM session_settle WHERE runtime_key = ? AND session_id = ?');
+  const insertSettleBaseline = db.prepare('INSERT OR IGNORE INTO session_settle_baseline(runtime_key, baseline_at) VALUES (?, ?)');
+  const readSettleBaseline = db.prepare('SELECT baseline_at AS baselineAt FROM session_settle_baseline WHERE runtime_key = ?');
+
+  // The baseline is written once per runtime, the first time that runtime is
+  // observed. Sessions whose last activity predates it are settled by default;
+  // no per-session rows are backfilled.
+  const ensureSettleBaseline = (key) => {
+    insertSettleBaseline.run(key, now());
+    return readSettleBaseline.get(key).baselineAt;
+  };
+  ensureSettleBaseline(runtimeKey());
 
   const movedLocations = new Map();
   const isStaleLocation = (session, directory) => {
@@ -555,6 +599,18 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     reconcileDirectoryAliases(key);
     const pinRows = readPins.all(key);
     const pinById = new Map(pinRows.map((row) => [row.id, row.pinnedAt]));
+    const settleOverrides = new Map(readSettleOverrides.all(key).map((row) => [row.id, row]));
+    const baselineAt = ensureSettleBaseline(key);
+    const cooldownMs = clampSettleAfterDays(getSettleAfterDays()) * DAY_MS;
+    const observedAt = now();
+    // Live state (running, pending questions/permissions) is overlaid by the
+    // client; this projection depends only on the override, baseline and clock.
+    const settledAtFor = (sessionID, activityUpdatedAt) => {
+      const override = settleOverrides.get(sessionID);
+      if (override) return override.override === 'settled' ? override.settledAt : 0;
+      if (activityUpdatedAt < baselineAt) return baselineAt;
+      return observedAt - activityUpdatedAt >= cooldownMs ? activityUpdatedAt + cooldownMs : 0;
+    };
     const directories = db.prepare(`
       SELECT directory, cursor, has_more AS hasMore, last_synced_at AS lastSyncedAt,
         last_full_synced_at AS lastFullSyncedAt, last_accessed_at AS lastAccessedAt
@@ -584,6 +640,9 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
             ...((pinById.get(session.id) ?? session.pinnedAt)
               ? { pinned: pinById.get(session.id) ?? session.pinnedAt }
               : {}),
+            ...(settledAtFor(session.id, session.activityUpdatedAt)
+              ? { settled: settledAtFor(session.id, session.activityUpdatedAt) }
+              : {}),
           },
           metadata: {
             yuri: {
@@ -608,6 +667,7 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     const key = runtimeKey();
     const parent = parentForChild.get(key, sessionID);
     const pinResult = deletePin.run(key, sessionID);
+    deleteSettle.run(key, sessionID);
     const result = db.prepare('DELETE FROM session_summary WHERE runtime_key = ? AND session_id = ?').run(key, sessionID);
     deleteChildrenWithParent.run(key, sessionID);
     deleteChild.run(key, sessionID);
@@ -735,6 +795,21 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     return pinResult.changes > 0 || summaryResult.changes > 0;
   });
 
+  const writeSettleOverride = (sessionID, override) => {
+    if (typeof sessionID !== 'string' || !sessionID) return false;
+    const key = runtimeKey();
+    ensureSettleBaseline(key);
+    upsertSettle.run(key, sessionID, override, now());
+    return true;
+  };
+  const setSettled = (sessionID) => writeSettleOverride(sessionID, 'settled');
+  // Manual un-settle pins the session active until its next real activity.
+  const clearSettled = (sessionID) => writeSettleOverride(sessionID, 'active');
+  const clearSettleOverride = (sessionID) => {
+    if (typeof sessionID !== 'string' || !sessionID) return false;
+    return deleteSettle.run(runtimeKey(), sessionID).changes > 0;
+  };
+
   const replaceChildSessions = db.transaction((directory, parentSessionID, children) => {
     const normalizedDirectory = normalizeDirectory(directory);
     if (!normalizedDirectory || typeof parentSessionID !== 'string' || !parentSessionID) return false;
@@ -800,6 +875,9 @@ export const createSessionIndexService = ({ dbPath, getRuntimeConfig = () => nul
     move,
     setPinned,
     clearPinned,
+    setSettled,
+    clearSettled,
+    clearSettleOverride,
     remove,
     findBySessionId,
     replaceChildSessions,

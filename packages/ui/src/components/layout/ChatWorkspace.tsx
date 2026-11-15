@@ -12,7 +12,7 @@ export const ChatWorkspace: React.FC<React.PropsWithChildren<{ header?: React.Re
     const [hidden, setHidden] = React.useState(false);
 
     const updateVisibility = useEvent(() => {
-        if (availableWidthRef.current <= 0) return;
+        if (reservedWidthRef.current > 0 && availableWidthRef.current <= 0) return;
         const next = reservedWidthRef.current > 0
             && availableWidthRef.current - reservedWidthRef.current < PRIMARY_CHAT_MIN_WIDTH;
         if (next === hiddenRef.current) return;

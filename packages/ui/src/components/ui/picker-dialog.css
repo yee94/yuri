@@ -1,5 +1,4 @@
 .yuri-picker-backdrop {
-  background: color-mix(in srgb, var(--surface-overlay) 55%, transparent);
   transition-duration: 180ms;
 }
 

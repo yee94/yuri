@@ -5,11 +5,15 @@ import { runtimeFetch } from './runtime-fetch';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from './runtime-switch';
 import { normalizePath } from './pathNormalization';
 
-/** Session-index summary row. `time.pinned` is ISO/null (null or absent = unpinned). */
+/**
+ * Session-index summary row. `time.pinned` is ISO/null (null or absent = unpinned).
+ * `time.settled` is a Host-projected timestamp, present only while the session is settled.
+ */
 export type SessionIndexSession = Session & {
   hasChildren?: boolean;
   time: Session['time'] & {
     pinned?: string | number | null;
+    settled?: number | null;
   };
 };
 
@@ -325,6 +329,33 @@ export const unpinSession = async (
   }
   await ensureOk(response);
 };
+
+const writeSessionSettle = async (
+  sessionId: string,
+  method: 'POST' | 'DELETE',
+  signal?: AbortSignal,
+): Promise<void> => {
+  const id = sessionId.trim();
+  if (!id) throw new Error('session index settle requires a session id');
+  const response = await runtimeFetch(
+    `/api/yuri/session-index/session/${encodeURIComponent(id)}/settle`,
+    { method, signal },
+  );
+  if (response.status === 501) {
+    throw new Error('session index settle is unsupported');
+  }
+  await ensureOk(response);
+};
+
+/** Settle a session (task-view shelf only; never archives). 501 = capability unsupported. */
+export const settleSession = (sessionId: string, options?: { signal?: AbortSignal }): Promise<void> => (
+  writeSessionSettle(sessionId, 'POST', options?.signal)
+);
+
+/** Hold a session active until its next real activity. 501 = capability unsupported. */
+export const unsettleSession = (sessionId: string, options?: { signal?: AbortSignal }): Promise<void> => (
+  writeSessionSettle(sessionId, 'DELETE', options?.signal)
+);
 
 export const persistSessionIndexDirectory = async (input: {
   directory: string;

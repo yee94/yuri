@@ -1,5 +1,6 @@
 import React from 'react';
 import type { SessionNode } from './types';
+import type { TaskProjectMark } from './TaskCardParts';
 import { useI18n } from '@/lib/i18n';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
@@ -20,6 +21,17 @@ export type PinnedItem = {
   secondaryMeta: {
     projectLabel?: string | null;
     branchLabel?: string | null;
+    /** Task-view card rows add a detail line under the title. */
+    card?: boolean;
+    /** Task-view settled rows render as small single lines. */
+    slim?: boolean;
+    /** Task-view card third line while git resolves / for non-repo projects. */
+    branchState?: 'loading' | 'no-git' | null;
+    pathLabel?: string | null;
+    /** Task-view card header icon. */
+    project?: TaskProjectMark | null;
+    /** When this client first saw the session running. */
+    runStartedAt?: number | null;
   } | null;
   content?: React.ReactNode;
   /** Remote items published for the top section: true = pinned list, otherwise in-progress. */
@@ -49,6 +61,10 @@ type Props = {
   openSidebarMenuKey: string | null;
   headerAccessory?: React.ReactNode;
   onVisibleSessionIdsChange?: (sessionIds: readonly string[]) => void;
+  /** Directly under the view switch: use the tight first-section top gap. */
+  isFirst?: boolean;
+  /** Task view: no "Pinned" label, just the rows followed by a section gap. */
+  hideHeader?: boolean;
 };
 
 export function SidebarPinnedSessions({
@@ -62,9 +78,13 @@ export function SidebarPinnedSessions({
   openSidebarMenuKey,
   headerAccessory,
   onVisibleSessionIdsChange,
+  isFirst = false,
+  hideHeader = false,
 }: Props): React.ReactNode {
   const { t } = useI18n();
-  const [collapsed, setCollapsed] = React.useState(false);
+  const [collapsedState, setCollapsed] = React.useState(false);
+  // Without a header there is nothing to toggle, so the rows are always shown.
+  const collapsed = collapsedState && !hideHeader;
   const canReorder = reorderEnabled && !editingId && items.length > 1 && Boolean(onSessionsReordered);
   const sessionIds = React.useMemo(() => items.map((item) => item.node.session.id), [items]);
   const folderIdBySessionId = React.useMemo(() => new Map(sessionIds.map((id) => [id, null])), [sessionIds]);
@@ -147,17 +167,20 @@ export function SidebarPinnedSessions({
     // Same grouping params as SidebarProjectsList so pinned ↔ project handoff
     // stays instant when both sections are visible.
     <TooltipProvider delay={0} closeDelay={150} timeout={600}>
-    <div className="pb-1">
-      <SidebarSectionHeader
-        title={
-          inProgressItems.length > 0
-            ? t('directoryTree.section.pinnedInProgress')
-            : t('directoryTree.section.pinned')
-        }
-        onToggle={() => setCollapsed((value) => !value)}
-        expanded={!collapsed}
-        accessory={headerAccessory}
-      />
+    <div className={hideHeader ? undefined : 'pb-1'}>
+      {hideHeader ? null : (
+        <SidebarSectionHeader
+          title={
+            inProgressItems.length > 0
+              ? t('directoryTree.section.pinnedInProgress')
+              : t('directoryTree.section.pinned')
+          }
+          onToggle={() => setCollapsed((value) => !value)}
+          expanded={!collapsed}
+          isFirst={isFirst}
+          accessory={headerAccessory}
+        />
+      )}
       {!collapsed ? (
         <div className="space-y-0.5">
           {canReorder ? (

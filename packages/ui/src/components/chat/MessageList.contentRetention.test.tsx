@@ -264,7 +264,10 @@ test('a cold idle continuation retains settled presentation instead of inventing
         state: { status: 'completed', input: { filePath: '/workspace/example.ts' }, output: 'done', time: { start: 2, end: 3 } },
     } as Part);
     await render([user, step], null);
-    expect(container.querySelector('.relative.ml-2.pl-3')).not.toBeNull();
+    // Settled presentation: the worked/used summary is rendered and no live reasoning block is.
+    expect(container.textContent).toContain('Worked for');
+    expect(container.textContent).toContain('Interrupted investigation.');
+    expect(container.querySelector('.relative.ml-2.pl-3')).toBeNull();
 });
 
 test('an interrupted live turn releases reasoning presentation', async () => {
@@ -276,7 +279,8 @@ test('an interrupted live turn releases reasoning presentation', async () => {
     await render([user, { ...step, info: { ...step.info, time: { created: 2, completed: 3 },
         error: { name: 'AbortError', data: { message: 'Interrupted test' } },
     } as Message }], null);
-    expect(container.querySelector('.relative.ml-2.pl-3')).not.toBeNull();
+    expect(container.textContent).toContain('Partial investigation.');
+    expect(container.querySelector('.relative.ml-2.pl-3')).toBeNull();
 });
 
 test('an explicit process expansion survives completion', async () => {

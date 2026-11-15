@@ -124,8 +124,9 @@ describe('custom provider form', () => {
     await fill('settings.providers.page.auth.apiKeyLabel', 'fixture-secret'); await settle();
     const claude = host.querySelector('[data-provider-model="claude-sonnet-4"]')!;
     const gpt = host.querySelector('[data-provider-model="gpt-4.1"]')!;
-    expect(claude.querySelector('img')?.getAttribute('src')).toBeTruthy();
-    expect(claude.querySelector('img')?.getAttribute('src')).not.toBe(gpt.querySelector('img')?.getAttribute('src'));
+    const logoMask = (row: Element) => row.querySelector<HTMLElement>('[role="img"][style*="mask"]')?.getAttribute('style');
+    expect(logoMask(claude)).toBeTruthy();
+    expect(logoMask(claude)).not.toBe(logoMask(gpt));
     expect(host.querySelector('[data-provider-model="unknown-local"] [data-icon="stack"]')).not.toBeNull();
     await act(async () => claude.querySelector<HTMLButtonElement>('button')!.click());
     expect(host.querySelector('[data-provider-model="claude-sonnet-4"]')?.getAttribute('data-added')).toBe('true');

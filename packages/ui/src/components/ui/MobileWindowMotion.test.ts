@@ -88,7 +88,8 @@ describe('MobileWindowMotion recipe', () => {
   test('wires the sessions drag handle to 72% and 98% sheet heights', () => {
     expect(mobileSessionStatusBarSource).toContain('<MobileSheetSnapHandle');
     expect(mobileSheetSnapHandleSource).toContain('data-mobile-sheet-snap-handle');
-    expect(mobileSheetSnapHandleSource).toContain('min-h-8 cursor-ns-resize touch-none justify-center pt-2.5');
+    expect(mobileSheetSnapHandleSource).toContain('cursor-ns-resize touch-none justify-center');
+    expect(mobileSheetSnapHandleSource).toContain("'min-h-8 pt-2.5'");
     expect(mobileSessionStatusBarSource).toContain("reservedTargetSelector: '[data-mobile-sheet-snap-handle]'");
     expect(mobileSessionStatusBarSource).toContain("'h-[98dvh] max-h-[98dvh]' : 'h-[72dvh] max-h-[98dvh]'");
     // onExitComplete must reset snap and clear sheetPresent (last-open retained until exit ends).

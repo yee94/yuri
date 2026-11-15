@@ -163,12 +163,17 @@ describe('mobile composer overflow and swap contract', () => {
             chatContainerSource.lastIndexOf("<div ref={composerSwapScopeRef} className={cn('relative flex flex-col h-full bg-background'"),
             chatContainerSource.indexOf('const MemoizedChatContainerContent'),
         );
+        // Feet are built by ComposerFoot: the overlay class comes from its `overlay` prop
+        // (default on), so every swap-scope shell must render at least one overlay foot.
+        const composerFootSource = readFileSync(join(here, '../components/chat/ComposerFoot.tsx'), 'utf-8');
+        expect(composerFootSource).toContain("isMobile && overlay && 'yuri-mobile-composer-foot--overlay'");
         for (const shell of [establishingDraftShell, hydratingShell, transcriptShell]) {
             expect(shell.match(/yuri-chat-composer-swap-scope/g)).toHaveLength(1);
-            expect(shell.match(/yuri-mobile-composer-foot--overlay/g)).toHaveLength(1);
+            const overlayFeet = (shell.match(/yuri-mobile-composer-foot--overlay/g)?.length ?? 0)
+                + (shell.match(/<ComposerFoot\b(?![^>]*overlay=\{false\})/g)?.length ?? 0);
+            expect(overlayFeet).toBeGreaterThanOrEqual(1);
         }
         expect(chatContainerSource.match(/yuri-chat-composer-swap-scope/g)).toHaveLength(3);
-        expect(chatContainerSource.match(/yuri-mobile-composer-foot--overlay/g)).toHaveLength(3);
         for (const source of [chatContainerSource, chatInputSource, autoFollowSource]) {
             expect(source).not.toContain("setProperty('--yuri-mobile-composer-shrink'");
             expect(source).not.toContain("setProperty('--yuri-chat-foot-inset'");
@@ -390,8 +395,16 @@ describe('mobile composer overflow and swap contract', () => {
         );
         expect(establishingDraftShell).toContain('yuri-mobile-composer-foot--overlay');
         expect(establishingDraftShell).toContain('yuri-chat-composer-swap-scope');
-        expect(idleDraftShell).toContain('yuri-mobile-composer-foot');
-        expect(idleDraftShell).not.toContain('yuri-mobile-composer-foot--overlay');
+        // The idle draft foot is DraftComposerFoot, which never takes the overlay class.
+        const composerFootSource = readFileSync(join(here, '../components/chat/ComposerFoot.tsx'), 'utf-8');
+        const draftFootSource = composerFootSource.slice(
+            composerFootSource.indexOf('export function DraftComposerFoot'),
+            composerFootSource.indexOf('export const DesktopComposerEdgeFade'),
+        );
+        expect(idleDraftShell).toContain('<DraftComposerFoot');
+        expect(idleDraftShell).not.toContain('<ComposerFoot');
+        expect(draftFootSource).toContain("isMobile && 'yuri-mobile-composer-foot'");
+        expect(draftFootSource).not.toContain('yuri-mobile-composer-foot--overlay');
         expect(idleDraftShell).toContain('yuri-draft-center');
     });
 

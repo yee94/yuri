@@ -262,6 +262,46 @@ function getLiveStates(childStores: ChildStoreManager): State[] {
   return Array.from(childStores.children.values(), (store) => store.getState())
 }
 
+const selectSessionIdsWithPendingRequests = (states: State[]): ReadonlySet<string> => {
+  const ids = new Set<string>()
+  for (const state of states) {
+    for (const [sessionID, requests] of Object.entries(state.permission)) {
+      if (requests.length > 0) ids.add(sessionID)
+    }
+    for (const [sessionID, requests] of Object.entries(state.question)) {
+      if (requests.length > 0) ids.add(sessionID)
+    }
+  }
+  return ids.size === 0 ? EMPTY_SESSION_ACTIVITY : ids
+}
+
+const sameSessionIdSet = (left: ReadonlySet<string>, right: ReadonlySet<string>): boolean => {
+  if (left === right) return true
+  if (left.size !== right.size) return false
+  for (const id of left) {
+    if (!right.has(id)) return false
+  }
+  return true
+}
+
+const subscribePendingRequests = (childStores: ChildStoreManager, notify: () => void): (() => void) => {
+  const unsubscribePermissions = childStores.subscribeAllSelected((state: State) => state.permission, notify)
+  const unsubscribeQuestions = childStores.subscribeAllSelected((state: State) => state.question, notify)
+  return () => {
+    unsubscribePermissions()
+    unsubscribeQuestions()
+  }
+}
+
+/**
+ * Sessions with an unanswered question or unapproved permission in any live
+ * directory store. Live channels only: a session that has not bootstrapped yet
+ * is simply absent, so callers must treat absence as "unknown", never "none".
+ */
+export function useSessionIdsWithPendingRequests(): ReadonlySet<string> {
+  return useLiveSyncSelector(selectSessionIdsWithPendingRequests, sameSessionIdSet, subscribePendingRequests)
+}
+
 function useLiveSyncSelector<T>(
   selector: (states: State[]) => T,
   isEqual: (left: T, right: T) => boolean = Object.is,

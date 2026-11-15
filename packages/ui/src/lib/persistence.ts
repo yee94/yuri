@@ -564,6 +564,11 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
       store.setDesktopWindowControlsPosition(settings.desktopWindowControlsPosition);
     }
   }
+  if (settings.sidebarView === 'tasks' || settings.sidebarView === 'projects') {
+    if (settings.sidebarView !== store.sidebarView) {
+      store.setSidebarView(settings.sidebarView);
+    }
+  }
   if (typeof settings.chatRenderMode === 'string'
     && (settings.chatRenderMode === 'sorted' || settings.chatRenderMode === 'live')) {
     if (settings.chatRenderMode !== store.chatRenderMode) {
@@ -1071,6 +1076,9 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
   if (typeof candidate.desktopWindowControlsPosition === 'string'
     && (candidate.desktopWindowControlsPosition === 'auto' || candidate.desktopWindowControlsPosition === 'left' || candidate.desktopWindowControlsPosition === 'right')) {
     result.desktopWindowControlsPosition = candidate.desktopWindowControlsPosition;
+  }
+  if (candidate.sidebarView === 'tasks' || candidate.sidebarView === 'projects') {
+    result.sidebarView = candidate.sidebarView;
   }
   if (typeof candidate.chatRenderMode === 'string'
     && (candidate.chatRenderMode === 'sorted' || candidate.chatRenderMode === 'live')) {

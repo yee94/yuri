@@ -8,10 +8,10 @@ import { GuiPluginTitlebarItems } from '@/components/gui-plugins/GuiPluginTitleb
 import { useI18n } from '@/lib/i18n';
 import { useDeviceInfo } from '@/lib/device';
 import { isDesktopShell } from '@/lib/desktop';
-import { formatDirectoryName, cn } from '@/lib/utils';
+import { formatDirectoryName, formatPathForDisplay, cn } from '@/lib/utils';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useNotificationStore } from '@/sync/notification-store';
-import { useAllLiveSessions } from '@/sync/sync-context';
+import { useAllLiveSessions, useSessionIdsWithPendingRequests } from '@/sync/sync-context';
 import { useAssistantCapabilityQuery } from '@/queries/assistantQueries';
 import { AssistantNavigationUnreadBadge } from '@/components/assistants/AssistantUnreadBadge';
 import { AssistantNavigationIcon } from '@/components/assistants/AssistantNavigationIcon';
@@ -22,6 +22,7 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { sortProjectEntries } from '@/lib/projectOrder';
 import { useUIStore } from '@/stores/useUIStore';
+import { updateDesktopSettings } from '@/lib/persistence';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
 import { createInstanceScopedStorageAdapter } from '@/lib/instanceScopedStorage';
@@ -87,6 +88,27 @@ import {
 import { type SessionGroup, type SessionNode } from './sidebar/types';
 import { derivePinnedSessions, listInProgressHomeSessions, rankByManualOrder, resolveTopSectionSecondaryMeta, PINNED_SESSION_ORDER_SCOPE } from './sidebar/pinnedSessions';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
+import { useSetSessionSettled, useSettledSessionIds } from '@/queries/sessionIndexSettleQueries';
+import { SidebarViewSwitch } from './sidebar/SidebarViewSwitch';
+import { SidebarSettledShelf, SidebarTaskList } from './sidebar/SidebarTaskList';
+import type { TaskProjectMark } from './sidebar/TaskCardParts';
+import { useRunStartTimes } from './sidebar/taskRunElapsed';
+import {
+  EMPTY_TRANSIENT_ORDER,
+  applyTransientOrder,
+  moveInTransientOrder,
+  type TransientOrder,
+  type TransientRowState,
+} from './sidebar/taskTransientOrder';
+import {
+  DEFAULT_SIDEBAR_VIEW,
+  SETTLED_SHELF_PAGE_SIZE,
+  deriveTaskBuckets,
+  taskNeedsAttention,
+  listVisibleTaskSessions,
+  parseSidebarView,
+  type SidebarView,
+} from './sidebar/taskView';
 import {
   compareSessionsByPinnedAndTime,
   normalizePath,
@@ -129,6 +151,7 @@ import {
   publishSidebarNumberedNavigation,
 } from "@/sync/sidebar-numbered-navigation";
 
+const SIDEBAR_VIEW_STORAGE_KEY = "yuri.sessions.sidebarView";
 const PROJECT_COLLAPSE_STORAGE_KEY = "yuri.sessions.projectCollapse";
 const GROUP_ORDER_STORAGE_KEY = "yuri.sessions.groupOrder";
 const GROUP_COLLAPSE_STORAGE_KEY = "yuri.sessions.groupCollapse";
@@ -142,6 +165,23 @@ const SESSION_EXPANDED_STORAGE_KEY = "yuri.sessions.expandedParents.v2";
 const LEGACY_SESSION_EXPANDED_STORAGE_KEY = "yuri.sessions.expandedParents";
 
 const instanceSafeStorage = createInstanceScopedStorageAdapter(getDeferredSafeStorage());
+
+// Task rows are rebuilt on every live update; reuse the previous PinnedItem
+// whenever none of its inputs changed so memoized rows keep their references.
+type TaskItemCacheEntry = {
+  session: Session;
+  card: boolean;
+  projectId: string | null;
+  groupDirectory: string | null;
+  projectLabel: string;
+  branchLabel: string | null;
+  branchState: 'loading' | 'no-git' | null;
+  pathLabel: string | null;
+  worktree: unknown;
+  project: TaskProjectMark | null;
+  runStartedAt: number | null;
+  item: PinnedItem;
+};
 
 const readStoredStringSet = (key: string): Set<string> => {
   try {
@@ -322,6 +362,32 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     React.useState<BulkDeleteSessionsConfirmState>(null);
   const pinnedSessionIds = usePinnedSessionIds();
   const togglePinnedSession = useTogglePinnedSession();
+  const settledSessionIds = useSettledSessionIds();
+  const setSessionSettled = useSetSessionSettled();
+  const pendingRequestSessionIds = useSessionIdsWithPendingRequests();
+  // Persisted in the UI store (instant on refresh) and mirrored to the Host
+  // settings, so the choice survives a changed origin or another device.
+  const sidebarView = useUIStore((state) => state.sidebarView);
+  const setSidebarViewState = useUIStore((state) => state.setSidebarView);
+  React.useEffect(() => {
+    // One-time carry-over of the earlier local-only key.
+    const legacy = getDeferredSafeStorage().getItem(SIDEBAR_VIEW_STORAGE_KEY);
+    if (legacy === null) return;
+    getDeferredSafeStorage().removeItem(SIDEBAR_VIEW_STORAGE_KEY);
+    if (useUIStore.getState().sidebarView === DEFAULT_SIDEBAR_VIEW && parseSidebarView(legacy) !== DEFAULT_SIDEBAR_VIEW) {
+      setSidebarViewState(parseSidebarView(legacy));
+    }
+  }, [setSidebarViewState]);
+  const [taskShelves, setTaskShelves] = React.useState({
+    settledOpen: false,
+    settledLimit: SETTLED_SHELF_PAGE_SIZE,
+  });
+  const taskItemCacheRef = React.useRef<Map<string, TaskItemCacheEntry>>(new Map());
+  const projectMarkCacheRef = React.useRef<Map<string, TaskProjectMark>>(new Map());
+  const handleSidebarViewChange = useEvent((view: SidebarView) => {
+    setSidebarViewState(view);
+    void updateDesktopSettings({ sidebarView: view });
+  });
   const [collapsedGroups, setCollapsedGroups] = React.useState<Set<string>>(
     () => readStoredStringSet(GROUP_COLLAPSE_STORAGE_KEY),
   );
@@ -1730,6 +1796,209 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   ].sort((a, b) => getSessionActivityUpdatedAt(b.node.session) - getSessionActivityUpdatedAt(a.node.session)),
   [inProgressItems, remoteTopItems]);
 
+  // Task view is a desktop/web local-project surface for now. Search keeps the
+  // project tree, which is what the search filter operates on.
+  const taskViewAvailable = !mobileVariant && !isVSCode && !hideDirectoryControls && !showOnlyMainWorkspace;
+  const taskViewActive = taskViewAvailable && sidebarView === "tasks" && !hasSessionSearchQuery;
+
+  const rowSetSessionSettled = taskViewAvailable ? setSessionSettled : undefined;
+  const runStartTimes = useRunStartTimes(runningSessionIds, isVisible && taskViewAvailable);
+
+  // Dragging rows in the active list only reorders them in memory. The order
+  // holds until a moved row's state changes, then the normal ranking returns.
+  const [taskTransientOrder, setTaskTransientOrder] = React.useState<TransientOrder>(EMPTY_TRANSIENT_ORDER);
+  const rankedTaskBuckets = React.useMemo(
+    () => taskViewActive
+      ? deriveTaskBuckets({
+          sessions,
+          pinnedSessionIds,
+          settledSessionIds,
+          runningSessionIds,
+          pendingRequestSessionIds,
+          unseenBySession,
+        })
+      : null,
+    [pendingRequestSessionIds, pinnedSessionIds, runningSessionIds, sessions, settledSessionIds, taskViewActive, unseenBySession],
+  );
+  const readTaskRowState = useEvent((session: Session): TransientRowState => ({
+    activityAt: getSessionActivityUpdatedAt(session),
+    running: runningSessionIds.has(session.id),
+    attention: taskNeedsAttention(session.id, pendingRequestSessionIds, unseenBySession),
+  }));
+  const taskBuckets = React.useMemo(() => {
+    if (!rankedTaskBuckets) return null;
+    const active = applyTransientOrder(
+      rankedTaskBuckets.active,
+      (session) => session.id,
+      readTaskRowState,
+      taskTransientOrder,
+    );
+    return active === rankedTaskBuckets.active ? rankedTaskBuckets : { ...rankedTaskBuckets, active: active as Session[] };
+  }, [rankedTaskBuckets, readTaskRowState, taskTransientOrder]);
+  const handleTaskSessionsReordered = useEvent((activeSessionId: string, overSessionId: string) => {
+    if (editingId || !taskBuckets) return;
+    const sessionsById = new Map(taskBuckets.active.map((session) => [session.id, session]));
+    const next = moveInTransientOrder(
+      taskBuckets.active.map((session) => session.id),
+      activeSessionId,
+      overSessionId,
+      (id) => {
+        const session = sessionsById.get(id);
+        return session ? readTaskRowState(session) : undefined;
+      },
+    );
+    if (next) setTaskTransientOrder(next);
+  });
+
+  // A session opened from outside the sidebar (URL, notification) that sits on
+  // the Settled shelf must be visible and selected: open the shelf and widen
+  // the page to it, once per selection.
+  const revealedSettledSessionRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!taskBuckets || !currentSessionId) {
+      revealedSettledSessionRef.current = null;
+      return;
+    }
+    if (revealedSettledSessionRef.current === currentSessionId) return;
+    const index = taskBuckets.settled.findIndex((session) => session.id === currentSessionId);
+    if (index < 0) return;
+    revealedSettledSessionRef.current = currentSessionId;
+    setTaskShelves((shelves) => {
+      const settledLimit = Math.max(shelves.settledLimit, Math.ceil((index + 1) / SETTLED_SHELF_PAGE_SIZE) * SETTLED_SHELF_PAGE_SIZE);
+      return shelves.settledOpen && settledLimit === shelves.settledLimit ? shelves : { settledOpen: true, settledLimit };
+    });
+  }, [currentSessionId, taskBuckets]);
+
+  const taskItems = React.useMemo(() => {
+    if (!taskBuckets) return null;
+    const unassignedLabel = t("sessions.sidebar.task.unassigned");
+    const projectLabelById = new Map(
+      sortedProjects.map((project) => [
+        project.id,
+        formatDirectoryName(project.normalizedPath) || project.normalizedPath,
+      ]),
+    );
+    // Cards depend only on a project's icon identity, not on the whole entry,
+    // so a rename or reorder elsewhere keeps the previous mark (and its rows).
+    const projectMarkCache = projectMarkCacheRef.current;
+    const projectPathById = new Map(sortedProjects.map((project) => [project.id, project.normalizedPath]));
+    const projectMarkById = new Map<string, TaskProjectMark>();
+    for (const project of sortedProjects) {
+      const known = projectMarkCache.get(project.id);
+      const mark = known
+        && known.icon === project.icon
+        && known.color === project.color
+        && known.iconImage?.mime === project.iconImage?.mime
+        && known.iconImage?.updatedAt === project.iconImage?.updatedAt
+        && known.iconImage?.source === project.iconImage?.source
+        ? known
+        : { id: project.id, icon: project.icon, color: project.color, iconImage: project.iconImage };
+      projectMarkCache.set(project.id, mark);
+      projectMarkById.set(project.id, mark);
+    }
+    const previous = taskItemCacheRef.current;
+    const next = new Map<string, TaskItemCacheEntry>();
+    const toTaskItem = (card: boolean) => (session: Session): PinnedItem => {
+      const owner = sessionOwnership.bySessionId.get(session.id);
+      const existing = sessionSidebarMetaById.get(session.id);
+      const projectId = owner?.projectId ?? existing?.projectId ?? null;
+      const groupDirectory =
+        owner?.scopeDirectory
+        ?? existing?.groupDirectory
+        ?? normalizePath((session as Session & { directory?: string | null }).directory ?? null);
+      const project = owner ? projectMarkById.get(owner.projectId) ?? null : null;
+      const projectLabel = (owner && projectLabelById.get(owner.projectId)) || unassignedLabel;
+      const projectPath = owner ? projectPathById.get(owner.projectId) ?? null : null;
+      const projectGit = projectPath ? gitRepoStatus.get(projectPath) : undefined;
+      const sessionWorktree = worktreeMetadata.get(session.id) ?? null;
+      const rawBranch = existing?.secondaryMeta?.branchLabel
+        ?? (owner ? projectRootBranches.get(owner.projectId) : null)
+        ?? projectGit?.branch
+        ?? (sessionWorktree as { branch?: string | null } | null)?.branch
+        ?? null;
+      const trimmedBranch = rawBranch?.trim() || null;
+      const branchLabel = trimmedBranch && trimmedBranch !== "HEAD" && trimmedBranch !== projectLabel ? trimmedBranch : null;
+      // Same third line in every state so rows never change height: a real
+      // branch, a placeholder while git resolves, or the path for non-repos.
+      const branchState: "loading" | "no-git" | null = branchLabel
+        ? null
+        : !projectPath || projectGit?.isGitRepo === false
+          ? "no-git"
+          : "loading";
+      const pathLabel = branchState === "no-git" && projectPath
+        ? formatPathForDisplay(projectPath, homeDirectory)
+        : null;
+      const worktree = sessionWorktree;
+      const runStartedAt = card ? runStartTimes.get(session.id) ?? null : null;
+      const cached = previous.get(session.id);
+      if (
+        cached
+        && cached.session === session
+        && cached.card === card
+        && cached.projectId === projectId
+        && cached.groupDirectory === groupDirectory
+        && cached.projectLabel === projectLabel
+        && cached.branchLabel === branchLabel
+        && cached.branchState === branchState
+        && cached.pathLabel === pathLabel
+        && cached.worktree === worktree
+        && cached.project === project
+        && cached.runStartedAt === runStartedAt
+      ) {
+        next.set(session.id, cached);
+        return cached.item;
+      }
+      const item: PinnedItem = {
+        node: { session, children: [], worktree },
+        projectId,
+        groupDirectory,
+        secondaryMeta: { projectLabel, branchLabel, branchState, pathLabel, card, slim: !card, project, runStartedAt },
+      };
+      next.set(session.id, { session, card, projectId, groupDirectory, projectLabel, branchLabel, branchState, pathLabel, worktree, project, runStartedAt, item });
+      return item;
+    };
+    // The Settled shelf can hold hundreds of sessions: build only the rows it
+    // is currently showing and report the full count separately.
+    const settledVisible = taskShelves.settledOpen
+      ? taskBuckets.settled.slice(0, taskShelves.settledLimit)
+      : [];
+    const result = {
+      pinned: pinnedSessions.map(toTaskItem(true)),
+      active: taskBuckets.active.map(toTaskItem(true)),
+      settled: settledVisible.map(toTaskItem(false)),
+      settledTotal: taskBuckets.settled.length,
+    };
+    taskItemCacheRef.current = next;
+    return result;
+  }, [gitRepoStatus, homeDirectory, pinnedSessions, projectRootBranches, runStartTimes, sessionOwnership, sessionSidebarMetaById, sortedProjects, t, taskBuckets, taskShelves.settledLimit, taskShelves.settledOpen, worktreeMetadata]);
+
+  // The pinned section renders the same card rows as the task list; remote
+  // rows and the manual pinned order are kept as they are.
+  const pinnedSectionItems = React.useMemo(() => {
+    if (!taskItems) return pinnedItems;
+    const cardBySessionId = new Map(taskItems.pinned.map((item) => [item.node.session.id, item]));
+    return pinnedItems.map((item) => cardBySessionId.get(item.node.session.id) ?? item);
+  }, [pinnedItems, taskItems]);
+
+  const taskNavigationTargets = React.useMemo<SessionNavigationTarget[]>(() => {
+    if (!taskBuckets || !taskItems) return [];
+    const itemBySessionId = new Map(
+      [...taskItems.active, ...taskItems.settled].map((item) => [item.node.session.id, item]),
+    );
+    return listVisibleTaskSessions(taskBuckets, taskShelves).flatMap((session, visibleIndex) => {
+      const item = itemBySessionId.get(session.id);
+      if (!item) return [];
+      return [{
+        scope: "project" as const,
+        sessionId: session.id,
+        projectId: item.projectId,
+        directory:
+          normalizePath(resolveGlobalSessionDirectory(session)) ?? item.groupDirectory ?? null,
+        visibleIndex,
+      }];
+    });
+  }, [taskBuckets, taskItems, taskShelves]);
+
   const sectionsForSidebarRender = React.useMemo(() => {
     return sectionsForRender.map((section) => ({
       ...section,
@@ -1805,7 +2074,10 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     }
     // Pinned rows first, then the unlabeled in-progress rows; both live in the
     // top `pinned` scope (VS Code included — its pinned list is simply empty).
-    return [...pinnedItems, ...displayInProgressItems].map((item, visibleIndex) => {
+    // The task view owns running rows in its In progress shelf, so the top
+    // section contributes pinned rows only there.
+    const topItems = taskViewActive ? pinnedItems : [...pinnedItems, ...displayInProgressItems];
+    return topItems.map((item, visibleIndex) => {
       const session = item.node.session;
       return {
         scope: "pinned",
@@ -1818,7 +2090,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         visibleIndex,
       };
     });
-  }, [hasSessionSearchQuery, displayInProgressItems, pinnedItems]);
+  }, [hasSessionSearchQuery, displayInProgressItems, pinnedItems, taskViewActive]);
 
   const [visiblePinnedShortcutSessionIds, setVisiblePinnedShortcutSessionIds] =
     React.useState<readonly string[] | null>(null);
@@ -1849,8 +2121,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const sidebarNavigationTargets = React.useMemo(() => (
     !isVisible && lastVisibleSidebarNavigationRef.current
       ? lastVisibleSidebarNavigationRef.current
-      : { pinned: visiblePinnedNavigationTargets, project: visibleProjectNavigationTargets }
-  ), [isVisible, visiblePinnedNavigationTargets, visibleProjectNavigationTargets]);
+      : {
+          pinned: visiblePinnedNavigationTargets,
+          // Mod+1…9 and next/previous session follow the layout on screen.
+          project: taskViewActive ? taskNavigationTargets : visibleProjectNavigationTargets,
+        }
+  ), [isVisible, taskNavigationTargets, taskViewActive, visiblePinnedNavigationTargets, visibleProjectNavigationTargets]);
 
   React.useLayoutEffect(() => {
     if (isVisible) lastVisibleSidebarNavigationRef.current = sidebarNavigationTargets;
@@ -1862,10 +2138,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         ? []
         : buildSidebarNumberedSessionTargets({
             pinnedTargets: sidebarNavigationTargets.pinned,
-            projectTargets: allProjects.flatMap((project) => project.hostId ? remoteNavigationTargets.get(project.id) ?? [] : sidebarNavigationTargets.project.filter((target) => target.projectId === project.id)),
+            projectTargets: taskViewActive
+              ? sidebarNavigationTargets.project
+              : allProjects.flatMap((project) => project.hostId ? remoteNavigationTargets.get(project.id) ?? [] : sidebarNavigationTargets.project.filter((target) => target.projectId === project.id)),
           }),
     [
       mobileVariant,
+      taskViewActive,
       sidebarNavigationTargets,
       allProjects,
       remoteNavigationTargets,
@@ -2134,6 +2413,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         archivedBucket={archivedBucket}
         currentSessionId={currentSessionId}
         pinnedSessionIds={pinnedSessionIds}
+        settledSessionIds={settledSessionIds}
+        setSessionSettled={rowSetSessionSettled}
         expandedParents={expandedParents}
         hasSessionSearchQuery={hasSessionSearchQuery}
         normalizedSessionSearchQuery={normalizedSessionSearchQuery}
@@ -2353,6 +2634,57 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     ],
   );
 
+  const taskHeaderActions = taskViewActive ? (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="mr-1 size-6 p-0 text-muted-foreground"
+      aria-label={t("sessions.sidebar.header.actions.newSession")}
+      title={t("sessions.sidebar.header.actions.newSession")}
+      onClick={handleNewTask}
+    >
+      <Icon name="add" className="size-4" />
+    </Button>
+  ) : null;
+  const sidebarViewSwitch = taskViewAvailable ? (
+    <SidebarViewSwitch
+      value={sidebarView}
+      onChange={handleSidebarViewChange}
+    />
+  ) : undefined;
+  const renderTaskRow = (item: PinnedItem): React.ReactNode =>
+    renderSessionNode(
+      item.node,
+      0,
+      item.groupDirectory,
+      item.projectId,
+      false,
+      item.secondaryMeta,
+      "project",
+    );
+  const taskContent = taskViewActive && taskItems ? (
+    <SidebarTaskList
+      items={taskItems}
+      renderTaskRow={renderTaskRow}
+      onSessionsReordered={handleTaskSessionsReordered}
+    />
+  ) : undefined;
+  const taskFooter = taskViewActive && taskItems ? (
+    <SidebarSettledShelf
+      items={taskItems}
+      open={taskShelves.settledOpen}
+      onToggle={() => setTaskShelves((shelves) => ({
+        ...shelves,
+        settledOpen: !shelves.settledOpen,
+        settledLimit: SETTLED_SHELF_PAGE_SIZE,
+      }))}
+      onShowMore={() => setTaskShelves((shelves) => ({
+        ...shelves,
+        settledLimit: shelves.settledLimit + SETTLED_SHELF_PAGE_SIZE,
+      }))}
+      renderTaskRow={renderTaskRow}
+    />
+  ) : undefined;
   const projectHeaderActions = !hideDirectoryControls ? (
     <div className="flex items-center gap-1">
       <SidebarDisplayModeMenu
@@ -2389,8 +2721,9 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   // shell-only because the web titlebar already owns that slot.
   const showSidebarActionButtons = !isVSCode && !hasSessionSearchQuery;
   const pinSidebarActionButtons = showSidebarActionButtons && isDesktop && !mobileVariant;
+  const topInProgressItems = taskViewActive ? [] : displayInProgressItems;
   const showPinnedTopSection =
-    !hasSessionSearchQuery && (pinnedItems.length > 0 || displayInProgressItems.length > 0);
+    !hasSessionSearchQuery && (pinnedItems.length > 0 || topInProgressItems.length > 0);
   const sidebarActionButtons = (
     <div className="space-y-0.5 py-1">
       <Button
@@ -2441,8 +2774,28 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       <GuiPluginTitlebarItems sidebar mobile={mobileVariant} />
     </div>
   );
+  // With the Tasks / Projects switch present, pinned / in-progress rows belong
+  // to the tab content, directly under the switch, instead of hanging above it.
+  const pinnedInsideTab = taskViewAvailable && !hasSessionSearchQuery;
+  const pinnedSection = showPinnedTopSection ? (
+    <SidebarPinnedSessions
+      isFirst={pinnedInsideTab}
+      hideHeader={taskViewActive}
+      items={pinnedSectionItems}
+      reorderEnabled
+      onSessionsReordered={handlePinnedSessionsReordered}
+      inProgressItems={topInProgressItems}
+      renderSessionNode={renderSessionNode}
+      currentSessionId={currentSessionId}
+      editingId={editingId}
+      openSidebarMenuKey={openSidebarMenuKey}
+      onVisibleSessionIdsChange={
+        handleVisiblePinnedShortcutSessionIdsChange
+      }
+    />
+  ) : null;
   const topContent =
-    (showSidebarActionButtons && !pinSidebarActionButtons) || showPinnedTopSection ? (
+    (showSidebarActionButtons && !pinSidebarActionButtons) || (showPinnedTopSection && !pinnedInsideTab) ? (
       <>
         {showSidebarActionButtons && !pinSidebarActionButtons ? (
           <>
@@ -2450,21 +2803,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
             {sidebarActionButtons}
           </>
         ) : null}
-        {showPinnedTopSection ? (
-          <SidebarPinnedSessions
-            items={pinnedItems}
-            reorderEnabled
-            onSessionsReordered={handlePinnedSessionsReordered}
-            inProgressItems={displayInProgressItems}
-            renderSessionNode={renderSessionNode}
-            currentSessionId={currentSessionId}
-            editingId={editingId}
-            openSidebarMenuKey={openSidebarMenuKey}
-            onVisibleSessionIdsChange={
-              handleVisiblePinnedShortcutSessionIdsChange
-            }
-          />
-        ) : null}
+        {pinnedInsideTab ? null : pinnedSection}
       </>
     ) : null;
   const isInlineEditing = Boolean(
@@ -2530,8 +2869,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         remoteError={remoteNavigation.catalog.error?.message}
         onRemoteNavigationTargets={handleRemoteNavigationTargets}
         topContent={topContent}
-        hasLeadingSection={topContent !== null && (pinnedItems.length > 0 || inProgressItems.length > 0)}
-        headerAccessory={projectHeaderActions}
+        tabLeadingContent={pinnedInsideTab ? pinnedSection : undefined}
+        hasLeadingSection={topContent !== null && !pinnedInsideTab && (pinnedItems.length > 0 || inProgressItems.length > 0)}
+        headerAccessory={taskViewActive ? taskHeaderActions : projectHeaderActions}
+        headerSwitch={sidebarViewSwitch}
+        taskContent={taskContent}
+        taskFooter={taskFooter}
         sectionsForRender={sectionsForSidebarRender}
         projectSections={projectSections}
         activeProjectId={activeProjectId}

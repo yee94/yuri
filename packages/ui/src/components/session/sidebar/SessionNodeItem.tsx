@@ -31,6 +31,7 @@ import { useSync } from '@/sync/use-sync';
 import { useViewportStore, viewportSessionKey } from '@/sync/viewport-store';
 import { DraggableSessionRow } from './sessionFolderDnd';
 import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
+import { TaskProjectBadge, TaskRunElapsed, type TaskProjectMark } from './TaskCardParts';
 import { nodeContainsSessionId, resolvedSessionRenderKey } from './sessionNodeItemUtils';
 import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './sessionNodeItemUtils';
 import type { SessionNode } from './types';
@@ -76,6 +77,17 @@ type Folder = { id: string; name: string; sessionIds: string[] };
 type SecondaryMeta = {
   projectLabel?: string | null;
   branchLabel?: string | null;
+  /** Task-view card: adds a detail line (status word, project, branch, time) under the title. */
+  card?: boolean;
+  /** Task-view settled row: smaller, quieter single line with the time on the right. */
+  slim?: boolean;
+  /** Task-view card third line: git is still resolving, or the project is not a repo (shows the path). */
+  branchState?: 'loading' | 'no-git' | null;
+  pathLabel?: string | null;
+  /** Card header identity (icon next to the project name). */
+  project?: TaskProjectMark | null;
+  /** When this client first saw the session running; drives "Running 3m". */
+  runStartedAt?: number | null;
 };
 
 type Props = {
@@ -174,6 +186,10 @@ type Props = {
   liveSessionById: Map<string, Session>;
   /** Global Mod+1…9 slot for this exact visible Focus row. */
   shortcutNumber?: number | null;
+  /** Task-view shelf membership. Settling never archives or unpins. */
+  settledSessionIds?: ReadonlySet<string>;
+  /** When provided, the row menu offers settle / move-back-to-active. */
+  setSessionSettled?: (sessionId: string, nextSettled: boolean) => void;
 };
 
 type QuickSessionActionProps = {
@@ -355,6 +371,8 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     childRenderExtrasFor,
     liveSessionById,
     shortcutNumber = null,
+    settledSessionIds,
+    setSessionSettled,
   } = props;
   const hasSecondaryProjectLabel = Boolean(secondaryMeta?.projectLabel);
   const hasSecondaryBranchLabel = Boolean(secondaryMeta?.branchLabel);
@@ -395,6 +413,9 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
         : hoverActionPadClass)
     : hoverActionPadClass;
   const alwaysActionPaddingClass = hoverActionCount >= 2 ? 'pr-12' : 'pr-8';
+  const actionPaddingClass = alwaysShowActions
+    ? (isVSCode ? revealPaddingClass : alwaysActionPaddingClass)
+    : revealPaddingClass;
   const suppressNextSelectRef = React.useRef(false);
   const mouseFocusedTitleRef = React.useRef(false);
   const [isTouchPressed, setIsTouchPressed] = React.useState(false);
@@ -527,6 +548,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     || Boolean((resolvedSession as Session & { hasChildren?: boolean }).hasChildren
       ?? (session as Session & { hasChildren?: boolean }).hasChildren);
   const isPinnedSession = pinnedSessionIds.has(session.id);
+  const isSettledSession = Boolean(settledSessionIds?.has(session.id));
   // Per-render-context expansion key matches the format of menuInstanceKey.
   const expansionKey = menuInstanceKey;
   const isExpanded = hasSessionSearchQuery ? true : expandedParents.has(expansionKey);
@@ -706,10 +728,17 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     togglePinnedSession(session.id);
   });
 
+  // In the task view "Archive" only moves the session to the archived shelf
+  // (Host settle); it never hides the session or clears its pin.
+  const archiveSettlesInPlace = Boolean(setSessionSettled) && Boolean(secondaryMeta?.card || secondaryMeta?.slim) && !archivedBucket && !isSubtaskSession;
   const handleQuickArchiveClick = useEvent((event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
     setOpenSidebarMenuKey(null);
+    if (archiveSettlesInPlace && setSessionSettled) {
+      setSessionSettled(session.id, !isSettledSession);
+      return;
+    }
     handleDeleteSession(session, { archivedBucket });
   });
 
@@ -939,12 +968,49 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   // Selected rows still show the unread dot. Completion must not look already
   // read just because this session is the one open in the transcript.
   const showUnreadStatus = !hasPendingQuestion && !isStreaming && needsAttention;
-  const showStatusMarker = hasPendingQuestion || isStreaming || showUnreadStatus;
+  // Task-view card (t3-style): header = project icon + name on the left and ONE
+  // small status slot on the right (waiting chip, "Running 3m", or the time);
+  // then the title, then the branch. Ready is unlabeled and an unread title
+  // turns bolder, so cards carry no trailing marker; in-flight titles recede.
+  // Nothing on the row repeats the status.
+  const isCardRow = Boolean(secondaryMeta?.card);
+  const isSlimRow = Boolean(secondaryMeta?.slim);
+  const cardWaiting = hasPendingQuestion || pendingPermissionCount > 0;
+  const cardWorking = !cardWaiting && isStreaming;
+  // Receding is for idle in-flight rows only; a selected row must never read
+  // dimmer than an unselected one.
+  const rowIsEmphasized = isActive || isRowSelected;
+  const cardUnread = isCardRow && showUnreadStatus;
+  const showStatusMarker = !isCardRow && (hasPendingQuestion || isStreaming || showUnreadStatus);
+  const cardStatusLabel = t(hasPendingQuestion
+    ? 'sessions.sidebar.session.status.questionRequired'
+    : 'sessions.sidebar.session.status.permissionRequired');
+  const runStartedAt = secondaryMeta?.runStartedAt ?? null;
+  const cardStatusSlot = cardWaiting
+    ? (
+        <span className="inline-flex items-center gap-1 text-[10px] font-medium leading-none text-status-warning" aria-label={cardStatusLabel} title={cardStatusLabel}>
+          <Icon name={hasPendingQuestion ? 'question' : 'shield'} className="h-3 w-3" />
+          <span>{cardStatusLabel}</span>
+        </span>
+      )
+    : cardWorking
+      ? (
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium leading-none tabular-nums text-status-info" title={t('sessions.sidebar.session.status.active')}>
+            <SessionBusyIndicator size={10} arcColor="var(--status-info)" />
+            {runStartedAt !== null ? <TaskRunElapsed startedAt={runStartedAt} /> : null}
+          </span>
+        )
+      : <span className={cn('text-[10px] leading-none tabular-nums', rowIsEmphasized ? 'text-foreground/70' : 'text-muted-foreground/70')}>{sessionCompactUpdatedLabel}</span>;
   // Trailing status owns a shrink-0 gutter on the right (same idea as hover
   // action padding): question tip while awaiting input, context-style ring
   // while busy, slightly larger info dot when unread. Hide when row actions
   // take over so the two never fight for the same edge.
   const hideTrailingStatusOnActionReveal = !alwaysShowActions || isVSCode;
+  // The card's top-right status slot yields to the action icons, same as the
+  // trailing marker on regular rows.
+  const cardStatusHiddenClass = hideTrailingStatusOnActionReveal
+    ? cn('group-hover:invisible group-focus-within:invisible', isSessionMenuOpen && 'invisible')
+    : isSessionMenuOpen ? 'invisible' : '';
   const statusMarkerContent = hasPendingQuestion
     ? (
         <span
@@ -1154,10 +1220,22 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
 
       <Separator />
       {!archivedBucket ? (
-        <Item className="[&>svg]:mr-1" onClick={() => handleDeleteSession(session, { archivedBucket })}>
-          <Icon name="inbox-archive" className="mr-1 h-4 w-4" />
-          {t('sessions.sidebar.bulkActions.archive')}
-        </Item>
+        archiveSettlesInPlace && isSettledSession ? (
+          <Item className="[&>svg]:mr-1" onClick={() => setSessionSettled?.(session.id, false)}>
+            <Icon name="restart" className="mr-1 h-4 w-4" />
+            {t('sessions.sidebar.session.menu.unsettle')}
+          </Item>
+        ) : (
+          <Item
+            className="[&>svg]:mr-1"
+            onClick={() => (archiveSettlesInPlace && setSessionSettled
+              ? setSessionSettled(session.id, true)
+              : handleDeleteSession(session, { archivedBucket }))}
+          >
+            <Icon name="inbox-archive" className="mr-1 h-4 w-4" />
+            {t('sessions.sidebar.bulkActions.archive')}
+          </Item>
+        )
       ) : null}
       <Item className="text-destructive/80 focus:text-destructive/80 [&>svg]:mr-1" onClick={() => handleDeleteSession(session, { archivedBucket, hardDelete: true })}>
         <Icon name="delete-bin" className="mr-1 h-4 w-4 text-inherit" />
@@ -1238,6 +1316,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                   isActive && !isRowSelected && SIDEBAR_ROW_ACTIVE_CLASS,
                   isRowSelected && SIDEBAR_ROW_ACTIVE_CLASS,
                   !isActive && !isRowSelected && SIDEBAR_ROW_HOVER_CLASS,
+                  isSlimRow && 'py-1',
                 )}
               />
             }
@@ -1269,15 +1348,28 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       // No padding transition: busy ring / unread dot must snap away
                       // the moment hover reveals actions (no slide-with-padding).
                       isTouchPressed && 'bg-[color-mix(in_srgb,var(--surface-foreground)_8%,transparent)]',
-                      alwaysShowActions
-                        ? (isVSCode ? revealPaddingClass : alwaysActionPaddingClass)
-                        : revealPaddingClass,
+                      isCardRow && 'gap-0.5',
+                      !isCardRow && actionPaddingClass,
                     )}
                   >
+                    {isCardRow ? (
+                      // Actions sit over the top-right status slot, so only this
+                      // header line makes room for them; title and branch keep full width.
+                      <div className={cn('flex h-5 w-full min-w-0 items-center gap-1 overflow-hidden', actionPaddingClass)}>
+                        <TaskProjectBadge project={secondaryMeta?.project} />
+                        <span className={cn('min-w-0 flex-1 truncate typography-micro leading-4', rowIsEmphasized ? 'text-foreground/80' : 'text-muted-foreground')}>
+                          {secondaryMeta?.projectLabel}
+                        </span>
+                        <span className={cn('shrink-0', cardStatusHiddenClass)}>{cardStatusSlot}</span>
+                      </div>
+                    ) : null}
                     <div className="flex w-full items-center min-w-0 flex-1 gap-1 overflow-hidden">
                       <div
                         className={cn(
-                          'block min-w-0 flex-1 truncate typography-ui-label font-normal text-foreground',
+                          'block min-w-0 flex-1 truncate text-foreground',
+                          isSlimRow ? 'typography-meta' : 'typography-ui-label',
+                          isSlimRow && !rowIsEmphasized && 'text-muted-foreground',
+                          cardUnread ? 'font-medium' : 'font-normal',
                           isTitleGenerating && 'animate-text-shimmer',
                         )}
                         aria-busy={isTitleGenerating || undefined}
@@ -1289,8 +1381,11 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                           {sessionChangeCounts}
                         </span>
                       ) : null}
+                      {isSlimRow ? (
+                        <span className="shrink-0 text-[10px] leading-none tabular-nums text-muted-foreground/70">{sessionCompactUpdatedLabel}</span>
+                      ) : null}
                       {isAssistantSession ? <Icon name="ai-agent" className="size-3 shrink-0 text-muted-foreground" aria-label="Assistant" /> : null}
-                      {pendingPermissionCount > 0 ? (
+                      {pendingPermissionCount > 0 && !isCardRow ? (
                         <span className="inline-flex items-center gap-1 rounded bg-destructive/10 px-1 py-0.5 text-[0.7rem] text-destructive flex-shrink-0" title={t('sessions.sidebar.session.status.permissionRequired')} aria-label={t('sessions.sidebar.session.status.permissionRequired')}>
                           <Icon name="shield" className="h-3 w-3" />
                           <span className="leading-none">{pendingPermissionCount}</span>
@@ -1318,6 +1413,33 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       ) : null}
                       {shortcutNumber ? <SessionShortcutHint number={shortcutNumber} /> : null}
                     </div>
+                    {isCardRow ? (
+                      <div className={cn('flex h-4 w-full min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-4', rowIsEmphasized ? 'text-foreground/60' : 'text-muted-foreground/60')}>
+                        {hasSecondaryBranchLabel ? (
+                          <>
+                            <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
+                              <Icon name="git-branch" className="size-2.5" />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{secondaryMeta?.branchLabel}</span>
+                          </>
+                        ) : secondaryMeta?.branchState === 'loading' ? (
+                          <>
+                            <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
+                              <Icon name="git-branch" className="size-2.5" />
+                            </span>
+                            <span className="min-w-0 flex-1 animate-pulse truncate">{t('common.loading')}</span>
+                          </>
+                        ) : secondaryMeta?.pathLabel ? (
+                          <>
+                            <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
+                              <Icon name="folder-open" className="size-2.5" />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{secondaryMeta.pathLabel}</span>
+                          </>
+                        ) : <span className="flex-1" />}
+                        {isPinnedSession ? <Icon name="pushpin-2-fill" className="size-2.5 shrink-0" aria-label={t('sessions.sidebar.session.actions.pinned')} /> : null}
+                      </div>
+                    ) : null}
                   </SessionRowTitle>
                 </TooltipTrigger>
                 {/* VS Code already shows project context via workspace headers, so
@@ -1374,6 +1496,8 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
               : (alwaysShowActions && !isVSCode)
                 ? 'opacity-100'
                 : cn('opacity-0', revealOnHoverClass),
+            // Card rows: pinned to the top-right corner over the status slot.
+            isCardRow && 'top-1.5 translate-y-0',
           )}>
             {/* No fade veil — title button reserves pr on hover so icons own their space. */}
             {showQuickPinAction ? (
@@ -1534,7 +1658,13 @@ const getNodeSessionDirectory = (node: SessionNode): string | null => {
 
 const isSecondaryMetaEqual = (prev?: SecondaryMeta | null, next?: SecondaryMeta | null): boolean => {
   return (prev?.projectLabel ?? null) === (next?.projectLabel ?? null)
-    && (prev?.branchLabel ?? null) === (next?.branchLabel ?? null);
+    && (prev?.branchLabel ?? null) === (next?.branchLabel ?? null)
+    && Boolean(prev?.card) === Boolean(next?.card)
+    && Boolean(prev?.slim) === Boolean(next?.slim)
+    && (prev?.branchState ?? null) === (next?.branchState ?? null)
+    && (prev?.pathLabel ?? null) === (next?.pathLabel ?? null)
+    && (prev?.project ?? null) === (next?.project ?? null)
+    && (prev?.runStartedAt ?? null) === (next?.runStartedAt ?? null);
 };
 
 const getMenuSessionIdFromKey = (props: Props): string | null => {
@@ -1649,6 +1779,12 @@ const areSessionNodeItemPropsEqual = (prev: Props, next: Props): boolean => {
     && hasSetMembershipChangeInNode(prev.node, next.node, prev.pinnedSessionIds, next.pinnedSessionIds, (node) => node.session.id)) {
     return false;
   }
+
+  if (prev.settledSessionIds !== next.settledSessionIds
+    && prev.settledSessionIds?.has(prev.node.session.id) !== next.settledSessionIds?.has(next.node.session.id)) {
+    return false;
+  }
+  if (prev.setSessionSettled !== next.setSessionSettled) return false;
 
   if (prev.expandedParents !== next.expandedParents && hasExpansionMembershipChange(prev, next)) {
     return false;

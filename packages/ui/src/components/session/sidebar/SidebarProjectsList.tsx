@@ -75,6 +75,14 @@ type Props = {
   topContent?: React.ReactNode;
   hasLeadingSection: boolean;
   headerAccessory?: React.ReactNode;
+  /** Tasks / Projects switch rendered where the Projects label sits. */
+  headerSwitch?: React.ReactNode;
+  /** When set, the task view replaces the project tree. */
+  taskContent?: React.ReactNode;
+  /** Pinned / in-progress rows rendered right under the view switch, inside the active tab. */
+  tabLeadingContent?: React.ReactNode;
+  /** Pinned below the scroll area in the task view (the Settled shelf). */
+  taskFooter?: React.ReactNode;
   sharedSessionsOnly?: boolean;
   hasSharedSessions?: boolean;
   sectionsForRender: ProjectSection[];
@@ -141,6 +149,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
   const projectsHeader = !props.hasSessionSearchQuery ? (
     <SidebarSectionHeader
       title={t('sessions.sidebar.projectsTitle')}
+      titleSlot={props.headerSwitch}
       isFirst={!props.hasLeadingSection}
       accessory={props.headerAccessory}
     />
@@ -206,8 +215,23 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
       <SidebarTooltipProvider>
       <ScrollableOverlay useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1', props.mobileVariant ? '' : '')}>
         {props.topContent}
+        {props.tabLeadingContent}
         {!props.hasSharedSessions ? (props.hasSessionSearchQuery ? props.searchEmptyState : props.emptyState) : null}
       </ScrollableOverlay>
+      </SidebarTooltipProvider>
+    );
+  }
+
+  if (props.taskContent) {
+    return (
+      <SidebarTooltipProvider>
+        <ScrollableOverlay useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1 [overflow-anchor:none]', props.mobileVariant ? '' : '')}>
+          {props.topContent}
+          {projectsHeader}
+          {props.tabLeadingContent}
+          {props.taskContent}
+        </ScrollableOverlay>
+        {props.taskFooter}
       </SidebarTooltipProvider>
     );
   }
@@ -215,7 +239,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
   if (props.projectSections.length === 0 && remoteSections.length === 0) {
     return (
       <SidebarTooltipProvider>
-        <ScrollableOverlay useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1', props.mobileVariant ? '' : '')}>{props.topContent}{projectsHeader}{props.emptyState}</ScrollableOverlay>
+        <ScrollableOverlay useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1', props.mobileVariant ? '' : '')}>{props.topContent}{projectsHeader}{props.tabLeadingContent}{props.emptyState}</ScrollableOverlay>
       </SidebarTooltipProvider>
     );
   }
@@ -276,6 +300,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
               Per-project loading lives on the folder icon + body placeholder;
               do not reintroduce a global "syncing sessions" accessory here. */}
           {projectsHeader}
+          {props.tabLeadingContent}
           <DndContext
             sensors={projectSensors}
             collisionDetection={closestCenter}

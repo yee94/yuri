@@ -186,6 +186,59 @@ describe('session index routes', () => {
     expect(res.statusCode).toBe(204);
   });
 
+  it('settles and un-settles a session and publishes a session-index change', () => {
+    const { app, route } = registry();
+    const setSettled = vi.fn(() => true);
+    const clearSettled = vi.fn(() => true);
+    const publishChange = vi.fn();
+    registerSessionIndexRoutes(app, {
+      sessionIndexService: { snapshot: () => ({ directories: [] }), setSettled, clearSettled },
+      sessionIndexSyncRuntime: { publishChange },
+    });
+
+    const settleRes = response();
+    route('POST', '/api/yuri/session-index/session/:id/settle')({ params: { id: 'ses_abc' } }, settleRes);
+    const unsettleRes = response();
+    route('DELETE', '/api/yuri/session-index/session/:id/settle')({ params: { id: 'ses_abc' } }, unsettleRes);
+
+    expect(setSettled).toHaveBeenCalledWith('ses_abc');
+    expect(clearSettled).toHaveBeenCalledWith('ses_abc');
+    expect(publishChange).toHaveBeenCalledTimes(2);
+    expect(settleRes.statusCode).toBe(204);
+    expect(unsettleRes.statusCode).toBe(204);
+  });
+
+  it('reports settle write failures without publishing a change', () => {
+    const { app, route } = registry();
+    const publishChange = vi.fn();
+    registerSessionIndexRoutes(app, {
+      sessionIndexService: {
+        snapshot: () => ({ directories: [] }),
+        setSettled: () => { throw new Error('disk full'); },
+        clearSettled: () => false,
+      },
+      sessionIndexSyncRuntime: { publishChange },
+    });
+
+    const failed = response();
+    route('POST', '/api/yuri/session-index/session/:id/settle')({ params: { id: 'ses_abc' } }, failed);
+    const missing = response();
+    route('DELETE', '/api/yuri/session-index/session/:id/settle')({ params: { id: 'ses_abc' } }, missing);
+
+    expect(failed.statusCode).toBe(500);
+    expect(failed.body).toMatchObject({ error: 'disk full' });
+    expect(missing.statusCode).toBe(404);
+    expect(publishChange).not.toHaveBeenCalled();
+  });
+
+  it('returns unsupported settle routes when the index is unavailable', () => {
+    const { app, route } = registry();
+    registerSessionIndexRoutes(app, { sessionIndexService: null });
+    const res = response();
+    route('POST', '/api/yuri/session-index/session/:id/settle')({ params: { id: 'ses_abc' } }, res);
+    expect(res.statusCode).toBe(501);
+  });
+
   it('returns 404 for pin and unpin when the session is missing', () => {
     const { app, route } = registry();
     const publishChange = vi.fn();

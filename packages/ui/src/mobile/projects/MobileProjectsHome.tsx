@@ -4,6 +4,7 @@ import { useEvent } from '@reactuses/core';
 import { Icon } from '@/components/icon/Icon';
 import { GlobalSearchButton } from '@/components/layout/GlobalSearchButton';
 import { MobileGuiApps } from '@/components/gui-plugins/MobileGuiApps';
+import { SETTLED_SHELF_PAGE_SIZE, type SidebarView } from '@/components/session/sidebar/taskView';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -41,6 +42,9 @@ import {
   type MobileSessionRowProps,
 } from './MobileSessionRow';
 import { resolveMobileSessionIndicator } from './mobileSessionIndicator';
+import { MobileHomeViewMenu } from './MobileHomeViewMenu';
+import { MobileSettledLine, MobileTaskCard } from './MobileTaskCard';
+import type { MobileTaskViewModel } from './useMobileTaskViewModel';
 
 const INTENT_LOCK_PX = 10;
 const REVEALED_WORKTREE_EVENT = 'yuri:mobile-worktree-row-revealed';
@@ -124,6 +128,18 @@ export type MobileProjectsHomeProps = {
   onOpenSessionActions: (session: MobileSessionTreeNode) => void;
   onReorderSessions?: (scope: string, ids: string[], activeId: string, overId: string) => void;
   className?: string;
+  /** Task view props; omit to keep the page a plain Projects home. */
+  task?: {
+    view: SidebarView;
+    onViewChange: (view: SidebarView) => void;
+    model: MobileTaskViewModel | null;
+    settledOpen: boolean;
+    onSettledOpenChange: (open: boolean) => void;
+    onShowMoreSettled: () => void;
+    onSelectTask: (sessionId: string) => void;
+    onOpenTaskActions: (sessionId: string) => void;
+    onRestoreTask: (sessionId: string) => void;
+  };
 };
 
 type SessionListProps = Pick<
@@ -551,6 +567,7 @@ export function MobileProjectsHome({
   onOpenSessionActions,
   className,
   onReorderSessions,
+  task,
 }: MobileProjectsHomeProps) {
   const { t } = useI18n();
   const [pinnedExpanded, setPinnedExpanded] = React.useState(true);
@@ -565,7 +582,9 @@ export function MobileProjectsHome({
   return (
     <main className={cn('relative isolate mx-auto flex w-full max-w-[26rem] flex-col gap-5', className)}>
       <MobileTabPageHeader
-        title={t('mobile.sessions.section.projects')}
+        title={task
+          ? <MobileHomeViewMenu value={task.view} onChange={task.onViewChange} />
+          : t('mobile.sessions.section.projects')}
         trailing={(
           <>
             <MobileGuiApps />
@@ -633,7 +652,11 @@ export function MobileProjectsHome({
         )}
       />
 
-      {pinnedSessions.length > 0 || inProgressSessions.length > 0 ? (
+      {task?.view === 'tasks' && task.model ? (
+        <MobileTaskView task={task} model={task.model} />
+      ) : null}
+
+      {task?.view === 'tasks' ? null : pinnedSessions.length > 0 || inProgressSessions.length > 0 ? (
         <MobileFloatingSurface asChild>
           <section className="yuri-mobile-project-shell" aria-label={t('mobile.sessions.section.pinned')}>
             <MobileProjectCard
@@ -680,7 +703,7 @@ export function MobileProjectsHome({
         </MobileFloatingSurface>
       ) : null}
 
-      {projects.length === 0 && !remoteProjects?.length ? (
+      {task?.view === 'tasks' ? null : projects.length === 0 && !remoteProjects?.length ? (
         <section className="flex min-h-[52dvh] flex-col items-center justify-center px-6 text-center">
           <span className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-[var(--surface-muted)] text-muted-foreground">
             <Icon name="folder-add" className="size-6" />
@@ -727,6 +750,71 @@ export function MobileProjectsHome({
         {t('sessions.sidebar.header.actions.addProject')}
       </button>
     </main>
+  );
+}
+
+function MobileTaskView({ task, model }: {
+  task: NonNullable<MobileProjectsHomeProps['task']>;
+  model: MobileTaskViewModel;
+}) {
+  const { t } = useI18n();
+  const listed = [...model.pinned, ...model.active];
+  const remaining = model.settledTotal - model.settled.length;
+  return (
+    <>
+      {listed.length > 0 ? (
+        <section className="flex flex-col gap-2.5" aria-label={t('sessions.sidebar.view.tasks')}>
+          {listed.map((node) => (
+            <MobileTaskCard
+              key={node.id}
+              task={node}
+              runStartedAt={model.runStartTimes.get(node.id) ?? null}
+              onSelect={task.onSelectTask}
+              onOpenActions={task.onOpenTaskActions}
+            />
+          ))}
+        </section>
+      ) : (
+        <p className="px-3 py-10 text-center typography-small text-muted-foreground">{t('sessions.sidebar.task.empty')}</p>
+      )}
+
+      {model.settledTotal > 0 ? (
+        <MobileFloatingSurface asChild>
+          <section className="overflow-hidden rounded-[var(--yuri-mobile-surface-radius)]" aria-label={t('sessions.sidebar.task.shelf.settled')}>
+            <button
+              type="button"
+              data-mobile-press-feedback="soft"
+              className="flex h-12 w-full items-center gap-2 px-4 text-left typography-ui-label text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
+              aria-expanded={task.settledOpen}
+              onClick={() => task.onSettledOpenChange(!task.settledOpen)}
+            >
+              <Icon name="inbox-archive" className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{t('sessions.sidebar.task.shelf.settled')}</span>
+              <span className="tabular-nums">{model.settledTotal}</span>
+              <Icon
+                name="arrow-down-s"
+                className={cn(
+                  'size-4 shrink-0 transition-transform duration-150 motion-reduce:transition-none',
+                  task.settledOpen ? 'rotate-0' : '-rotate-90',
+                )}
+              />
+            </button>
+            {task.settledOpen ? (
+              <div className="border-t border-[var(--yuri-mobile-divider)]">
+                {model.settled.map((node) => (
+                  <MobileSettledLine key={node.id} task={node} onSelect={task.onSelectTask} onRestore={task.onRestoreTask} />
+                ))}
+                {remaining > 0 ? (
+                  <Button type="button" variant="ghost" className="h-11 w-full rounded-none text-muted-foreground" onClick={task.onShowMoreSettled}>
+                    {t(remaining === 1 ? 'sessions.sidebar.group.showMoreSingle' : 'sessions.sidebar.group.showMorePlural', { count: Math.min(SETTLED_SHELF_PAGE_SIZE, remaining) })}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        </MobileFloatingSurface>
+      ) : null}
+    </>
   );
 }
 

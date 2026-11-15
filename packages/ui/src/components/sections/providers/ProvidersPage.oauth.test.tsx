@@ -274,7 +274,8 @@ describe('provider credential mutation scope regressions', () => {
     const pdf = host.querySelector('[data-provider-model="pdf"]')!;
     expect(vision.querySelector('[aria-label="settings.providers.page.models.capability.imageInput"]')).not.toBeNull();
     expect(vision.querySelector('[aria-label="settings.providers.page.models.capability.reasoning"]')).not.toBeNull();
-    expect(pdf.querySelector('[role="img"]')).toBeNull();
+    // The provider logo is also a role=img; only capability icons carry a capability label.
+    expect(pdf.querySelector('[role="img"][aria-label^="settings.providers.page.models.capability."]')).toBeNull();
   });
   it('passes directory to key connect, refreshes only the current catalog, and selects the actual provider ID', async () => {
     state.directory = '/key-project'; state.selected = '__add_provider__';
@@ -453,7 +454,7 @@ describe('provider connection regressions', () => {
     await mount();
     expect(host.querySelectorAll('[data-provider-model]')).toHaveLength(100);
     expect(host.querySelector('input[aria-label="settings.providers.page.models.filterPlaceholder"]')?.getAttribute('data-bordered')).toBe('true');
-    expect(host.querySelectorAll('[data-provider-model] img')).toHaveLength(100);
+    expect(host.querySelectorAll('[data-provider-model] [role="img"], [data-provider-model] [data-icon="stack"]').length).toBeGreaterThanOrEqual(100);
     await fill('input[aria-label="settings.providers.page.models.filterPlaceholder"]', 'gpt-model-1999');
     expect(host.querySelectorAll('[data-provider-model]')).toHaveLength(1);
     await click('settings.providers.custom.addAllModels'); await mount();

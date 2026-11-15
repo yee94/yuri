@@ -156,4 +156,30 @@ export const registerSessionIndexRoutes = (app, {
     sessionIndexSyncRuntime?.publishChange?.();
     res.status(204).end();
   });
+
+  const registerSettleRoute = (method, action, unavailableMessage) => {
+    app[method]('/api/yuri/session-index/session/:id/settle', (req, res) => {
+      if (!sessionIndexService) return unsupported(res);
+      if (typeof sessionIndexService[action] !== 'function') {
+        return res.status(501).json({ error: unavailableMessage });
+      }
+      const sessionId = req.params.id;
+      if (typeof sessionId !== 'string' || !sessionId.trim()) {
+        return res.status(400).json({ error: 'sessionId is required' });
+      }
+      let changed;
+      try {
+        changed = sessionIndexService[action](sessionId.trim());
+      } catch (error) {
+        return res.status(500).json({ error: error instanceof Error ? error.message : unavailableMessage });
+      }
+      if (!changed) {
+        return res.status(404).json({ error: 'session_not_found', sessionId: sessionId.trim() });
+      }
+      sessionIndexSyncRuntime?.publishChange?.();
+      res.status(204).end();
+    });
+  };
+  registerSettleRoute('post', 'setSettled', 'Session settle is unavailable');
+  registerSettleRoute('delete', 'clearSettled', 'Session unsettle is unavailable');
 };
