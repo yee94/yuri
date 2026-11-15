@@ -1468,14 +1468,7 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                     </span>
                     </button> : null}
                 {shouldShowRowsContainer ? (
-                    <div className={disclosureLockedOpen ? undefined : 'relative ml-2 pl-3'}>
-                        {!disclosureLockedOpen ? (
-                            <span
-                                aria-hidden="true"
-                                className="pointer-events-none absolute left-0 top-px bottom-0 w-px opacity-40"
-                                style={{ backgroundColor: 'var(--tools-border)' }}
-                            />
-                        ) : null}
+                    <div>
                         {previewHiddenCount > 0 ? (
                             <button
                                 type="button"
@@ -1492,7 +1485,6 @@ const ProgressiveGroup: React.FC<ProgressiveGroupProps> = ({
                     <div
                         className={cn(
                             'typography-meta flex min-h-9 items-center gap-2 px-2 text-muted-foreground',
-                            disclosureLockedOpen ? undefined : 'ml-5',
                             hasMaterializationError && 'text-[var(--status-error)]',
                         )}
                         role={hasMaterializationError ? 'alert' : 'status'}
