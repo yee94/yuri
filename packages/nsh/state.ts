@@ -23,6 +23,8 @@ import { createErrorFeedback, feedbackErrorKey, type ErrorFeedback } from './err
 import type { I18nKey } from '../ui/src/lib/i18n/messages/en';
 import { sameReferenceScope, validateNativeReferences, type ReferenceCandidate, type ReferenceScope, type ScopedReferenceDocument } from './composer-references';
 import { activeFrom, applySessionContent, eventBusy, eventSessionID, id, inboxFrom, isSessionContentEvent, list, mergeMessages, messagesFrom, projectsFrom, record, rowsFrom, runtimeEventFrom, slashCommand, text, unwrap, type Attachment, type ChatTarget, type CompiledSubmission, type Connection, type FormAnswer, type Message, type Project, type Row, type RuntimeEvent, type Session, type Submission } from './model';
+import { answersToFormAnswer } from '../ui/src/sync/question-form';
+import { isQuestionRequestNotFound } from './question-model';
 
 const notificationCatalogAuthority = signal<NotificationCatalogState>({ scope: null, refreshGeneration: 0, complete: false, domains: { projects: 'unknown', sessions: 'unknown', bots: 'unknown', tasks: 'unknown' }, error: null });
 const catalogSources: { projects?: readonly Project[]; sessions?: readonly Session[]; bots?: readonly Row[]; tasks?: readonly Row[] } = {};
@@ -1473,6 +1475,40 @@ export function createChat(target: ChatTarget, dependencies: { messageStreamTran
   }
   async function replyForm(formID: string, answer: FormAnswer) { await mutateForm(formID, 'reply', { answer }); }
   async function cancelForm(formID: string) { await mutateForm(formID, 'cancel'); }
+  function dropForm(formID: string) { blockingRevision++; forms.set(forms().filter(item => item.id !== formID)); }
+  /** Web `respondToQuestion`: read the authoritative schema, then reply with its field keys and value types. */
+  async function replyQuestion(formID: string, answers: string[][]) {
+    const lane = operationLane, request = lane.request, current = () => laneCurrent(lane);
+    if (!current() || target.kind !== 'session') throw new Error('Session unavailable');
+    try {
+      const form = record(await request(scoped(`form/${encodeURIComponent(formID)}`)));
+      if (!current()) return;
+      const answer = answersToFormAnswer(answers, list(form.fields) as unknown as Parameters<typeof answersToFormAnswer>[1]);
+      await request(scoped(`form/${encodeURIComponent(formID)}/reply`), 'POST', { answer });
+    } catch (failure) {
+      if (current() && isQuestionRequestNotFound(failure)) dropForm(formID);
+      throw failure;
+    }
+    if (!current()) return;
+    dropForm(formID);
+    await load(false, allChatDomains, lane);
+  }
+  /** Web `dismissQuestion`: stop the run without resuming; only an idle session needs the form cancelled explicitly. */
+  async function dismissQuestion(formID: string) {
+    const lane = operationLane, request = lane.request, current = () => laneCurrent(lane);
+    if (!current() || target.kind !== 'session') throw new Error('Session unavailable');
+    try {
+      const result = record(await request(scoped('interrupt'), 'POST', { resume: false }));
+      if (!current()) return;
+      if (result.interrupted !== true) await request(scoped(`form/${encodeURIComponent(formID)}/cancel`), 'POST');
+    } catch (failure) {
+      if (current() && isQuestionRequestNotFound(failure)) dropForm(formID);
+      throw failure;
+    }
+    if (!current()) return;
+    dropForm(formID);
+    await load(false, allChatDomains, lane);
+  }
   async function mutateForm(formID: string, action: string, body?: unknown) {
     const lane = operationLane, request = lane.request, current = () => laneCurrent(lane);
     if (!current() || target.kind !== 'session') throw new Error('Session unavailable');
@@ -1681,5 +1717,5 @@ export function createChat(target: ChatTarget, dependencies: { messageStreamTran
     if (laneCurrent(initialOperationLane) && pendingSend()) await recoverPendingSend();
   }).catch(fail);
   cleanup(() => { historyPresentationListener = undefined; previousHistoryPresentation = undefined; messageCommitListeners.clear(); void durable.close(); operationLane.history.close(); alive = false; activityFill.cancel(true); goalCore.retire(); taskSnapshot.set([]); resolvedAuthority.set(false); clearStreamingSelection(); chatAuthorityRetirements.delete(retireAuthority); chatOperationResumptions.delete(rebuildOperationLane); unsubscribe(); disconnected(); if (timer) clearTimeout(timer); if (deltaTimer) clearTimeout(deltaTimer); chatOwners.set(chatOwners().filter(value => value !== owner)); });
-  return { historyActionStorageKey, draftRevision: durable.draftRevision, compact, compactReceipt, compactionBarrier, prepareHistoryAction, historyActionSnapshot, captureAttachment, canSend, sendAdmission, rebuildOperationLane, goal, tasks, activityMaterialization, observeMessageCommits, messageReadError, get messageScope() { laneRevision(); return messageScope; }, messages, messagesResolved, historyGeneration, streamingMessageIDs, visibleMessages, revert, historyBusy, historyBoundaryMissing, historyRepairPending, refreshHistory, inbox, permissions, forms, error, executionError, loading, olderLoading, historyError, sending, busy, retry, streamState, commands, loadCommands, command, draft, references: durable.references, referenceDocument: durable.document, referenceScope: durable.scope, setReferenceDocument, setDraftText, insertReference, attachments, more, hasGap, active, syncActive, pendingSend, queueEdit, queueBusy, queueError, editInbox, cancelInbox, steerInbox, recoverQueueEdit, discardQueueEdit, recoverPendingSend, draftReady: durable.ready, draftStatus: durable.status, draftError: durable.error, flushDraft: durable.flush, restoreDraft: durable.restore, retryDraft: durable.retry, load, loadOlder, send, retrySend, stop, replyPermission, replyForm, cancelForm };
+  return { historyActionStorageKey, draftRevision: durable.draftRevision, compact, compactReceipt, compactionBarrier, prepareHistoryAction, historyActionSnapshot, captureAttachment, canSend, sendAdmission, rebuildOperationLane, goal, tasks, activityMaterialization, observeMessageCommits, messageReadError, get messageScope() { laneRevision(); return messageScope; }, messages, messagesResolved, historyGeneration, streamingMessageIDs, visibleMessages, revert, historyBusy, historyBoundaryMissing, historyRepairPending, refreshHistory, inbox, permissions, forms, error, executionError, loading, olderLoading, historyError, sending, busy, retry, streamState, commands, loadCommands, command, draft, references: durable.references, referenceDocument: durable.document, referenceScope: durable.scope, setReferenceDocument, setDraftText, insertReference, attachments, more, hasGap, active, syncActive, pendingSend, queueEdit, queueBusy, queueError, editInbox, cancelInbox, steerInbox, recoverQueueEdit, discardQueueEdit, recoverPendingSend, draftReady: durable.ready, draftStatus: durable.status, draftError: durable.error, flushDraft: durable.flush, restoreDraft: durable.restore, retryDraft: durable.retry, load, loadOlder, send, retrySend, stop, replyPermission, replyForm, cancelForm, replyQuestion, dismissQuestion };
 }

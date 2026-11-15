@@ -1,7 +1,9 @@
-import { cleanup, openUrl, Scroll, signal, Text, View } from "nsh";
+import { cleanup, openUrl, signal, Text, View } from "nsh";
 import { Button, Input } from "nsh/base";
 import { t } from "./i18n";
 import { list, record, text, type FormAnswer, type Row } from "./model";
+import { QuestionCard } from "./question-card";
+import { isQuestionForm } from "./question-model";
 import { epoch, type createChat } from "./state";
 
 type Chat = ReturnType<typeof createChat>;
@@ -622,9 +624,24 @@ export function BlockingRequests(props: {
     }
   }
   const scope: Scope = { chat, disabled, perform };
+  // Web ChatContainer order: question cards, permissions, then generic forms. Question-tool forms never fall back to FormRequest.
+  const questions = () => chat.forms().filter(isQuestionForm);
+  const generic = () => chat.forms().filter((item) => !isQuestionForm(item));
   return (
-    <If when={chat.permissions().length > 0 || chat.forms().length > 0}>
-      <Scroll class="max-h-80 shrink px-3" contentClass="gap-3 py-3">
+    <If
+      when={
+        chat.permissions().length > 0 ||
+        questions().length > 0 ||
+        generic().length > 0
+      }
+    >
+      <View testID="blocking-requests" class="px-3 pb-1 gap-3">
+        <Each
+          of={questions()}
+          key={(item) => `${text(item.sessionID)}:${text(item.id)}`}
+        >
+          {(item) => <QuestionCard item={item} scope={scope} />}
+        </Each>
         <Each
           of={chat.permissions()}
           key={(item) => `${text(item.sessionID)}:${text(item.id)}`}
@@ -632,12 +649,12 @@ export function BlockingRequests(props: {
           {(item) => <PermissionRequest item={item} scope={scope} />}
         </Each>
         <Each
-          of={chat.forms()}
+          of={generic()}
           key={(item) => `${text(item.sessionID)}:${text(item.id)}`}
         >
           {(item) => <FormRequest item={item} scope={scope} />}
         </Each>
-      </Scroll>
+      </View>
     </If>
   );
 }

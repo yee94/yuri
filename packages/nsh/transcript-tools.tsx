@@ -4,7 +4,7 @@ import { t } from './i18n';
 import { record, text, type ChatTarget, type Row } from './model';
 import { query } from './runtime';
 import { captureHostRequest } from './state';
-import { nativeMultiFileEntries, nativeToolDescription, nativeToolDetails, nativeToolDuration, type NativeToolFile } from './transcript-tools-model';
+import { nativeMultiFileEntries, nativeQuestionBody, nativeToolDescription, nativeToolDetails, nativeToolDuration, type NativeQuestionBody, type NativeToolFile } from './transcript-tools-model';
 import { toolIconSpec } from '../ui/src/components/chat/message/parts/toolIconModel';
 import { formatToolInput, resolveToolDisplayName } from '../ui/src/lib/toolHelpers';
 import { NativeAgentAvatar } from './chat-identity';
@@ -52,6 +52,7 @@ export function NativeToolRow(props: NativeToolRowProps) {
   const current = () => alive && props.current();
   const details = computed(() => nativeToolDetails(props.tool));
   const multi = computed(() => nativeMultiFileEntries(details()));
+  const question = computed(() => nativeQuestionBody(details()));
   const now = signal(Date.now());
   const active = () => details().active;
   const shell = () => ['bash', 'shell', 'cmd', 'terminal'].includes(details().name);
@@ -149,11 +150,18 @@ export function NativeToolRow(props: NativeToolRowProps) {
       </View>
     </View>}</Each>
       <Scroll style={{ maxHeight: Math.max(0, windowSize().height - safeArea().top - safeArea().bottom) * .4 }} contentClass="ml-2 pl-3 border-l py-1 gap-2" contentStyle={nativeToolRailStyle()}>
-        <If when={!navigation() && !details().todos.length && !details().task && Object.keys(details().input).length > 0}><Text class="text-muted-foreground italic" style={{ ...rowStyle(), opacity: .7 }}>{typeof details().input.content === 'string' ? text(details().input.content) : formatToolInput(details().input, details().name)}</Text></If>
+        <If when={question()?.kind === 'answers'}><Each of={(question() as Extract<NativeQuestionBody, { kind: 'answers' }>).items}>{item => <View testID="tool-question-answer" class="gap-0.5"><Text class="text-muted-foreground" style={nativeChatTextStyle('meta')}>{item().question}</Text><View selectable><Text class="text-foreground" style={rowStyle()}>{item().answer}</Text></View></View>}</Each></If>
+        <If when={question()?.kind === 'questions'}><Each of={(question() as Extract<NativeQuestionBody, { kind: 'questions' }>).items}>{item => <View testID="tool-question-asked" class="gap-0.5">
+          <If when={!!item().header}><Text class="text-muted-foreground" style={nativeChatTextStyle('meta')}>{item().header}</Text></If>
+          <Text class="text-foreground" style={rowStyle()}>{item().question}</Text>
+          <If when={item().options.length > 0}><View class="flex-row flex-wrap gap-1 pt-0.5"><Each of={item().options}>{option => <View class="px-1.5 py-0.5 rounded bg-muted/30 border border-border/30"><Text class="text-muted-foreground" style={nativeChatTextStyle('meta')}>{option()}</Text></View>}</Each></View></If>
+        </View>}</Each></If>
+        <If when={question()?.kind === 'awaiting'}><Text class="text-muted-foreground" style={rowStyle()}>{t('chat.toolPart.awaitingResponse')}</Text></If>
+        <If when={!navigation() && !question() && !details().todos.length && !details().task && Object.keys(details().input).length > 0}><Text class="text-muted-foreground italic" style={{ ...rowStyle(), opacity: .7 }}>{typeof details().input.content === 'string' ? text(details().input.content) : formatToolInput(details().input, details().name)}</Text></If>
         <If when={!!details().streamingInput}><RawToolText value={details().streamingInput} /></If>
         <Each of={details().todos}>{todo => <Text class="text-sm text-foreground">{todo().status === 'completed' ? '✓ ' : todo().status === 'in_progress' ? '◉ ' : '○ '}{String(todo().content || '')}</Text>}</Each>
         <Each of={details().summary}>{entry => <View class="flex-row items-center gap-1.5"><Icon name={toolIconSpec(entry().tool || 'tool').name} size={14} color={palette()?.icon} /><Text class="text-muted-foreground" style={rowStyle()}>{toolDisplayName(entry().tool || 'tool')}</Text><Text class="text-muted-foreground flex-1" style={{ ...rowStyle(), numberOfLines: 1 }}>{entry().state?.title}</Text></View>}</Each>
-        <If when={!!details().output && !details().todos.length}><If when={details().task} else={<RawToolText value={details().output} />}><TextView markdown={details().output} selectable links="open" style={rowStyle()} styles={nativeTranscriptMarkdownStyles('assistant')} /></If></If>
+        <If when={!!details().output && !question() && !details().todos.length}><If when={details().task} else={<RawToolText value={details().output} />}><TextView markdown={details().output} selectable links="open" style={rowStyle()} styles={nativeTranscriptMarkdownStyles('assistant')} /></If></If>
         <If when={!details().slim && !details().output && details().status === 'completed'}><Text class="text-xs text-muted-foreground">{t('chat.toolPart.noOutputProduced')}</Text></If>
         <If when={!!details().error}><Text class="text-muted-foreground font-medium" style={rowStyle()}>{t('chat.toolPart.error')}</Text><View selectable class="p-2 rounded-xl bg-destructive/10"><Text class="text-destructive" style={rowStyle()}>{details().error}</Text></View></If>
       </Scroll>

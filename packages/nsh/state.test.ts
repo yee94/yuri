@@ -1114,6 +1114,53 @@ describe('native chat authority and lifecycle', () => {
       ['/api/session/s/form/frm_2/cancel?directory=%2Frepo', undefined],
     ]);
   });
+  it('answers a question by reading the authoritative schema and typing the reply', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    const normal = handle; let replied = false;
+    const question = { id: 'frm_q', sessionID: 's', metadata: { kind: 'question' }, fields: [{ key: 'pick', type: 'string', options: [{ label: 'iOS', value: 'ios' }] }, { key: 'areas', type: 'multiselect', options: [{ label: 'UI', value: 'ui' }] }] };
+    handle = (path, method, body) => {
+      if (method === 'POST') { if (path.includes('/reply?')) replied = true; return null; }
+      if (path.includes('/form/frm_q?')) return question;
+      if (path.includes('/form?')) return replied ? [] : [question];
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await flush(); expect(chat.forms()).toHaveLength(1);
+    await chat.replyQuestion('frm_q', [['iOS'], ['UI']]);
+    expect(requests().filter(input => input.method === 'POST').map(input => [input.path, input.body])).toEqual([
+      ['/api/session/s/form/frm_q/reply?directory=%2Frepo', { answer: { pick: 'ios', areas: ['ui'] } }],
+    ]);
+    expect(chat.forms()).toEqual([]);
+  });
+  it('dismisses a question by interrupting without resume and cancels only when nothing was interrupted', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    const normal = handle; let interrupted = true;
+    handle = (path, method, body) => {
+      if (method === 'POST' && path.includes('/interrupt?')) return { interrupted };
+      if (method === 'POST') return null;
+      if (path.includes('/form?')) return [];
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await flush();
+    await chat.dismissQuestion('frm_q');
+    expect(requests().filter(input => input.method === 'POST').map(input => [input.path, input.body])).toEqual([['/api/session/s/interrupt?directory=%2Frepo', { resume: false }]]);
+    interrupted = false; harness.call.mockClear();
+    await chat.dismissQuestion('frm_q');
+    expect(requests().filter(input => input.method === 'POST').map(input => input.path)).toEqual(['/api/session/s/interrupt?directory=%2Frepo', '/api/session/s/form/frm_q/cancel?directory=%2Frepo']);
+  });
+  it('drops a question that is no longer pending without masking the failure', async () => {
+    const state = await import('./state'); await state.loadConnections();
+    const normal = handle; let gone = false;
+    const question = { id: 'frm_q', sessionID: 's', metadata: { kind: 'question' }, fields: [{ key: 'pick', type: 'string' }] };
+    handle = (path, method, body) => {
+      if (path.includes('/form/frm_q?')) throw Object.assign(new Error('Question request not found'), { status: 404 });
+      if (path.includes('/form?')) return gone ? [] : [question];
+      return normal(path, method, body);
+    };
+    const chat = state.createChat(target); await flush(); expect(chat.forms()).toHaveLength(1);
+    gone = true;
+    await expect(chat.replyQuestion('frm_q', [['x']])).rejects.toThrow('Question request not found');
+    expect(chat.forms()).toEqual([]);
+  });
   it('polls only the latest chat and never polls while backgrounded', async () => {
     const state = await import('./state'); await state.loadConnections(); state.createChat(target); await flush();
     state.createChat({ ...target, id: 's2' }); await flush(); harness.call.mockClear();

@@ -1,5 +1,6 @@
 import { list, record, text, type Row } from './model';
 import { projectionToolOutput, projectionToolTime } from '../ui/src/sync/session-tool-content';
+import { parseQuestionOutput } from '../ui/src/sync/recover-pending-questions';
 import { isToolPartActive } from '../ui/src/components/chat/message/parts/toolRenderUtils';
 import {
   isTaskToolName, normalizeTaskToolName, normalizeTaskSummaryEntries,
@@ -78,6 +79,11 @@ export function nativeToolDetails(tool: Row) {
 
 /** Display-only shortening never changes the source path passed to navigation. */
 export function nativeToolDescription(details: ReturnType<typeof nativeToolDetails>, directory: string): string {
+  // Web ToolPart summary for the question tool; the wording is not localized there either.
+  if (details.name === 'question' && Array.isArray(details.input.questions)) {
+    const count = details.input.questions.length;
+    return `Asked ${count} question${count !== 1 ? 's' : ''}`;
+  }
   const path = details.path || (details.files.length === 1 ? details.files[0].path : '');
   if (path) {
     const normalized = path.replace(/\\/g, '/'), root = directory.replace(/\\/g, '/').replace(/\/$/, '');
@@ -85,6 +91,26 @@ export function nativeToolDescription(details: ReturnType<typeof nativeToolDetai
   }
   if (details.command) return details.command.split('\n')[0].slice(0, 100);
   return details.task ? details.description.slice(0, 80) : details.description;
+}
+
+export type NativeQuestionBody =
+  | { kind: 'answers'; items: { question: string; answer: string }[] }
+  | { kind: 'questions'; items: { header: string; question: string; options: string[] }[] }
+  | { kind: 'awaiting' };
+
+/** Web ToolPart question-tool body: parsed Q&A, else the asked questions from input, else awaiting. Errors keep the generic error block. */
+export function nativeQuestionBody(details: ReturnType<typeof nativeToolDetails>): NativeQuestionBody | null {
+  if (details.name !== 'question') return null;
+  if (details.status === 'completed' && details.output) {
+    const parsed = parseQuestionOutput(details.output);
+    if (parsed?.length) return { kind: 'answers', items: parsed };
+  }
+  if (details.status === 'error') return null;
+  const items = list(details.input.questions).map(item => ({
+    header: text(item.header), question: text(item.question),
+    options: list(item.options).map(option => text(option.label)).filter(Boolean),
+  }));
+  return items.length ? { kind: 'questions', items } : { kind: 'awaiting' };
 }
 
 export type NativeMultiFileEntry = { path: string; name: string; added: number | null; removed: number | null };

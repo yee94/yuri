@@ -1449,7 +1449,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
         ref={value => transcriptRef.set(value)}
         class="flex-1"
         contentStyle={nativeDensity().chat.transcript}
-        header={() => <View testID="transcript-composer-inset" style={{ height: composerHeight() + 16 }} />}
+        header={() => <View><BlockingRequests chat={chat} /><View testID="transcript-composer-inset" style={{ height: composerHeight() + 16 }} /></View>}
         inverted
         onScrollDragStart={listHistoryEvents().onScrollDragStart}
         onScroll={listHistoryEvents().onScroll}
@@ -1498,7 +1498,7 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
             </AssistantTranscriptRow>
             <If when={props.target.kind === 'session' && pendingHeaders().has(row().head.id)}><NativeTurnHeader message={turnHeader(row())} modelName={turnModelName(turnHeader(row()))} identityKey={row().turn?.turnId} /></If>
             <NativeTurnError row={row()} />
-            <If when={nativeUserActionsVisible(row()) || !!turns().get(item().id)?.footer}><NativeMessageActions history={history} message={item} speech={messageSpeech} tps={turns().get(item().id)?.tps} duration={turns().get(item().id)?.duration} /></If>
+            <If when={props.target.kind === 'session' && (nativeUserActionsVisible(row()) || !!turns().get(item().id)?.footer)}><NativeMessageActions history={history} message={item} speech={messageSpeech} tps={turns().get(item().id)?.tps} duration={turns().get(item().id)?.duration} /></If>
           </View>
         ); }}</If>}
       </List>
@@ -1508,7 +1508,6 @@ function Chat(props: { route: Extract<Route, { kind: 'chat' }>; target: ChatTarg
         <Text testID="history-focus-status" class="text-sm text-muted-foreground">{t(focusState()?.status === 'not-found' ? 'chat.history.focusMissing' : focusState()?.status === 'hidden' ? 'chat.history.focusHidden' : focusState()?.status === 'loading' ? 'mobile.chat.syncingMessages' : 'commandPalette.error.messages')}</Text>
         <If when={focusState()?.status === 'error'}><Button testID="history-focus-retry" class={quiet} onPress={() => { void messageFocus.retry(); }}><Text class="text-foreground">{t('chat.questionDelegate.retry')}</Text></Button></If>
       </View></If>
-      <BlockingRequests chat={chat} />
       <If when={props.target.kind === 'assistant'}><AssistantHeaderScrim><AssistantIdentity bot={contactBot()} active={chat.active()} onPress={openSelection} /></AssistantHeaderScrim></If>
       <NativeComposerChrome state={chromeState()} bottom={safeArea().bottom + 16} onHeight={value => composerHeight.set(value)} compact={<>
         <If when={props.target.kind === 'session'}><Button testID="compact-attach" class="size-8 items-center justify-center" disabled={attaching()} accessibilityLabel={t('chat.chatInput.actions.addAttachment')} onPress={chooseAttachment}><Icon name="attachment-2" size={20} /></Button></If>
