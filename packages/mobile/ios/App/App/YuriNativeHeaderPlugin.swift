@@ -80,6 +80,13 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
             guard let self, let controller = self.webView?.configuration.userContentController else { return }
             controller.add(WeakMessageHandler(self), name: "yuriHeaderCollapse")
             self.observeKeyboard()
+            self.keyboardObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.imeSync else { return }
+                // Foreground may follow a page reload; republish what the page lost.
+                self.publishedSafeArea = nil
+                self.publishSafeArea()
+                self.publishLift(self.keyboardOverlap)
+            })
             // WKWebView pans its root scroll view to reveal a focused field.
             // The page already lays itself out above the keyboard, so that pan
             // would double the lift (same rule as Keyboard disableScroll).
@@ -104,6 +111,9 @@ class YuriNativeHeaderPlugin: CAPPlugin, CAPBridgedPlugin, WKScriptMessageHandle
             if !enabled { self.resetIme() }
             self.imeSync = enabled
             if enabled {
+                // A reloaded page (OTA restart, recycled web process) has lost
+                // the CSS variables this cache claims are already published.
+                self.publishedSafeArea = nil
                 self.publishSafeArea()
                 // Focus can move from search to chat with an already-open IME;
                 // UIKit need not send another keyboard frame in that case.
