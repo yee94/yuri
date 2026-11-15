@@ -10,7 +10,8 @@ vi.mock('@/lib/i18n', () => ({
   getCurrentIntlLocale: () => 'en-US',
 }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
-vi.mock('@/components/ui/ModelLogo', () => ({ ModelLogo: () => null }));
+const rowRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('@/components/ui/ModelLogo', () => ({ ModelLogo: () => { rowRenders.count += 1; return null; } }));
 vi.mock('@/components/ui/ProviderLogo', () => ({ ProviderLogo: () => null }));
 vi.mock('@/components/ui/matchingPress', () => ({
   markMatchingPress: () => undefined,
@@ -109,6 +110,15 @@ describe('MobileModelPickerPanel stairs layout', () => {
     await renderPanel({ selectedProviderID: 'anthropic', selectedModelID: 'haiku' });
     await search('claude');
     expect(rowNames()[0]).toBe('Claude Haiku');
+  });
+
+  test('rail highlight changes do not re-render model rows', async () => {
+    await renderPanel();
+    const before = rowRenders.count;
+    const button = container.querySelector<HTMLButtonElement>('.model-picker-rail button[aria-label="Claude Code"]')!;
+    await act(async () => button.click());
+    expect(button.getAttribute('aria-current')).toBe('true');
+    expect(rowRenders.count).toBe(before);
   });
 
   test('tapping a rail entry scrolls to that provider and keeps it active', async () => {

@@ -232,8 +232,20 @@ a tapped entry stays active until the list scrolls away from its target. Search 
 a flat list with the same ranking and ID/multi-term matching. Ranking and
 selected-provider lifting are shared in `lib/search/modelPickerRanking.ts`; the
 mobile panel takes `recencyOrder` (raw usage history) like the desktop list.
-Because every group is now expanded, row work scales with the full catalog; the
-closed-sheet gate still keeps it out of the closed state.
+Because every group is expanded, the panel bounds row work explicitly:
+- rows are a memoized `MobileModelRow` with primitive props and `useEvent`
+  handlers, so rail highlight, scroll sync, and another row's expansion never
+  re-render them;
+- display names and thinking variants come from a per-catalog index instead of
+  per-row provider scans;
+- the first commit mounts about 40 rows and the rest follow in a transition (a
+  rail tap before then mounts them synchronously with `flushSync`);
+- provider groups use `content-visibility: auto` with intrinsic sizes from the
+  measured row/label heights, so off-screen groups skip layout and paint and
+  rail jumps land on the rendered position;
+- scroll sync runs at most once per animation frame, and filtering follows a
+  deferred query so typing does not wait for the list.
+The closed-sheet gate still keeps all of it out of the closed state.
 
 ## Mobile session read/unread actions
 
