@@ -49,4 +49,38 @@ describe('task view partition', () => {
     expect(buckets.active.map((item) => item.id).sort()).toEqual(['running', 'waiting']);
     expect(buckets.settled.map((item) => item.id)).toEqual(['quiet']);
   });
+
+  test('sessions the Host index does not hold stay out unless they are live', () => {
+    const buckets = deriveTaskBuckets({
+      sessions: [session('indexed'), session('old'), session('live-old')],
+      pinnedSessionIds: none,
+      settledSessionIds: none,
+      indexedSessionIds: new Set(['indexed']),
+      runningSessionIds: new Set(['live-old']),
+      pendingRequestSessionIds: none,
+      unseenBySession: {},
+    });
+    expect(buckets.active.map((item) => item.id).sort()).toEqual(['indexed', 'live-old']);
+    expect(buckets.settled).toEqual([]);
+  });
+
+  test('project-view archives join the shelf, newest archive or settle first', () => {
+    const buckets = deriveTaskBuckets({
+      sessions: [
+        session('archived-old', { time: { created: 1, updated: 1, archived: 100 } }),
+        session('archived-new', { time: { created: 1, updated: 1, archived: 300 } }),
+        session('settled-mid', { time: { created: 1, updated: 1 } }),
+        session('open'),
+      ],
+      pinnedSessionIds: none,
+      settledSessionIds: new Set(['settled-mid']),
+      indexedSessionIds: new Set(['settled-mid', 'open']),
+      settledAtBySessionId: new Map([['settled-mid', 200]]),
+      runningSessionIds: none,
+      pendingRequestSessionIds: none,
+      unseenBySession: {},
+    });
+    expect(buckets.active.map((item) => item.id)).toEqual(['open']);
+    expect(buckets.settled.map((item) => item.id)).toEqual(['archived-new', 'settled-mid', 'archived-old']);
+  });
 });

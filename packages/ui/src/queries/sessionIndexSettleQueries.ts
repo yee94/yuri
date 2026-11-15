@@ -65,6 +65,40 @@ export const readSettledSessionIds = (
   return cachedSettledIds;
 };
 
+export type TaskIndexMembership = {
+  indexedIds: ReadonlySet<string>;
+  settledAtById: ReadonlyMap<string, number>;
+};
+
+let cachedMembershipSnapshot: SessionIndexSnapshot | null | undefined;
+let cachedMembershipTransport: string | null = null;
+let cachedMembership: TaskIndexMembership | null = null;
+
+/** Index-held session ids and their settle times; `null` while no snapshot is loaded. */
+export const readTaskIndexMembership = (
+  client: Pick<QueryClient, 'getQueryData'> = queryClient,
+  transport = getRuntimeTransportIdentity(),
+): TaskIndexMembership | null => {
+  const snapshot = readSessionIndexSnapshotQuery(client, transport);
+  if (snapshot === cachedMembershipSnapshot && transport === cachedMembershipTransport) return cachedMembership;
+  let next: TaskIndexMembership | null = null;
+  if (snapshot) {
+    const indexedIds = new Set<string>();
+    const settledAtById = new Map<string, number>();
+    for (const directory of snapshot.directories) {
+      for (const session of directory.sessions) {
+        indexedIds.add(session.id);
+        if (isSessionIndexSettled(session)) settledAtById.set(session.id, session.time.settled as number);
+      }
+    }
+    next = { indexedIds, settledAtById };
+  }
+  cachedMembershipSnapshot = snapshot;
+  cachedMembershipTransport = transport;
+  cachedMembership = next;
+  return next;
+};
+
 export const patchSessionIndexSettled = (
   snapshot: SessionIndexSnapshot,
   sessionId: string,
@@ -125,6 +159,10 @@ const subscribeSettledSessionIds = (onStoreChange: () => void): (() => void) => 
 /** Reactive settled-id set derived from the session-index snapshot Query cache. */
 export const useSettledSessionIds = (): ReadonlySet<string> => (
   useSyncExternalStore(subscribeSettledSessionIds, () => readSettledSessionIds(), () => EMPTY_SETTLED_SESSION_IDS)
+);
+
+export const useTaskIndexMembership = (): TaskIndexMembership | null => (
+  useSyncExternalStore(subscribeSettledSessionIds, () => readTaskIndexMembership(), () => null)
 );
 
 /**

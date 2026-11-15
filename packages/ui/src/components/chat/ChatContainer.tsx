@@ -101,6 +101,7 @@ import {
     useSession,
     useCurrentSessionEntity,
     setActiveSession,
+    releaseActiveSession,
 } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
 import {
@@ -789,6 +790,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
     useIsomorphicLayoutEffect(() => {
         if (!active || !currentSessionId || !effectiveSessionDirectory) return;
         setActiveSession(effectiveSessionDirectory, currentSessionId);
+        return () => releaseActiveSession(effectiveSessionDirectory, currentSessionId);
     }, [active, currentSessionId, effectiveSessionDirectory]);
     const ensureSessionRenderable = useEvent(
         (sessionId: string) => sync.ensureSessionRenderable(sessionId, { directory: effectiveSessionDirectory }),

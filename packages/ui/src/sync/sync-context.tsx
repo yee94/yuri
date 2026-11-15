@@ -867,6 +867,13 @@ export function setActiveSession(directory: string, sessionId: string) {
   flushDeferredIdleTranscriptSettle(directory, sessionId)
 }
 
+/** Release the active-session claim only if it still belongs to the caller. */
+export function releaseActiveSession(directory: string, sessionId: string) {
+  if (_activeDirectory !== directory || _activeSession !== sessionId) return
+  _activeDirectory = ""
+  _activeSession = ""
+}
+
 /** Test-only: drop the succeeded/idle dedupe so cases do not leak across files. */
 export function clearTurnCompleteNotificationGuardForTests() {
   turnCompleteNotified.clear()

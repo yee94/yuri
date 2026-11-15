@@ -37,7 +37,7 @@ vi.mock('@/sync/notification-store', () => ({
     selector({ index: { session: { unseenCount: fixtures.counts } } }),
 }));
 vi.mock('@/queries/sessionIndexPinQueries', () => ({ usePinnedSessionIds: () => fixtures.ids }));
-vi.mock('@/queries/sessionIndexSettleQueries', () => ({ useSettledSessionIds: () => fixtures.ids }));
+vi.mock('@/queries/sessionIndexSettleQueries', () => ({ useSettledSessionIds: () => fixtures.ids, useTaskIndexMembership: () => null }));
 vi.mock('@/components/session/sidebar/hooks/useAlwaysVisibleSessionIds', () => ({ useRunningSessionIds: () => fixtures.ids }));
 vi.mock('@/components/session/sidebar/taskRunElapsed', () => ({ useRunStartTimes: () => fixtures.runStarts }));
 vi.mock('@/sync/sync-context', () => ({ useSessionIdsWithPendingRequests: () => fixtures.ids }));

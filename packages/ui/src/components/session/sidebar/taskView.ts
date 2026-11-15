@@ -20,6 +20,14 @@ type TaskBucketInput = {
   pinnedSessionIds: ReadonlySet<string>;
   /** Host-projected settled membership (override, baseline and cooldown already applied). */
   settledSessionIds: ReadonlySet<string>;
+  /**
+   * Host-index membership. When known, a session the index does not hold (older
+   * rows pulled in by browsing the project view) never joins the active list
+   * unless it is live. `null` means the snapshot is unavailable: do not filter.
+   */
+  indexedSessionIds?: ReadonlySet<string> | null;
+  /** Host settle timestamps, used to order the archived shelf. */
+  settledAtBySessionId?: ReadonlyMap<string, number>;
   runningSessionIds: ReadonlySet<string>;
   pendingRequestSessionIds: ReadonlySet<string>;
   unseenBySession: Readonly<Record<string, number>>;
@@ -56,6 +64,8 @@ export const deriveTaskBuckets = ({
   sessions,
   pinnedSessionIds,
   settledSessionIds,
+  indexedSessionIds = null,
+  settledAtBySessionId,
   runningSessionIds,
   pendingRequestSessionIds,
   unseenBySession,
@@ -64,12 +74,16 @@ export const deriveTaskBuckets = ({
   const settled: Session[] = [];
 
   for (const session of sessions) {
-    if (!isTaskViewSession(session) || pinnedSessionIds.has(session.id)) continue;
-    if (
-      !runningSessionIds.has(session.id)
-      && !pendingRequestSessionIds.has(session.id)
-      && settledSessionIds.has(session.id)
-    ) {
+    if (isSubtask(session)) continue;
+    // A project-view archive is an archive here too: it joins the shelf and never the active list.
+    if (isArchived(session)) {
+      settled.push(session);
+      continue;
+    }
+    if (pinnedSessionIds.has(session.id)) continue;
+    const live = runningSessionIds.has(session.id) || pendingRequestSessionIds.has(session.id);
+    if (!live && indexedSessionIds && !indexedSessionIds.has(session.id)) continue;
+    if (!live && settledSessionIds.has(session.id)) {
       settled.push(session);
     } else {
       active.push(session);
@@ -80,7 +94,11 @@ export const deriveTaskBuckets = ({
     taskNeedsAttention(session.id, pendingRequestSessionIds, unseenBySession) ? 0 : 1
   );
   active.sort((a, b) => attentionRank(a) - attentionRank(b) || byActivityDesc(a, b));
-  settled.sort(byActivityDesc);
+  // Newest archive first: real archive time, else the Host settle time.
+  const archivedAtOf = (session: Session): number => (
+    isArchived(session) ? session.time?.archived ?? 0 : settledAtBySessionId?.get(session.id) ?? 0
+  );
+  settled.sort((a, b) => archivedAtOf(b) - archivedAtOf(a) || byActivityDesc(a, b));
 
   return { active, settled };
 };

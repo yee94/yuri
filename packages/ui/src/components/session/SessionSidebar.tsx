@@ -88,7 +88,8 @@ import {
 import { type SessionGroup, type SessionNode } from './sidebar/types';
 import { derivePinnedSessions, listInProgressHomeSessions, rankByManualOrder, resolveTopSectionSecondaryMeta, PINNED_SESSION_ORDER_SCOPE } from './sidebar/pinnedSessions';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
-import { useSetSessionSettled, useSettledSessionIds } from '@/queries/sessionIndexSettleQueries';
+import { useSetSessionSettled, useSettledSessionIds, useTaskIndexMembership } from '@/queries/sessionIndexSettleQueries';
+import { unarchiveSession } from '@/sync/session-actions';
 import { SidebarViewSwitch } from './sidebar/SidebarViewSwitch';
 import { SidebarSettledShelf, SidebarTaskList } from './sidebar/SidebarTaskList';
 import type { TaskProjectMark } from './sidebar/TaskCardParts';
@@ -363,6 +364,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const pinnedSessionIds = usePinnedSessionIds();
   const togglePinnedSession = useTogglePinnedSession();
   const settledSessionIds = useSettledSessionIds();
+  const taskIndexMembership = useTaskIndexMembership();
   const setSessionSettled = useSetSessionSettled();
   const pendingRequestSessionIds = useSessionIdsWithPendingRequests();
   // Persisted in the UI store (instant on refresh) and mirrored to the Host
@@ -1812,13 +1814,20 @@ export const SessionSidebar = React.memo(function SessionSidebar({
           sessions,
           pinnedSessionIds,
           settledSessionIds,
+          indexedSessionIds: taskIndexMembership?.indexedIds ?? null,
+          settledAtBySessionId: taskIndexMembership?.settledAtById,
           runningSessionIds,
           pendingRequestSessionIds,
           unseenBySession,
         })
       : null,
-    [pendingRequestSessionIds, pinnedSessionIds, runningSessionIds, sessions, settledSessionIds, taskViewActive, unseenBySession],
+    [pendingRequestSessionIds, pinnedSessionIds, runningSessionIds, sessions, settledSessionIds, taskIndexMembership, taskViewActive, unseenBySession],
   );
+  // Archived-shelf rows offer "move back"; project-view archives count as shelf rows too.
+  const rowSettledSessionIds = React.useMemo(() => {
+    const archived = rankedTaskBuckets?.settled.filter((session) => !settledSessionIds.has(session.id));
+    return archived?.length ? new Set([...settledSessionIds, ...archived.map((session) => session.id)]) : settledSessionIds;
+  }, [rankedTaskBuckets, settledSessionIds]);
   const readTaskRowState = useEvent((session: Session): TransientRowState => ({
     activityAt: getSessionActivityUpdatedAt(session),
     running: runningSessionIds.has(session.id),
@@ -1872,6 +1881,10 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     );
   });
   const handleSetTaskSessionSettled = useEvent((sessionId: string, nextSettled: boolean) => {
+    if (!nextSettled && rankedTaskBuckets?.settled.some((session) => session.id === sessionId && session.time?.archived)) {
+      void unarchiveSession(sessionId);
+      return;
+    }
     if (!nextSettled || !taskViewActive || currentSessionId !== sessionId) {
       setSessionSettled(sessionId, nextSettled);
       return;
@@ -2430,7 +2443,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         archivedBucket={archivedBucket}
         currentSessionId={currentSessionId}
         pinnedSessionIds={pinnedSessionIds}
-        settledSessionIds={settledSessionIds}
+        settledSessionIds={rowSettledSessionIds}
         setSessionSettled={rowSetSessionSettled}
         expandedParents={expandedParents}
         hasSessionSearchQuery={hasSessionSearchQuery}

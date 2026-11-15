@@ -120,7 +120,7 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
     </span>
   ) : indicator === 'running' ? (
     <span
-      className="yuri-mobile-task-meta inline-flex shrink-0 items-center gap-1 font-medium tabular-nums text-foreground"
+      className="yuri-mobile-task-meta inline-flex shrink-0 items-center gap-1 font-medium tabular-nums text-status-info"
       title={t('sessions.sidebar.session.status.active')}
     >
       <SessionBusyIndicator size={11} arcColor="var(--status-info)" className="motion-reduce:[&_svg]:animate-none" />

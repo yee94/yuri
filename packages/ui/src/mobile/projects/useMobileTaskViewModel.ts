@@ -15,7 +15,7 @@ import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
 import { formatPathForDisplay } from '@/lib/utils';
 import { usePinnedSessionIds } from '@/queries/sessionIndexPinQueries';
-import { useSettledSessionIds } from '@/queries/sessionIndexSettleQueries';
+import { useSettledSessionIds, useTaskIndexMembership } from '@/queries/sessionIndexSettleQueries';
 import { useGitRepoStatusMap, useGitStore } from '@/stores/useGitStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
@@ -84,6 +84,7 @@ export function useMobileTaskViewModel(
   const { t } = useI18n();
   const pinnedSessionIds = usePinnedSessionIds();
   const settledIds = useSettledSessionIds();
+  const indexMembership = useTaskIndexMembership();
   const runningSessionIds = useRunningSessionIds({ enabled });
   const pendingRequestSessionIds = useSessionIdsWithPendingRequests();
   const unseenBySession = useNotificationStore((state) => state.index.session.unseenCount);
@@ -115,6 +116,8 @@ export function useMobileTaskViewModel(
       sessions: model.allSessions,
       pinnedSessionIds,
       settledSessionIds: settledIds,
+      indexedSessionIds: indexMembership?.indexedIds ?? null,
+      settledAtBySessionId: indexMembership?.settledAtById,
       runningSessionIds,
       pendingRequestSessionIds,
       unseenBySession,
@@ -175,6 +178,7 @@ export function useMobileTaskViewModel(
     enabled,
     gitStatus,
     homeDirectory,
+    indexMembership,
     model.allSessions,
     model.ownership,
     model.projectMetaById,
