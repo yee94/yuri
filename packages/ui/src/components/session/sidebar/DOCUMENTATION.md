@@ -25,6 +25,13 @@ Their compact type scale is scoped in `mobile.css`: title 14/20px, project
 weight, with medium (500) reserved for unread tasks. Rows use 14px vertical
 insets and no inter-row gap; the archive group follows in document flow with an
 8px gap and no glass background, border shell, shadow or backdrop filter.
+Mobile task rows always reserve the compact 14px branch line and its 6px top
+gap, including unpinned rows. The task model projects the same branch/loading/
+no-git distinction as PC from the existing shared Git status: unknown Git status
+stays loading, a confirmed non-repository shows its home-shortened project path.
+Loading uses the existing localized `common.loading`, a small branch glyph and
+muted text without a spinner or pulse. Resolution, pinning and missing metadata
+do not add/remove this line; title wrapping remains capped at two lines.
 Its 48px disclosure header aligns an 18px archive glyph within the same 40px
 icon column and puts its label at the task text inset (54px). The count uses
 the 11px meta scale. Expanded rows share that 54px inset, top separators and

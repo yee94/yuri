@@ -13,9 +13,11 @@ import {
 } from '@/components/session/sidebar/taskView';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
+import { formatPathForDisplay } from '@/lib/utils';
 import { usePinnedSessionIds } from '@/queries/sessionIndexPinQueries';
 import { useSettledSessionIds } from '@/queries/sessionIndexSettleQueries';
 import { useGitRepoStatusMap, useGitStore } from '@/stores/useGitStore';
+import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { useNotificationStore } from '@/sync/notification-store';
@@ -38,6 +40,8 @@ const sameMobileTaskNode = (a: MobileTaskNode, b: MobileTaskNode): boolean => (
   && a.projectLabel === b.projectLabel
   && a.project === b.project
   && a.branch === b.branch
+  && a.branchState === b.branchState
+  && a.pathLabel === b.pathLabel
   && a.activityLabel === b.activityLabel
   && a.unread === b.unread
   && a.pinned === b.pinned
@@ -85,6 +89,7 @@ export function useMobileTaskViewModel(
   const pinnedOrder = useSessionFoldersStore((state) => state.sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]);
   const registryProjects = useProjectsStore((state) => state.projects);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
   const runStartTimes = useRunStartTimes(runningSessionIds, enabled);
   const previousNodesRef = React.useRef<Map<string, MobileTaskNode>>(new Map());
 
@@ -126,6 +131,9 @@ export function useMobileTaskViewModel(
       const worktree = meta && owner?.kind === 'worktree'
         ? findExactWorktreeMatch(meta, owner.scopeDirectory)
         : null;
+      const projectGit = meta ? gitStatus.get(meta.path) : undefined;
+      const branch = resolveTaskBranch(worktree?.branch, projectGit?.branch, meta?.label);
+      const branchState = branch ? null : !meta || projectGit?.isGitRepo === false ? 'no-git' : 'loading';
       const candidate: MobileTaskNode = {
         id: session.id,
         title: session.title?.trim() || untitled,
@@ -134,7 +142,9 @@ export function useMobileTaskViewModel(
         project: meta
           ? { id: meta.id, icon: meta.icon ?? undefined, color: colorByProjectId.get(meta.id), iconImage: meta.iconImage ?? undefined }
           : null,
-        branch: resolveTaskBranch(worktree?.branch, meta ? gitStatus.get(meta.path)?.branch : null, meta?.label),
+        branch,
+        branchState,
+        pathLabel: branchState === 'no-git' && meta ? formatPathForDisplay(meta.path, homeDirectory) : undefined,
         activityLabel: formatRelativeShort(getSessionTimestamp(session)) || undefined,
         unread: (unseenBySession[session.id] ?? 0) > 0,
         pinned,
@@ -161,6 +171,7 @@ export function useMobileTaskViewModel(
     currentSessionId,
     enabled,
     gitStatus,
+    homeDirectory,
     model.allSessions,
     model.ownership,
     model.projectMetaById,

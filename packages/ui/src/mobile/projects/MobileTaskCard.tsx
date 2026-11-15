@@ -29,6 +29,8 @@ export type MobileTaskNode = {
   projectLabel: string;
   project: TaskProjectMark | null;
   branch?: string;
+  branchState?: 'loading' | 'no-git' | null;
+  pathLabel?: string;
   activityLabel?: string;
   unread: boolean;
   pinned: boolean;
@@ -188,21 +190,29 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
           >
             {task.title}
           </span>
-          {task.branch || task.pinned ? (
-            <span className="yuri-mobile-task-meta mt-1.5 flex h-3.5 items-center gap-1 text-muted-foreground">
-              {task.branch ? (
-                <>
-                  <Icon name="git-branch" className="size-3 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">{task.branch}</span>
-                </>
-              ) : <span className="flex-1" />}
-              {task.pinned ? (
-                <span className="yuri-mobile-task-pin inline-flex shrink-0 items-center justify-center">
-                  <Icon name="pushpin-2-fill" className="size-3 shrink-0" aria-label={t('sessions.sidebar.session.actions.pinned')} />
+          <span className="yuri-mobile-task-branch yuri-mobile-task-meta mt-1.5 flex h-3.5 items-center gap-1 text-muted-foreground">
+            {task.branch || task.branchState === 'loading' ? (
+              <>
+                <Icon name="git-branch" className="size-3 shrink-0" />
+                <span
+                  className={cn('min-w-0 flex-1 truncate', !task.branch && 'opacity-60')}
+                  aria-busy={!task.branch && task.branchState === 'loading' ? true : undefined}
+                >
+                  {task.branch || t('common.loading')}
                 </span>
-              ) : null}
-            </span>
-          ) : null}
+              </>
+            ) : task.pathLabel ? (
+              <>
+                <Icon name="folder-open" className="size-3 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{task.pathLabel}</span>
+              </>
+            ) : <span className="flex-1" />}
+            {task.pinned ? (
+              <span className="yuri-mobile-task-pin inline-flex shrink-0 items-center justify-center">
+                <Icon name="pushpin-2-fill" className="size-3 shrink-0" aria-label={t('sessions.sidebar.session.actions.pinned')} />
+              </span>
+            ) : null}
+          </span>
         </button>
         <Button
           type="button"

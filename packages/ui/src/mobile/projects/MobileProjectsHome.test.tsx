@@ -18,6 +18,7 @@ import {
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useMobileProjectsHomeModel } from './useMobileProjectsHomeModel';
 import { MobileTaskCard } from './MobileTaskCard';
+import type { MobileTaskNode } from './MobileTaskCard';
 import { MobileSessionRow } from './MobileSessionRow';
 
 import {
@@ -63,6 +64,36 @@ const homeSource = readFileSync(
 );
 
 const noop = () => undefined;
+
+test.each([
+  { branchState: 'loading' as const },
+  { branch: 'feature/compact-branch' },
+  { branchState: 'no-git' as const, pathLabel: '~/notes' },
+  { branchState: 'no-git' as const },
+  { pinned: true },
+])('task branch line reserves compact space for $branchState $branch $pinned', (patch) => {
+  const task: MobileTaskNode = {
+    id: 'branch-slot', title: 'Task', projectLabel: 'Project', project: null,
+    unread: false, pinned: false, active: false, ...patch,
+  };
+  const host = document.createElement('div');
+  host.innerHTML = renderToString(<I18nProvider>
+    <MobileTaskCard task={task} runStartedAt={null}
+      onSelect={noop} onOpenActions={noop} onPin={noop} onArchive={noop} />
+  </I18nProvider>);
+  const slot = host.querySelector('.yuri-mobile-task-branch')!;
+  expect(slot.classList.contains('h-3.5')).toBe(true);
+  expect(slot.classList.contains('mt-1.5')).toBe(true);
+  if (task.branchState === 'loading') {
+    expect(slot.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(slot.querySelector('use[href="#yuri-git-branch"]')).not.toBeNull();
+    expect(slot.className).not.toContain('animate-');
+  } else {
+    expect(slot.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(slot.textContent).toBe(task.branch ?? task.pathLabel ?? '');
+  }
+  expect(Boolean(slot.querySelector('.yuri-mobile-task-pin'))).toBe(task.pinned);
+});
 
 test('project session swipe archive shares the solid red plate and white content', () => {
   const host = document.createElement('div');
