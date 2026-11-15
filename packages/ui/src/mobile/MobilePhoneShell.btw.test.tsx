@@ -90,6 +90,28 @@ describe('phone /btw page', () => {
     expect(pushPhoneBtw(target)).toBe(false);
   });
 
+  test('projects the claimed session before the draft navigation mirror catches up', async () => {
+    useMobileNavigationStore.setState({ secondary: { kind: 'draft' } });
+    const projected: { authoritative: string | null; sessionId: string; viewKey: string }[] = [];
+    await act(async () => root.render(<MobilePhoneShell
+      onAddProject={() => undefined}
+      onEnableAssistants={() => undefined}
+      renderChat={(chat) => {
+        const authoritative = useSessionUIStore.getState().currentSessionId;
+        projected.push({ authoritative, sessionId: chat.sessionId, viewKey: chat.viewKey });
+        return authoritative && !chat.sessionId ? null : <textarea />;
+      }}
+    />));
+    const textarea = host.querySelector('textarea');
+    expect(textarea).not.toBeNull();
+    await act(async () => useSessionUIStore.setState({ currentSessionId: 'claimed-session' }));
+    expect(projected.filter((chat) => chat.authoritative === 'claimed-session')).toEqual(
+      expect.arrayContaining([expect.objectContaining({ sessionId: 'claimed-session', viewKey: 'chat-primary' })]),
+    );
+    expect(projected.some((chat) => chat.authoritative === 'claimed-session' && !chat.sessionId)).toBe(false);
+    expect(host.querySelector('textarea')).toBe(textarea);
+  });
+
   test('remote chat secondary never materializes the retained Hub session, and Back only clears the remote bridge', async () => {
     useSessionUIStore.setState({ currentSessionId: 'hub-session' });
     const localSelect = vi.spyOn(useSessionUIStore.getState(), 'setCurrentSession');

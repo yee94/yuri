@@ -110,6 +110,9 @@ const getSessionTimestamp = (session: Session): number => {
   return Number.isFinite(value) && value > 0 ? value : 0;
 };
 
+// Constructing Intl.DateTimeFormat per row dominated home-model rebuilds.
+const shortDateFormat = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
 /** Same short relative labels as MobileSessionsSheet. */
 const formatRelativeShort = (timestamp: number): string => {
   if (timestamp <= 0) return '';
@@ -121,7 +124,7 @@ const formatRelativeShort = (timestamp: number): string => {
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(timestamp));
+  return shortDateFormat.format(timestamp);
 };
 
 const isSessionArchived = (session: Session): boolean => {

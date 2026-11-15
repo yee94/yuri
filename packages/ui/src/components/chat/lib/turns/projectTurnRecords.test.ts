@@ -175,6 +175,30 @@ describe('projectTurnRecords', () => {
         expect(projectTurnRecords([leading, assistant]).turns[0]?.assistantMessageIds).toEqual(['a1']);
     });
 
+    test('a late leading synthetic notice cannot insert an empty turn before the first prompt', () => {
+        const user = createMessageEntry({ id: 'u1', role: 'user', createdAt: 1 });
+        const assistant = createMessageEntry({ id: 'a1', role: 'assistant', parentID: 'u1', createdAt: 2, finish: 'stop', completedAt: 3 });
+        const notice: ChatMessageEntry = {
+            info: { id: 'n0', role: 'user', nativeType: 'synthetic', time: { created: 0 } } as unknown as Message,
+            parts: [{ id: 'n0:text', type: 'text', text: '<system-reminder>Context</system-reminder>', synthetic: true } as Part],
+        };
+        const before = projectTurnRecords([user, assistant]);
+        const after = projectTurnRecords([notice, user, assistant], { previousProjection: before });
+        expect(after.turns.map((turn) => turn.turnId)).toEqual(before.turns.map((turn) => turn.turnId));
+        expect(after.ungroupedMessageIds.has(notice.info.id)).toBe(true);
+        expect(after.indexes.messageToTurnId.has(notice.info.id)).toBe(false);
+        expect(projectTurnRecords([notice]).turns).toHaveLength(0);
+    });
+
+    test('keeps replies explicitly parented to a leading synthetic notice', () => {
+        const notice: ChatMessageEntry = {
+            info: { id: 'n0', role: 'user', nativeType: 'synthetic', time: { created: 1 } } as unknown as Message,
+            parts: [],
+        };
+        const assistant = createMessageEntry({ id: 'a1', role: 'assistant', parentID: 'n0', createdAt: 2 });
+        expect(projectTurnRecords([notice, assistant]).turns[0]?.assistantMessageIds).toEqual(['a1']);
+    });
+
     test('does not render orphan assistant messages as standalone ungrouped entries', () => {
         const assistant = createMessageEntry({ id: 'a1', role: 'assistant', parentID: 'missing-user', createdAt: 1 });
 

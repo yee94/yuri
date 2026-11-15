@@ -36,21 +36,24 @@ function WorkingStatusText({ text, elapsed, reducedMotion }: { text: string; ela
     if (!node || !label) return;
     latestText.current = text;
     if (reducedMotion) {
-      animation.current?.stop();
+      animation.current?.cancel();
       animation.current = null;
       label.textContent = text;
       node.style.opacity = '1';
       return;
     }
     // Keep both halves continuous; bursts replace one pending label, not the animation.
+    // Both keyframes are explicit: a single keyframe makes Motion read the
+    // computed style, a forced style flush on every status change. The halves
+    // only ever chain from a finished animation, so the start value is known.
     const transition = () => {
       if (animation.current || label.textContent === latestText.current) return;
-      const exit = animate(node, { opacity: 0 }, { duration: 0.25, ease: 'easeIn' });
+      const exit = animate(node, { opacity: [1, 0] }, { duration: 0.25, ease: 'easeIn' });
       animation.current = exit;
       void exit.then(() => {
         if (animation.current !== exit) return;
         label.textContent = latestText.current;
-        const enter = animate(node, { opacity: 1 }, { duration: 0.35, ease: 'easeOut' });
+        const enter = animate(node, { opacity: [0, 1] }, { duration: 0.35, ease: 'easeOut' });
         animation.current = enter;
         void enter.then(() => {
           if (animation.current !== enter) return;
@@ -62,8 +65,9 @@ function WorkingStatusText({ text, elapsed, reducedMotion }: { text: string; ela
     transition();
   }, [text, reducedMotion]);
 
+  // cancel(), never stop(): stop() commits the style of a node that is leaving.
   React.useLayoutEffect(() => () => {
-    animation.current?.stop();
+    animation.current?.cancel();
     animation.current = null;
   }, []);
 

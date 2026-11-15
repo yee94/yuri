@@ -30,9 +30,12 @@ export function MotionStreamText({ node }: React.ComponentProps<typeof TextNode>
       span.replaceWith(document.createTextNode(span.textContent ?? ''));
       root.normalize();
     };
+    // cancel(), never stop(): stop() commits each span's style first, a forced
+    // style/layout flush per span that freezes long unvirtualized transcripts.
+    // The span is replaced by its text right here, so nothing needs committing.
     const settle = () => {
       for (const [span, controls] of pending.current) {
-        controls.stop();
+        controls.cancel();
         finish(span);
       }
     };
@@ -76,7 +79,7 @@ export function MotionStreamText({ node }: React.ComponentProps<typeof TextNode>
   React.useLayoutEffect(() => {
     const animations = pending.current;
     return () => {
-      for (const controls of animations.values()) controls.stop();
+      for (const controls of animations.values()) controls.cancel();
       animations.clear();
     };
   }, []);

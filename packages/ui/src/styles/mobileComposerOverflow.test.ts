@@ -393,18 +393,14 @@ describe('mobile composer overflow and swap contract', () => {
             chatContainerSource.indexOf('if (draftSubmitting || draftEstablishing)'),
             chatContainerSource.indexOf('if (!currentSessionId)', chatContainerSource.indexOf('if (draftSubmitting || draftEstablishing)')),
         );
-        expect(establishingDraftShell).toContain('yuri-mobile-composer-foot--overlay');
+        expect(establishingDraftShell).toContain('<ComposerFoot key="composer-foot"');
+        expect(establishingDraftShell).not.toContain('overlay={false}');
+        expect(establishingDraftShell).not.toContain('invisible');
         expect(establishingDraftShell).toContain('yuri-chat-composer-swap-scope');
-        // The idle draft foot is DraftComposerFoot, which never takes the overlay class.
-        const composerFootSource = readFileSync(join(here, '../components/chat/ComposerFoot.tsx'), 'utf-8');
-        const draftFootSource = composerFootSource.slice(
-            composerFootSource.indexOf('export function DraftComposerFoot'),
-            composerFootSource.indexOf('export const DesktopComposerEdgeFade'),
-        );
-        expect(idleDraftShell).toContain('<DraftComposerFoot');
-        expect(idleDraftShell).not.toContain('<ComposerFoot');
-        expect(draftFootSource).toContain("isMobile && 'yuri-mobile-composer-foot'");
-        expect(draftFootSource).not.toContain('yuri-mobile-composer-foot--overlay');
+        // The same keyed foot keeps the editor mounted; only its positioning changes.
+        expect(idleDraftShell).toContain('<ComposerFoot');
+        expect(idleDraftShell).toContain('key="composer-foot"');
+        expect(idleDraftShell).toContain('overlay={false}');
         expect(idleDraftShell).toContain('yuri-draft-center');
     });
 
@@ -414,8 +410,8 @@ describe('mobile composer overflow and swap contract', () => {
         );
         expect(chatInputSource).toContain('yuri-mobile-draft-target-selectors');
         expect(chatInputSource).toContain('data-native-composer-accessories');
-        // Establishing foot is geometry-only; project/branch must not paint through
-        // the invisible shell via `.yuri-mobile-composer-reveal { visibility: visible }`.
+        // Once submission claims the draft target, its project/branch selectors
+        // stay unavailable until claim completes.
         expect(chatInputSource).toContain('&& !draftBusy');
         expect(chatInputSource).toMatch(
             /const showDraftTargetSelectors = surface\.kind === 'primary'[\s\S]*?&& !draftBusy/,

@@ -16,7 +16,7 @@ import { normalizeSessionProjectionMessage, reconcileFetched } from '@/sync/sess
 import { mergeSessionTranscript, shareSessionTranscriptData } from '@/sync/transcript-merge';
 
 vi.mock('motion/mini', () => ({
-    animate: () => ({ stop() {}, then() {} }),
+    animate: () => ({ stop() {}, cancel() {}, then() {} }),
 }));
 
 vi.hoisted(() => {

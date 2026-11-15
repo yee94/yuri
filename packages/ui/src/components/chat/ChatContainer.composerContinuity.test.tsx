@@ -22,7 +22,7 @@ const visit = (node: ts.Node) => {
         && node.initializer && ts.isArrowFunction(node.initializer) && ts.isBlock(node.initializer.body)) {
         const statements = node.initializer.body.statements;
         const start = statements.findIndex((statement) => ts.isIfStatement(statement)
-            && statement.expression.getText(ast) === 'hasSessionHistoryLoadError');
+            && statement.expression.getText(ast) === '!currentSessionId && !draftOpen');
         branches = statements.slice(start).map((statement) => statement.getText(ast)).join('\n');
     }
     ts.forEachChild(node, visit);
@@ -60,6 +60,9 @@ const render = async (overrides: Record<string, unknown>) => {
     const scope: Record<string, unknown> = {
         React, cn: (...values: unknown[]) => values.filter(Boolean).join(' '),
         currentSessionId: 'session', isMobile: false, isDesktopExpandedInput: false,
+        draftOpen: false, draftSubmitting: false, draftEstablishing: false,
+        useCompactDraftLayout: true, newSessionDraft: { draftID: 'draft' },
+        DraftPresetChips: Empty, renderDraftTitle: (title: string) => title, BusyDots: Empty,
         hasSessionHistoryLoadError: false, isSessionHydrating: false, sessionIsWorking: false,
         renderedViewportMessages: [{}], HYDRATING_SKELETON_ITEMS: [],
         timelineController: { historySignals: {} }, navigation: {},
@@ -77,6 +80,29 @@ const render = async (overrides: Record<string, unknown>) => {
 };
 
 describe('session loading composer continuity', () => {
+    test.each([
+        { isMobile: true, isDesktopExpandedInput: false, useCompactDraftLayout: true },
+        { isMobile: false, isDesktopExpandedInput: false, useCompactDraftLayout: false },
+        { isMobile: false, isDesktopExpandedInput: true, useCompactDraftLayout: false },
+    ])('preserves the focused input from draft through first send ($isMobile, $isDesktopExpandedInput)', async (layout) => {
+        const draft = { ...layout, currentSessionId: null, draftOpen: true };
+        await render(draft);
+        const textarea = host.querySelector('textarea')!;
+        textarea.focus();
+        for (const state of [
+            { ...draft, draftEstablishing: true },
+            draft,
+            { ...draft, draftEstablishing: true, draftPendingMessage: { info: { id: 'message' }, parts: [] } },
+            { ...draft, draftSubmitting: true, draftPendingMessage: { info: { id: 'message' }, parts: [] } },
+            { ...layout, sessionIsWorking: true },
+        ]) {
+            await render(state);
+            expect(host.querySelector('textarea')).toBe(textarea);
+            expect(document.activeElement).toBe(textarea);
+            expect(textarea.closest('.invisible')).toBeNull();
+        }
+    });
+
     test.each([
         { isMobile: false, isDesktopExpandedInput: false },
         { isMobile: true, isDesktopExpandedInput: false },

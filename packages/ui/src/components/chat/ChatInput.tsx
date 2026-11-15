@@ -6148,9 +6148,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
     const footerGapClass = 'gap-x-1.5 gap-y-0';
     const isVSCode = isVSCodeRuntime();
-    // Establishing reuses ChatInput under an `invisible` foot for geometry only.
-    // `.yuri-mobile-composer-reveal { visibility: visible }` would otherwise punch
-    // project/branch chips through that hide — drop the selectors until claim.
+    // Submission has claimed the target; keep the composer mounted but remove
+    // project/branch selectors until the real session takes ownership.
     const showDraftTargetSelectors = surface.kind === 'primary'
         && surfaceHasNewDraft
         && !isVSCode
@@ -7359,7 +7358,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 ? { marginBottom: `${inputBarOffset}px` }
                 : undefined}
         >
-            {surfaceHasNewDraft && !isDesktopExpanded && !isMobile && !isVSCode && !isMiniChatSurface ? (
+            {surfaceHasNewDraft && !draftBusy && !isDesktopExpanded && !isMobile && !isVSCode && !isMiniChatSurface ? (
                 <div className="chat-input-column mb-7 text-center">
                     <h1 className="text-balance text-2xl font-normal tracking-tight text-foreground md:text-3xl">
                         {renderDraftTitle(
@@ -8075,7 +8074,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     />
                 ) : null}
             </div>
-            {newSessionDraftOpen && !isDesktopExpanded && !isMobile && !isVSCode && !isMiniChatSurface ? (
+            {newSessionDraftOpen && !draftBusy && !isDesktopExpanded && !isMobile && !isVSCode && !isMiniChatSurface ? (
                 <DraftPresetChips onSubmit={submitPresetPrompt} className="chat-input-column mt-4" />
             ) : null}
         </form>

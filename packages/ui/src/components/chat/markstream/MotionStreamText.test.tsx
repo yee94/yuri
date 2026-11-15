@@ -4,13 +4,14 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { MotionStreamText } from './MotionStreamText';
 import { MarkstreamHostContext } from './markstreamHostContext';
 
-const state = vi.hoisted(() => ({ reduced: false, animations: [] as { stop: ReturnType<typeof vi.fn>; complete: () => void }[] }));
+const state = vi.hoisted(() => ({ reduced: false, animations: [] as { stop: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn>; complete: () => void }[] }));
 vi.mock('motion/react', () => ({ useReducedMotion: () => state.reduced }));
 vi.mock('motion/mini', () => ({ animate: vi.fn(() => {
   let complete = () => {};
   const stop = vi.fn();
-  state.animations.push({ stop, complete: () => complete() });
-  return { stop, then(callback: () => void) { complete = callback; } };
+  const cancel = vi.fn();
+  state.animations.push({ stop, cancel, complete: () => complete() });
+  return { stop, cancel, then(callback: () => void) { complete = callback; } };
 }) }));
 
 afterEach(() => { state.reduced = false; state.animations = []; });
@@ -43,7 +44,8 @@ test('only the appended suffix animates and the same inline host survives comple
     expect(s.container.firstElementChild).toBe(host);
     expect(s.container.querySelector('[data-motion-stream-chunk]')).toBeNull();
     expect(s.container.textContent).toBe('Existing text 新增文字与表情👨‍👩‍👧‍👦结束');
-    expect(state.animations.every((animation) => animation.stop.mock.calls.length === 1)).toBe(true);
+    expect(state.animations.every((animation) => animation.cancel.mock.calls.length === 1)).toBe(true);
+    expect(state.animations.some((animation) => animation.stop.mock.calls.length > 0)).toBe(false);
   } finally { await s.close(); }
 });
 
@@ -71,7 +73,7 @@ test('reduced motion, authoritative replacement and unmount stop pending work', 
     await s.render('abcdef');
     const pending = state.animations[0];
     await s.render('replacement');
-    expect(pending.stop).toHaveBeenCalledOnce();
+    expect(pending.cancel).toHaveBeenCalledOnce();
     expect(s.container.textContent).toBe('replacement');
     state.reduced = true;
     const count = state.animations.length;
@@ -80,5 +82,7 @@ test('reduced motion, authoritative replacement and unmount stop pending work', 
     state.reduced = false;
     await s.render('replacement with no motion then live');
   } finally { await s.close(); }
-  expect(state.animations.every((animation) => animation.stop.mock.calls.length === 1)).toBe(true);
+  // Motion's stop() commits styles: one forced style/layout flush per span.
+  expect(state.animations.every((animation) => animation.cancel.mock.calls.length === 1)).toBe(true);
+  expect(state.animations.some((animation) => animation.stop.mock.calls.length > 0)).toBe(false);
 });

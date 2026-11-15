@@ -71,6 +71,31 @@ const visit = (node: ts.Node) => {
 };
 visit(ast);
 
+it('removes desktop draft welcome chrome as soon as submission starts', () => {
+    const conditions: string[] = [];
+    const findWelcome = (node: ts.Node) => {
+        if (ts.isJsxExpression(node) && node.expression && ts.isConditionalExpression(node.expression)) {
+            const content = node.expression.whenTrue.getText(ast);
+            if (content.includes('<DraftPresetChips') || (content.includes('<h1') && content.includes('renderDraftTitle('))) {
+                conditions.push(node.expression.condition.getText(ast));
+            }
+        }
+        ts.forEachChild(node, findWelcome);
+    };
+    findWelcome(ast);
+    expect(conditions).toHaveLength(2);
+    const scope = {
+        surfaceHasNewDraft: true, newSessionDraftOpen: true,
+        isDesktopExpanded: false, isMobile: false, isVSCode: false, isMiniChatSurface: false,
+        draftBusy: false,
+    };
+    for (const condition of conditions) {
+        const visible = new Function(...Object.keys(scope), `return ${condition};`);
+        expect(visible(...Object.values(scope))).toBe(true);
+        expect(visible(...Object.values({ ...scope, draftBusy: true }))).toBe(false);
+    }
+});
+
 // Execute the production admission boundary, stopping before resource/selection work.
 function admissionHandler(name: string, stopBefore: string, scope: Record<string, unknown>) {
     const declaration = declarations.get(name)!;

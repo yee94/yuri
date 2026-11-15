@@ -344,7 +344,12 @@ export function MobilePhoneShell({
         depth: 1,
         ariaLabel: t('mobile.nav.secondaryPageAria'),
         onBack: handleSecondaryBack,
-        content: renderChat({ sessionId: '', directory: null, viewKey: 'chat-primary', active: true }),
+        content: renderChat({
+          sessionId: remoteSession ? '' : currentSessionId ?? '',
+          directory: remoteSession ? null : currentSessionDirectory,
+          viewKey: 'chat-primary',
+          active: true,
+        }),
       }];
     }
     if (navigation.secondary?.kind !== 'chat') return [];
@@ -375,7 +380,7 @@ export function MobilePhoneShell({
       onBack: handleSecondaryBack,
       content: <MobileBtwPage route={btw} />,
     }] : [...originPages, ...chatPages];
-   }, [secondaryKind, navigation.secondary, handleSecondaryBack, pushAssistantSettings, instancesSecondaryPage, renderChat, t]);
+   }, [secondaryKind, navigation.secondary, currentSessionId, currentSessionDirectory, remoteSession, handleSecondaryBack, pushAssistantSettings, instancesSecondaryPage, renderChat, t]);
 
   return (
     <MobileTabsRoot

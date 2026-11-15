@@ -18,7 +18,7 @@ vi.mock('markstream-react', async (importOriginal) => {
   };
 });
 vi.mock('motion/mini', () => ({
-  animate: () => ({ stop() {}, then() {} }),
+  animate: () => ({ stop() {}, cancel() {}, then() {} }),
 }));
 vi.mock('./MotionStreamText', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./MotionStreamText')>();

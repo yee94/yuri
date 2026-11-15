@@ -8,8 +8,9 @@ const motionState = vi.hoisted(() => ({ reducedMotion: true }));
 const animations: {
   finish: () => void;
   stop: ReturnType<typeof vi.fn>;
+  cancel: ReturnType<typeof vi.fn>;
   element: HTMLElement;
-  target: { opacity: number };
+  target: { opacity: number[] };
 }[] = [];
 
 vi.mock('@/lib/i18n', () => ({
@@ -24,10 +25,11 @@ vi.mock('motion/react', () => ({
 }));
 
 vi.mock('motion/mini', () => ({
-  animate: vi.fn((element: HTMLElement, target: { opacity: number }) => {
+  animate: vi.fn((element: HTMLElement, target: { opacity: number[] }) => {
     let onFinish = () => {};
     const controls = {
       stop: vi.fn(),
+      cancel: vi.fn(),
       then: (callback: () => void) => { onFinish = callback; },
       finish: () => onFinish(),
       element,
@@ -174,9 +176,9 @@ describe('WorkingPlaceholder status stickiness', () => {
     expect(container.querySelector('.animate-text-shimmer')).toBe(label);
     expect(container.querySelector('[data-testid="orb"]')).toBe(orb);
     expect(animations[0].element).toBe(label?.parentElement);
-    expect(animations[0].target).toEqual({ opacity: 0 });
+    expect(animations[0].target).toEqual({ opacity: [1, 0] });
     expect(animations[1].element).toBe(label?.parentElement);
-    expect(animations[1].target).toEqual({ opacity: 1 });
+    expect(animations[1].target).toEqual({ opacity: [0, 1] });
     expect(label?.classList.contains('flex-1')).toBe(false);
     expect(label?.parentElement?.classList.contains('gap-1.5')).toBe(true);
 
@@ -201,7 +203,7 @@ describe('WorkingPlaceholder status stickiness', () => {
       await render({ isWorking: true, statusText: `Reading ${index}` });
     }
     expect(animations).toHaveLength(2);
-    expect(animations[1].stop).not.toHaveBeenCalled();
+    expect(animations[1].cancel).not.toHaveBeenCalled();
     expect(label?.textContent).toBe('Thinking');
     await act(async () => animations[1].finish());
     expect(animations).toHaveLength(3);
@@ -220,7 +222,8 @@ describe('WorkingPlaceholder status stickiness', () => {
     await render({ isWorking: true, statusText: 'Thinking' });
     motionState.reducedMotion = true;
     await render({ isWorking: true, statusText: 'Reading file' });
-    expect(animations[0].stop).toHaveBeenCalledOnce();
+    expect(animations[0].cancel).toHaveBeenCalledOnce();
+    expect(animations[0].stop).not.toHaveBeenCalled();
     await act(async () => animations[0].finish());
     expect(container.querySelector('.animate-text-shimmer')?.textContent).toBe('Reading file');
     expect(animations).toHaveLength(1);
@@ -236,7 +239,8 @@ describe('WorkingPlaceholder status stickiness', () => {
     await render({ isWorking: true, statusText: 'Running command' });
     await render({ isWorking: true, statusText: 'Thinking' });
     await render({ isWorking: true, statusText: 'Thinking', isTurnSettled: true });
-    expect(animations[0].stop).toHaveBeenCalledOnce();
+    expect(animations[0].cancel).toHaveBeenCalledOnce();
+    expect(animations[0].stop).not.toHaveBeenCalled();
     await act(async () => animations[0].finish());
     expect(container.querySelector('[role="status"]')).toBeNull();
     expect(animations).toHaveLength(1);

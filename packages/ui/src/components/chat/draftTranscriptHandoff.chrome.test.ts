@@ -154,7 +154,7 @@ describe('draft transcript handoff Chrome continuity', () => {
             expect(draft.headerPresent).toBe(true);
             expect(draft.scrollerPresent).toBe(true);
             expect(draft.composerPresent).toBe(true);
-            expect(draft.composerVisibility).toBe('hidden');
+            expect(draft.composerVisibility).toBe('visible');
             expect(draft.userVisibility).toBe('visible');
             expect(draft.headerVisibility).toBe('visible');
             expect(draft.pinReveal).not.toBe('pending');

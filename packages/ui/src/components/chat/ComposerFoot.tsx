@@ -14,23 +14,25 @@ export function DraftComposerFoot({ isMobile, expanded, compact, children }: {
     )}>{children}</div>;
 }
 
-export const DesktopComposerEdgeFade: React.FC = () => (
+const DesktopComposerEdgeFade: React.FC = () => (
     <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 bottom-full z-0 h-11 bg-gradient-to-t from-[var(--surface-background)] to-transparent"
     />
 );
 
-export function ComposerFoot({ isMobile, expanded, overlay = true, children }: {
+export function ComposerFoot({ isMobile, expanded, overlay = true, className, children }: {
     isMobile: boolean;
     expanded: boolean;
     overlay?: boolean;
+    className?: string;
     children: React.ReactNode;
 }) {
     return <div className={cn('relative z-10',
         isMobile && 'yuri-mobile-composer-foot',
         isMobile && overlay && 'yuri-mobile-composer-foot--overlay',
         expanded ? 'flex-1 min-h-0 bg-background' : 'bg-background',
+        className,
     )}>
         {!isMobile && !expanded && overlay ? <DesktopComposerEdgeFade /> : null}
         {React.Children.toArray(children)}

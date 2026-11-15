@@ -22,37 +22,18 @@ export const FadeInDisabledProvider: React.FC<{ disabled: boolean; children: Rea
     </FadeInDisabledContext.Provider>
 );
 
-type AnimatedFadeInProps = Pick<FadeInOnRevealProps, 'children' | 'className'>;
+type AnimatedFadeInProps = Pick<FadeInOnRevealProps, 'children' | 'className'> & { animate?: boolean };
 
-const AnimatedFadeIn: React.FC<AnimatedFadeInProps> = ({ children, className }) => {
-    const [visible, setVisible] = React.useState(false);
-
-    React.useEffect(() => {
-        let frame: number | null = null;
-        const enable = () => setVisible(true);
-
-        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-            frame = window.requestAnimationFrame(enable);
-        } else {
-            enable();
-        }
-
-        return () => {
-            if (
-                frame !== null &&
-                typeof window !== 'undefined' &&
-                typeof window.cancelAnimationFrame === 'function'
-            ) {
-                window.cancelAnimationFrame(frame);
-            }
-        };
-    }, []);
+const AnimatedFadeIn: React.FC<AnimatedFadeInProps> = ({ children, className, animate = true }) => {
+    // Consume is bookkeeping, not a new reveal. Keep both the DOM and the
+    // mount-time animation decision when the parent changes skipAnimation.
+    const [animateOnMount] = React.useState(animate);
 
     return (
         <div
             className={cn(
-                'w-full transition-all duration-300 ease-out',
-                visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2',
+                'w-full',
+                animateOnMount && 'animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out',
                 className
             )}
         >
@@ -77,6 +58,10 @@ export const FadeInOnReveal: React.FC<FadeInOnRevealProps> = ({
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const shouldSkip = Boolean(skipAnimation) || (!ignoreContextDisabled && contextDisabled) || reducedMotion;
     const animationEnabled = FADE_ANIMATION_ENABLED || forceAnimation;
+
+    if (forceAnimation) {
+        return <AnimatedFadeIn className={className} animate={!shouldSkip}>{children}</AnimatedFadeIn>;
+    }
 
     if (!animationEnabled || shouldSkip) {
         return <>{children}</>;

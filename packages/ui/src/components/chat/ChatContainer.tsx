@@ -52,7 +52,7 @@ import { refreshSessionForms, useSessionFormStore } from '@/sync/session-form-st
 import { isQuestionFormMetadata } from '@/sync/v2-runtime';
 import { isSessionRetryAction, resolveRetryActionCopy } from '@/sync/session-retry-action';
 import { StatusRowContainer } from './StatusRowContainer';
-import { ComposerFoot, DesktopComposerEdgeFade, DraftComposerFoot } from './ComposerFoot';
+import { ComposerFoot } from './ComposerFoot';
 import { TranscriptScrollControls } from './components/TranscriptScrollControls';
 import { PromptNavigatorRail } from './components/PromptNavigatorRail';
 import { getFullText } from './lib/messagePreview';
@@ -1902,12 +1902,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 	}
 
 	if (!currentSessionId && draftOpen) {
-		// Match fork: leave the draft composer and show a full-screen
-		// establishing page until a real session ID arrives. ChatInput sets
-		// draftEstablishing before response-style prep; claim then
-		// promotes to draftSubmitting. Combined create+prompt can take a while;
-		// partial draft banners were easy to miss (especially desktop /
-		// expanded-input layouts).
+		// Keep the keyed composer mounted while the pending transcript replaces
+		// the welcome. ChatInput sets draftEstablishing before response-style
+		// prep; claim then promotes to draftSubmitting.
 		if ((draftSubmitting || draftEstablishing) && draftPendingMessage) {
 			const draftViewportKey = `draft:${newSessionDraft.draftID ?? 'pending'}`;
 			return (
@@ -1957,28 +1954,18 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 							</div>
 						)}
 					/>
-					<div
-						className={cn(
-							'invisible pointer-events-none relative z-10',
-							isMobile && 'yuri-mobile-composer-foot yuri-mobile-composer-foot--overlay',
-							isDesktopExpandedInput
-								? 'absolute inset-0 bg-background'
-								: 'bg-background',
-						)}
-						aria-hidden="true"
-					>
-						{!isMobile && !isDesktopExpandedInput ? <DesktopComposerEdgeFade /> : null}
+					<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
 						{promptSurface}
-					</div>
+					</ComposerFoot>
 				</div>
 			);
 		}
 
 		if (draftSubmitting || draftEstablishing) {
 			return (
-				<div className="flex h-full flex-col items-center justify-center bg-background px-6 text-center">
+				<div className="relative flex h-full flex-col bg-background">
 					<div
-						className="flex flex-col items-center gap-3"
+						className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center"
 						role="status"
 						aria-live="polite"
 						aria-label={t('chat.emptyState.establishingConversation')}
@@ -1988,6 +1975,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 							<BusyDots />
 						</span>
 					</div>
+					<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
+						{promptSurface}
+					</ComposerFoot>
 				</div>
 			);
 		}
@@ -2010,9 +2000,17 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						/>
 					</div>
 				) : null}
-				<DraftComposerFoot isMobile={isMobile} expanded={isDesktopExpandedInput} compact={useCompactDraftLayout}>
+				<ComposerFoot
+					key="composer-foot"
+					isMobile={isMobile}
+					expanded={isDesktopExpandedInput}
+					overlay={false}
+					className={cn('flex min-h-0', !isDesktopExpandedInput && (
+						useCompactDraftLayout ? 'px-0' : 'flex-1 items-center justify-center px-0 pb-[6vh]'
+					))}
+				>
                         {promptSurface}
-				</DraftComposerFoot>
+				</ComposerFoot>
 			</div>
         );
     }

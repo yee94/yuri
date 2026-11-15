@@ -531,8 +531,17 @@ export const projectTurnRecords = (
         }
     }
 
+    // A leading native notice can own legacy replies, but a notice alone is
+    // not a user turn. Otherwise its empty TurnItem inserts a 32px history gap.
+    const contentTurns = turns.filter((turn) => {
+        if (!turn.userMessage || !isNativeSyntheticNotice(turn.userMessage) || turn.assistantMessages.length > 0) {
+            return true;
+        }
+        for (const record of turn.messages) groupedMessageIds.delete(record.messageId);
+        return false;
+    });
     const stableTurns = settleHistoricalActiveTurns(
-        hydrateStableTurnRecords(turns, effectiveOptions),
+        hydrateStableTurnRecords(contentTurns, effectiveOptions),
     );
     const projection = projectTurnIndexes(stableTurns);
     const ungroupedMessageIds = new Set<string>();

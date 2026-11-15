@@ -250,7 +250,8 @@ describe('ChatContainer source contracts', () => {
         const foot = readFileSync(join(here, 'ComposerFoot.tsx'), 'utf8');
         expect(foot).toContain('const DesktopComposerEdgeFade');
         expect(foot).toContain('bg-gradient-to-t from-[var(--surface-background)] to-transparent');
-        expect(source).toContain('{!isMobile && !isDesktopExpandedInput ? <DesktopComposerEdgeFade /> : null}');
+        // ComposerFoot owns the fade; shells opt in through its default overlay.
+        expect(source).not.toContain('<DesktopComposerEdgeFade');
         const establishingDraftShell = source.slice(
             source.indexOf('if ((draftSubmitting || draftEstablishing) && draftPendingMessage)'),
             source.indexOf('if (draftSubmitting || draftEstablishing)'),
@@ -263,8 +264,7 @@ describe('ChatContainer source contracts', () => {
             source.lastIndexOf("<div ref={composerSwapScopeRef} className={cn('relative flex flex-col h-full bg-background'"),
             source.indexOf('const MemoizedChatContainerContent'),
         );
-        expect(establishingDraftShell.match(/<DesktopComposerEdgeFade \/>/g)).toHaveLength(1);
-        for (const shell of [hydratingShell, transcriptShell]) {
+        for (const shell of [establishingDraftShell, hydratingShell, transcriptShell]) {
             expect(shell).toContain('<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>');
         }
         expect(foot).toContain('!isMobile && !expanded && overlay');
