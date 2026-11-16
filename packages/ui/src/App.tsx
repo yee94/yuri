@@ -638,7 +638,7 @@ function App({ apis }: AppProps) {
       openSessionFromNotification(detail ?? {});
     };
     const linkHandler = (event: Event) => {
-      const detail = (event as CustomEvent<{ sessionId?: string; directory?: string }>).detail;
+      const detail = (event as CustomEvent<{ sessionId?: string; directory?: string; hostId?: string }>).detail;
       void import('@/sync/openSessionFromDeepLink').then(({ openSessionFromDeepLink }) => openSessionFromDeepLink(detail ?? {}));
     };
     const openAssistantHandler = (event: Event) => {

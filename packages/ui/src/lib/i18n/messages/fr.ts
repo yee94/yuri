@@ -529,6 +529,7 @@ export const dict = {
   'sessions.sidebar.session.menu.share': 'Partager',
   'sessions.sidebar.session.menu.copied': 'Copié',
   'sessions.sidebar.session.menu.copyLink': 'Copier le lien',
+  'sessions.sidebar.session.menu.copyDeepLink': 'Copier le lien profond',
   'sessions.sidebar.session.menu.unshare': 'Annuler le partage',
   'sessions.sidebar.session.menu.exportMarkdown': 'Exporter le Markdown',
   'sessions.sidebar.session.menu.refreshTranscript': 'Synchroniser les messages',

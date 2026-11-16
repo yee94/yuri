@@ -37,6 +37,9 @@ import { nodeContainsSessionId, resolvedSessionRenderKey } from './sessionNodeIt
 import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './sessionNodeItemUtils';
 import type { SessionNode } from './types';
 import { formatSessionCompactDateLabel, formatSessionDateLabel, normalizePath, renderHighlightedText, SIDEBAR_ROW_ACTIVE_CLASS, SIDEBAR_ROW_HOVER_CLASS, getSidebarRowPaddingLeft } from './utils';
+import { buildSessionDeepLink } from '@/apps/deepLinks';
+import { copyTextToClipboard } from '@/lib/clipboard';
+import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { markSessionUnread, markSessionViewed, useSessionUnseenCount } from '@/sync/notification-store';
 import { useSessionMultiSelectStore } from '@/stores/useSessionMultiSelectStore';
@@ -673,6 +676,19 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     await doExportSession(false);
   });
 
+  const handleCopyDeepLink = useEvent((target: Session) => {
+    const remote = useSessionNavigationStore.getState().remoteSession;
+    const hostId = remote && remote.projectId === projectId ? remote.location.hostId : undefined;
+    const url = buildSessionDeepLink(target.id, {
+      hostId,
+      directory: sessionDirectory || undefined,
+    });
+    void copyTextToClipboard(url).then((result) => {
+      if (result.ok) toast.success(t('sessions.sidebar.session.menu.copied'));
+      else toast.error(t('sessions.sidebar.session.share.copyUrlError'));
+    });
+  });
+
   const handleOpenMiniChatWindow = useEvent(() => {
     if (!sessionDirectory) return;
     void invokeDesktop('desktop_open_session_mini_chat_window', {
@@ -1157,6 +1173,10 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
           </Item>
         </>
       ) : null}
+      <Item onClick={() => handleCopyDeepLink(resolvedSession)} className="[&>svg]:mr-1">
+        <Icon name="file-copy" className="mr-1 h-4 w-4" />
+        {t('sessions.sidebar.session.menu.copyDeepLink')}
+      </Item>
       <Item onClick={() => { void handleExportSession(); }} className="[&>svg]:mr-1">
         <Icon name="download" className="mr-1 h-4 w-4" />
         {t('sessions.sidebar.session.menu.exportMarkdown')}

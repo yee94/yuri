@@ -762,6 +762,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.menu.share': '分享',
   'sessions.sidebar.session.menu.copied': '已複製',
   'sessions.sidebar.session.menu.copyLink': '複製連結',
+  'sessions.sidebar.session.menu.copyDeepLink': '複製深連結',
   'sessions.sidebar.session.menu.unshare': '取消分享',
   'sessions.sidebar.session.menu.exportMarkdown': '匯出 Markdown',
   'sessions.sidebar.session.menu.refreshTranscript': '同步訊息',

@@ -238,3 +238,23 @@ export function buildDeepLink(intent: DeepLinkIntent): string {
     }
   }
 }
+
+/**
+ * Build the canonical external link for a session, including the remote Host
+ * when the session lives on a connected development machine.
+ */
+export function buildSessionDeepLink(
+  sessionId: string,
+  options: { hostId?: string; directory?: string } = {},
+): string {
+  const id = sessionId.trim();
+  if (!id) return '';
+  const encoded = encodeURIComponent(id);
+  const hostId = options.hostId?.trim();
+  const directory = options.directory?.trim();
+  const query = new URLSearchParams();
+  if (hostId) query.set('hostId', hostId);
+  if (directory) query.set('directory', directory);
+  const suffix = query.size ? `?${query.toString()}` : '';
+  return `${DEEP_LINK_SCHEME}://session/${encoded}${suffix}`;
+}

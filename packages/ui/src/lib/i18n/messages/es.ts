@@ -759,6 +759,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.session.menu.share": "Compartir",
   "sessions.sidebar.session.menu.copied": "Copiado",
   "sessions.sidebar.session.menu.copyLink": "Copiar enlace",
+  "sessions.sidebar.session.menu.copyDeepLink": "Copiar enlace profundo",
   "sessions.sidebar.session.menu.unshare": "Dejar de compartir",
   "sessions.sidebar.session.menu.exportMarkdown": "Exportar Markdown",
   "sessions.sidebar.session.menu.refreshTranscript": "Sincronizar mensajes",

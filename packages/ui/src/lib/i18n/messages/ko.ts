@@ -749,6 +749,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.session.menu.share': '공유',
   'sessions.sidebar.session.menu.copied': '복사됨',
   'sessions.sidebar.session.menu.copyLink': '링크 복사',
+  'sessions.sidebar.session.menu.copyDeepLink': '딥 링크 복사',
   'sessions.sidebar.session.menu.unshare': '공유 해제',
   'sessions.sidebar.session.menu.exportMarkdown': 'Markdown 내보내기',
   'sessions.sidebar.session.menu.refreshTranscript': '메시지 동기화',

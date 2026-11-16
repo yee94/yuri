@@ -2314,7 +2314,18 @@ const parseDeepLink = (raw) => {
     // Yuri keeps the same query shape under yuri://.
     const directory = resolveDeepLinkDirectory(url, value);
     const prompt = (url.searchParams.get('prompt') || '').trim();
-    return { type, value, directory, prompt, raw: trimmed };
+    const hostId = (url.searchParams.get('hostId') || url.searchParams.get('host') || '').trim();
+    if (type === 'host' && segments[1] === 'session' && segments[2]) {
+      return {
+        type: 'session',
+        value: decodeURIComponent(segments[2]),
+        directory: resolveDeepLinkDirectory(url, ''),
+        hostId: decodeURIComponent(segments[0]),
+        prompt,
+        raw: trimmed,
+      };
+    }
+    return { type, value, directory, prompt, ...(hostId ? { hostId } : {}), raw: trimmed };
   } catch {
     return null;
   }
@@ -2517,7 +2528,9 @@ const confirmConnectDeepLink = async (payload) => {
 };
 
 const isLocalWorkspaceDeepLink = (link) =>
-  Boolean(link?.raw) && ['session', 'new-session', 'new', 'project', 'open-project'].includes(link.type);
+  Boolean(link?.raw)
+  && ['session', 'new-session', 'new', 'project', 'open-project'].includes(link.type)
+  && !link.hostId;
 
 const resolveLocalDeepLinkWindow = () => {
   const existing = BrowserWindow.getAllWindows().find((window) =>
@@ -2595,7 +2608,11 @@ const dispatchDeepLink = (link) => {
     return;
   }
   if (link.type === 'session' && link.value) {
-    emit('yuri:open-session-link', { sessionId: link.value, directory: link.directory === link.value ? '' : link.directory });
+    emit('yuri:open-session-link', {
+      sessionId: link.value,
+      directory: link.directory === link.value ? '' : link.directory,
+      ...(link.hostId ? { hostId: link.hostId } : {}),
+    });
     return;
   }
   // Align with OpenCode: yuri://new-session?directory=${path}&prompt=…

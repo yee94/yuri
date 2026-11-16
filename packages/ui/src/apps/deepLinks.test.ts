@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { buildPairingConnectionPayload, encodePairingConnectionPayload } from '@/lib/connectionPayload';
 
-import { buildDeepLink, parseDeepLink } from './deepLinks';
+import { buildDeepLink, buildSessionDeepLink, parseDeepLink } from './deepLinks';
 
 const pairing = buildPairingConnectionPayload({
   pairingId: 'pair_deep_link',
@@ -114,5 +114,16 @@ describe('buildDeepLink (OpenCode-aligned)', () => {
     expect(buildDeepLink({ type: 'open-project', directory: '/tmp/demo' })).toBe(
       'yuri://open-project?directory=%2Ftmp%2Fdemo',
     );
+  });
+
+  test('buildSessionDeepLink includes directory and an explicit remote Host', () => {
+    expect(buildSessionDeepLink('ses_1')).toBe('yuri://session/ses_1');
+    expect(buildSessionDeepLink('ses_1', { directory: '/tmp/demo' })).toBe(
+      'yuri://session/ses_1?directory=%2Ftmp%2Fdemo',
+    );
+    expect(buildSessionDeepLink('ses_1', { hostId: 'dev', directory: '/tmp/demo' })).toBe(
+      'yuri://session/ses_1?hostId=dev&directory=%2Ftmp%2Fdemo',
+    );
+    expect(buildSessionDeepLink('  ')).toBe('');
   });
 });

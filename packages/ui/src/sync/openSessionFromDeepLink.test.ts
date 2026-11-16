@@ -49,6 +49,28 @@ describe('openSessionFromDeepLink', () => {
     expect(mocks.notify).not.toHaveBeenCalled();
   });
 
+  test('uses an explicit Host and skips the local session index', async () => {
+    mocks.catalog.mockResolvedValue(catalog([
+      project('p1', 'host-a', '/srv/app'),
+      project('p2', 'host-b', '/srv/app'),
+    ]));
+    await openSessionFromDeepLink({ sessionId: 'ses_1', directory: '/srv/app', hostId: 'host-b' });
+    expect(mocks.lookup).not.toHaveBeenCalled();
+    expect(mocks.remoteRoute).toHaveBeenCalledWith(
+      { sessionId: 'ses_1', directory: '/srv/app', hostId: 'host-b', hubId: 'hub', projectId: 'p2', isNewSession: false },
+      expect.any(Function),
+    );
+    expect(mocks.notify).not.toHaveBeenCalled();
+  });
+
+  test('reports not found when the named Host does not own the directory', async () => {
+    mocks.catalog.mockResolvedValue(catalog([project('p1', 'host-a', '/srv/app')]));
+    await openSessionFromDeepLink({ sessionId: 'ses_1', directory: '/srv/app', hostId: 'host-b' });
+    expect(mocks.lookup).not.toHaveBeenCalled();
+    expect(mocks.remoteRoute).not.toHaveBeenCalled();
+    expect(mocks.notify).toHaveBeenCalledWith('ses_1', 'not-found');
+  });
+
   test('reports not found when no Remote Project owns the directory', async () => {
     mocks.catalog.mockResolvedValue(catalog([project('p1', 'host-a', '/srv/app')]));
     await openSessionFromDeepLink({ sessionId: 'ses_1', directory: '/elsewhere' });

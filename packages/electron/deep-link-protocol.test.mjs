@@ -64,6 +64,57 @@ describe('external deep-link compatibility', () => {
     }
   });
 
+  it('parses explicit Host session links', async () => {
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
+    const context = vm.createContext({ isAppDeepLink, URL });
+    vm.runInContext(
+      source.slice(
+        source.indexOf('const resolveDeepLinkDirectory ='),
+        source.indexOf('const decodeBase64UrlJson ='),
+      ) + '\nglobalThis.parse = parseDeepLink;',
+      context,
+    );
+    expect(context.parse('yuri://host/remote/session/ses_1')).toMatchObject({
+      type: 'session', value: 'ses_1', hostId: 'remote',
+    });
+    expect(context.parse('yuri://session/ses_2?hostId=remote')).toMatchObject({
+      type: 'session', value: 'ses_2', hostId: 'remote',
+    });
+  });
+
+  it('forwards the Host identity on session links without creating a local window', async () => {
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
+    const local = {
+      __yuriLabel: 'window', __yuriRuntimeConfig: { apiBaseUrl: 'http://localhost:3000' },
+      isDestroyed: () => false, isMinimized: () => false,
+      restore() {}, show() {}, focus() {}, webContents: { isLoading: () => false },
+    };
+    const events = [];
+    const context = vm.createContext({
+      BrowserWindow: { getAllWindows: () => [local] },
+      state: { mainWindow: local, sidecarUrl: 'http://localhost:3000', localUiOrigin: 'http://localhost:5173' },
+      sameOrigin: (a, b) => Boolean(a && b && new URL(a).origin === new URL(b).origin),
+      shouldUsePackagedUi: () => false,
+      buildPackagedUiUrl: () => 'yuri-ui://app/index.html',
+      nextWindowLabel: () => 'new-local', readDesktopLocalClientToken: () => 'local-test-token',
+      createBrowserWindow: () => { throw new Error('host-scoped links must not create a local window'); },
+      initialStartupComplete: true, pendingDeepLinks: [],
+      schedulePendingDeepLinkFlush() {}, log: { info() {}, warn() {} },
+      resolveMainWindowTarget: () => local,
+      emitToWindow: (window, event, detail) => events.push({ window, event, detail }),
+    });
+    vm.runInContext(source.slice(source.indexOf('const isLocalWorkspaceDeepLink ='), source.indexOf('const flushPendingDeepLinks ='))
+      + '\nglobalThis.dispatch = dispatchDeepLink;', context);
+    context.dispatch({ raw: 'yuri://session/ses_1?hostId=remote', type: 'session', value: 'ses_1', hostId: 'remote', directory: '/repo' });
+    expect(events).toEqual([{
+      window: local,
+      event: 'yuri:open-session-link',
+      detail: { sessionId: 'ses_1', directory: '/repo', hostId: 'remote' },
+    }]);
+  });
+
   it.each(['yuri', 'openchamber', 'openchambery'])('admits %s without rewriting route, scope or payload', (scheme) => {
     const link = `${scheme}://connect?v=2&p=opaque%2Bpayload%2Fvalue`;
     const args = ['/path/to/app', '--flag', link];
