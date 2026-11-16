@@ -168,6 +168,14 @@ completion events advance the separate `activity_updated_at` ordering field,
 while session status transitions update `status` and `status_changed_at`.
 Renderer event handling never performs these index writes and assistant
 streaming events never change session ordering.
+A user message for a session the index does not hold (an old session outside the
+newest-20 window, or one resumed from history) is handed to
+`adopt-unindexed-session.js`: it reads the session upstream, applies the Host
+projection, lifts its clock to the message time so the retention bound accepts it,
+writes the row and publishes a change. Concurrent messages share one read, a failed
+read is retried by the next message, and a row written live meanwhile wins. Without
+this the task view (which only lists indexed idle sessions) and recency ordering
+would drop such a session as soon as its run ends.
 Native creation projects the event's session identity, location, parent, metadata
 and creation clock before the Host metadata overlay. User inbox enqueue advances
 activity; native execution/retry events update status, and successful completion

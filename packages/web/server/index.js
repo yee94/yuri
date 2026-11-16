@@ -76,6 +76,7 @@ import { createSessionIndexSyncRuntime } from './lib/session-index/sync-runtime.
 import { createSessionDirectoryRuntime } from './lib/opencode/session-directory-runtime.js';
 import { resolveSessionIndexDbPath } from './lib/session-index/resolve-db-path.js';
 import { applySessionIndexEvent } from './lib/session-index/event-ingest.js';
+import { createUnindexedSessionAdopter } from './lib/session-index/adopt-unindexed-session.js';
 import { createTranscriptCacheService } from './lib/transcript-cache/service.js';
 import { resolveTranscriptCacheDbPath } from './lib/transcript-cache/resolve-db-path.js';
 import { createMessageQueueRuntime } from './lib/message-queue/runtime.js';
@@ -1535,12 +1536,26 @@ async function main(options = {}) {
   });
   sessionIndexSyncRuntimeRef = sessionIndexSyncRuntime;
 
+  const fetchUpstreamSession = createUpstreamSessionFetcher({
+    buildOpenCodeUrl,
+    getOpenCodeAuthHeaders,
+  });
+  const projectSessionForIndex = (session) => {
+    if (!sessionMetadataStore.isLoaded()) return null;
+    const snap = sessionMetadataStore.getSnapshotSync();
+    if (!snap) return null;
+    return projectSessionWithStoredMap(session, snap);
+  };
+  const adoptUnindexedSession = createUnindexedSessionAdopter({
+    service: sessionIndexService,
+    fetchSession: fetchUpstreamSession,
+    projectSession: projectSessionForIndex,
+    onChanged: () => sessionIndexSyncRuntimeRef?.publishChange(),
+  });
+
   sessionArchiveServiceRef = createSessionArchiveService({
     sessionMetadataStore,
-    fetchUpstreamSession: createUpstreamSessionFetcher({
-      buildOpenCodeUrl,
-      getOpenCodeAuthHeaders,
-    }),
+    fetchUpstreamSession,
     sessionIndexService,
     broadcastSessionEvent: (payload, options = {}) => {
       try {
@@ -1562,12 +1577,8 @@ async function main(options = {}) {
   const unsubscribeSessionIndexEvents = globalMessageStreamHub.subscribeEvent((event) => {
     if (applySessionIndexEvent(sessionIndexService, event, Date.now(), {
       isHostReady: () => sessionMetadataStore.isLoaded(),
-      projectSession: (session) => {
-        if (!sessionMetadataStore.isLoaded()) return null;
-        const snap = sessionMetadataStore.getSnapshotSync();
-        if (!snap) return null;
-        return projectSessionWithStoredMap(session, snap);
-      },
+      projectSession: projectSessionForIndex,
+      onUnindexedUserActivity: adoptUnindexedSession,
       onSessionDeleted: (sessionID) => sessionArchiveServiceRef?.forgetSession(sessionID),
     })) {
       sessionIndexSyncRuntime?.publishChange();

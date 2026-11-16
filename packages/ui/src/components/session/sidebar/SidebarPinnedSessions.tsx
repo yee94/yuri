@@ -167,7 +167,7 @@ export function SidebarPinnedSessions({
     // Same grouping params as SidebarProjectsList so pinned ↔ project handoff
     // stays instant when both sections are visible.
     <TooltipProvider delay={0} closeDelay={150} timeout={600}>
-    <div className={hideHeader ? undefined : 'pb-1'}>
+    <div className={hideHeader ? '-ml-1 -mr-1' : 'pb-1'}>
       {hideHeader ? null : (
         <SidebarSectionHeader
           title={

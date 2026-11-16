@@ -26,6 +26,9 @@ const withDirectory = (session, directory) => {
  * @param {(sessionID: string) => void | Promise<void>} [options.onSessionDeleted]
  * @param {() => boolean} [options.isHostReady]
  *   When false, session lifecycle upserts are skipped until metadata is ready.
+ * @param {(sessionID: string, directory: string, activityAt: number) => void} [options.onUnindexedUserActivity]
+ *   Called when a user message targets a session the index does not hold (an old
+ *   session outside the newest-20 window); the owner adopts it asynchronously.
  */
 export const applySessionIndexEvent = (service, event, observedAt = Date.now(), options = {}) => {
   if (!service || !event || typeof event !== 'object') return false;
@@ -35,6 +38,9 @@ export const applySessionIndexEvent = (service, event, observedAt = Date.now(), 
   const projectSession = typeof options.projectSession === 'function' ? options.projectSession : null;
   const onSessionDeleted = typeof options.onSessionDeleted === 'function' ? options.onSessionDeleted : null;
   const isHostReady = typeof options.isHostReady === 'function' ? options.isHostReady : null;
+  const onUnindexedUserActivity = typeof options.onUnindexedUserActivity === 'function'
+    ? options.onUnindexedUserActivity
+    : null;
 
   const baseType = normalizeSessionEventType(payload.type);
 
@@ -127,14 +133,21 @@ export const applySessionIndexEvent = (service, event, observedAt = Date.now(), 
     const activityAt = typeof info.time?.created === 'number' ? info.time.created : observedAt;
     const activityChanged = service.touchActivity(info.sessionID, activityAt);
     const settleCleared = service.clearSettleOverride?.(info.sessionID) ?? false;
+    if (!activityChanged && onUnindexedUserActivity && !service.findBySessionId?.(info.sessionID)) {
+      onUnindexedUserActivity(info.sessionID, directory, activityAt);
+    }
     return activityChanged || settleCleared;
   }
 
   if (baseType === 'session.inbox.enqueued') {
     const data = payload.data ?? properties;
     if (data.item?.type !== 'user' || typeof data.sessionID !== 'string') return false;
-    const activityChanged = service.touchActivity(data.sessionID, data.item.time?.created ?? payload.created ?? observedAt);
+    const activityAt = data.item.time?.created ?? payload.created ?? observedAt;
+    const activityChanged = service.touchActivity(data.sessionID, activityAt);
     const settleCleared = service.clearSettleOverride?.(data.sessionID) ?? false;
+    if (!activityChanged && onUnindexedUserActivity && !service.findBySessionId?.(data.sessionID)) {
+      onUnindexedUserActivity(data.sessionID, directory, activityAt);
+    }
     return activityChanged || settleCleared;
   }
 
