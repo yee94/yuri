@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useEvent } from '@reactuses/core';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { ensureHostUpdateSnapshot, refreshHostUpdateSnapshot, startHostUpdate } from '@/queries/hostUpdateQueries';
-import type { UpdateInfo, UpdateProgress } from '@/lib/desktop';
+import { isDesktopLocalOriginActive, isDesktopShell, type UpdateInfo, type UpdateProgress } from '@/lib/desktop';
 import { openExternalUrl } from '@/lib/url';
 import { useI18n } from '@/lib/i18n';
 import { useUpdateStore } from '@/stores/useUpdateStore';
@@ -43,6 +43,21 @@ async function installWebUpdate(version: string | undefined, scope: UpdateScope)
   }
 }
 
+/** Starts the connected remote Host's own update; false when it has nothing matching to apply. */
+async function startRemoteHostUpdate(version: string | undefined, scope: UpdateScope): Promise<boolean> {
+  let plan;
+  try {
+    plan = await ensureHostUpdateSnapshot(scope.transport, scope.generation);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'host_update_unsupported') return false;
+    throw error;
+  }
+  if (!isCurrentUpdateScope(scope)) throw new Error('Stale update runtime');
+  if (!version || !plan.supported || !plan.update || plan.update.rollback || plan.update.version !== version) return false;
+  await startHostUpdate(plan, scope.transport, scope.generation);
+  return true;
+}
+
 async function waitForUpdateApplied(
   targetVersion: string | undefined,
   scope: UpdateScope,
@@ -70,6 +85,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
   const { t } = useI18n();
   const [webUpdateState, setWebUpdateState] = useState<WebUpdateState>('idle');
   const [webError, setWebError] = useState<string | null>(null);
+  const [syncRemote, setSyncRemote] = useState(true);
   const otaDownloadSkipped = useUpdateStore((state) => state.otaDownloadSkipped);
   const releaseUrl = info?.releaseUrl || (info?.version ? `${GITHUB_RELEASES_URL}/tag/v${info.version}` : GITHUB_RELEASES_URL);
   // Mobile follows the check protocol: only open a URL the decision provided.
@@ -80,6 +96,8 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
   const isInAppMobileOta = isMobileRuntime && info?.inAppApply === true;
   const isManualDesktopUpdate = runtimeType === 'desktop' && info?.manualUpdate === true;
   const isWebUpdating = webUpdateState !== 'idle' && webUpdateState !== 'error';
+  const canSyncRemote = runtimeType === 'desktop' && !isManualDesktopUpdate && isDesktopShell() && !isDesktopLocalOriginActive();
+  const isRemoteSyncing = canSyncRemote && isWebUpdating;
   const releaseLinkUrl = isMobileRuntime ? protocolExternalUrl : releaseUrl;
   const handleDialogOpenChange = useEvent((nextOpen: boolean) => {
     if (!nextOpen && isInAppMobileOta && downloaded) useUpdateStore.getState().dismiss();
@@ -107,12 +125,34 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     if (applied) window.location.reload();
     else { setWebUpdateState('error'); setWebError(t('updateDialog.error.takingLonger')); }
   });
+  // The remote Host updates first; this app restarts only after it reports the new version.
+  const handleRestart = useEvent(async () => {
+    if (!canSyncRemote || !syncRemote) { onRestart(); return; }
+    const scope = { transport: getRuntimeTransportIdentity(), generation: getRuntimeGeneration() };
+    setWebUpdateState('updating'); setWebError(null);
+    try {
+      if (await startRemoteHostUpdate(info?.version, scope)) {
+        if (!isCurrentUpdateScope(scope)) return;
+        setWebUpdateState('reconnecting');
+        if (!(await waitForUpdateApplied(info?.version, scope))) {
+          if (isCurrentUpdateScope(scope)) { setWebUpdateState('error'); setWebError(t('updateDialog.error.remoteUpdateFailed')); }
+          return;
+        }
+      }
+    } catch {
+      if (isCurrentUpdateScope(scope)) { setWebUpdateState('error'); setWebError(t('updateDialog.error.remoteUpdateFailed')); }
+      return;
+    }
+    if (!isCurrentUpdateScope(scope)) return;
+    setWebUpdateState('idle');
+    onRestart();
+  });
   const handleAction = useEvent((id: string) => {
     switch (id) {
       case 'download':
         onDownload();
         break;
-      case 'restart': onRestart(); break;
+      case 'restart': void handleRestart(); break;
       case 'later': useUpdateStore.getState().dismiss(); onOpenChange(false); break;
       case 'open-external': {
         const url = isMobileRuntime ? protocolExternalUrl : releaseUrl;
@@ -130,7 +170,9 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     if (downloading) actions.push({ id: 'downloading', icon: 'loader', loading: true, disabled: true, label: t('updateDialog.status.downloading') });
     if (downloaded) {
       if (isInAppMobileOta) actions.push({ id: 'later', variant: 'ghost', label: t('updateDialog.actions.later') });
-      actions.push({ id: 'restart', icon: 'restart', label: t('updateDialog.actions.restartToUpdate') });
+      actions.push(isRemoteSyncing
+        ? { id: 'updating', icon: 'loader', loading: true, disabled: true, label: t('updateDialog.status.updating') }
+        : { id: 'restart', icon: 'restart', label: t('updateDialog.actions.restartToUpdate') });
     }
   }
   if (isMobileRuntime && !isInAppMobileOta && showProtocolExternalLink) actions.push({ id: 'open-external', icon: 'external-link', label: t('updateDialog.actions.openMobileUpdate') });
@@ -142,6 +184,10 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
     title: webUpdateState === 'restarting' || webUpdateState === 'reconnecting' ? t('updateDialog.header.updating') : t('updateDialog.header.updateAvailable'),
     currentVersion: info?.currentVersion, version: info?.version, body: info?.body,
     hideChangelog: isWebUpdating, dismissible: !isWebUpdating,
+    option: canSyncRemote && downloaded ? {
+      label: t('updateDialog.remote.syncLabel'), hint: t('updateDialog.remote.syncHint'),
+      checked: syncRemote, disabled: isRemoteSyncing, onChange: setSyncRemote,
+    } : undefined,
     error: error || webError,
     fallbackCommand: isWebRuntime && webUpdateState === 'error' ? info?.updateCommand || 'yuri update' : undefined,
     notice: isInAppMobileOta && downloaded && otaDownloadSkipped ? t('updateDialog.status.otaBundleReused') : undefined,
@@ -153,6 +199,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
       : webUpdateState === 'restarting' ? t('updateDialog.status.serverRestarting') : t('updateDialog.status.waitingForServer'),
     detail: t('updateDialog.status.autoReloadHint'),
   };
+  if (isRemoteSyncing) model.status = { kind: 'activity', label: t('updateDialog.status.updatingRemote') };
   if (!isWebRuntime && (!isMobileRuntime || isInAppMobileOta) && downloading) model.status = {
     kind: 'download', label: t('updateDialog.status.downloadingPayload'),
     progress: progress?.total ? Math.round(progress.downloaded / progress.total * 100) : 0,

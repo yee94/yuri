@@ -764,6 +764,18 @@ function MobileTaskView({ task, model, onPinSession, onArchiveSession, onNewSess
   const handleArchive = useEvent((sessionId: string) => onArchiveSession({ id: sessionId, title: '' }));
   const archived = task.status === 'archived';
   const remaining = model.total - model.items.length;
+  const allDone = (
+    <section className="flex flex-col items-center px-6 py-16 text-center">
+      <TasksAllDoneIllustration />
+      <p className="mt-3 typography-ui-label text-muted-foreground">{t('mobile.tasks.empty.allDone')}</p>
+      <Button type="button" size="lg" className="mt-5 min-h-10 rounded-full bg-[color-mix(in_srgb,var(--foreground)_14%,var(--background))] px-5 text-foreground hover:bg-[color-mix(in_srgb,var(--foreground)_18%,var(--background))] active:bg-[color-mix(in_srgb,var(--foreground)_22%,var(--background))]" onClick={onNewSession}>
+        <Icon name="chat-new" className="size-4" />
+        {t('mobile.projects.menu.newChat')}
+      </Button>
+    </section>
+  );
+  // Pinned rows share the active list, so "all done" means no unpinned open task is left.
+  const onlyPinnedLeft = task.status === 'active' && model.items.length > 0 && model.items.every((node) => node.pinned);
   return (
     <div className="yuri-mobile-task-list flex flex-col gap-2">
       <div className="yuri-mobile-task-filter-bar">
@@ -792,17 +804,9 @@ function MobileTaskView({ task, model, onPinSession, onArchiveSession, onNewSess
               {t(remaining === 1 ? 'sessions.sidebar.group.showMoreSingle' : 'sessions.sidebar.group.showMorePlural', { count: Math.min(SETTLED_SHELF_PAGE_SIZE, remaining) })}
             </Button>
           ) : null}
+          {onlyPinnedLeft ? allDone : null}
         </section>
-      ) : task.status === 'active' ? (
-        <section className="flex flex-col items-center px-6 py-16 text-center">
-          <TasksAllDoneIllustration />
-          <p className="mt-3 typography-ui-label text-muted-foreground">{t('mobile.tasks.empty.allDone')}</p>
-          <Button type="button" size="lg" className="mt-5 min-h-10 rounded-full bg-[color-mix(in_srgb,var(--foreground)_14%,var(--background))] px-5 text-foreground hover:bg-[color-mix(in_srgb,var(--foreground)_18%,var(--background))] active:bg-[color-mix(in_srgb,var(--foreground)_22%,var(--background))]" onClick={onNewSession}>
-            <Icon name="chat-new" className="size-4" />
-            {t('mobile.projects.menu.newChat')}
-          </Button>
-        </section>
-      ) : (
+      ) : task.status === 'active' ? allDone : (
         <p className="px-3 py-10 text-center typography-small text-muted-foreground">
           {t('mobile.tasks.empty.filtered')}
         </p>

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useEvent } from '@reactuses/core';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { Icon } from '@/components/icon/Icon';
@@ -29,6 +30,7 @@ export type UpdateDialogModel = {
   notice?: string;
   fallbackCommand?: string;
   releaseLink?: { url: string; label: string };
+  option?: { label: string; hint?: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void };
   actions: Array<{ id: string; label: string; icon?: IconName; disabled?: boolean; loading?: boolean; variant?: 'default' | 'ghost' }>;
 };
 
@@ -193,6 +195,13 @@ export function UpdateDialogView({ open, onOpenChange, model, onAction }: {
         {/* Error display */}
         {model.error && <div role="alert" className="p-3 mt-4 bg-[var(--status-error-background)] border border-[var(--status-error-border)] rounded-lg"><p className="text-sm text-[var(--status-error)]">{model.error}</p></div>}
       </div>
+      {model.option && <div className={cn("mt-4 flex shrink-0 items-start gap-2.5", model.option.disabled && "opacity-60")}>
+        <Checkbox checked={model.option.checked} onChange={model.option.onChange} disabled={model.option.disabled} ariaLabel={model.option.label} className="mt-0.5 self-start" />
+        <span className={cn("min-w-0 space-y-0.5", model.option.disabled ? "cursor-not-allowed" : "cursor-pointer")} onClick={model.option.disabled ? undefined : () => model.option?.onChange(!model.option.checked)}>
+          <span className="block typography-ui-label text-foreground">{model.option.label}</span>
+          {model.option.hint && <span className="block typography-meta text-muted-foreground">{model.option.hint}</span>}
+        </span>
+      </div>}
       {model.notice && <div className="mt-4 flex items-center gap-2 rounded-lg border border-[var(--status-success-border)] bg-[var(--status-success-background)] px-3 py-2.5 text-sm text-[var(--status-success)]"><Icon name="check" className="h-4 w-4 shrink-0" /><span>{model.notice}</span></div>}
       {/* Action Footer */}
       {(model.releaseLink || model.actions.length > 0) && <div className="mt-4 flex shrink-0 items-center justify-between gap-4">
