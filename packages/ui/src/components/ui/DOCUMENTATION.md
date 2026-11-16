@@ -215,17 +215,19 @@ session or Assistant contact consumers.
 # Desktop picker dialogs
 
 Desktop compact search/list surfaces use `DialogContent presentation="picker"`.
-This opt-in owns the global-search glass recipe, shared black translucent scrim, top-offset
+This opt-in owns the global-search glass recipe, shared transparent backdrop, top-offset
 position, radius and viewport bound. Ordinary `DialogContent` remains unchanged
 for confirmations, editors, Settings forms, permission flows and content viewers.
 Do not apply picker geometry globally or remove warnings needed to decide safely.
 
-`picker-dialog.css` owns `yuri-picker-backdrop`: it only sets a 180ms fade
-(disabled under reduced motion) and inherits the black translucent scrim of
-`DialogOverlay` (`bg-black/50 dark:bg-black/75`), not a theme surface token. All
-picker dialogs, including desktop global search, use this same scrim rather than
-local transparent overrides.
-Ordinary dialogs and mobile sheet/page backdrops retain their existing recipes.
+`picker-dialog.css` owns `yuri-picker-backdrop`: it uses a transparent background
+and a 180ms fade (disabled under reduced motion). The thin glass fill must sample
+the page itself, not the ordinary modal's black scrim, which turns light picker
+surfaces gray and overwhelms dark ones. All desktop pickers, including global
+search and directory selection, share this backdrop; it remains the full-window
+dismissal target. Ordinary dialogs keep `DialogOverlay`'s black translucent scrim
+(`bg-black/50 dark:bg-black/75`), and mobile sheet/page backdrops retain their
+existing recipes.
 
 The add-project directory picker additionally uses a 180ms fade and 320ms scale
 transition from 6% size. Pointer requests carry the trigger's viewport center

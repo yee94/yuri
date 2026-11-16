@@ -1,4 +1,5 @@
 .yuri-picker-backdrop {
+  background: transparent;
   transition-duration: 180ms;
 }
 

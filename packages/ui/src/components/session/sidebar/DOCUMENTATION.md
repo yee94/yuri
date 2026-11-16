@@ -2,6 +2,9 @@
 
 ## Task navigation icons and hover details
 
+The desktop task-view header's add button opens the existing add-project dialog,
+matching the project-view header. New-session creation stays on its separate action.
+
 `MobilePhoneShell` owns the persisted `yuri.mobile.homeView` selection and passes
 it to both the home page and the Web tab bar. The Web Projects tab follows the
 title menu and PC switch (`list-check-2` for Tasks, `folder-tree` for Projects).

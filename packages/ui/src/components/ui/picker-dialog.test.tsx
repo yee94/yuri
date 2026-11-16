@@ -91,6 +91,32 @@ describe('desktop picker presentation', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
 
+  test.each(['light', 'dark'] as const)('picker glass does not sample the ordinary modal dimming scrim (%s)', async (theme) => {
+    const style = document.createElement('style');
+    style.textContent = `
+      .bg-black\\/50 { background-color: rgba(0, 0, 0, 0.5); }
+      ${theme === 'dark' ? '.dark\\:bg-black\\/75 { background-color: rgba(0, 0, 0, 0.75); }' : ''}
+      ${readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'picker-dialog.css'), 'utf8')}
+    `;
+    document.head.append(style);
+    try {
+      for (const presentation of ['default', 'picker'] as const) {
+        await act(async () => root.render(<Dialog open>
+          <DialogContent presentation={presentation} initialFocus={false}><DialogTitle>Material test</DialogTitle></DialogContent>
+        </Dialog>));
+        const backdrop = document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]')!;
+        const background = getComputedStyle(backdrop).backgroundColor;
+        if (presentation === 'picker') {
+          expect(['transparent', 'rgba(0, 0, 0, 0)']).toContain(background);
+        } else {
+          expect(background).toBe(`rgba(0, 0, 0, ${theme === 'dark' ? '0.75' : '0.5'})`);
+        }
+      }
+    } finally {
+      style.remove();
+    }
+  });
+
   test('directory picker shares the picker scrim and uses source origin without changing keyboard fallback', async () => {
     const onOpenChange = vi.fn();
     const render = (origin?: { x: number; y: number }) => <DirectoryExplorerSurface open onOpenChange={onOpenChange}

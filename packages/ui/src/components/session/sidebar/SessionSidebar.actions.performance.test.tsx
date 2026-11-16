@@ -14,6 +14,47 @@ import {
 } from '@/sync/sidebar-numbered-navigation';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
 
+test('task header add opens the add-project dialog rather than a new session', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');
+    const ast = ts.createSourceFile('SessionSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let statement = '';
+    const visit = (node: ts.Node) => {
+        if (ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => declaration.name.getText(ast) === 'taskHeaderActions')) {
+            statement = node.getText(ast);
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    expect(statement).not.toBe('');
+    const requestDirectoryDialog = vi.fn();
+    const handleNewTask = vi.fn();
+    const compiled = ts.transpileModule(`return function Surface({ taskViewActive = true }) {
+        ${statement}
+        return taskHeaderActions;
+    }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+    const Button = ({ children, variant: _variant, size: _size, ...props }: React.ComponentProps<'button'> & { variant?: string; size?: string }) => <button {...props}>{children}</button>;
+    const Surface = new Function('React', 'Button', 'Icon', 't', 'sessionEvents', 'handleNewTask', compiled)(
+        React, Button, () => null, (key: string) => key, { requestDirectoryDialog }, handleNewTask,
+    );
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(<Surface />));
+        const button = host.querySelector('button')!;
+        expect(button.getAttribute('aria-label')).toBe('sessions.sidebar.header.actions.addProject');
+        expect(button.title).toBe('sessions.sidebar.header.actions.addProject');
+        await act(async () => button.click());
+        expect(requestDirectoryDialog).toHaveBeenCalledOnce();
+        expect(handleNewTask).not.toHaveBeenCalled();
+        await act(async () => root.render(<Surface taskViewActive={false} />));
+        expect(host.querySelector('button')).toBeNull();
+    } finally {
+        await act(async () => root.unmount());
+        vi.unstubAllGlobals();
+    }
+});
+
 test('archiving the focused task keeps the archive shelf closed and focuses the next visible task only after success', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');

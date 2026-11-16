@@ -2669,9 +2669,9 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       variant="ghost"
       size="xs"
       className="-mr-0.5 size-6 p-0 text-muted-foreground"
-      aria-label={t("sessions.sidebar.header.actions.newSession")}
-      title={t("sessions.sidebar.header.actions.newSession")}
-      onClick={handleNewTask}
+      aria-label={t("sessions.sidebar.header.actions.addProject")}
+      title={t("sessions.sidebar.header.actions.addProject")}
+      onClick={sessionEvents.requestDirectoryDialog}
     >
       <Icon name="add" className="size-4" />
     </Button>
