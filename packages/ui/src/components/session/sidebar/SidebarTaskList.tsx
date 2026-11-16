@@ -46,7 +46,7 @@ export function SidebarTaskList({ items, renderTaskRow, onSessionsReordered }: T
   }
   const rows = items.active.map(renderTaskRow);
   return (
-    <div className="-ml-1 space-y-0.5">
+    <div className="-ml-1 -mr-1 space-y-0.5">
       {onSessionsReordered && items.active.length > 1 ? (
         <SessionFolderDndScope
           scopeKey="task-active"
