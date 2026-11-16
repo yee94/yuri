@@ -92,6 +92,13 @@ export const queryKeys = {
       sessionID,
     ],
   },
+  workStatusShell: {
+    info: (
+      directory: string,
+      shellID: string,
+      transport = getRuntimeTransportIdentity(),
+    ): readonly [string, 'workStatusShell', 'info', string, string] => [transport, 'workStatusShell', 'info', normalizeQueryDirectory(directory) ?? '', shellID],
+  },
   sessionStatus: {
     snapshot: (directory: string, transport = getRuntimeTransportIdentity()): readonly [string, 'sessionStatus', 'snapshot', string | null] => [transport, 'sessionStatus', 'snapshot', normalizeQueryDirectory(directory)],
   },

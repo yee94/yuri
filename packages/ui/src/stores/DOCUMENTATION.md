@@ -31,6 +31,12 @@ it never falls back to the Hub's terminal endpoint. Local close behavior remains
 unchanged. Remote filesystem/native IDE actions likewise cannot fall back to the
 Hub filesystem merely because their selected paths look local.
 
+`useTerminalStore.openShellTab` adds a transient read-only shell-log descriptor
+to the ordinary terminal tab strip, deduplicated by runtime and shell ID.
+These tabs have no PTY session, cannot spawn one, and are excluded from persisted
+terminal tabs. Closing one does not stop its shell. Query owns output; the store
+only owns tab selection and identity.
+
 ## Delegated worker visibility
 
 Ordinary session visibility also excludes explicit delegated CLI workers carrying

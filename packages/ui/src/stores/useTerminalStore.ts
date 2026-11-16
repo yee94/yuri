@@ -14,6 +14,7 @@ export type TerminalTabLifecycle = 'idle' | 'running' | 'exited';
 
 export type TerminalTab = {
   id: string;
+  shellLog?: { id: string; directory: string; transport: string };
   terminalSessionId: string | null;
   lifecycle: TerminalTabLifecycle;
   label: string;
@@ -53,6 +54,7 @@ interface TerminalStore {
   getActiveTab: (directory: string) => TerminalTab | undefined;
 
   createTab: (directory: string) => string;
+  openShellTab: (directory: string, shell: NonNullable<TerminalTab['shellLog']>, label: string) => string;
   setActiveTab: (directory: string, tabId: string) => void;
   setTabLabel: (directory: string, tabId: string, label: string) => void;
   setTabIconKey: (directory: string, tabId: string, iconKey: string | null) => void;
@@ -171,6 +173,25 @@ export const useTerminalStore = create<TerminalStore>()(
           const activeId = entry.activeTabId;
           if (!activeId) return entry.tabs[0];
           return entry.tabs.find((t) => t.id === activeId) ?? entry.tabs[0];
+        },
+
+        openShellTab: (directory, shell, label) => {
+          const key = normalizeDirectory(directory);
+          const existing = get().sessions.get(key)?.tabs.find((tab) =>
+            tab.shellLog?.id === shell.id && tab.shellLog.transport === shell.transport);
+          if (existing) {
+            get().setActiveTab(key, existing.id);
+            return existing.id;
+          }
+          const id = `tab-${get().nextTabId}`;
+          set((state) => {
+            const sessions = new Map(state.sessions);
+            const previous = sessions.get(key);
+            const tab = { ...createEmptyTab(id, label), shellLog: shell };
+            sessions.set(key, { tabs: [...(previous?.tabs ?? []), tab], activeTabId: id });
+            return { sessions, nextTabId: state.nextTabId + 1 };
+          });
+          return id;
         },
 
         createTab: (directory: string) => {
@@ -631,7 +652,7 @@ export const useTerminalStore = create<TerminalStore>()(
             directory,
             {
               activeTabId: dirState.activeTabId,
-              tabs: dirState.tabs.map((tab) => ({
+              tabs: dirState.tabs.filter((tab) => !tab.shellLog).map((tab) => ({
                 id: tab.id,
                 label: tab.label,
                 iconKey: tab.iconKey,

@@ -23,6 +23,13 @@ import type { ProjectEntry } from '@/lib/api/types';
 import type { WorkStatusSubagent } from './workStatusSubagents';
 import { useRemoteWorkStatus } from './useRemoteWorkStatus';
 import type { Todo } from '@/lib/opencode/v2-types';
+import { useRunningSessionShells } from '@/sync/sync-context';
+import { WorkStatusShellRow } from './WorkStatusShellView';
+import { useTerminalStore } from '@/stores/useTerminalStore';
+import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import type { WorkStatusShell } from './workStatusShells';
+
+const NO_SHELLS: readonly WorkStatusShell[] = [];
 
 type Props = {
   sessionId: string | null;
@@ -72,16 +79,25 @@ const LocalWorkStatusCompact: React.FC<Props> = (props) => {
     return { project, worktree };
   }, [availableWorktrees, directory, projects, sessionWorktree]);
   const subagents = useWorkStatusSubagents(sessionId, directory);
-  return <WorkStatusCompactContent {...props} project={project ?? undefined} worktree={worktree} subagents={subagents} />;
+  const runningShells = useRunningSessionShells();
+  const shells = React.useMemo<WorkStatusShell[]>(() => {
+    if (!sessionId) return [];
+    return [...runningShells]
+      .filter(([, owner]) => owner.sessionID === sessionId)
+      .map(([id, owner]) => ({ id, directory: owner.directory, startedAt: owner.startedAt }))
+      .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+  }, [runningShells, sessionId]);
+  return <WorkStatusCompactContent {...props} project={project ?? undefined} worktree={worktree} subagents={subagents} shells={shells} />;
 };
 
 const WorkStatusCompactContent: React.FC<Props & {
   project?: ProjectEntry;
   worktree?: WorktreeMetadata;
   subagents: WorkStatusSubagent[];
+  shells?: readonly WorkStatusShell[];
   remoteTodos?: { todos: Todo[]; isWorking: boolean };
   stateKey?: string;
-}> = ({ sessionId, directory, active = true, placement = 'inline', project, worktree, subagents, remoteTodos, stateKey }) => {
+}> = ({ sessionId, directory, active = true, placement = 'inline', project, worktree, subagents, shells = NO_SHELLS, remoteTodos, stateKey }) => {
   const { t } = useI18n();
   const { git } = useProjectRuntimeAPIs();
   const host = useHostRuntime();
@@ -100,9 +116,18 @@ const WorkStatusCompactContent: React.FC<Props & {
     { phase: 'done', labelKey: 'chat.workStatus.subagent.doneCount', items: subagents.filter((agent) => agent.phase === 'done') },
   ] as const;
   const workingSubagents = subagentGroups[0].items;
+  const backgroundGroups = subagentGroups.map((group) => ({
+    ...group,
+    count: group.items.length + (group.phase === 'working' ? shells.length : 0),
+  })).filter((group) => group.count > 0);
   const visibleSubagents = (workingSubagents.length > 0 ? workingSubagents : subagents).slice(0, 3);
   const [subagentsExpanded, setSubagentsExpanded] = React.useState(false);
   const subagentsListId = React.useId();
+  const openShell = useEvent((shell: WorkStatusShell, command: string) => {
+    useTerminalStore.getState().openShellTab(stateKey ?? shell.directory,
+      { id: shell.id, directory: shell.directory, transport: getRuntimeTransportIdentity() }, command);
+    useUIStore.getState().setBottomTerminalOpen(true);
+  });
   const setRightSidebarOpen = useUIStore((state) => state.setRightSidebarOpen);
   const openContextPanel = useUIStore((state) => state.openContextPanel);
   const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
@@ -244,13 +269,13 @@ const WorkStatusCompactContent: React.FC<Props & {
 
       <WorkStatusTodos sessionId={sessionId} directory={directory} remote={remoteTodos} />
 
-      {subagents.length > 0 ? (
-        <div role="group" aria-label={t('chat.workStatus.section.subagents')} className="flex min-w-0 flex-col">
+      {subagents.length + shells.length > 0 ? (
+        <div role="group" aria-label={t(shells.length > 0 ? 'chat.workStatus.section.background' : 'chat.workStatus.section.subagents')} className="flex min-w-0 flex-col">
           <Button
             type="button"
             variant="ghost"
             size="sm"
-             className={`yuri-work-status-action ${rowClassName} gap-1.5`}
+             className={`yuri-work-status-action ${rowClassName} h-auto min-h-8 gap-1.5 py-1`}
             aria-expanded={subagentsExpanded}
             aria-controls={subagentsListId}
             onClick={() => setSubagentsExpanded((expanded) => !expanded)}
@@ -268,12 +293,13 @@ const WorkStatusCompactContent: React.FC<Props & {
                   />
                 );
               })}
+              {subagents.length === 0 ? <Icon name="terminal" className={iconClassName} /> : null}
             </span>
-            <span className="flex min-w-0 flex-1 items-center gap-x-1 whitespace-nowrap text-left text-[11px] leading-5 tabular-nums">
-              {subagentGroups.filter((group) => group.items.length > 0).map((group, index) => (
+            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 text-left text-[11px] leading-5 tabular-nums">
+              {backgroundGroups.map((group, index) => (
                 <React.Fragment key={group.phase}>
                   {index > 0 ? <span aria-hidden="true">·</span> : null}
-                  <span>{t(group.labelKey, { count: group.items.length })}</span>
+                  <span>{t(group.labelKey, { count: group.count })}</span>
                 </React.Fragment>
               ))}
             </span>
@@ -283,10 +309,10 @@ const WorkStatusCompactContent: React.FC<Props & {
             />
           </Button>
           <div id={subagentsListId} hidden={!subagentsExpanded} className={subagentsExpanded ? 'mt-1 mb-1 flex min-w-0 flex-col gap-1' : 'hidden'}>
-            {subagentsExpanded ? subagentGroups.filter((group) => group.items.length > 0).map((group) => (
-              <section key={group.phase} aria-label={t(group.labelKey, { count: group.items.length })} className="flex min-w-0 flex-col gap-1 [&+section]:mt-2">
+            {subagentsExpanded ? backgroundGroups.map((group) => (
+              <section key={group.phase} aria-label={t(group.labelKey, { count: group.count })} className="flex min-w-0 flex-col gap-1 [&+section]:mt-2">
                 <div className="px-2 py-1 text-[11px] leading-4 text-muted-foreground/70">
-                  {t(group.labelKey, { count: group.items.length })}
+                  {t(group.labelKey, { count: group.count })}
                 </div>
                 {group.items.map((subagent) => {
                 const label = subagent.label.trim() || t('chat.workStatus.subagent.untitled');
@@ -312,6 +338,8 @@ const WorkStatusCompactContent: React.FC<Props & {
                   </Button>
                 );
                 })}
+                {group.phase === 'working' ? shells.map((shell) =>
+                  <WorkStatusShellRow key={shell.id} shell={shell} onOpen={openShell} />) : null}
               </section>
             )) : null}
           </div>

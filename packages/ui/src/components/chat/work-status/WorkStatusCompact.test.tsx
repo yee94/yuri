@@ -10,11 +10,13 @@ import type { OpenCodeClient } from '@yuriai/opencode-gui-client';
 import type { FilesAPI } from '@/lib/api/types';
 import { GuiPluginHost } from '@/lib/gui-plugins/host';
 import { GuiPluginHostContext } from '@/lib/gui-plugins/react';
+import { useTerminalStore } from '@/stores/useTerminalStore';
 
 const fixture = vi.hoisted(() => ({
   worktrees: new Map<string, WorktreeMetadata[]>(),
   attached: new Map<string, WorktreeMetadata>(),
   sessions: [] as { id: string; parentID: string; title: string }[],
+  shells: new Map<string, { sessionID: string; directory: string; startedAt?: number }>(),
   faces: [] as { key: string; sessionID?: string; seed: string; label: string; phase: 'working' | 'done' }[],
   todowrite: undefined as { content: string; status: string; priority: string }[] | undefined,
   liveTodos: {} as Record<string, { content: string; status: string; priority: string }[]>,
@@ -27,6 +29,7 @@ const fixture = vi.hoisted(() => ({
     openContextPanel: vi.fn(),
     setRightSidebarOpen: vi.fn(),
     setRightSidebarTab: vi.fn(),
+    setBottomTerminalOpen: vi.fn(),
   },
   ensureStatus: vi.fn(),
   copy: vi.fn(async (_text: string) => ({ ok: true })),
@@ -43,7 +46,12 @@ vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: (selector: (state
   worktreeMetadata: fixture.attached, availableWorktreesByProject: fixture.worktrees,
 }) }));
 vi.mock('./useWorkStatusSubagents', () => ({ useWorkStatusSubagents: () => fixture.faces }));
+vi.mock('./WorkStatusShellView', () => ({
+  WorkStatusShellRow: ({ shell, onOpen }: { shell: { id: string }; onOpen: (shell: { id: string }, command: string) => void }) =>
+    <button type="button" data-shell-row={shell.id} onClick={() => onOpen(shell, 'printf demo')}>{shell.id}</button>,
+}));
 vi.mock('@/sync/sync-context', () => ({
+  useRunningSessionShells: () => fixture.shells,
   useDirectorySync: (selector: (state: unknown) => unknown) => selector({ todo: fixture.liveTodos, session_status: {} }),
   useSessionLatestTodos: () => fixture.todowrite,
 }));
@@ -51,7 +59,7 @@ vi.mock('@/stores/useTodosPersistStore', () => ({ useTodosPersistStore: (selecto
 vi.mock('@/stores/useUIStore', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/stores/useUIStore')>(),
   normalizeContextPanelDirectoryKey: (directory: string) => directory,
-  useUIStore: (selector: (state: unknown) => unknown) => selector(fixture.ui),
+  useUIStore: Object.assign((selector: (state: unknown) => unknown) => selector(fixture.ui), { getState: () => fixture.ui }),
 }));
 vi.mock('@/lib/api/useProjectGitStore', () => ({
   useGitStore: (selector: (state: unknown) => unknown) => selector({ ensureStatus: fixture.ensureStatus }),
@@ -70,6 +78,8 @@ beforeEach(() => {
   fixture.attached.clear();
   fixture.sessions = [];
   fixture.faces = [];
+  fixture.shells = new Map();
+  useTerminalStore.setState({ sessions: new Map(), nextTabId: 1 });
   fixture.liveTodos = {};
   fixture.persistedTodos = {};
   fixture.todowrite = undefined;
@@ -165,6 +175,41 @@ it('renders a collapsed agent disclosure with stacked faces and expandable statu
   fixture.faces = [];
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
   expect(host.querySelector('[role="group"]')).toBeNull();
+});
+
+it('merges this session\'s running shells into the disclosure and opens a shell view', async () => {
+  fixture.faces = [{ key: 'live', seed: 'live', label: 'Live', phase: 'working' }];
+  fixture.shells = new Map([
+    ['shell-b', { sessionID: 's', directory: '/repo', startedAt: 20 }],
+    ['shell-a', { sessionID: 's', directory: '/repo', startedAt: 10 }],
+    ['other', { sessionID: 'elsewhere', directory: '/repo', startedAt: 1 }],
+  ]);
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  const group = host.querySelector('[role="group"][aria-label="Background tasks"]');
+  const disclosure = group?.querySelector<HTMLButtonElement>('button[aria-expanded]');
+  expect(disclosure?.textContent).toBe('3 working');
+  await act(async () => disclosure?.click());
+  expect([...host.querySelectorAll('[data-shell-row]')].map((row) => row.getAttribute('data-shell-row'))).toEqual(['shell-a', 'shell-b']);
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-shell-row="shell-a"]')?.click());
+  expect(fixture.ui.setBottomTerminalOpen).toHaveBeenCalledWith(true);
+  const tab = useTerminalStore.getState().getActiveTab('/repo');
+  expect(tab?.shellLog?.id).toBe('shell-a');
+  expect(tab?.terminalSessionId).toBeNull();
+  expect(tab?.label).toBe('printf demo');
+  expect(host.querySelector('[data-shell-row]')).not.toBeNull();
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-shell-row="shell-a"]')?.click());
+  expect(useTerminalStore.getState().getDirectoryState('/repo')?.tabs).toHaveLength(1);
+  fixture.shells = new Map([['shell-b', { sessionID: 's', directory: '/repo', startedAt: 20 }]]);
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  expect(useTerminalStore.getState().getActiveTab('/repo')?.id).toBe(tab?.id);
+  expect(host.querySelector('[data-shell-row="shell-b"]')).not.toBeNull();
+  expect(host.querySelector('[data-shell-view]')).toBeNull();
+});
+
+it('shows the disclosure for shells alone', async () => {
+  fixture.shells = new Map([['only', { sessionID: 's', directory: '/repo' }]]);
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  expect(host.querySelector('[role="group"][aria-label="Background tasks"]')?.textContent).toBe('1 working');
 });
 
 it('shows the session todos with a done count, keeps cancelled items struck through, and collapses on demand', async () => {

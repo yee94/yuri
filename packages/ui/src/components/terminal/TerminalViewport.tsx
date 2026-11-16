@@ -85,6 +85,7 @@ interface TerminalViewportProps {
   enableTouchScroll?: boolean;
   autoFocus?: boolean;
   isVisible?: boolean;
+  readOnly?: boolean;
 }
 
 const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportProps>(
@@ -101,6 +102,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
       enableTouchScroll,
       autoFocus = true,
       isVisible = true,
+      readOnly = false,
     },
     ref
   ) => {
@@ -133,7 +135,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
     const previousVisibleRef = React.useRef(isVisible);
     const [, forceRender] = React.useReducer((x) => x + 1, 0);
     const [terminalReadyVersion, bumpTerminalReady] = React.useReducer((x) => x + 1, 0);
-    inputHandlerRef.current = onInput;
+    inputHandlerRef.current = readOnly ? () => {} : onInput;
     resizeHandlerRef.current = onResize;
 
     const isAndroid = typeof navigator !== 'undefined' && (
@@ -143,7 +145,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
     // Touch devices need a dedicated editable surface so special keys like
     // Backspace and arrows are captured reliably without relying on Ghostty's
     // internal mobile text handling.
-    const useHiddenInputOverlay = Boolean(enableTouchScroll);
+    const useHiddenInputOverlay = Boolean(enableTouchScroll) && !readOnly;
 
     React.useEffect(() => {
       if (!enableTouchScroll) {
@@ -1049,7 +1051,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
             return;
           }
 
-          const options = getGhosttyTerminalOptions(fontFamily, fontSize, theme, ghostty, false);
+          const options = getGhosttyTerminalOptions(fontFamily, fontSize, theme, ghostty, readOnly);
 
           const terminal = new GhosttyTerminal(options);
           followOutputRef.current = true;
@@ -1099,6 +1101,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
             ?? container.querySelector('textarea');
 
           if (localTerminalTextarea) {
+            localTerminalTextarea.readOnly = readOnly;
             localTerminalTextarea.addEventListener('focus', handleTerminalTextareaFocus);
             localTerminalTextarea.addEventListener('blur', handleTerminalTextareaBlur);
           }
@@ -1203,7 +1206,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
         cursorBlinkStateRef.current = null;
         resetWriteState();
       };
-    }, [disableTerminalTextareas, enableTouchScroll, fitTerminal, focusHiddenInput, fontFamily, fontSize, setupTouchScroll, theme, resetWriteState, setTerminalCursorBlink, useHiddenInputOverlay]);
+    }, [disableTerminalTextareas, enableTouchScroll, fitTerminal, focusHiddenInput, fontFamily, fontSize, setupTouchScroll, theme, resetWriteState, setTerminalCursorBlink, useHiddenInputOverlay, readOnly]);
 
 
     React.useEffect(() => {

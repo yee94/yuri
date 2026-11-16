@@ -138,3 +138,23 @@ both enables a previously disabled preference and opens the popup; subsequent
 clicks close/reopen it. Inline mode keeps its preference toggle behavior.
 The global Escape capture closes this popup before either preview dismissal or
 double-Escape abort priming, including while the conversation is running.
+
+## Background shells
+
+The subagent disclosure is the column's background-task disclosure: when the
+displayed session has running agent shells it also lists them, counted together
+with running subagents (e.g. `3 working`, group label "Background tasks").
+Expanded rows share the same working group. The list comes from the
+authoritative running-shell inventory (`useRunningSessionShells`, backed by
+`getSessionShellActivity`), filtered to the displayed session; user-entered
+`background` shells are excluded by that inventory. Rows resolve the command with
+`shell.get`. Opening a row opens/selects a read-only shell tab in the bottom
+Terminal dock. The tab uses the existing Ghostty viewport, preserving ANSI color,
+bold and scrollback; it never creates a PTY or sends input. Reopening the same
+runtime/shell selects the existing tab. Query owns cursor-based output, with a
+1 MB buffer and polling only while the tab is visible. Status is read before
+output so exit drains the final page; failures preserve output and show an error.
+Closing a tab stops observation, not the process; Stop explicitly calls
+`shell.remove`. Shell tabs are transient and excluded from PTY persistence.
+Remote Projects intentionally show no shell rows: the remote column does not
+read the local Hub shell inventory.

@@ -248,6 +248,12 @@ export function useBackgroundTaskCount(sessionID: string, scope: BackgroundTaskS
   return React.useSyncExternalStore(reader.subscribe, read, read)
 }
 
+export function useRunningSessionShells(): ReturnType<ReturnType<typeof getSessionShellActivity>['read']> {
+  const { childStores } = useSyncSystem()
+  const activity = getSessionShellActivity(childStores)
+  return React.useSyncExternalStore(activity.subscribe, activity.read, activity.read)
+}
+
 export function useActiveSessionTreeIds(enabled = true): ReadonlySet<string> {
   const { childStores } = useSyncSystem()
   const reader = getSessionActivityReader(childStores)

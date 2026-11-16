@@ -9,6 +9,7 @@ import { useFontPreferences } from '@/hooks/useFontPreferences';
 import { CODE_FONT_OPTION_MAP, DEFAULT_MONO_FONT } from '@/lib/fontOptions';
 import { convertThemeToXterm } from '@/lib/terminalTheme';
 import { TerminalViewport, type TerminalController } from '@/components/terminal/TerminalViewport';
+import { ShellLogViewport } from '@/components/terminal/ShellLogViewport';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/useUIStore';
 import { Button } from '@/components/ui/button';
@@ -102,7 +103,7 @@ export const TerminalView: React.FC = () => {
     // Tabs are supported for web + desktop runtimes, including mobile (not VSCode).
     const enableTabs = runtime.platform !== 'vscode';
     const showTerminalQuickKeysOnDesktop = useUIStore((state) => state.showTerminalQuickKeysOnDesktop);
-    const showQuickKeys = !isDesktopShell() && (isTouchTerminal || showTerminalQuickKeysOnDesktop);
+    const allowQuickKeys = !isDesktopShell() && (isTouchTerminal || showTerminalQuickKeysOnDesktop);
 
     const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
     const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
@@ -158,13 +159,15 @@ export const TerminalView: React.FC = () => {
                 return <Icon name={tabIconName} className="h-4 w-4" />;
             })(),
             id: tab.id,
-            label: tab.label,
+            label: tab.shellLog ? 'Agent Shell' : tab.label,
             title: tab.label,
             closeLabel: t('terminalView.tabs.closeTabTitle'),
         }));
     }, [directoryTerminalState?.tabs, t]);
 
     const terminalSessionId = activeTab?.terminalSessionId ?? null;
+    const shellLog = activeTab?.shellLog;
+    const showQuickKeys = allowQuickKeys && !shellLog;
     const terminalLifecycle = activeTab?.lifecycle ?? 'idle';
     const bufferChunks = activeTab?.bufferChunks ?? [];
     const isConnecting = activeTab?.isConnecting ?? false;
@@ -540,6 +543,7 @@ export const TerminalView: React.FC = () => {
             }
 
             const tab = state.tabs.find((t) => t.id === tabId) ?? state.tabs[0];
+            if (tab?.shellLog) return;
             const existingTerminalId = tab?.terminalSessionId ?? null;
             const tabLifecycle = tab?.lifecycle ?? 'idle';
             const isActionTab = Boolean(tab?.label?.startsWith('Action:'));
@@ -1294,7 +1298,8 @@ export const TerminalView: React.FC = () => {
                 className="relative flex-1 overflow-hidden"
                 style={{ backgroundColor: xtermTheme.background }}
             >
-                <div className="h-full w-full box-border pl-4 pr-1.5 pt-3 pb-4">
+                {shellLog ? (isTerminalVisible ? <ShellLogViewport key={activeTabId} shell={shellLog}
+                    theme={xtermTheme} fontFamily={resolvedFontStack} fontSize={terminalFontSize} /> : null) : <div className="h-full w-full box-border pl-4 pr-1.5 pt-3 pb-4">
                     {shouldRenderViewport ? (
                         <TerminalViewport
                             key={terminalViewportKey}
@@ -1313,8 +1318,8 @@ export const TerminalView: React.FC = () => {
                             isVisible={isTerminalVisible}
                         />
                     ) : null}
-                </div>
-                {!isReconnectPending && connectionError && (
+                </div>}
+                {!shellLog && !isReconnectPending && connectionError && (
                     <div className="absolute inset-x-0 bottom-0 bg-[var(--status-error-background)] px-3 py-2 text-xs text-[var(--status-error-foreground)] flex items-center justify-between gap-2">
                         <span>{connectionError}</span>
                         {isFatalError && isMobile && (

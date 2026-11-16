@@ -47,7 +47,7 @@ vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: (select: (state: 
   get availableWorktreesByProject() { return fixture.localReads(); },
   get worktreeMetadata() { return fixture.localReads(); },
 }) }));
-vi.mock('@/sync/sync-context', () => ({ useDirectorySync: fixture.localReads, useSessionLatestTodos: fixture.localReads, useDirectoryStore: fixture.localReads }));
+vi.mock('@/sync/sync-context', () => ({ useRunningSessionShells: () => new Map(), useDirectorySync: fixture.localReads, useSessionLatestTodos: fixture.localReads, useDirectoryStore: fixture.localReads }));
 vi.mock('@/stores/useTodosPersistStore', () => ({ useTodosPersistStore: fixture.localReads }));
 vi.mock('@/stores/useUIStore', async (original) => ({ ...await original<typeof import('@/stores/useUIStore')>(),
   useUIStore: (select: (state: unknown) => unknown) => select(fixture.ui),
