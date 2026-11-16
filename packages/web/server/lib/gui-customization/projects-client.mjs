@@ -28,7 +28,7 @@ async function main() {
     const response = await fetch(new URL('/api/yuri/session-skills/projects', origin), {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(['create-session', 'prompt-session'].includes(operation) ? 305_000 : 30_000),
       headers: { 'content-type': 'application/json', authorization: `Basic ${Buffer.from(`opencode:${registration.password}`).toString('base64')}` },
-      body: JSON.stringify({ sessionID: binding.sessionID, operation, input }),
+      body: JSON.stringify({ ...(binding.assistantID ? { assistantID: binding.assistantID } : { sessionID: binding.sessionID }), operation, input }),
     });
     const result = await response.json();
     if (!response.ok) {

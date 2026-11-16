@@ -578,9 +578,13 @@ construction, no additional skill directories are scanned, and no skill/config
 copy, tool registration or permission is created. Missing/failed OpenCode skill
 reads retain the existing explicit tool errors. These pointers are absent from
 read-only background reviews and do not change ordinary Session instructions.
-The customization pointer explicitly has no bound desktop helper: SSH, config
-sync and Relay pairing remain unavailable in the contact, without a filesystem,
-credential or internal-HTTP fallback. GUI authoring instructions do not authorize
+The customization pointer follows the OpenCode Session capability set: when the turn
+has `bash` and `resolveCustomizationSkill(assistantID)` returns a binding, it names the
+staged skill and the bound project and (with the Electron adapter) SSH/Relay helper
+commands, so archive (`settle-session`), remote sessions, SSH and pairing work through
+the same Host APIs. Otherwise SSH, config sync and Relay pairing stay unavailable,
+without a filesystem, credential or internal-HTTP fallback. `service.hasAssistant`
+backs the bridge's caller check. GUI authoring instructions do not authorize
 installation; substantive implementation still belongs in a worker.
 CLI authentication instructions, endpoint URLs and skill bodies are not duplicated
 in the permanent prompt. For other connected skills, load `opencode.catalog`,

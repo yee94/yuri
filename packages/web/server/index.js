@@ -1903,6 +1903,7 @@ async function main(options = {}) {
     remoteHostGateway,
     getRemoteProjectState: () => ({ hubId: remoteHostStore.hubId, hasRemoteProjects: remoteHostStore.hasProjects() }),
     remoteConnectionsAdapter: options.remoteConnectionsAdapter,
+    getHostPort: () => tunnelRuntimeContext.getActivePort(),
     express,
     uiAuthController,
     crypto,

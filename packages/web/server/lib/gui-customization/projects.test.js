@@ -12,7 +12,7 @@ import { createProjectDirectoryRuntime } from '../opencode/project-directory-run
 import { registerProjectsSkill, PROJECTS_SKILL_PATH } from './projects.js';
 
 describe('session project registration API', () => {
-  let root, workspace, settingsPath, runtime, server, origin, getSession, binding, registerProject, shared, failWrites, tips, gateway;
+  let root, workspace, settingsPath, runtime, server, origin, getSession, binding, registerProject, shared, failWrites, tips, gateway, hasAssistant;
   const auth = { Authorization: `Basic ${Buffer.from('opencode:fixture').toString('base64')}` };
   beforeEach(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'project-skill-'));
@@ -30,12 +30,13 @@ describe('session project registration API', () => {
     const registry = createProjectRegistry({ persistSettings: runtime.persistSettings, validateDirectoryPath });
     registerProject = vi.fn((input) => registry.register(input));
     getSession = vi.fn(async () => ({ metadata: { yuri: { scheduledTaskSkill: { hostOrigin: binding } } } }));
+    hasAssistant = vi.fn(async (id) => id === 'ast_live');
     const app = express();
     gateway = { supported: true, acquireTask: vi.fn(), registerProject: vi.fn(), list: vi.fn(async () => ({ supported: true, hubId: 'hub', hosts: [], projects: [] })) };
     registerProjectsSkill(app, { express, getIsSharedOpenCodeService: () => shared, getOpenCodeAuthHeaders: () => auth,
       createClient: () => ({ session: { get: getSession } }), registerProject, readSettingsFromDiskStrict: runtime.readSettingsFromDiskStrict,
       sanitizeProjects: normalization.sanitizeProjects,
-      remoteHostGateway: gateway,
+      remoteHostGateway: gateway, hasAssistant,
     });
     server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     origin = `http://127.0.0.1:${server.address().port}`; binding = origin;
@@ -63,6 +64,16 @@ describe('session project registration API', () => {
     const listed = await (await request('list')).json();
     expect(listed.projects).toContainEqual(added.project);
     expect(JSON.stringify({ added, listed })).not.toContain('private-settings');
+  });
+
+  it('admits a live Assistant contact as the caller, without any Session lookup', async () => {
+    const call = (body) => fetch(`${origin}${PROJECTS_SKILL_PATH}`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify(body) });
+    const ok = await call({ assistantID: 'ast_live', operation: 'list', input: {} });
+    expect(ok.status).toBe(200);
+    expect(getSession).not.toHaveBeenCalled();
+    expect((await call({ assistantID: 'ast_gone', operation: 'list', input: {} })).status).toBe(403);
+    expect((await call({ assistantID: 'ast_live', sessionID: 'ses_one', operation: 'list', input: {} })).status).toBe(400);
+    expect((await call({ operation: 'list', input: {} })).status).toBe(400);
   });
 
   it('rejects invalid input and nonexistent/file paths without changing saved state', async () => {

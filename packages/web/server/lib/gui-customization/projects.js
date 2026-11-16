@@ -2,6 +2,7 @@ import path from 'node:path';
 import { authorizeScheduledTaskSkillRequest } from '../scheduled-tasks/session-skill-contract.js';
 import { remoteProjectOperations, validRemoteProjectInput, runRemoteProjectOperation } from './projects-remote.js';
 import { lifecycleOperations, validLifecycleInput } from './projects-lifecycle.js';
+import { isBoundSkillCaller, parseSkillCaller } from './skill-caller.js';
 
 export const PROJECTS_SKILL_PATH = '/api/yuri/session-skills/projects';
 
@@ -18,17 +19,16 @@ const validInput = (operation, input) => {
 };
 
 /** Session-bound Host registration; the shared project registry owns persistence. */
-export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, createClient, registerProject, readSettingsFromDiskStrict, sanitizeProjects, remoteHostGateway, sessionLifecycle }) {
+export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, createClient, registerProject, readSettingsFromDiskStrict, sanitizeProjects, remoteHostGateway, sessionLifecycle, hasAssistant }) {
   app.post(PROJECTS_SKILL_PATH, express.json({ limit: '16kb' }), async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!getIsSharedOpenCodeService() || !authorizeScheduledTaskSkillRequest(req, getOpenCodeAuthHeaders())) return res.status(403).json({ error: 'Forbidden' });
-    const { sessionID, operation, input = {} } = req.body ?? {};
-    if (typeof sessionID !== 'string' || !sessionID || sessionID.length > 256
+    const { operation, input = {} } = req.body ?? {};
+    const caller = parseSkillCaller(req.body);
+    if (!caller
       || !['describe', 'list', 'add', ...lifecycleOperations, ...remoteProjectOperations].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid project input' });
     try {
-      const session = await createClient().session.get({ sessionID });
-      const hostOrigin = `http://${req.socket.localAddress === '::1' ? '[::1]' : '127.0.0.1'}:${req.socket.localPort}`;
-      if (session.metadata?.yuri?.scheduledTaskSkill?.hostOrigin !== hostOrigin) return res.status(403).json({ error: 'Session is not bound to this Host' });
+      if (!await isBoundSkillCaller(req, caller, { createClient, hasAssistant })) return res.status(403).json({ error: 'Caller is not bound to this Host' });
       if (operation === 'describe') return res.json({ supported: true, remoteSupported: Boolean(remoteHostGateway?.supported && remoteHostGateway?.acquireTask), lifecycleSupported: Boolean(sessionLifecycle), inputs: { add: '{path: existing absolute Host directory, label?: display name}', list: '{}',
         'task-sessions': '{directory?: absolute bound-Host directory, cursor?: returned nextCursor} bounded Host index metadata, not full upstream history',
         'session-state': '{sessionID} read Host archive authority and nullable task projection; not upstream existence or live UI state',

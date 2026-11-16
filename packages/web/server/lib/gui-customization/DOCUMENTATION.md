@@ -22,11 +22,22 @@ navigation protocol. Existing instance discovery/binding does not imply support 
 identity-scoped session URLs; this skill update adds neither a self-identity helper
 nor a new deep-link parameter.
 
-Interactive Yuri contacts reuse this same shipped entry and references through
-the assistant-only pointer in `../assistants/builtin-skills.js`. Their pi tools
-run on the Host, so the pointer names the package-local resource directly rather
-than staging a Session instruction. It advertises no bound desktop helper and
-grants no SSH/config-sync/Relay capability. Read-only background reviews omit it.
+Interactive Yuri contacts consume this same skill, staged resources and helpers
+through the assistant-only pointer in `../assistants/builtin-skills.js`, so a
+contact and an OpenCode Session have the same capability set. The Host resolves
+`createCustomizationSkillInstaller(...).resolve({ assistantID }, bindings)` per turn
+(`feature-routes-runtime.js`): the pointer names the staged `SKILL.md` and the bound
+`projects.mjs` / `remote-connections.mjs` describe commands, which the contact runs
+with its pi `bash` tool. The remote helper is bound only when the Electron adapter is
+present. Without `bash`, a resolved binding, a shared service or a readable
+registration, the pointer falls back to the shipped file with no helper and the
+SSH/config-sync/Relay branch stays unavailable. Read-only background reviews omit it.
+
+Both bridge routes accept exactly one caller: `{sessionID}` (admission-bound Session
+metadata) or `{assistantID}` (a live, non-tombstoned contact checked through
+`hasAssistant`). `skill-caller.js` owns that parsing and binding check; a body with
+both or neither is `invalid_input`. Loopback, no Origin and the shared-service
+credential still gate every call.
 
 References are organized by capability: project registration, window APIs, appearance, UI surfaces, plugin styles, global pages, work-status widgets, icons,
 file parsing/previews, preview actions/exports, and package workflow. Host contracts
@@ -40,8 +51,9 @@ independently of Electron's remote-connections adapter. `projects-client.mjs` is
 staged as `projects.mjs`; it and the remote helper share the staged
 `session-skill-command.mjs` command formatter. Only bound helpers are staged, and
 each resource combination has its own content fingerprint. Existing sessions keep
-their immutable staged references until a new session is admitted. Contacts use
-their own granted `yuri.projects` tools, not this session binding.
+their immutable staged references until a new session is admitted. Contacts keep
+their granted `yuri.projects` `register_project` tool for the assign flow and also
+reach every other operation through the same helper, bound to their `assistantID`.
 
 `projects.js` owns `POST /api/yuri/session-skills/projects` (`describe`, `list`,
 `add`, `task-sessions`, `session-state`, `settle-session`, `unsettle-session`, `archive-session`, `unarchive-session`, `remote-hosts`, `add-remote`, `remote-projects`, `sessions`, `read-session`, `create-session`, `prompt-session`). `projects-remote.js` uses the injected `remoteHostGateway` and its immutable task leases; discovery returns authenticated `{hubId,hostId,instanceId}` targets, and explicit targets never fall back to local. `remote-hosts` includes authorized machines with no associated project, reports per-machine failures and releases each probe. `add-remote` uses `gateway.registerProject`, shared with the UI: the target validates/canonicalizes and registers the directory before the Hub saves a deduplicated reference and broadcasts project-order invalidation. A Hub write failure leaves the remote project intact; retrying the same target/path completes association. Paths are never resolved on the Hub filesystem. Lease cleanup runs on every outcome. Remote SDK requests preserve generated request data through the lease; bounded message reads use the existing Host turn-page route. No remote bodies are persisted on Hub. Session creation/prompt require stable caller IDs for ambiguous-result inspection, not automatic replay. This capability neither uses nor grants the desktop SSH helper. The global gate and route require the existing loopback service credential,

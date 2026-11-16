@@ -1,4 +1,5 @@
 import { authorizeScheduledTaskSkillRequest } from '../scheduled-tasks/session-skill-contract.js';
+import { isBoundSkillCaller, parseSkillCaller } from './skill-caller.js';
 
 export const REMOTE_CONNECTIONS_SKILL_PATH = '/api/yuri/session-skills/remote-connections';
 
@@ -18,17 +19,16 @@ const validInput = (operation, input) => {
 };
 
 /** Loopback + service credential + admitted-session binding, never browser/native IPC. */
-export function registerRemoteConnectionsSkill(app, { express, adapter, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, createClient }) {
+export function registerRemoteConnectionsSkill(app, { express, adapter, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, createClient, hasAssistant }) {
   app.post(REMOTE_CONNECTIONS_SKILL_PATH, express.json({ limit: '16kb' }), async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!getIsSharedOpenCodeService() || !authorizeScheduledTaskSkillRequest(req, getOpenCodeAuthHeaders())) return res.status(403).json({ error: 'Forbidden' });
     if (!adapter) return res.status(501).json({ code: 'remote_connections_unsupported', error: 'Requires the local desktop Host' });
-    const { sessionID, operation, input = {} } = req.body ?? {};
-    if (typeof sessionID !== 'string' || !sessionID || !['describe', 'list', 'setup', 'pair'].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid connection input' });
+    const { operation, input = {} } = req.body ?? {};
+    const caller = parseSkillCaller(req.body);
+    if (!caller || !['describe', 'list', 'setup', 'pair'].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid connection input' });
     try {
-      const session = await createClient().session.get({ sessionID });
-      const hostOrigin = `http://${req.socket.localAddress === '::1' ? '[::1]' : '127.0.0.1'}:${req.socket.localPort}`;
-      if (session.metadata?.yuri?.scheduledTaskSkill?.hostOrigin !== hostOrigin) return res.status(403).json({ error: 'Session is not bound to this Host' });
+      if (!await isBoundSkillCaller(req, caller, { createClient, hasAssistant })) return res.status(403).json({ error: 'Caller is not bound to this Host' });
       if (operation === 'describe') return res.json({ supported: true,
         inputs: { setup: '{sshCommand, nickname?} or {id}', pair: '{id?, relayUrl?, label?}; omitted id means this local desktop', list: '{}' },
         installation: 'New Linux SSH connections use the matching self-contained release (x64/arm64, glibc 2.36+), without system Node/npm/Python/compiler. Existing saved installation choices and macOS keep their package-manager path.',

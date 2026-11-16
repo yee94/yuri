@@ -29,6 +29,22 @@ describe('assistant built-in skill pointers', () => {
     }
   });
 
+  it('hands a contact the bound helpers only when it can run them', () => {
+    const customizationSkill = { file: '/data/session-skills/yuri-customization-abc/SKILL.md', projectsCommand: 'run projects describe', remoteCommand: 'run remote describe' };
+    const withBash = formatAssistantBuiltinSkillsPrompt([{ name: 'read' }, { name: 'bash' }], { customizationSkill });
+    expect(withBash).toContain('settle-session');
+    expect(withBash).toContain('read({"path":"/data/session-skills/yuri-customization-abc/SKILL.md"})');
+    expect(withBash).toContain('run projects describe');
+    expect(withBash).toContain('run remote describe');
+    expect(withBash).not.toContain('no bound local desktop helper');
+    const withoutBash = formatAssistantBuiltinSkillsPrompt([{ name: 'read' }], { customizationSkill });
+    expect(withoutBash).not.toContain('run projects describe');
+    expect(withoutBash).toContain('no bound local desktop helper');
+    const noRemote = formatAssistantBuiltinSkillsPrompt([{ name: 'read' }, { name: 'bash' }], { customizationSkill: { ...customizationSkill, remoteCommand: null } });
+    expect(noRemote).toContain('run projects describe');
+    expect(noRemote).toContain('no bound local desktop helper');
+  });
+
   it('omits pointers whose readers were not granted', () => {
     expect(formatAssistantBuiltinSkillsPrompt([])).toBe('');
     const local = formatAssistantBuiltinSkillsPrompt([{ name: 'read' }]);

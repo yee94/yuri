@@ -503,6 +503,7 @@ export async function runContactTurn({
   AgentImpl = Agent,
   signal = null,
   readOnly = false,
+  customizationSkill = null,
   allowWatchSession = false,
   allowSilent = false,
 }) {
@@ -539,7 +540,7 @@ export async function runContactTurn({
         cwd: runtime?.cwd,
         skillsPrompt: runtime?.skillsPrompt,
       }),
-      readOnly ? '' : formatAssistantBuiltinSkillsPrompt([...codingTools, ...contactTools]),
+      readOnly ? '' : formatAssistantBuiltinSkillsPrompt([...codingTools, ...contactTools], { customizationSkill }),
       assistant.defaultPrompt,
       codingTools.length > 0 ? WORKSPACE_RESPONSE_PROTOCOL : '',
       'Actual tool results arrive in tool-role messages; never manufacture them.',

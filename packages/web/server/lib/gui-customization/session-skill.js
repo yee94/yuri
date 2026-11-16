@@ -29,14 +29,26 @@ export function createCustomizationSkillInstaller({ yuriDataDir }) {
     })().catch((error) => { resources.delete(key); throw error; }));
     return resources.get(key);
   };
-  return async (client, sessionID, { remoteBinding, projectBinding } = {}) => {
+  /** Stage the resource set and format the bound helper commands for one caller (`{sessionID}` or `{assistantID}`). */
+  const resolve = async (caller, { remoteBinding, projectBinding } = {}) => {
     const file = await prepare(Boolean(remoteBinding), Boolean(projectBinding));
-    const projects = projectBinding ? ` For local/remote project registration, task/session archive and restore, discovering authorized remote machines, or reading/creating/continuing remote sessions, read references/projects.md and run the bound project API helper.\nBound project helper: ${sessionSkillCommand(process.execPath, path.join(path.dirname(file), 'projects.mjs'), Buffer.from(JSON.stringify({ ...projectBinding, sessionID })).toString('base64url'), 'describe')}\n` : ' No bound project helper is provided; project registration, task/session archive and remote project/session access are unavailable through this session skill.';
-    const remote = remoteBinding ? ` For SSH setup/config sync or Relay pairing, use only this bound helper after reading references/remote-connections.md. Bound local desktop helper: ${remoteConnectionsCommand(process.execPath, path.join(path.dirname(file), 'remote-connections.mjs'), Buffer.from(JSON.stringify({ ...remoteBinding, sessionID })).toString('base64url'), 'describe')}` : ' No bound SSH/Relay command is provided: these operations are unavailable in this session. Report that limit and stop this branch; use native Settings or a new supported local desktop session. A script or another capability\'s binding does not enable it. There is no credential/filesystem fallback for this capability.';
+    const encode = (binding) => Buffer.from(JSON.stringify({ ...binding, ...caller })).toString('base64url');
+    return {
+      file,
+      projectsCommand: projectBinding ? sessionSkillCommand(process.execPath, path.join(path.dirname(file), 'projects.mjs'), encode(projectBinding), 'describe') : null,
+      remoteCommand: remoteBinding ? remoteConnectionsCommand(process.execPath, path.join(path.dirname(file), 'remote-connections.mjs'), encode(remoteBinding), 'describe') : null,
+    };
+  };
+  const install = async (client, sessionID, { remoteBinding, projectBinding } = {}) => {
+    const { file, projectsCommand, remoteCommand } = await resolve({ sessionID }, { remoteBinding, projectBinding });
+    const projects = projectsCommand ? ` For local/remote project registration, task/session archive and restore, discovering authorized remote machines, or reading/creating/continuing remote sessions, read references/projects.md and run the bound project API helper.\nBound project helper: ${projectsCommand}\n` : ' No bound project helper is provided; project registration, task/session archive and remote project/session access are unavailable through this session skill.';
+    const remote = remoteCommand ? ` For SSH setup/config sync or Relay pairing, use only this bound helper after reading references/remote-connections.md. Bound local desktop helper: ${remoteCommand}` : ' No bound SSH/Relay command is provided: these operations are unavailable in this session. Report that limit and stop this branch; use native Settings or a new supported local desktop session. A script or another capability\'s binding does not enable it. There is no credential/filesystem fallback for this capability.';
     await client.session.instructions.entry.put({ sessionID, key: 'yuri.customization',
       value: `Yuri customization: for adding a directory as a project in Yuri (local or remote), task/session archive or restore (归档/恢复), remote sessions, project/session resource ownership or yuri:// deep links, SSH connections, configuration sync, Relay pairing, appearance (themes, CSS/layout, Logo, macOS Dock), work-status widgets, global pages/tabs, custom file parsing/previews, preview exports, or GUI panels/commands/settings, read ${JSON.stringify(file)} first. Use the matching reference and apply changes only when requested.${projects}${remote}`,
     });
   };
+  install.resolve = resolve;
+  return install;
 }
 
 /** Managed local servers share the resource filesystem; external servers do not. */

@@ -23,7 +23,8 @@ import { registerProjectIconRoutes } from './project-icon-routes.js';
 import { registerScheduledTaskRoutes } from '../scheduled-tasks/routes.js';
 import { registerScheduledTaskToolRoute } from '../scheduled-tasks/managed-tool-route.js';
 import { registerScheduledTaskSessionSkill } from '../scheduled-tasks/session-skill.js';
-import { registerCustomizationSessionSkill } from '../gui-customization/session-skill.js';
+import { registerCustomizationSessionSkill, createCustomizationSkillInstaller } from '../gui-customization/session-skill.js';
+import { readSharedServiceRegistration, resolveSharedServiceRegistrationPath } from './shared-service.js';
 import { registerConversationRoutes } from '../conversations/routes.js';
 import { registerHistoryImportRoutes } from '../history-import/routes.js';
 import { registerSessionTurnPageRoutes } from '../session-turn-pages/routes.js';
@@ -135,6 +136,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getIsExternalOpenCode = () => false,
       getIsSharedOpenCodeService = () => false,
       remoteConnectionsAdapter = null,
+      getHostPort = () => null,
       forceResolvedOpenCodeBinary = null,
       upgradeOpenCodeCli = null,
       restartOpenCode = null,
@@ -264,8 +266,22 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       scheduledTaskRouter,
       remoteConnectionsAdapter,
     });
+    const hasAssistant = (assistantID) => assistantRoutesRuntime?.service?.hasAssistant(assistantID) ?? false;
+    // Contacts run on this Host, so they get the same staged helpers as admitted Sessions, bound to their own ID.
+    const customizationSkill = createCustomizationSkillInstaller({ yuriDataDir });
+    const resolveAssistantCustomizationSkill = async (assistantID) => {
+      const port = getHostPort();
+      if (!getIsSharedOpenCodeService() || !port) return null;
+      const registrationFile = resolveSharedServiceRegistrationPath();
+      const upstreamOrigin = new URL(buildOpenCodeUrl('/', '')).origin;
+      const registration = await readSharedServiceRegistration({ file: registrationFile });
+      if (!registration?.password || registration.origin !== upstreamOrigin
+        || getOpenCodeAuthHeaders().Authorization !== `Basic ${Buffer.from(`opencode:${registration.password}`).toString('base64')}`) return null;
+      const binding = { hostOrigin: `http://127.0.0.1:${port}`, upstreamOrigin, registrationFile };
+      return customizationSkill.resolve({ assistantID }, { projectBinding: binding, ...(remoteConnectionsAdapter ? { remoteBinding: binding } : {}) });
+    };
     registerRemoteConnectionsSkill(app, {
-      express, adapter: remoteConnectionsAdapter, getIsSharedOpenCodeService, getOpenCodeAuthHeaders,
+      express, adapter: remoteConnectionsAdapter, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, hasAssistant,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
     });
     registerCustomizationSessionSkill(app, {
@@ -310,7 +326,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     const projectRegistry = createProjectRegistry({ persistSettings, validateDirectoryPath });
     registerProjectsSkill(app, {
       remoteHostGateway: routeDependencies.remoteHostGateway,
-      express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders,
+      express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, hasAssistant,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
       registerProject: (input) => projectRegistry.register(input), readSettingsFromDiskStrict, sanitizeProjects,
       sessionLifecycle: createProjectSessionLifecycle({
@@ -354,6 +370,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getServerId,
       getAllowedRoots: () => assistantAllowedRoots,
       registerProject: registerAssistantProject,
+      resolveCustomizationSkill: resolveAssistantCustomizationSkill,
       listProjects: async () => {
         const settings = await readSettingsFromDiskMigrated();
         return sanitizeProjects(settings?.projects ?? [])

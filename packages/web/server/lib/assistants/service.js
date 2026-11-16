@@ -258,7 +258,7 @@ const awaitWithDeadline = async (work, ms = CONTACT_CATALOG_DEADLINE_MS, code = 
   }
 };
 
-export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders, getServerId = async () => null, getAllowedRoots = () => [], listProjects = async () => [], registerProject = null, readModelPreferences = async () => null, listScheduledTasks = null, sessionIndexService = null, upsertScheduledTask = null, patchScheduledTask = null, syncScheduledTaskProject = null, globalEventHub = null, onRevisionTip = null, onContactTurnEvent = null, onContactTurnComplete = null, /** Host archive op: ({ sessionID, directory, archivedAt }) => Promise */ archiveSessionHost = null, /** Idempotent Host metadata drop after successful SDK delete */ forgetSessionHost = null, /** Host store write: (sessionId, patch) => Promise */ persistSessionMetadata = null, /** After Host isolation metadata is committed. */ onSystemSessionPersisted = null, clock = () => Date.now(), setIntervalFn = setInterval, clearIntervalFn = clearInterval, setImmediateFn = setImmediate, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, reconcileIntervalMs = 60_000, clientFactory, fetchImpl, remoteHostGateway = null, createChatCompletion = null, runContactTurn = defaultRunContactTurn, listWorktrees = defaultListWorktrees } = {}) => {
+export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders, getServerId = async () => null, getAllowedRoots = () => [], listProjects = async () => [], registerProject = null, /** (assistantID) => Promise<{file, projectsCommand, remoteCommand}|null> */ resolveCustomizationSkill = null, readModelPreferences = async () => null, listScheduledTasks = null, sessionIndexService = null, upsertScheduledTask = null, patchScheduledTask = null, syncScheduledTaskProject = null, globalEventHub = null, onRevisionTip = null, onContactTurnEvent = null, onContactTurnComplete = null, /** Host archive op: ({ sessionID, directory, archivedAt }) => Promise */ archiveSessionHost = null, /** Idempotent Host metadata drop after successful SDK delete */ forgetSessionHost = null, /** Host store write: (sessionId, patch) => Promise */ persistSessionMetadata = null, /** After Host isolation metadata is committed. */ onSystemSessionPersisted = null, clock = () => Date.now(), setIntervalFn = setInterval, clearIntervalFn = clearInterval, setImmediateFn = setImmediate, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, reconcileIntervalMs = 60_000, clientFactory, fetchImpl, remoteHostGateway = null, createChatCompletion = null, runContactTurn = defaultRunContactTurn, listWorktrees = defaultListWorktrees } = {}) => {
   const execution = createAssistantExecutionAccessor(remoteHostGateway);
   const targetFields = () => execution.current() ? { target: execution.current().target } : {};
   const scopedWork = (params, work) => execution.run(params, work);
@@ -3821,9 +3821,12 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             } : null,
           }));
           controller.signal.throwIfAborted();
+          const customizationSkill = typeof resolveCustomizationSkill === 'function'
+            ? await Promise.resolve(resolveCustomizationSkill(row.assistant_id)).catch(() => null) : null;
           const generated = await runContactTurn({
             signal: controller.signal,
             readOnly: false,
+            customizationSkill,
             assistant: assistantSnapshot,
             history: executionHistory,
             userText,
@@ -4363,7 +4366,8 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     assertGeneration();
     return image;
   };
-  return { capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, channelPage, prepareChannelImage, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
+  const hasAssistant = (assistantID) => { const row = typeof assistantID === 'string' && assistantID ? assistant(assistantID) : null; return Boolean(row) && !row.tombstone_at; };
+  return { hasAssistant, capability: async () => ({ supported: true, enabled: enabled(), revision: revision(), serverInstanceID: await getServerId(), sharingAvailable: false, archiveMetadataAvailable: typeof archiveSessionHost === 'function', sessionMetadataAvailable: false }), snapshot, channelPage, prepareChannelImage, ensureDefaultAssistant, createAssistant, updateAssistant, setEnabled: (input) => { if (!plainObject(input) || typeof input.enabled !== 'boolean' || input.expectedRevision !== revision()) fail('revision_conflict'); return { enabled: true, revision: revision() }; }, removeAssistant, ensure, createNew, compact, send, whenContactTurnSettled, abort, captureQueueDeliveryTarget, sendWithCapturedConfig, share, shareOperation, historicalMessages, contactMessages, clearContactMemory, resetContact, markContactRead, appendContactCard, deliverPeerMessage, listAssistantScheduledTasks, reportScheduledTaskResult, putAssistantContactAttachment, getAssistantContactAttachment, migrateContactAttachments, processEvent, reportAssignedSessionSettle: reportAssignedSession, reconcile,   close: () => {
     assignedCompletion.dispose();
     remoteWatchReconciler.close();
     execution.close();
