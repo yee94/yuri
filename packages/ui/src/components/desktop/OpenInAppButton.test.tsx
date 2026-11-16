@@ -95,3 +95,21 @@ test('switching to ordinary Relay hides toolbar; switching local restores local 
     expect(io.open).toHaveBeenCalledWith('/srv/remote project', 'finder', 'Finder', undefined);
   } finally { await view.close(); }
 });
+
+test('default terminal menu uses its actual name/icon and stable terminal identity', async () => {
+  io.local = true;
+  io.ssh = null;
+  const previous = io.apps;
+  io.apps = [{ id: 'terminal', appName: '/Applications/Warp.app', label: 'Warp' }];
+  const view = await fixture();
+  try {
+    expect(view.host.textContent).toContain('Warp');
+    expect(view.host.textContent).not.toContain('Terminal');
+    expect(view.host.querySelector('img')).toBeNull();
+    await act(async () => view.host.querySelector('button')!.click());
+    expect(io.open).toHaveBeenCalledWith('/srv/remote project', 'terminal', '/Applications/Warp.app', undefined);
+  } finally {
+    io.apps = previous;
+    await view.close();
+  }
+});

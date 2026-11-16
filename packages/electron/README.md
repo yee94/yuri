@@ -462,6 +462,16 @@ link their CLI only into `~/.local/bin` (not PATH), and opening the folder with
 `open -a` makes LaunchServices load the app bundle as a data path instead. Wu is
 launched through `Wu.app/Contents/MacOS/cli` with `-n <project>`.
 
+On macOS the persisted `terminal` choice represents the system default terminal,
+not a fixed Apple Terminal app. Native discovery asks NSWorkspace for the handler
+of `/bin/zsh` without launching it, supplies its display name and icon, and
+rechecks on installed-app requests even while the editor catalog is cached.
+Project/file opening resolves the handler again; files open their parent folder.
+An unavailable handler/probe falls back to Apple Terminal. Installed terminals
+are never ranked heuristically. Windows keeps its existing terminal launch chain;
+SSH, web, VS Code and mobile capabilities are unchanged. This requires an updated
+desktop installer as well as the shared UI, not UI OTA alone.
+
 SSH config aliases are preserved so editor-side OpenSSH can apply identity files,
 jump hosts and other config. Explicit `-l` and `-p` (including `user@host:port`)
 are carried into the link; VS Code-family explicit ports use the Remote-SSH

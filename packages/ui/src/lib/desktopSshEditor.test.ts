@@ -30,3 +30,21 @@ test('local app catalog can be read from a trusted desktop UI connected to SSH',
   expect(result.apps[0].name).toBe('Cursor');
   expect(io.invoke).toHaveBeenCalledWith('desktop_get_installed_apps', { apps: ['Cursor'], force: undefined });
 });
+
+test('installed-app IPC preserves default terminal metadata and accepts older payloads', async () => {
+  vi.stubGlobal('__YURI_DESKTOP__', { invoke: io.invoke });
+  io.invoke.mockResolvedValue({
+    apps: [
+      { name: 'Terminal', appName: '/Applications/Warp.app', label: 'Warp', iconDataUrl: 'warp-icon' },
+      { name: 'Finder' },
+      { name: 'Invalid', appName: 123, label: false },
+    ],
+    hasCache: true,
+  });
+  const result = await fetchDesktopInstalledApps(['Terminal', 'Finder']);
+  expect(result.apps[0]).toEqual({
+    name: 'Terminal', appName: '/Applications/Warp.app', label: 'Warp', iconDataUrl: 'warp-icon',
+  });
+  expect(result.apps[1]).toMatchObject({ name: 'Finder', appName: undefined, label: undefined });
+  expect(result.apps[2]).toMatchObject({ appName: undefined, label: undefined });
+});

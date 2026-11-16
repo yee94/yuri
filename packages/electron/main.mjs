@@ -3740,6 +3740,47 @@ const buildInstalledApps = async (apps) => {
   return results;
 };
 
+const resolveDefaultTerminal = async () => {
+  try {
+    const { stdout } = await execFileAsync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `
+      ObjC.import('AppKit');
+      const url = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL($.NSURL.fileURLWithPath('/bin/zsh'));
+      const bundle = $.NSBundle.bundleWithURL(url);
+      JSON.stringify({
+        appName: ObjC.unwrap(url.path),
+        label: ObjC.unwrap(bundle.objectForInfoDictionaryKey('CFBundleDisplayName'))
+          || ObjC.unwrap(bundle.objectForInfoDictionaryKey('CFBundleName'))
+      });
+    `], { encoding: 'utf8', timeout: 3000 });
+    const terminal = JSON.parse(stdout);
+    if (typeof terminal.appName === 'string' && path.isAbsolute(terminal.appName)
+      && terminal.appName.endsWith('.app') && await pathExists(terminal.appName)) {
+      return {
+        appName: terminal.appName,
+        label: typeof terminal.label === 'string' && terminal.label.trim()
+          ? terminal.label.trim() : path.basename(terminal.appName, '.app'),
+      };
+    }
+  } catch {
+  }
+  return { appName: 'Terminal', label: 'Terminal' };
+};
+
+const withDefaultTerminal = async (apps) => {
+  if (process.platform !== 'darwin') return apps;
+  const terminal = await resolveDefaultTerminal();
+  const previous = apps.find((entry) => entry.name === 'Terminal');
+  const iconDataUrl = previous?.appName === terminal.appName && previous.iconDataUrl
+    ? previous.iconDataUrl
+    : await iconToDataUrl(await resolveAppIconPath(
+      path.isAbsolute(terminal.appName) ? terminal.appName : await resolveAppBundlePath(terminal.appName)
+    ), terminal.label);
+  const entry = { name: 'Terminal', ...terminal, iconDataUrl };
+  return previous
+    ? apps.map((app) => app.name === 'Terminal' ? entry : app)
+    : [...apps, entry];
+};
+
 const parseSshConfigImports = () => {
   const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
   if (!fs.existsSync(sshConfigPath)) return [];
@@ -4096,7 +4137,12 @@ const buildOpenProjectSpecs = async ({ projectPath, appId, appName }) => {
     return [{ program: 'open', args: [projectPath] }];
   }
 
-  if (appId === 'terminal' || appId === 'iterm2' || appId === 'ghostty') {
+  if (appId === 'terminal') {
+    const terminal = await resolveDefaultTerminal();
+    return [{ program: 'open', args: ['-a', terminal.appName, projectPath] }];
+  }
+
+  if (appId === 'iterm2' || appId === 'ghostty') {
     return [{ program: 'open', args: ['-a', appName, projectPath] }];
   }
 
@@ -4129,7 +4175,10 @@ const buildOpenFileSpecs = async ({ filePath, appId, appName }) => {
   }
 
   const parentDir = path.dirname(filePath);
-  if (appId === 'terminal' || appId === 'iterm2' || appId === 'ghostty') {
+  if (appId === 'terminal') {
+    return buildOpenProjectSpecs({ projectPath: parentDir, appId, appName });
+  }
+  if (appId === 'iterm2' || appId === 'ghostty') {
     return [{ program: 'open', args: ['-a', appName, parentDir] }];
   }
 
@@ -4650,7 +4699,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const refresh = async () => {
         const apps = process.platform === 'win32'
           ? await buildWindowsInstalledApps(args.apps)
-          : await buildInstalledApps(Array.isArray(args.apps) ? args.apps : []);
+          : await withDefaultTerminal(await buildInstalledApps(Array.isArray(args.apps) ? args.apps : []));
         await fsp.mkdir(path.dirname(cachePath), { recursive: true });
         await fsp.writeFile(cachePath, JSON.stringify({ updatedAt: now, apps }, null, 2));
         emitToAllWindows('yuri:installed-apps-updated', apps);
@@ -4661,7 +4710,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (!hasCache || isCacheStale || args.force === true) {
         void refresh();
       }
-      return { apps: cachedApps, hasCache, isCacheStale };
+      return { apps: await withDefaultTerminal(cachedApps), hasCache, isCacheStale };
     }
 
     case 'desktop_window_runtime_set': {

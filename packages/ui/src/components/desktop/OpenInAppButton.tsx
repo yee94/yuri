@@ -27,7 +27,7 @@ const withFallbackIcon = (app: OpenInAppOption): OpenInAppOptionWithFallback => 
   ...app,
   fallbackIconDataUrl: app.id === 'finder' && window.__YURI_PLATFORM__ !== 'win32'
     ? FINDER_DEFAULT_ICON_DATA_URL
-    : app.id === 'terminal'
+    : app.id === 'terminal' && app.label === 'Terminal'
       ? TERMINAL_DEFAULT_ICON_DATA_URL
       : undefined,
 });

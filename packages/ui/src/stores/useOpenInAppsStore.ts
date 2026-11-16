@@ -26,6 +26,21 @@ const getAlwaysAvailableApps = (): OpenInAppOption[] => {
     .map((app) => ({ ...getPlatformOpenInApp(app) }));
 };
 
+const getInstalledAppOptions = (installed: InstalledDesktopAppInfo[]): OpenInAppOption[] => {
+  const byName = new Map(installed.map((app) => [app.name, app]));
+  return OPEN_IN_APPS
+    .filter((app) => byName.has(app.appName) || OPEN_IN_ALWAYS_AVAILABLE_APP_IDS.has(app.id))
+    .map((app) => {
+      const info = byName.get(app.appName);
+      return {
+        ...getPlatformOpenInApp(app),
+        ...(app.id === 'terminal' && info?.appName && info.label
+          ? { appName: info.appName, label: info.label } : {}),
+        iconDataUrl: info?.iconDataUrl ?? undefined,
+      };
+    });
+};
+
 const getStoredAppId = (): string => {
   if (typeof window === 'undefined') {
     return DEFAULT_OPEN_IN_APP_ID;
@@ -71,19 +86,7 @@ export const useOpenInAppsStore = create<OpenInAppsState>()((set, get) => ({
         return;
       }
 
-      const allowed = new Set(installed.map((app) => app.name));
-      const iconMap = new Map(installed.map((app) => [app.name, app.iconDataUrl ?? undefined]));
-
-      const filtered = OPEN_IN_APPS.filter(
-        (app) => allowed.has(app.appName) || OPEN_IN_ALWAYS_AVAILABLE_APP_IDS.has(app.id)
-      );
-
-      const withIcons = filtered.map((app) => ({
-        ...getPlatformOpenInApp(app),
-        iconDataUrl: iconMap.get(app.appName),
-      }));
-
-      set({ availableApps: withIcons, hasLoadedApps: true });
+      set({ availableApps: getInstalledAppOptions(installed), hasLoadedApps: true });
     };
 
     const loadInstalledApps = async (force?: boolean) => {
@@ -245,15 +248,7 @@ export const useOpenInAppsStore = create<OpenInAppsState>()((set, get) => ({
         isCacheStale,
       } = await fetchDesktopInstalledApps(appNames, force);
 
-      const allowed = new Set(installed.map((app) => app.name));
-      const iconMap = new Map(installed.map((app) => [app.name, app.iconDataUrl ?? undefined]));
-      const filtered = OPEN_IN_APPS.filter(
-        (app) => allowed.has(app.appName) || OPEN_IN_ALWAYS_AVAILABLE_APP_IDS.has(app.id)
-      );
-      const withIcons = filtered.map((app) => ({
-        ...app,
-        iconDataUrl: iconMap.get(app.appName),
-      }));
+      const withIcons = getInstalledAppOptions(installed);
 
       set({
         availableApps: withIcons.length > 0 ? withIcons : getAlwaysAvailableApps(),

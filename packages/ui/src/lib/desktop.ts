@@ -1045,6 +1045,8 @@ export const openDesktopFileInApp = async (
 
 export type InstalledDesktopAppInfo = {
   name: string;
+  appName?: string;
+  label?: string;
   iconDataUrl?: string | null;
 };
 
@@ -1091,9 +1093,11 @@ export const fetchDesktopInstalledApps = async (
     const installedApps = payload.apps
       .filter((entry) => entry && typeof entry === 'object')
       .map((entry) => {
-        const record = entry as { name?: unknown; iconDataUrl?: unknown };
+        const record = entry as { name?: unknown; appName?: unknown; label?: unknown; iconDataUrl?: unknown };
         return {
           name: typeof record.name === 'string' ? record.name : '',
+          appName: typeof record.appName === 'string' ? record.appName : undefined,
+          label: typeof record.label === 'string' ? record.label : undefined,
           iconDataUrl: typeof record.iconDataUrl === 'string' ? record.iconDataUrl : null,
         };
       })
