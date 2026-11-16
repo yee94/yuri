@@ -23,10 +23,12 @@ describe('built-in customization instructions', () => {
     expect(entry.value.length).toBeLessThan(1500);
     const file = JSON.parse(entry.value.match(/read (".*?") first/)[1]);
     expect(await fs.readFile(file, 'utf8')).toContain('name: yuri-customization');
-    for (const name of ['projects', 'appearance', 'ui-surfaces', 'plugin-styles', 'gui-api', 'workflow', 'global-pages', 'work-status', 'icons', 'file-previews', 'preview-exports', 'remote-connections']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
+    for (const name of ['projects', 'appearance', 'ui-surfaces', 'plugin-styles', 'gui-api', 'workflow', 'global-pages', 'work-status', 'icons', 'file-previews', 'preview-exports', 'remote-connections', 'deep-links']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
     expect(entry.value).toContain('adding a directory as a project in Yuri');
     expect(entry.value).toContain('task/session archive or restore (归档/恢复)');
     expect(await fs.readFile(file, 'utf8')).toContain('(references/projects.md)');
+    expect(entry.value).toContain('yuri:// deep links');
+    expect(await fs.readFile(file, 'utf8')).toContain('(references/deep-links.md)');
     const projects = await fs.readFile(path.join(path.dirname(file), 'references', 'projects.md'), 'utf8');
     expect(projects).toContain('POST /api/yuri/session-skills/projects');
     expect(projects).toContain('commands.add');

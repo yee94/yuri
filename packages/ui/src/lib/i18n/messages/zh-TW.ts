@@ -466,6 +466,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.toast.openFailed': '對話 {sessionId} 無法載入',
   'sessions.toast.openFailedMissingDirectory': '對話 {sessionId} 無法載入：缺少工作區路徑',
   'sessions.toast.openFailedMissingSessionId': '無法開啟對話：缺少工作階段 ID',
+  'sessions.toast.notFound': '找不到對話 {sessionId}：本機與已連線的遠端專案中都不存在',
   'sessions.scheduledTasks.history.loadingMore': '正在載入更多…',
   'sessions.scheduledTasks.history.loadMore': '載入更多',
   'sessions.scheduledTasks.workspace.search.placeholder': '搜尋任務…',

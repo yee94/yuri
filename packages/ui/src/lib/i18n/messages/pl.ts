@@ -574,6 +574,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.toast.openFailed': 'Nie można wczytać rozmowy {sessionId}',
   'sessions.toast.openFailedMissingDirectory': 'Nie można wczytać rozmowy {sessionId}. Brak ścieżki obszaru roboczego.',
   'sessions.toast.openFailedMissingSessionId': 'Nie można otworzyć rozmowy. Brak identyfikatora sesji.',
+  'sessions.toast.notFound': 'Nie znaleziono rozmowy {sessionId} na tym urządzeniu ani w żadnym połączonym projekcie zdalnym.',
   'sessions.scheduledTasks.history.loadingMore': 'Wczytywanie…',
   'sessions.scheduledTasks.history.loadMore': 'Wczytaj więcej',
   'sessions.scheduledTasks.workspace.search.placeholder': 'Szukaj zadań…',

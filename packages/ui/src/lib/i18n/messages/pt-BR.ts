@@ -468,6 +468,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.toast.openFailed": "Não foi possível carregar a conversa {sessionId}",
   "sessions.toast.openFailedMissingDirectory": "Não foi possível carregar a conversa {sessionId}. O caminho do workspace está ausente.",
   "sessions.toast.openFailedMissingSessionId": "Não foi possível abrir a conversa. O id da sessão está ausente.",
+  "sessions.toast.notFound": "A conversa {sessionId} não foi encontrada neste dispositivo nem em nenhum projeto remoto conectado.",
   "sessions.scheduledTasks.history.loadingMore": "Carregando mais…",
   "sessions.scheduledTasks.history.loadMore": "Carregar mais",
   "sessions.scheduledTasks.workspace.search.placeholder": "Buscar tarefas…",

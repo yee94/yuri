@@ -234,6 +234,7 @@ export const dict = {
   'sessions.toast.openFailed': 'Impossible de charger la conversation {sessionId}',
   'sessions.toast.openFailedMissingDirectory': 'Impossible de charger la conversation {sessionId}. Le chemin de l’espace de travail est manquant.',
   'sessions.toast.openFailedMissingSessionId': 'Impossible d’ouvrir la conversation. L’identifiant de session est manquant.',
+  'sessions.toast.notFound': 'Conversation {sessionId} introuvable sur cet appareil et dans les projets distants connectés.',
   'sessions.scheduledTasks.history.loadingMore': 'Chargement…',
   'sessions.scheduledTasks.history.loadMore': 'Charger plus',
   'sessions.scheduledTasks.workspace.search.placeholder': 'Rechercher des tâches…',

@@ -453,6 +453,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.toast.openFailed': '会話 {sessionId} を読み込めません',
   'sessions.toast.openFailedMissingDirectory': '会話 {sessionId} を読み込めません。ワークスペースパスがありません。',
   'sessions.toast.openFailedMissingSessionId': '会話を開けません。セッション ID がありません。',
+  'sessions.toast.notFound': '会話 {sessionId} が見つかりません。この端末にも接続済みのリモートプロジェクトにも存在しません。',
   'sessions.scheduledTasks.history.loadingMore': 'さらに読み込み中…',
   'sessions.scheduledTasks.history.loadMore': 'さらに読み込む',
   'sessions.scheduledTasks.workspace.search.placeholder': 'タスクを検索…',

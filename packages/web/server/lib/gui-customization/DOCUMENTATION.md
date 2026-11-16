@@ -7,6 +7,12 @@ short discovery pointer enters `session.instructions.entry` under
 no global OpenCode config, installed user skills, project files or old sessions
 are modified.
 
+`skill/references/deep-links.md` is the on-demand reference for `yuri://` links
+(session, new-session, open-project, host, settings). It mirrors the vocabulary in
+`packages/ui/src/apps/deepLinks.ts` and the desktop session-link resolution in
+`packages/ui/src/sync/DOCUMENTATION.md`; update it when either changes. It is
+navigation guidance only and adds no helper or authorization.
+
 Interactive Yuri contacts reuse this same shipped entry and references through
 the assistant-only pointer in `../assistants/builtin-skills.js`. Their pi tools
 run on the Host, so the pointer names the package-local resource directly rather

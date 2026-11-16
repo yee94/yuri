@@ -458,6 +458,7 @@ export const dict = {
   'sessions.toast.openFailed': 'Unable to load conversation {sessionId}',
   'sessions.toast.openFailedMissingDirectory': 'Unable to load conversation {sessionId}. Workspace path is missing.',
   'sessions.toast.openFailedMissingSessionId': 'Unable to open conversation. Session id is missing.',
+  'sessions.toast.notFound': 'Conversation {sessionId} was not found on this device or in any connected remote project',
   'sessions.scheduledTasks.history.loadingMore': 'Loading more…',
   'sessions.scheduledTasks.history.loadMore': 'Load more',
   'sessions.scheduledTasks.workspace.search.placeholder': 'Search schedules…',

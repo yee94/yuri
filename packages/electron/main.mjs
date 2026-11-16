@@ -2595,7 +2595,7 @@ const dispatchDeepLink = (link) => {
     return;
   }
   if (link.type === 'session' && link.value) {
-    emit('yuri:open-session', { sessionId: link.value });
+    emit('yuri:open-session-link', { sessionId: link.value, directory: link.directory === link.value ? '' : link.directory });
     return;
   }
   // Align with OpenCode: yuri://new-session?directory=${path}&prompt=…

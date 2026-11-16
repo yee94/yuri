@@ -453,6 +453,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.toast.openFailed': '대화 {sessionId}을(를) 불러올 수 없습니다',
   'sessions.toast.openFailedMissingDirectory': '대화 {sessionId}을(를) 불러올 수 없습니다. 작업 영역 경로가 없습니다.',
   'sessions.toast.openFailedMissingSessionId': '대화를 열 수 없습니다. 세션 ID가 없습니다.',
+  'sessions.toast.notFound': '대화 {sessionId}을(를) 찾을 수 없습니다. 이 기기와 연결된 원격 프로젝트 어디에도 없습니다.',
   'sessions.scheduledTasks.history.loadingMore': '더 불러오는 중…',
   'sessions.scheduledTasks.history.loadMore': '더 불러오기',
   'sessions.scheduledTasks.workspace.search.placeholder': '작업 검색…',

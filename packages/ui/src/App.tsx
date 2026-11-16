@@ -637,6 +637,10 @@ function App({ apis }: AppProps) {
       const detail = (event as CustomEvent<{ sessionId?: string; directory?: string }>).detail;
       openSessionFromNotification(detail ?? {});
     };
+    const linkHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; directory?: string }>).detail;
+      void import('@/sync/openSessionFromDeepLink').then(({ openSessionFromDeepLink }) => openSessionFromDeepLink(detail ?? {}));
+    };
     const openAssistantHandler = (event: Event) => {
       const assistantID = (event as CustomEvent<{ assistantID?: string }>).detail?.assistantID;
       if (typeof assistantID === 'string' && assistantID.trim()) {
@@ -653,10 +657,12 @@ function App({ apis }: AppProps) {
     };
 
     window.addEventListener('yuri:open-session', handler as EventListener);
+    window.addEventListener('yuri:open-session-link', linkHandler as EventListener);
     window.addEventListener('yuri:open-assistant', openAssistantHandler as EventListener);
     window.addEventListener('yuri:open-scheduled-task', openTaskHandler);
     return () => {
       window.removeEventListener('yuri:open-session', handler as EventListener);
+      window.removeEventListener('yuri:open-session-link', linkHandler as EventListener);
       window.removeEventListener('yuri:open-assistant', openAssistantHandler as EventListener);
       window.removeEventListener('yuri:open-scheduled-task', openTaskHandler);
     };

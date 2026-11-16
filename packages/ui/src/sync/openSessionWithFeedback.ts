@@ -9,6 +9,7 @@ import { isIPadApp } from '@/lib/platform';
 export type OpenSessionFailureReason =
   | 'missing-session-id'
   | 'missing-directory'
+  | 'not-found'
   | 'tab-switch-blocked';
 
 export type OpenSessionResult =
@@ -48,6 +49,11 @@ export function notifySessionOpenFailed(
     toast.error(
       t('sessions.toast.openFailedMissingDirectory', { sessionId: displayId }),
     );
+    return;
+  }
+
+  if (reason === 'not-found') {
+    toast.error(t('sessions.toast.notFound', { sessionId: displayId }));
     return;
   }
 

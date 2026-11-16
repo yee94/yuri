@@ -2644,3 +2644,7 @@ const useViewportStore = create(() => ({ scrollAnchor: 0 }))
 const useSelectionStore = create(() => ({ selectedModel: null }))
 const useInputStore = create(() => ({ pendingInput: "" }))
 ```
+
+## Session deep link (`openSessionFromDeepLink`)
+
+Desktop `yuri://session/<id>?directory=<path>` is emitted by Electron as `yuri:open-session-link` and handled by `openSessionFromDeepLink`. The id is resolved through the local session index first. If it is absent, `directory` (a path on the machine that produced the link) must be owned by exactly one connected Remote Project; the route then goes through `applyRemoteProjectRoute` with that project's `hostId`/`hubId`. Missing directory, no Remote Project support, zero or several owning Hosts, or a catalog failure surface the `sessions.toast.notFound` toast; the link never guesses a Host and never carries Host or credential identity. Notification clicks keep using `openSessionFromNotification` with explicit Host identity. Mobile deep links (`deepLinkNavigation`) are unchanged and do not perform Remote Project lookup.

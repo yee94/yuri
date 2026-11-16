@@ -453,6 +453,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.toast.openFailed': '对话 {sessionId} 无法加载',
   'sessions.toast.openFailedMissingDirectory': '对话 {sessionId} 无法加载：缺少工作区路径',
   'sessions.toast.openFailedMissingSessionId': '无法打开对话：缺少会话 ID',
+  'sessions.toast.notFound': '未找到对话 {sessionId}：本机和已连接的远程项目中都不存在',
   'sessions.scheduledTasks.history.loadingMore': '正在加载更多…',
   'sessions.scheduledTasks.history.loadMore': '加载更多',
   'sessions.scheduledTasks.workspace.search.placeholder': '搜索计划…',

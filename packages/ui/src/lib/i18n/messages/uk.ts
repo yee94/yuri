@@ -468,6 +468,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.toast.openFailed": "Не вдалося завантажити розмову {sessionId}",
   "sessions.toast.openFailedMissingDirectory": "Не вдалося завантажити розмову {sessionId}. Відсутній шлях робочого простору.",
   "sessions.toast.openFailedMissingSessionId": "Не вдалося відкрити розмову. Відсутній ідентифікатор сесії.",
+  "sessions.toast.notFound": "Розмову {sessionId} не знайдено на цьому пристрої чи в жодному підключеному віддаленому проєкті.",
   "sessions.scheduledTasks.history.loadingMore": "Завантаження…",
   "sessions.scheduledTasks.history.loadMore": "Завантажити ще",
   "sessions.scheduledTasks.workspace.search.placeholder": "Пошук завдань…",
