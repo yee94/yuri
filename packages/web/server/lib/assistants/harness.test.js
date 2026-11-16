@@ -895,7 +895,7 @@ describe('runContactTurn', () => {
         history: [], userText: '再建个会话去修这个问题', tools,
         projects: [{ id: 'project', path: workspace }], skillHomeDir: home, createChatCompletion,
       })
-      expect(result.tools.map((tool) => tool.name)).toEqual([...PI_CODING_TOOL_NAMES, ...tools.map((tool) => tool.name).filter((name) => !['create_assistant', 'schedule_task', 'update_scheduled_task'].includes(name)), 'load_tools', 'notify_user'])
+      expect(result.tools.map((tool) => tool.name)).toEqual([...PI_CODING_TOOL_NAMES, ...tools.map((tool) => tool.name).filter((name) => !['create_assistant', 'delete_assistant', 'schedule_task', 'update_scheduled_task'].includes(name)), 'load_tools', 'notify_user'])
       expect(assignWork).toHaveBeenCalledTimes(1)
       expect(result.cards).toEqual([])
       // Assignment terminates mutations; a tools-disabled completion summarizes the result.

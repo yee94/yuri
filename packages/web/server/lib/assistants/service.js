@@ -3757,6 +3757,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             archiveSession: (params) => mutateSessionWork('archive', params),
             deleteSession: (params) => mutateSessionWork('delete', params),
              createAssistant: (toolInput) => createAssistant({ ...toolInput, avatarSeed: randomAvatarSeed(id()), language: language || 'en' }),
+            deleteAssistant: ({ assistantID, expectedRevision }) => removeAssistant(assistantID, expectedRevision),
             scheduleTask: (params) => scheduleWork(row, params),
             listScheduledTasks: (params) => listScheduledTaskWork(params),
             updateScheduledTask: (params) => updateScheduledTaskWork(row, params, controller.signal),

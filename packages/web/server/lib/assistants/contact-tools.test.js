@@ -6,6 +6,7 @@ import {
   CLEAR_CHAT_HISTORY_CONFIRM_BUBBLE,
   CLEAR_CHAT_HISTORY_TOOL_NAME,
   CREATE_ASSISTANT_TOOL_NAME,
+  DELETE_ASSISTANT_TOOL_NAME,
   GET_ASSISTANT_SETTINGS_TOOL_NAME,
   LIST_PROJECTS_TOOL_NAME,
   LIST_SESSIONS_TOOL_NAME,
@@ -121,6 +122,9 @@ describe('contact tool protocol', () => {
     expect(detectRequestedContactTools('帮我新建一个助理，名叫 FlowNL，不要开编码 session', tools)).toEqual([
       CREATE_ASSISTANT_TOOL_NAME,
     ]);
+    expect(detectRequestedContactTools('把这个项目管理员助理删掉', [...tools, DELETE_ASSISTANT_TOOL_NAME])).toEqual([DELETE_ASSISTANT_TOOL_NAME]);
+    expect(detectRequestedContactTools('delete the assistant', [...tools, DELETE_ASSISTANT_TOOL_NAME])).toEqual([DELETE_ASSISTANT_TOOL_NAME]);
+    expect(detectRequestedContactTools('删除会话 ses_1', [...tools, DELETE_ASSISTANT_TOOL_NAME])).toEqual([]);
     expect(detectRequestedContactTools('每天 18:00 排一个 ping 定时任务', tools)).toEqual([SCHEDULE_TASK_TOOL_NAME]);
     expect(detectRequestedContactTools('建会话写一个文件', tools)).toEqual([ASSIGN_SESSION_TOOL_NAME]);
     expect(detectRequestedContactTools('对，你直接派给那个项目组，再建个会话去修这个问题', tools)).toEqual([ASSIGN_SESSION_TOOL_NAME]);
@@ -411,10 +415,12 @@ describe('createContactTools', () => {
         role: 'peer',
         toAssistantID: input.toAssistantID,
       }),
+      deleteAssistant: async () => ({}),
       listAssistants: async () => [{ id: 'asst_peer', name: 'PeerQA' }],
       currentAssistant: { id: 'asst_host', providerID: 'p', modelID: 'm' },
       onCard,
     });
+    expect(createContactTools({}).some((tool) => tool.name === DELETE_ASSISTANT_TOOL_NAME)).toBe(false);
     expect(tools.map((tool) => tool.name)).toEqual([
       'reference_resource',
       'search_memory',
@@ -428,6 +434,7 @@ describe('createContactTools', () => {
       GET_ASSISTANT_SETTINGS_TOOL_NAME,
       UPDATE_ASSISTANT_SETTINGS_TOOL_NAME,
       CREATE_ASSISTANT_TOOL_NAME,
+      DELETE_ASSISTANT_TOOL_NAME,
       SCHEDULE_TASK_TOOL_NAME,
       'list_scheduled_tasks',
       'update_scheduled_task',
@@ -503,6 +510,16 @@ describe('createContactTools', () => {
     expect(created.details.card).toBeUndefined();
     expect(created.terminate).toBe(false);
 
+    const createWithPrompt = vi.fn(async (input) => ({ id: 'asst_pm', name: input.name }));
+    const promptTool = createContactTools({ createAssistant: createWithPrompt, currentAssistant: { id: 'asst_host', providerID: 'p', modelID: 'm' } })
+      .find((tool) => tool.name === CREATE_ASSISTANT_TOOL_NAME);
+    await promptTool.execute('call_prompt', { name: '项目管理员', defaultPrompt: '  中文简练，只汇报变化。  ' });
+    expect(createWithPrompt).toHaveBeenCalledWith({
+      name: '项目管理员', providerID: 'p', modelID: 'm', mode: 'continuous', defaultPrompt: '中文简练，只汇报变化。',
+    });
+    await promptTool.execute('call_bare', { name: 'Bare' });
+    expect(createWithPrompt.mock.calls[1][0]).not.toHaveProperty('defaultPrompt');
+
     const scheduled = await tools.find((tool) => tool.name === SCHEDULE_TASK_TOOL_NAME).execute('call_2', {
       name: 'Daily ping',
       prompt: 'ping',
@@ -530,6 +547,48 @@ describe('createContactTools', () => {
     });
     expect(assigned.terminate).toBe(true);
     expect(onCard).not.toHaveBeenCalled();
+  });
+
+  describe('delete_assistant', () => {
+    const assistants = [
+      { id: 'asst_host', name: 'Host', revision: 3 },
+      { id: 'asst_pm', name: '项目管理员', revision: 7 },
+      { id: 'asst_a', name: 'Twin', revision: 1 },
+      { id: 'asst_b', name: 'twin', revision: 2 },
+    ];
+    const build = (deleteAssistant) => createContactTools({
+      deleteAssistant,
+      listAssistants: async () => assistants,
+      currentAssistant: { id: 'asst_host' },
+    }).find((tool) => tool.name === DELETE_ASSISTANT_TOOL_NAME);
+
+    it('deletes the resolved assistant with its live revision, by name or ID', async () => {
+      const deleteAssistant = vi.fn(async () => ({}));
+      const tool = build(deleteAssistant);
+      const byName = await tool.execute('c1', { to: '项目管理员' });
+      expect(byName.details).toEqual({ deleted: true, assistantID: 'asst_pm', name: '项目管理员' });
+      expect(deleteAssistant).toHaveBeenCalledWith({ assistantID: 'asst_pm', expectedRevision: 7 });
+      await tool.execute('c2', { toAssistantID: 'asst_pm' });
+      expect(deleteAssistant).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses to delete itself, an unknown target, or an ambiguous name without calling the host', async () => {
+      const deleteAssistant = vi.fn();
+      const tool = build(deleteAssistant);
+      for (const params of [{ toAssistantID: 'asst_host' }, { to: 'Host' }, { to: 'Nobody' }, { to: 'Twin' }, {}]) {
+        const result = await tool.execute('c', params);
+        expect(result.details.error).toBeDefined();
+      }
+      expect(deleteAssistant).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a failed delete instead of claiming success', async () => {
+      const failing = build(vi.fn(async () => { throw Object.assign(new Error('stale'), { code: 'revision_conflict' }); }));
+      const result = await failing.execute('c', { to: '项目管理员' });
+      expect(result.details.error).toBeDefined();
+      expect(result.details.deleted).toBeUndefined();
+      expect(build(undefined)).toBeUndefined();
+    });
   });
 
   it.each(['assign_session', 'watch_session'])('%s forwards AbortSignal and drops a late card after cancellation', async (name) => {

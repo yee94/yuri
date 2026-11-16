@@ -144,7 +144,7 @@ describe('assistant-only progressive business tools', () => {
     const tools = [...createContactTools({}), ...createYuriContactTools({ registerProject })];
     await turn(tools, async ({ body }) => {
       expect(names(body)).toContain('list_scheduled_tasks');
-      for (const name of ['load_tools', 'register_project', 'create_assistant', 'schedule_task', 'update_assistant_settings']) expect(names(body)).not.toContain(name);
+      for (const name of ['load_tools', 'register_project', 'create_assistant', 'delete_assistant', 'schedule_task', 'update_assistant_settings']) expect(names(body)).not.toContain(name);
       return { text: 'Reviewed.' };
     }, { readOnly: true });
     expect(registerProject).not.toHaveBeenCalled();
