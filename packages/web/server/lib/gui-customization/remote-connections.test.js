@@ -5,6 +5,23 @@ import { registerRemoteConnectionsSkill, REMOTE_CONNECTIONS_SKILL_PATH } from '.
 
 describe('remote connection bridge availability', () => {
   const auth = { Authorization: `Basic ${Buffer.from('opencode:fixture').toString('base64')}` };
+  it('describes self-contained Linux setup through the admitted session bridge', async () => {
+    const app = express();
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    registerRemoteConnectionsSkill(app, { express, adapter: {},
+      getIsSharedOpenCodeService: () => true, getOpenCodeAuthHeaders: () => auth,
+      createClient: () => ({ session: { get: async () => ({ metadata: { yuri: { scheduledTaskSkill: { hostOrigin: origin } } } }) } }),
+    });
+    try {
+      const response = await request(server).post(REMOTE_CONNECTIONS_SKILL_PATH).set(auth)
+        .send({ sessionID: 'ses_one', operation: 'describe' });
+      expect(response.status).toBe(200);
+      expect(response.body.installation).toContain('self-contained release');
+      expect(response.body.installation).toContain('without system Node/npm/Python/compiler');
+    } finally { await new Promise((resolve) => server.close(resolve)); }
+  });
   it.each([true, false])('has no native capability outside a shared desktop: shared=%s', async (shared) => {
     const app = express();
     const createClient = vi.fn();

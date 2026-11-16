@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 
 // Mock child_process to prevent real spawnSync calls that would hang in tests
 vi.mock('node:child_process', () => ({
@@ -395,6 +396,12 @@ describe('getCurrentVersion', () => {
 });
 
 describe('CLI update exports', () => {
+  it('never falls back to a shell package manager for portable installations', () => {
+    const before = spawnSync.mock.calls.length;
+    expect(() => executeUpdate('portable', { silent: true })).toThrow('self-contained Yuri installation');
+    expect(spawnSync.mock.calls.length).toBe(before);
+  });
+
   it('exports package-manager helpers used by the update command', () => {
     expect(typeof detectPackageManager).toBe('function');
     expect(typeof executeUpdate).toBe('function');

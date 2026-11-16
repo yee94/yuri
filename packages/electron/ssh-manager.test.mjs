@@ -785,6 +785,10 @@ describe('first-install configuration sync', () => {
     expect(root.desktopHosts.find(({ id }) => id === 'one').label).toBe('One');
     expect(root.desktopSshInitialConfigSyncPending).toEqual(['other']);
     expect(root.desktopSshInstances[0].remoteYuri.mode).toBe('managed');
+    expect(root.desktopSshInstances[0].remoteYuri.installMethod).toBe('download_release');
+    await manager.saveSessionConnection({ id: 'legacy', sshCommand: 'ssh user@legacy', remoteYuri: { installMethod: 'npm' } });
+    await manager.saveSessionConnection({ id: 'legacy', sshCommand: 'ssh user@legacy' });
+    expect(manager.readInstances().instances.find(({ id }) => id === 'legacy').remoteYuri.installMethod).toBe('npm');
   });
 
   test.each([{ installed: false, available: false }, { installed: true, available: false }])('chooses the first-install source from installation: %j', async (magpie) => {

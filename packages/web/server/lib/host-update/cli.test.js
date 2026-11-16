@@ -2,13 +2,14 @@ import { EventEmitter } from 'node:events';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { createCliUpdateAdapter } from './cli.js';
 
-const fixture = vi.hoisted(() => ({ fork: vi.fn(), inspect: vi.fn(), reject: false, children: [] }));
+const fixture = vi.hoisted(() => ({ fork: vi.fn(), inspect: vi.fn(), reject: false, children: [], portable: false }));
 vi.mock('node:child_process', () => ({ fork: (...args) => fixture.fork(...args) }));
-vi.mock('node:fs', () => ({ existsSync: () => false }));
+vi.mock('node:fs', () => ({ existsSync: (file) => fixture.portable && file.endsWith('/portable.json') }));
 vi.mock('./releases.js', () => ({ discoverCliRelease: (...args) => fixture.inspect(...args) }));
 
 beforeEach(() => {
   fixture.reject = false; fixture.children = []; fixture.inspect.mockReset(); fixture.fork.mockReset();
+  fixture.portable = false;
   fixture.fork.mockImplementation(() => {
     const child = Object.assign(new EventEmitter(), {
       connected: true, unref: vi.fn(), kill: vi.fn(), disconnect: vi.fn(), send: vi.fn(),
@@ -56,4 +57,16 @@ it('advertises development and externally supervised installations as unsupporte
   const host = createCliUpdateAdapter({ packageRoot: '/source/web', dataDir: '/data', env: {} });
   expect(host.supported).toBe(false);
   expect(fixture.fork).not.toHaveBeenCalled();
+});
+
+it('advertises portable installs as unsupported without package-manager probes or shutdown', async () => {
+  fixture.portable = true;
+  const shutdown = vi.fn();
+  const host = adapter(shutdown);
+  expect(host.supported).toBe(false);
+  expect(host.reason).toBe('portable_installation_requires_release');
+  await host.refreshSupport();
+  await expect(host.assertReady()).rejects.toThrow('installer');
+  expect(fixture.fork).not.toHaveBeenCalled();
+  expect(shutdown).not.toHaveBeenCalled();
 });

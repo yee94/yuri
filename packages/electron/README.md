@@ -88,6 +88,20 @@ Explicit instance switches from the client-owned UI, new windows (default host, 
 
 Managed SSH bootstrap discovers registered daemons through `yuri status --json` and confirms each live runtime before choosing a retained `ssh-remote` Host. Within the remote user's CLI data scope it consolidates SSH-managed daemons, preserving manually launched web and desktop runtimes. A matching running version with valid in-memory/configured credentials is reused even without a preferred port. Missing credentials after desktop restart or a stale running version requires a verified stop and replacement on the same port; credentials are not persisted for reuse. Package upgrades drain managed daemons before replacing installation files. Shutdown uses `yuri stop --port ... --json`, whose registry/PID checks and signal fallback work with password-protected Hosts. Discovery or shutdown failure blocks replacement rather than adding another database writer. A failed install leaves the old daemon stopped and surfaces the error for retry. External SSH mode remains probe-only. These lifecycle fixes are installer-owned.
 
+New UI- and session-skill-created SSH entries use `download_release` for the self-contained Linux
+x64/arm64 distribution (glibc 2.36+). It supplies private Node, precompiled native
+modules and OpenCode without installing npm/Python/compiler or changing the
+system Node. The packaged Web installer verifies checksums/native readiness,
+retains old releases and switches `current` atomically; `ssh-portable.mjs` owns
+the shell integration. `ssh-runtime.sh` binds the portable launcher and OpenCode,
+never adding private Node to login PATH. Stored npm/bun selections retain their
+existing installation/ABI-repair path. macOS SSH targets retain the previous
+Node/package-manager path even for new default entries; portable releases are
+Linux-only. `upload_bundle` is explicitly unsupported
+rather than silently running a package manager. Portable native failures do not
+trigger target-side compilation. This SSH extension requires a new desktop
+installer, not UI OTA alone. See `../web/scripts/portable/DOCUMENTATION.md`.
+
 For Relay-paired hosts, direct probes must first obtain an exact `/health.serverId` match without sending credentials. Missing identity, malformed JSON, redirects, failed health requests and mismatched computers cannot qualify as a usable direct transport; startup restore and background candidate refresh retain Relay instead. Explicit direct-only hosts keep their compatibility/authentication probe. This gate is installer-owned Electron main code, so a UI/backend OTA alone cannot update it.
 
 Renderer local-instance checks use the active Host/Relay identity before URL comparisons. A Relay virtual loopback origin never qualifies as the local machine. Remote windows do not inherit unscoped local storage through immutable preload URLs, and their transcript cache uses IndexedDB rather than the local-only HTTP/SQLite backend. Yuri filesystem and session-wrapper requests resolve route paths through the current runtime, alongside SDK calls, rather than retaining the startup HTTP origin.

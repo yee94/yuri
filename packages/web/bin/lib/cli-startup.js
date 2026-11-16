@@ -8,6 +8,7 @@ import { getDataDir } from './cli-paths.js';
 import { hasUiPasswordConfigured } from './cli-network.js';
 import { resolveExplicitBinary, searchPathFor } from './cli-executables.js';
 import { isAcceptableOpenCode2HealthVersion, isOpenCode1xVersion } from '../../server/lib/opencode/opencode2-pin.js';
+import { readPortableInstallation } from '../../server/lib/portable-installation.js';
 
 const STARTUP_SERVICE_ID = 'dev.yuri.web';
 
@@ -325,7 +326,11 @@ ${envXml}  <key>ProcessType</key>
 }
 
 function buildSystemdUserService(options = {}) {
-  const args = buildStartupArgs(options).map((arg) => `"${systemdEscapeArg(arg)}"`).join(' ');
+  const portable = readPortableInstallation();
+  const launchArgs = buildStartupArgs(options);
+  if (portable) launchArgs.shift();
+  const args = launchArgs.map((arg) => `"${systemdEscapeArg(arg)}"`).join(' ');
+  const executable = portable?.launcher || process.execPath;
   const envFilePath = getStartupEnvFilePath();
   return `[Unit]
 Description=Yuri web server
@@ -334,7 +339,7 @@ After=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-${systemdEscapeArg(envFilePath)}
-ExecStart="${systemdEscapeArg(process.execPath)}" ${args}
+ExecStart="${systemdEscapeArg(executable)}" ${args}
 WorkingDirectory=${systemdUnitPath(os.homedir())}
 Restart=always
 RestartSec=5

@@ -1,6 +1,7 @@
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { discoverCliRelease } from './releases.js';
 
 const workerFile = fileURLToPath(new URL('./cli-worker.js', import.meta.url));
@@ -22,13 +23,14 @@ function startWorker(message, detached = false) {
 }
 
 export function createCliUpdateAdapter({ packageRoot, dataDir, getPort, shutdown, currentVersion, env = process.env }) {
-  const unsupported = process.platform === 'win32' || !packageRoot.replaceAll('\\', '/').includes('/node_modules/')
+  const portable = existsSync(path.join(packageRoot, '..', 'portable.json'));
+  const unsupported = portable || process.platform === 'win32' || !packageRoot.replaceAll('\\', '/').includes('/node_modules/')
     || existsSync('/.dockerenv') || env.CONTAINER || env.container || env.INVOCATION_ID || env.PM2_HOME;
   const configuration = () => ({ packageRoot, dataDir, port: getPort(), pid: process.pid });
   let checkedAt = 0;
   const adapter = {
     host: 'cli', external: true, supported: !unsupported,
-    reason: unsupported ? 'managed_or_development_installation' : null,
+    reason: portable ? 'portable_installation_requires_release' : unsupported ? 'managed_or_development_installation' : null,
     inspect: (channel) => discoverCliRelease(channel, currentVersion),
     async refreshSupport() {
       if (unsupported || Date.now() - checkedAt < 60_000) return;
@@ -37,6 +39,7 @@ export function createCliUpdateAdapter({ packageRoot, dataDir, getPort, shutdown
       checkedAt = Date.now();
     },
     async assertReady() {
+      if (unsupported) throw new Error('This installation must be updated through its installer or service manager');
       const { child, ready } = startWorker({ mode: 'probe', ...configuration() });
       try { await ready; } finally { if (child.connected) child.disconnect(); child.unref(); }
     },

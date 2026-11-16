@@ -324,7 +324,10 @@ async function serveCommand(options) {
       await new Promise(() => {});
     }
 
-    const serverArgs = [serverPath, '--port', String(targetPort)];
+    const serverArgs = [
+      ...(process.execArgv.includes('--title=yuri') ? ['--title=yuri'] : []),
+      serverPath, '--port', String(targetPort),
+    ];
     serverArgs.push('--host', effectiveHost);
     if (options.apiOnly === true) {
       serverArgs.push('--api-only');

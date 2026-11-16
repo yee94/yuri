@@ -21,6 +21,7 @@ Command modules implement user-facing commands and preserve output contracts acr
   - Implements `yuri serve`.
   - Owns OpenCode CLI checks, port resolution, log rotation, PID/instance registry writes, foreground/background server launch, startup summaries, and foreground shutdown behavior.
   - The Host process always inherits the CLI's Node executable. Do not select Bun based on PATH availability: the Web API owns `better-sqlite3` and requires the prepared Node ABI.
+  - The self-contained launcher passes `--title=yuri`; propagate that explicit title to its daemon so lifecycle identity checks continue to work after relocation to a directory not named Yuri.
   - Sets `YURI_RUNTIME=web` for ordinary CLI serve (foreground and daemon) so a leftover desktop env cannot host or probe the private relay. Preserves `YURI_RUNTIME=ssh-remote` when SSH manager already set it.
   - `--relay-host [url]` is valid only when `YURI_RUNTIME=ssh-remote`. It enables the private relay host before startup: writes `settings.privateRelay.enabled=true` (and optional pinned `relayUrl`), and when a URL is provided also sets `YURI_RELAY_URL`. Ordinary `web` serve rejects the flag.
 
@@ -50,6 +51,7 @@ Command modules implement user-facing commands and preserve output contracts acr
 - `commands-update.js`
   - Implements `yuri update`.
   - Loads the package-manager helper, performs update flow, and coordinates restart behavior after updates.
+  - Self-contained Linux releases are not npm-owned: reject `yuri update` before any daemon shutdown or package-manager probing and point to the bundled release installer. SSH-managed portable Hosts align through desktop reconnect.
   - HTTP/Relay-initiated exact-version updates instead use the detached Host helper in `server/lib/host-update/`; see its documentation for admission, state recovery and supported launch modes. Never invoke this command inside the serving process to update itself.
 
 ## Shared Helper Modules

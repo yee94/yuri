@@ -127,7 +127,13 @@ git push origin "v$VERSION"
 
 `release.yml` 在 `v*` tag push 后创建 Draft Release、构建桌面端和 Android、上传产物，将 `@yuriai/web` 与 `@yuriai/relay-server` 发布到 npm，再将 Draft Release 发布为正式 Release。Android 流程会生成签名 APK/AAB 并上传到对应 GitHub Release。同版本 web bundle 由 `mobile-native-targets` 写入 OTA。**iOS/TestFlight 由 `mobile-release-plan` 的 mode 决定**：`mode: native` 的 beta 与所有稳定版构建并上传 iOS（beta 走内测；稳定版上传后留下异步外测请求）；`mode: ota` 的 beta 与 `mobile-beta/*` OTA-only tag 不构建 iOS。构建、签名和 IPA 上传仍是发布门禁；外测组关联、等待 Apple 处理及 Beta App Review 由独立 workflow 执行，不再阻塞 Release、Relay 或 OTA。若 IPA 已上传，不能直接重跑旧上传步骤，否则会重复上传相同 build number；外测失败按下文独立重试。
 
-npm 发布需要仓库 Secret `NPM_TOKEN`（对 `@yuriai` scope 有 publish 权限）。稳定版发到 `latest`；含 `-` 的 prerelease 使用 `--tag beta`，不会覆盖 `latest`。`dry_run=true` 会跳过 npm 发布。SSH 远程预装与 `scripts/install.sh` 安装的都是 `@yuriai/web`。完整 `v*` 仍会同时发布 `@yuriai/web` 与 `@yuriai/relay-server` 以及 Relay Docker；只发 Relay 时改用 `relay/v*`（见下文）。
+npm 发布需要仓库 Secret `NPM_TOKEN`（对 `@yuriai` scope 有 publish 权限）。稳定版发到 `latest`；含 `-` 的 prerelease 使用 `--tag beta`，不会覆盖 `latest`。`dry_run=true` 会跳过 npm 发布。Linux 的 `scripts/install.sh` 和新建 SSH 连接默认使用自包含 CLI 发行包；显式保存的 npm/bun 安装选择保持原行为。完整 `v*` 仍会同时发布 `@yuriai/web` 与 `@yuriai/relay-server` 以及 Relay Docker；只发 Relay 时改用 `relay/v*`（见下文）。
+
+Linux 双架构 job 还通过 `packages/web/scripts/portable/Dockerfile` 在 Debian 12 上构建
+`yuri-<version>-linux-{x64,arm64}.tar.gz` 及对应 `.sha256`。包内含独立 Node 24、
+预编译模块、GCC 运行库、Web 资源和原生 OpenCode。导出前必须在没有系统
+Node/npm/Python/编译器的 slim 容器中通过原生模块、PTY、启动/停止和 HTTP 验收。
+要求 glibc 2.36+，暂不提供 musl 版；不能用 AppImage 替代无桌面 Linux CLI。
 
 ### Beta / prerelease
 
@@ -249,7 +255,7 @@ gh workflow run release.yml --repo yee94/yuri --ref main \
   -f version=0.1.0 -f resume_run_id=40268802312
 ```
 
-恢复入口校验原 Release run、tag commit、桌面双架构 Linux/macOS/Windows、Android、npm 的成功记录；稳定版还要求 IPA 已成功上传，iOS 仅允许旧的外测送审步骤失败。任何构建、签名或上传失败都不能绕过。复用原始 build number 和现有安装包，跳过重新构建及 npm/IPA 上传，继续原 commit 的 Relay 镜像、资产完整性校验、正式 Release 和同版本 OTA。正常发布与恢复共用同一套 finalize 步骤，清理过期 Android 版本化资产并校验恰好 13 个产物。旧运行保留真实失败记录，新恢复运行必须通过；不移动原 tag。
+恢复入口校验原 Release run、tag commit、桌面双架构 Linux/macOS/Windows、Android、npm 的成功记录；稳定版还要求 IPA 已成功上传，iOS 仅允许旧的外测送审步骤失败。任何构建、签名或上传失败都不能绕过。复用原始 build number 和现有安装包，跳过重新构建及 npm/IPA 上传，继续原 commit 的 Relay 镜像、资产完整性校验、正式 Release 和同版本 OTA。正常发布与恢复共用同一套 finalize 步骤，清理过期 Android 版本化资产并校验恰好 17 个产物（含自包含 Linux CLI 与校验和）。旧运行保留真实失败记录，新恢复运行必须通过；不移动原 tag。
 
 同一入口也可恢复 GitHub Release 已公开、但 `finalize-release` 的 `Deploy update service to Vercel` 失败的运行：必须有原运行发布 Release 成功的步骤记录，且唯一失败步骤为该部署。无需撤回 Release、移动 tag 或重复上传 IPA。修复 workflow 后从 `main` 传入原 `resume_run_id`；直接 rerun 旧运行不会加载新的 workflow。稳定版 finalize job 显式安装 Bun 1.3.14，供 Vercel 按 `bun.lock` 打包 Node Functions 时使用，即使更新服务自身没有包依赖也不能省略。
 
@@ -335,7 +341,7 @@ tag push 会包含 mobile-release。手动触发时使用 `release_scope=all`。
 
 ### `finalize-release` / `Verify complete release asset inventory` 失败
 
-`finalize-release` 要求 Draft Release **恰好 13 个**资产（mac DMG/ZIP、Windows EXE、两种架构 Linux AppImage、四份 `full*.yml` 全量更新清单，加上 `app-release.aab` / `app-release.apk` 与当前 `run_number` 的版本化 Android 两个文件），且 Android 版本化文件名必须匹配**当前这次** workflow 的 `github.run_number`：
+`finalize-release` 要求 Draft Release **恰好 17 个**资产（mac DMG/ZIP、Windows EXE、两种架构 Linux AppImage、自包含 Linux CLI 两份 tar.gz 及两份 SHA-256、四份 `full*.yml` 全量更新清单，加上 `app-release.aab` / `app-release.apk` 与当前 `run_number` 的版本化 Android 两个文件），且 Android 版本化文件名必须匹配**当前这次** workflow 的 `github.run_number`：
 
 - `Yuri-$VERSION-$RUN_NUMBER-android.aab`
 - `Yuri-$VERSION-$RUN_NUMBER-android.apk`
@@ -369,7 +375,7 @@ Expected exactly 16 release assets, found 18: ... Yuri-1.16.32-72-android.aab, .
    gh api -X DELETE "repos/yee94/yuri/releases/assets/<asset-id>"
    ```
 
-3. 清理后资产数应为 13，再只重跑失败的 `finalize-release`（不必整条 Release 全量重跑）：
+3. 当前发布清理后资产数应为 17（引入自包含 Linux CLI 之前的历史发布为 13），再只重跑失败的 `finalize-release`（不必整条 Release 全量重跑）：
 
    ```bash
    gh run rerun <run-id> --repo yee94/yuri --failed

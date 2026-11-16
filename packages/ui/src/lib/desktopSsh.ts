@@ -335,7 +335,7 @@ export const createDesktopSshInstance = (id: string, sshCommand: string): Deskto
       mode: 'managed',
       keepRunning: true,
       relayHost: true,
-      installMethod: 'bun',
+      installMethod: 'download_release',
       uploadBundleOverSsh: false,
     },
     localForward: {

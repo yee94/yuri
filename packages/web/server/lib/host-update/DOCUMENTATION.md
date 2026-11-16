@@ -75,6 +75,11 @@ unsupported or fail preflight without stopping the Host. Use their installation
 or service manager instead. Other data scopes sharing one global installation
 must be administratively drained; the installation lock prevents competing
 remote helpers but does not coordinate arbitrary external package managers.
+A self-contained Linux release reports
+`portable_installation_requires_release` without probing a package manager.
+Stop it and use its bundled release installer, or reconnect through an updated
+desktop for SSH version alignment. Neither HTTP updates nor `yuri update` may
+fall back to installing a global npm copy.
 A helper killed before its `finally` cleanup leaves an installation lock in the
 user cache; an operator must verify no helper remains before removing that lock.
 Workers deliberately do not race to reap presumed stale locks.

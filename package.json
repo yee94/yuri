@@ -1,6 +1,6 @@
 {
   "name": "yuri-monorepo",
-  "version": "0.3.6-beta.12",
+  "version": "0.3.6-beta.13",
   "description": "AI workspace for coding, personal assistants, and recurring tasks across desktop, mobile, browser, and VS Code",
   "private": true,
   "type": "module",
@@ -57,6 +57,7 @@
     "dev:web:hmr": "node ./scripts/dev-web-hmr.mjs",
     "start:web": "bun run --cwd packages/web start",
     "pack:web": "bun pm pack --cwd packages/web",
+    "pack:portable": "bun run --cwd packages/web pack:portable",
     "pack:relay": "bun pm pack --cwd packages/relay-server",
     "electron:dev": "node ./packages/electron/scripts/electron-dev.mjs",
     "electron:dev:bundled": "YURI_ELECTRON_USE_BUNDLED_UI=1 node ./packages/electron/scripts/electron-dev.mjs",

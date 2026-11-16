@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { readPortableInstallation, portableUpdateError } from './portable-installation.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -401,6 +402,17 @@ export function detectPackageManagerDetails() {
     };
   }
 
+  const portable = readPortableInstallation();
+  if (portable) {
+    return {
+      packageManager: 'portable',
+      reason: 'self-contained-bundle',
+      packagePath: getCurrentPackagePath(),
+      packageManagerCommand: null,
+      globalNodeModulesRoot: null,
+    };
+  }
+
   if (cachedDetectedPm) {
       return {
         packageManager: cachedDetectedPm,
@@ -660,6 +672,8 @@ function isPackageInstalledWith(pm) {
  * Get the update command for the detected package manager
  */
 export function getUpdateCommand(pm = detectPackageManager()) {
+  const portable = readPortableInstallation();
+  if (portable || pm === 'portable') throw portableUpdateError(portable?.root || path.resolve(__dirname, '../../..'));
   const pmCommand = quoteCommand(resolvePackageManagerCommand(pm));
   switch (pm) {
     case 'pnpm':

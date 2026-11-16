@@ -161,6 +161,10 @@ short tool deadline does not strand other targets. Repeated active requests join
 the target operation. Saved instances survive restart; setup receipts do not.
 The pairing operation calls the existing authenticated Host pairing API, never
 writes pairing stores or grants SSH-only connections Relay provenance.
+New session-created managed SSH entries use the same `download_release` default
+as the UI. Existing saved installation choices remain unchanged. Linux portable
+bootstrap and release alignment belong to Electron's SSH manager; the skill only
+submits the destination and reports connection/sync/gateway evidence separately.
 
 Package publishing includes the entire web `server` directory, so the Markdown
 resources ship with the backend and resolve relative to this module in packaged

@@ -31,6 +31,7 @@ export function registerRemoteConnectionsSkill(app, { express, adapter, getIsSha
       if (session.metadata?.yuri?.scheduledTaskSkill?.hostOrigin !== hostOrigin) return res.status(403).json({ error: 'Session is not bound to this Host' });
       if (operation === 'describe') return res.json({ supported: true,
         inputs: { setup: '{sshCommand, nickname?} or {id}', pair: '{id?, relayUrl?, label?}; omitted id means this local desktop', list: '{}' },
+        installation: 'New Linux SSH connections use the matching self-contained release (x64/arm64, glibc 2.36+), without system Node/npm/Python/compiler. Existing saved installation choices and macOS keep their package-manager path.',
         completion: 'setup starts asynchronous SSH installation and config sync. Poll list until running=false; phase=ready alone does not confirm sync or Magpie gateway. Warnings mean partial completion.',
       });
       return res.json(await adapter[operation](input));

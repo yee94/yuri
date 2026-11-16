@@ -62,6 +62,11 @@ describe('built-in customization instructions', () => {
     expect(bound).toContain('Bound local desktop helper:');
     expect(await fs.readFile(path.join(path.dirname(boundFile), 'references', 'projects.md'), 'utf8')).toBe(projects);
     expect(await fs.readFile(path.join(path.dirname(boundFile), 'remote-connections.mjs'), 'utf8')).toContain('/api/yuri/session-skills/remote-connections');
+    const connections = await fs.readFile(path.join(path.dirname(boundFile), 'references', 'remote-connections.md'), 'utf8');
+    expect(connections).toContain('matching self-contained release');
+    expect(connections).toContain('not Node/npm/Python or build tools');
+    expect(connections).toContain('system Node and shell profiles unchanged');
+    expect(connections).toContain('Portable `yuri update` and HTTP self-update report unsupported');
     expect(await fs.readFile(path.join(path.dirname(boundFile), 'session-skill-command.mjs'), 'utf8')).toContain('sessionSkillCommand');
     await install(client, 'ses_project', { projectBinding: binding });
     const projectEntry = put.mock.calls[3][0].value;

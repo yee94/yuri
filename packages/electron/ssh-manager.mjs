@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
+import { buildRemotePortableInstallScript, buildRemotePortableVerificationScript } from './ssh-portable.mjs';
 
 import {
   OPENCODE_AGENTS_ROOT_PROBE_MARKER,
@@ -396,12 +397,19 @@ consider_node() {
  * still selects Node 18; prefer the highest even LTS (22/24) with a sibling npm.
  */
 export const buildRemoteManagedRuntimePrefix = () => `
+[ -r "$HOME/.config/yuri/ssh-runtime.sh" ] && . "$HOME/.config/yuri/ssh-runtime.sh"
+if [ -n "$YURI_SSH_PORTABLE" ] && [ -x "$YURI_SSH_PORTABLE/current/yuri" ]; then
+  export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/.bun/bin:$PATH"
+  yuri() { "$YURI_SSH_PORTABLE/current/yuri" "$@"; }
+  opencode() { "$YURI_SSH_PORTABLE/current/bin/opencode" "$@"; }
+  export OPENCODE_BINARY="$YURI_SSH_PORTABLE/current/bin/opencode"
+  export LD_LIBRARY_PATH="$YURI_SSH_PORTABLE/current/runtime/lib\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+else
 ${buildRemoteManagedNodeSelectionFunctions()}
 prepend_path "$HOME/.bun/bin"
 prepend_path "$HOME/.opencode/bin"
 prepend_path "$HOME/.local/bin"
 prepend_path "$HOME/.npm/node_modules/bin"
-[ -r "$HOME/.config/yuri/ssh-runtime.sh" ] && . "$HOME/.config/yuri/ssh-runtime.sh"
 if [ -r "$HOME/.config/yuri/ssh-opencode-path" ]; then IFS= read -r YURI_SSH_OPENCODE < "$HOME/.config/yuri/ssh-opencode-path"; fi
 [ -x "$YURI_SSH_YURI" ] || YURI_SSH_YURI=""
 [ -x "$YURI_SSH_OPENCODE" ] || YURI_SSH_OPENCODE=""
@@ -425,6 +433,7 @@ if [ -n "$YURI_SSH_YURI" ]; then yuri() { "$YURI_SSH_YURI" "$@"; }; fi
 if [ -n "$YURI_SSH_OPENCODE" ]; then
   opencode() { "$YURI_SSH_OPENCODE" "$@"; }
   export OPENCODE_BINARY="$YURI_SSH_OPENCODE"
+fi
 fi
 `;
 
@@ -1329,7 +1338,10 @@ export class ElectronSshManager {
   }
 
   async saveSessionConnection(input) {
-    const instance = this.sanitizeInstance(input);
+    const instance = this.sanitizeInstance({
+      ...input,
+      remoteYuri: { installMethod: 'download_release', ...input.remoteYuri },
+    });
     let saved = instance;
     await this.mutateSettingsRoot((root) => {
       const instances = Array.isArray(root.desktopSshInstances) ? root.desktopSshInstances : [];
@@ -1926,6 +1938,20 @@ find_opencode
   }
 
   async installYuriManaged(parsed, controlPath, version, preferred) {
+    if (preferred === 'download_release') {
+      try {
+        await this.runManagedRemoteCommand(parsed, controlPath, buildRemotePortableInstallScript(version));
+        if (await this.currentRemoteYuriVersion(parsed, controlPath) !== version) {
+          throw new Error('Portable Yuri version verification failed');
+        }
+        return;
+      } catch (error) {
+        throw new Error(`Failed to install Yuri portable release: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (preferred === 'upload_bundle') {
+      throw new Error('Failed to install Yuri: upload_bundle is not supported; select download_release, npm or bun');
+    }
     const hasBun = await this.remoteCommandExists(parsed, controlPath, 'bun');
     const hasNpm = await this.remoteCommandExists(parsed, controlPath, 'npm');
     // npm refuses to overwrite an existing global bin (EEXIST) when a previous
@@ -2612,7 +2638,7 @@ find_opencode
     }
   }
 
-  async ensureRemoteServer(instance, parsed, controlPath) {
+  async ensureRemoteServer(instance, parsed, controlPath, remoteOs = 'linux') {
     if (instance.remoteYuri.mode === 'external') {
       if (!instance.remoteYuri.preferredPort) {
         throw new Error('External mode requires a preferred remote Yuri port');
@@ -2625,7 +2651,12 @@ find_opencode
     }
 
     this.setStatus(instance.id, 'remote_probe', 'Checking remote Yuri installation');
-    await this.ensureManagedNodeRuntime(parsed, controlPath);
+    const installMethod = instance.remoteYuri.installMethod === 'download_release' && remoteOs === 'darwin'
+      ? 'bun' : instance.remoteYuri.installMethod;
+    const portable = installMethod === 'download_release';
+    if (!portable) await this.ensureManagedNodeRuntime(parsed, controlPath);
+    const portableRegistered = !portable || (await this.runManagedRemoteCommand(parsed, controlPath,
+      '[ -n "$YURI_SSH_PORTABLE" ] && [ -x "$YURI_SSH_PORTABLE/current/yuri" ] && echo yes || echo no')).trim() === 'yes';
     const installedVersion = await this.currentRemoteYuriVersion(parsed, controlPath);
     const firstInstall = !installedVersion && !(await this.remoteCommandExists(parsed, controlPath, 'yuri'));
     if (!installedVersion && !firstInstall) {
@@ -2638,6 +2669,7 @@ find_opencode
     let uiPassword = this.configuredYuriPassword(instance) || this.ephemeralUiPasswords.get(instance.id) || null;
     let reusable = existing?.port === desiredPort
       && installedVersion === this.appVersion && existing.info.yuriVersion === this.appVersion
+      && portableRegistered
       && Boolean(uiPassword);
     if (reusable) {
       try {
@@ -2654,13 +2686,17 @@ find_opencode
     if (!installedVersion) {
       if (firstInstall) await this.setInitialConfigSyncPending(instance.id, true);
       this.setStatus(instance.id, 'installing', 'Installing Yuri on remote host');
-      await this.installYuriManaged(parsed, controlPath, this.appVersion, instance.remoteYuri.installMethod);
-    } else if (installedVersion !== this.appVersion) {
+      await this.installYuriManaged(parsed, controlPath, this.appVersion, installMethod);
+    } else if (installedVersion !== this.appVersion || !portableRegistered) {
       this.setStatus(instance.id, 'updating', `Updating remote Yuri from ${installedVersion} to ${this.appVersion}`);
-      await this.installYuriManaged(parsed, controlPath, this.appVersion, instance.remoteYuri.installMethod);
+      await this.installYuriManaged(parsed, controlPath, this.appVersion, installMethod);
     }
-    await this.ensureRemoteYuriNativeBinding(parsed, controlPath);
-    await this.ensureRemoteOpenCodeCli(parsed, controlPath, instance.remoteYuri.installMethod);
+    if (portable) {
+      await this.runManagedRemoteCommand(parsed, controlPath, buildRemotePortableVerificationScript());
+    } else {
+      await this.ensureRemoteYuriNativeBinding(parsed, controlPath);
+      await this.ensureRemoteOpenCodeCli(parsed, controlPath, installMethod);
+    }
 
     this.setStatus(instance.id, 'server_detecting', 'Detecting managed Yuri server');
     let remotePort = reusable ? existing.port : null;
@@ -2777,7 +2813,7 @@ find_opencode
       throw new Error(`Unsupported remote OS: ${remoteOs}`);
     }
 
-    const { remotePort, startedByUs, uiPassword } = await this.ensureRemoteServer(instance, parsed, controlPath);
+    const { remotePort, startedByUs, uiPassword } = await this.ensureRemoteServer(instance, parsed, controlPath, remoteOs);
     this.setStatus(id, 'forwarding', 'Setting up port forwards', null, null, remotePort, startedByUs, 0, false);
 
     const bindHost = sanitizeBindHost(instance.localForward?.bindHost);

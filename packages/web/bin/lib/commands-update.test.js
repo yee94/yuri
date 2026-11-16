@@ -5,6 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createUpdateCommand } from './commands-update.js';
 
+const portableFixture = vi.hoisted(() => ({ installation: null }));
+vi.mock('../../server/lib/portable-installation.js', async (original) => ({
+  ...await original(),
+  readPortableInstallation: () => portableFixture.installation,
+}));
+
 async function withTempYuriDataDir(fn) {
   const previous = process.env.YURI_DATA_DIR;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-update-test-'));
@@ -22,6 +28,18 @@ async function withTempYuriDataDir(fn) {
 }
 
 describe('update command', () => {
+  it('rejects a portable update before discovering or stopping daemons or loading a package manager', async () => {
+    const importFromFilePath = vi.fn();
+    const serveCommand = vi.fn();
+    portableFixture.installation = { root: '/portable/yuri' };
+    try {
+      const update = createUpdateCommand({ importFromFilePath, serveCommand });
+      await expect(update({ json: true })).rejects.toThrow('self-contained Yuri installation');
+      expect(importFromFilePath).not.toHaveBeenCalled();
+      expect(serveCommand).not.toHaveBeenCalled();
+    } finally { portableFixture.installation = null; }
+  });
+
   it('uses the package-manager helpers on the update-available path', async () => {
     await withTempYuriDataDir(async () => {
       const originalWrite = process.stdout.write;

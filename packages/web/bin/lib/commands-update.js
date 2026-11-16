@@ -1,5 +1,6 @@
 import { requestServerShutdown } from './cli-http.js';
 import { discoverRunningInstances } from './cli-lifecycle.js';
+import { readPortableInstallation, portableUpdateError } from '../../server/lib/portable-installation.js';
 import {
   readInstanceOptions,
   removePidFile,
@@ -18,6 +19,8 @@ import {
 
 function createUpdateCommand({ importFromFilePath, packageManagerPath, serveCommand }) {
   return async function updateCommand(options = {}) {
+    const portable = readPortableInstallation();
+    if (portable) throw portableUpdateError(portable.root);
     const showOutput = shouldRenderHumanOutput(options);
     const updateSpin = createSpinner(options);
 

@@ -107,9 +107,25 @@ Hosts connected to different OpenCode databases must not share assistant watches
 curl -fsSL https://raw.githubusercontent.com/yee94/yuri/main/scripts/install.sh | bash
 ```
 
-Or install manually: `bun add -g @yuriai/web` (or npm, pnpm, yarn).
+On Linux x64/arm64 with glibc 2.36+, this installs a self-contained release:
+private Node 24, precompiled native modules, browser assets and native OpenCode.
+No system Node, npm, Python or compiler is needed. The installer requires bash,
+curl or wget, tar and a SHA-256 utility; it does not edit shell profiles or system
+Node. Alpine/musl is not supported by this distribution.
 
-> **Prerequisites:** [`opencode`](https://opencode.ai/v2/docs/) v2 CLI installed (PATH or `OPENCODE_BINARY`; 1.x versions are rejected), Node.js 22+.
+For a specific release (including beta), download its Linux CLI archive and
+checksum from GitHub Releases, or run the installer with `--version <version>`.
+Extracted archives run through `./yuri`; installer-managed releases use
+`~/.local/bin/yuri` and retain old versions under `~/.local/share/yuri/versions`.
+
+Alternatively install the npm distribution manually:
+`bun add -g @yuriai/web` (or npm, pnpm, yarn).
+That distribution still requires Node.js 22+ and a compatible OpenCode v2 CLI
+(PATH or `OPENCODE_BINARY`; missing OpenCode is downloaded automatically).
+The self-contained distribution refuses npm-based `yuri update` and HTTP Host
+self-update; stop the Host and use its bundled `install.sh --version <version>`,
+or let an updated desktop align an SSH-managed Host on reconnect.
+See `scripts/portable/DOCUMENTATION.md` for build and verification boundaries.
 
 ## Usage
 

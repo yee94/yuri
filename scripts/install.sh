@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+if [ "$(uname -s)" = "Linux" ]; then
+  portable_installer="$(mktemp)"
+  trap 'rm -f "$portable_installer"' EXIT
+  curl -fsSL https://raw.githubusercontent.com/yee94/yuri/main/packages/web/bin/install-portable.sh -o "$portable_installer"
+  bash "$portable_installer" "$@"
+  exit $?
+fi
+
 PACKAGE_NAME="@yuriai/web"
 BIN_NAME="yuri"
 MIN_NODE_VERSION=22

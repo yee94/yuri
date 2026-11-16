@@ -522,6 +522,13 @@ jobs:
           bun run verify:linux-appimage
           node ./scripts/write-installer-feed.mjs dist "${{ needs.create-release.outputs.version }}" linux "${{ matrix.arch }}"
 
+      - name: Build and smoke-test self-contained Linux CLI
+        run: |
+          docker build --file packages/web/scripts/portable/Dockerfile \
+            --build-arg YURI_OPENCODE2_VERSION="$YURI_OPENCODE2_VERSION" \
+            --target artifacts --output type=local,dest=packages/web/portable-dist .
+          cp packages/web/portable-dist/yuri-*.tar.gz* packages/electron/dist/
+
       - name: Upload validated Linux release files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -529,6 +536,8 @@ jobs:
           path: |
             packages/electron/dist/Yuri-${{ needs.create-release.outputs.version }}-linux-${{ matrix.artifact_arch }}.AppImage
             packages/electron/dist/full-linux*.yml
+            packages/electron/dist/yuri-*.tar.gz
+            packages/electron/dist/yuri-*.tar.gz.sha256
           if-no-files-found: error
           retention-days: 1
 
@@ -570,6 +579,10 @@ jobs:
             artifacts/arm64/Yuri-${{ needs.create-release.outputs.version }}-linux-arm64.AppImage
             artifacts/x64/full-linux.yml
             artifacts/arm64/full-linux-arm64.yml
+            artifacts/x64/yuri-${{ needs.create-release.outputs.version }}-linux-x64.tar.gz
+            artifacts/x64/yuri-${{ needs.create-release.outputs.version }}-linux-x64.tar.gz.sha256
+            artifacts/arm64/yuri-${{ needs.create-release.outputs.version }}-linux-arm64.tar.gz
+            artifacts/arm64/yuri-${{ needs.create-release.outputs.version }}-linux-arm64.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -1123,6 +1136,10 @@ jobs:
             `Yuri-${version}-win-x64.exe`,
             `Yuri-${version}-linux-x86_64.AppImage`,
             `Yuri-${version}-linux-arm64.AppImage`,
+            `yuri-${version}-linux-x64.tar.gz`,
+            `yuri-${version}-linux-x64.tar.gz.sha256`,
+            `yuri-${version}-linux-arm64.tar.gz`,
+            `yuri-${version}-linux-arm64.tar.gz.sha256`,
             'full.yml',
             'full-mac.yml',
             'full-linux.yml',
