@@ -5,6 +5,7 @@ import { SidebarSectionHeader } from './SidebarSectionHeader';
 import type { PinnedItem } from './SidebarPinnedSessions';
 import { SETTLED_SHELF_PAGE_SIZE } from './taskView';
 import { SessionFolderDndScope } from './sessionFolderDnd';
+import { TasksAllDoneIllustration } from './TasksAllDoneIllustration';
 
 export type TaskListItems = {
   active: PinnedItem[];
@@ -35,7 +36,12 @@ export function SidebarTaskList({ items, renderTaskRow, onSessionsReordered }: T
   const sessionIds = React.useMemo(() => items.active.map((item) => item.node.session.id), [items.active]);
   const folderIdBySessionId = React.useMemo(() => new Map(sessionIds.map((id) => [id, null])), [sessionIds]);
   if (items.active.length === 0) {
-    return <div className="space-y-0.5"><div className={SIDEBAR_MUTED_HINT_CLASS}>{t('sessions.sidebar.task.empty')}</div></div>;
+    return (
+      <div className="flex flex-col items-center gap-1 pt-6 pb-2">
+        <TasksAllDoneIllustration className="size-20" />
+        <div className={`${SIDEBAR_MUTED_HINT_CLASS} !text-center`}>{t('sessions.sidebar.task.empty')}</div>
+      </div>
+    );
   }
   const rows = items.active.map(renderTaskRow);
   return (
