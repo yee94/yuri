@@ -21,7 +21,9 @@ vi.mock('@/lib/i18n', () => ({ useI18n: () => { fixture.renders(); return { loca
 vi.mock('@/lib/desktop', () => ({ isDesktopLocalOriginActive: () => fixture.local }));
 vi.mock('@/stores/useUpdateStore', async () => {
   const { create } = await import('zustand');
-  return { useUpdateStore: create(() => ({ downloading: false, downloaded: false, info: null, downloadError: null, downloadVersion: null, progress: null, downloadUpdate: vi.fn(async () => {}) })) };
+  const useStore = create(() => ({ downloading: false, downloaded: false, info: null, downloadError: null, downloadVersion: null, progress: null, downloadUpdate: vi.fn(async () => {}),
+    discardInterruptedDownload: () => useStore.setState({ downloadError: null, downloadVersion: null, progress: null }) }));
+  return { useUpdateStore: useStore };
 });
 vi.mock('@/queries/projectOrderQueries', () => ({ refreshProjectOrderSnapshot: (...args: unknown[]) => fixture.refresh(...args) }));
 vi.mock('@/stores/useSetupTourStore', () => ({ useSetupTourStore: { getState: () => ({ move: fixture.move, open: fixture.open }) } }));
@@ -315,6 +317,20 @@ test('only download failures create a client task and retry delegates to the upd
   await act(async () => (document.querySelector('[data-background-task="client-update"] button') as HTMLButtonElement).click()); await tick();
   expect(useUpdateStore.getState().downloadUpdate).toHaveBeenCalledOnce();
   expect(host.querySelector('[role="progressbar"]')?.className).not.toContain('text-[var(--status-error)]');
+});
+
+test('a client download whose update plan changed offers Dismiss instead of a dead Continue, and dismissing clears the task', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' })));
+  useUpdateStore.setState({ downloadError: 'update_interrupted', downloadVersion: '2.0.0' });
+  await render(); await act(async () => host.querySelector('button')!.click()); await tick();
+  const button = document.querySelector('[data-background-task="client-update"] button') as HTMLButtonElement;
+  vi.mocked(useUpdateStore.getState().downloadUpdate).mockImplementation(async () => { useUpdateStore.setState({ downloadError: 'update_plan_changed' }); });
+  await act(async () => button.click()); await tick();
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe('backgroundTasks.updateChanged');
+  expect(button.textContent).toBe('backgroundTasks.dismiss');
+  await act(async () => button.click()); await tick();
+  expect(useUpdateStore.getState().downloadError).toBeNull();
+  expect(host.querySelector('[data-sidebar-background-tasks]')).toBeNull();
 });
 
 test('a successful remote retry clears only the remote task, keeping an independent same-version client download untouched', async () => {

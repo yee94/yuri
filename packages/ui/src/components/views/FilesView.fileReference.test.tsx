@@ -27,6 +27,7 @@ vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: harness.t }) }));
 vi.mock('@/lib/desktop', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/desktop')>(),
   isDesktopLocalOriginActive: () => harness.local,
+  isDesktopLocalMachineRuntime: async () => harness.local,
   openDesktopPath: harness.openDesktopPath,
 }));
 vi.mock('@/components/gui-plugins/GuiFileLinkBridge', () => ({

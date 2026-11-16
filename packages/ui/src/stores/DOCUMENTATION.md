@@ -208,7 +208,9 @@ independent of the selected Host. Web and VS Code keep their existing package pa
 `downloadError` is separate from general check/apply errors, so only failed
 downloads become resumable background tasks. Downloads synchronously reject
 duplicate starts; `downloadUpdate({ resume: true })` preserves the original
-version/channel and refuses changed candidates. Ordinary explicit new downloads
+version/channel and refuses changed candidates; the background task then offers
+Dismiss (`discardInterruptedDownload`) so the stale intent can be cleared and a
+new download started from the update dialog. Ordinary explicit new downloads
 can choose a newly checked version. Dismissal preserves active/failed downloads.
 Only version/channel/client-runtime intent is stored under
 `yuri-client-update-download`; no URLs, credentials, release contents or error

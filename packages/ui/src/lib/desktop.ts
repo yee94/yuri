@@ -882,8 +882,22 @@ export const getDesktopLanAddress = async (): Promise<string | null> => {
   }
 };
 
+/**
+ * True when the window's active server runs on this machine, including when the
+ * desktop reaches its own server through a LAN address. Authority is the main process.
+ */
+export const isDesktopLocalMachineRuntime = async (): Promise<boolean> => {
+  if (!hasDesktopInvoke()) return false;
+  if (isDesktopLocalOriginActive()) return true;
+  try {
+    return await invokeDesktop<boolean>('desktop_runtime_is_local_machine') === true;
+  } catch {
+    return false;
+  }
+};
+
 export const openDesktopPath = async (path: string, app?: string | null): Promise<boolean> => {
-  if (!hasDesktopInvoke() || !isDesktopLocalOriginActive()) {
+  if (!await isDesktopLocalMachineRuntime()) {
     return false;
   }
 

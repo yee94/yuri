@@ -82,6 +82,7 @@ interface UpdateStore extends UpdateState {
   setOtaDownloadPercent: (percent: number) => void;
   setOtaDownloadFailed: (message?: string) => void;
   dismiss: () => void;
+  discardInterruptedDownload: () => void;
   reset: () => void;
 }
 
@@ -787,6 +788,11 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
       otaPhase: 'idle',
       otaDownloadSkipped: false,
     });
+  },
+
+  discardInterruptedDownload: () => {
+    if (get().downloading) return;
+    set({ downloadError: null, downloadVersion: null, downloadChannel: null, error: null, progress: null });
   },
 
   reset: () => {

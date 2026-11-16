@@ -4537,6 +4537,12 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return null;
     }
 
+    case 'desktop_runtime_is_local_machine': {
+      const runtime = browserWindow?.__yuriRuntimeConfig;
+      if (runtime?.relayHostId) return false;
+      return isLocalRuntimeUrl(runtime?.apiBaseUrl || state.sidecarUrl || state.localOrigin || '');
+    }
+
     case 'desktop_is_binary_path': {
       const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
       if (!targetPath) throw new Error('Path is required');

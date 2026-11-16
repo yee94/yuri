@@ -13,7 +13,7 @@ import { refreshProjectOrderSnapshot } from '@/queries/projectOrderQueries';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 
 type Task = { id: string; label: string; detail: string; completed: number; total: number; stale: boolean; bytes?: boolean; hideCounts?: boolean;
-  failed?: boolean; failures?: number; resume?: () => Promise<unknown>; dismiss?: () => Promise<unknown> };
+  failed?: boolean; failures?: number; resume?: () => Promise<unknown>; dismiss?: () => Promise<unknown>; dismissOnError?: string };
 
 function TaskRing({ task }: { task: Task }) {
   const value = task.total > 0 ? Math.min(99, Math.floor(Math.max(0, task.completed) / task.total * 100)) : undefined;
@@ -33,7 +33,7 @@ function TaskDetails({ task }: { task: Task }) {
   const mutation = useMutation({ mutationFn: async (action: 'resume' | 'dismiss') => {
     try { await (action === 'dismiss' ? task.dismiss?.() : task.resume?.()); }
     finally { flight.current = false; }
-  }, onError: (_error, action) => { if (action === 'resume' && task.dismiss) setRemoving(true); }, retry: false });
+  }, onError: (error, action) => { if (action === 'resume' && task.dismiss && (!task.dismissOnError || error.message === task.dismissOnError)) setRemoving(true); }, retry: false });
   const number = (value: number) => new Intl.NumberFormat(locale).format(value);
   const megabytes = (value: number) => new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value / 1_000_000);
   const progress = task.total > 0 ? Math.min(100, Math.max(0, task.completed / task.total * 100)) : undefined;
@@ -116,7 +116,7 @@ function RuntimeBackgroundTasks({ compactWithRestart }: { compactWithRestart: bo
     completed: downloadCompleted, total: downloadTotal, stale: false, bytes: true, failed: Boolean(downloadError), resume: async () => {
       await useUpdateStore.getState().downloadUpdate({ resume: true });
       if (useUpdateStore.getState().downloadError) throw new Error(useUpdateStore.getState().downloadError!);
-    } });
+    }, dismiss: async () => useUpdateStore.getState().discardInterruptedDownload(), dismissOnError: 'update_plan_changed' });
   const operation = update.data?.operation;
   const snapshot = update.data;
   const failedPlanGone = operation?.status === 'failed' && !!snapshot && !snapshot.checkError && snapshot.update !== undefined && snapshot.channel === operation.channel

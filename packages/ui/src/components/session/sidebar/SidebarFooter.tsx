@@ -33,6 +33,7 @@ function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () 
   const downloading = useUpdateStore((state) => state.downloading);
   const downloaded = useUpdateStore((state) => state.downloaded);
   const error = useUpdateStore((state) => state.error);
+  const downloadError = useUpdateStore((state) => state.downloadError);
   // Read the action at call time so the mutation never captures a stale store.
   const restartToUpdate = useUpdateStore((state) => state.restartToUpdate);
   const percent = useUpdateStore((state) => state.progress?.total
@@ -65,7 +66,7 @@ function SidebarUpdateButton({ onOpenUpdate, hideDownload }: { onOpenUpdate: () 
         ? t('sessions.sidebar.footer.actions.restartUpdate')
         : t('sessions.sidebar.footer.actions.update'));
 
-  if (hideDownload && downloading) return null;
+  if (hideDownload && (downloading || (downloadError && !downloaded))) return null;
 
   return (
     <Tooltip>

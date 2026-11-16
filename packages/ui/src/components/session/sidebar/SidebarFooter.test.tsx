@@ -103,6 +103,13 @@ describe('SidebarFooter update button', () => {
     expect(onOpenUpdate).not.toHaveBeenCalled();
   });
 
+  test('an interrupted download is shown only as a background task, not as a second download icon', async () => {
+    useUpdateStore.setState({ downloading: false, downloaded: false, available: true, downloadError: 'update_interrupted' });
+    const { render } = renderFooter(vi.fn(), true); await render();
+    expect(host.querySelector('button[aria-label="sessions.sidebar.footer.actions.update"]')).toBeNull();
+    useUpdateStore.setState({ downloadError: null });
+  });
+
   test('an undownloaded update still opens the update dialog', async () => {
     const restartToUpdate = vi.fn(async () => {});
     useUpdateStore.setState({ downloaded: false, available: true, restartToUpdate });
