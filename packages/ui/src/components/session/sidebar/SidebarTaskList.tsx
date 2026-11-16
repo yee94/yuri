@@ -17,7 +17,7 @@ export type TaskListItems = {
 };
 
 const ShelfCount = ({ count }: { count: number }) => (
-  <span className="mr-2 typography-micro tabular-nums text-muted-foreground/70">{count}</span>
+  <span className="mr-3 typography-micro tabular-nums text-muted-foreground/70">{count}</span>
 );
 
 type TaskListProps = {
@@ -99,8 +99,9 @@ export function SidebarSettledShelf({ items, open, onToggle, onShowMore, renderT
             <button
               type="button"
               onClick={onShowMore}
-              className={`${SIDEBAR_MUTED_HINT_CLASS} rounded-md hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50`}
+              className={`box-border flex w-full items-center gap-[3px] rounded-md px-2 py-1.5 text-left typography-meta text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50`}
             >
+              <Icon name="arrow-down-s" className="-ml-0.5 size-4 shrink-0" />
               {t(nextPage === 1 ? 'sessions.sidebar.group.showMoreSingle' : 'sessions.sidebar.group.showMorePlural', { count: nextPage })}
             </button>
           ) : null}
