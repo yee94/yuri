@@ -10,6 +10,7 @@ const harness = vi.hoisted(() => ({
   files: { readFile: vi.fn(), listDirectory: vi.fn(), statFile: vi.fn(), writeFile: vi.fn(), downloadFile: vi.fn() },
   runtime: { isDesktop: false, isVSCode: false },
   local: false,
+  machineLocal: false,
   pluginPreview: false,
   themeDark: false,
   openDesktopPath: vi.fn(),
@@ -27,7 +28,7 @@ vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: harness.t }) }));
 vi.mock('@/lib/desktop', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/desktop')>(),
   isDesktopLocalOriginActive: () => harness.local,
-  isDesktopLocalMachineRuntime: async () => harness.local,
+  isDesktopLocalMachineRuntime: async () => harness.local || harness.machineLocal,
   openDesktopPath: harness.openDesktopPath,
 }));
 vi.mock('@/components/gui-plugins/GuiFileLinkBridge', () => ({
@@ -169,6 +170,7 @@ beforeEach(() => {
   harness.runtime.isDesktop = false;
   harness.runtime.isVSCode = false;
   harness.local = false;
+  harness.machineLocal = false;
   harness.pluginPreview = false;
   harness.themeDark = false;
   harness.openDesktopPath.mockReset().mockResolvedValue(true);
@@ -248,6 +250,33 @@ test.each(['collapsed', 'expanded'] as const)('Markdown %s preview controls use 
 });
 
 describe('binary file fallback', () => {
+  test('Electron using the web API adapter still offers system open for a local binary', async () => {
+    // Electron uses createWebAPIs(), whose runtime.isDesktop is false.
+    harness.runtime.isDesktop = false;
+    harness.local = true;
+    harness.files.statFile.mockResolvedValue({ path: '/repo/video.mp4', isFile: true, size: 50, isBinary: true });
+    await open('/repo/video.mp4');
+    await act(async () => reactRoot.render(<FilePanel />));
+    expect(host.textContent).toContain('filesView.binary.openSystemApp');
+    await clickButton('filesView.binary.openSystemApp');
+    expect(harness.openDesktopPath).toHaveBeenCalledWith('/repo/video.mp4');
+  });
+
+  test.each([true, false])('web API adapter uses the native LAN machine verdict (%s)', async (machineLocal) => {
+    harness.machineLocal = machineLocal;
+    harness.files.statFile.mockResolvedValue({ path: '/repo/video.mp4', isFile: true, size: 50, isBinary: true });
+    await open('/repo/video.mp4');
+    await act(async () => reactRoot.render(<FilePanel />));
+    expect(host.textContent?.includes('filesView.binary.openSystemApp')).toBe(machineLocal);
+    expect(harness.openDesktopPath).not.toHaveBeenCalled();
+    if (machineLocal) {
+      await clickButton('filesView.binary.openSystemApp');
+      expect(harness.openDesktopPath).toHaveBeenCalledWith('/repo/video.mp4');
+    }
+    await clickButton('sidebarFilesTree.menu.save');
+    expect(harness.files.downloadFile).toHaveBeenCalledWith('/repo/video.mp4');
+  });
+
   test.each(['/repo/installer.dmg', '/repo/data.unknown', '/repo/binary.md'])('does not read or edit authoritative binary %s', async (path) => {
     harness.files.statFile.mockImplementation(async (requested: string) => ({ path: requested, isFile: true, size: 9_000_000, isBinary: true }));
     await open(path);

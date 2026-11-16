@@ -6,7 +6,7 @@ import { isDesktopLocalMachineRuntime, isDesktopLocalOriginActive, openDesktopPa
 import { useI18n } from '@/lib/i18n';
 
 export function BinaryFileFallback({ path }: { path: string }) {
-  const { files, runtime, projectScope } = useRuntimeAPIs();
+  const { files, projectScope } = useRuntimeAPIs();
   const { t } = useI18n();
   const [pending, setPending] = React.useState(false);
   const [localMachine, setLocalMachine] = React.useState(() => isDesktopLocalOriginActive());
@@ -15,7 +15,7 @@ export function BinaryFileFallback({ path }: { path: string }) {
     void isDesktopLocalMachineRuntime().then((value) => { if (active) setLocalMachine(value); });
     return () => { active = false; };
   }, []);
-  const canOpenLocally = !projectScope && runtime.isDesktop && localMachine;
+  const canOpenLocally = !projectScope && localMachine;
 
   const performAction = async (action: () => Promise<void>) => {
     setPending(true);

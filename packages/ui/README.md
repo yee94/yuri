@@ -3,6 +3,11 @@
 `@yuriai/ui` owns the shared React surfaces, runtime contracts, state and persistence.
 OpenCode package identities and protocols remain third-party contracts.
 
+Electron reuses the Web API adapter, whose `runtime.isDesktop` is false. Binary
+file fallback uses the native local-machine capability, not that adapter flag,
+to offer system open. Remote Project files never use the client's local opener;
+Web, VS Code and mobile retain Save without local native file access.
+
 ## iOS keyboard and editing lifetimes
 
 `apps/MobileApp.tsx` treats Capacitor keyboard hide and iOS native IME
