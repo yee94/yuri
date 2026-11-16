@@ -1,5 +1,6 @@
 import React from 'react';
 import { useI18n } from '@/lib/i18n';
+import { Icon } from '@/components/icon/Icon';
 import { SIDEBAR_MUTED_HINT_CLASS } from './utils';
 import { SidebarSectionHeader } from './SidebarSectionHeader';
 import type { PinnedItem } from './SidebarPinnedSessions';
@@ -45,7 +46,7 @@ export function SidebarTaskList({ items, renderTaskRow, onSessionsReordered }: T
   }
   const rows = items.active.map(renderTaskRow);
   return (
-    <div className="space-y-0.5">
+    <div className="-ml-1 space-y-0.5">
       {onSessionsReordered && items.active.length > 1 ? (
         <SessionFolderDndScope
           scopeKey="task-active"
@@ -88,10 +89,11 @@ export function SidebarSettledShelf({ items, open, onToggle, onShowMore, renderT
         onToggle={onToggle}
         expanded={open}
         className="pt-2 pb-1"
+        leadingIcon={<Icon name="archive" className="-ml-1 mr-0.5 size-3.5 shrink-0 text-foreground/55" />}
         accessory={<ShelfCount count={items.settledTotal} />}
       />
       {open ? (
-        <div className="max-h-[40vh] space-y-px overflow-y-auto overscroll-contain">
+        <div className="-ml-1 -mr-2 max-h-[40vh] space-y-px overflow-y-auto overscroll-contain">
           {items.settled.map(renderTaskRow)}
           {remaining > 0 ? (
             <button

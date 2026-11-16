@@ -14,6 +14,8 @@ type SidebarSectionHeaderProps = {
   className?: string;
   /** Replaces the text label (e.g. the Tasks / Projects view switch). */
   titleSlot?: React.ReactNode;
+  /** Small icon shown before a collapsible title. */
+  leadingIcon?: React.ReactNode;
 };
 
 /**
@@ -28,6 +30,7 @@ export function SidebarSectionHeader({
   expanded,
   className,
   titleSlot,
+  leadingIcon,
 }: SidebarSectionHeaderProps) {
   const titleClassName = 'typography-micro font-normal tracking-wide text-muted-foreground/80';
 
@@ -50,6 +53,7 @@ export function SidebarSectionHeader({
           className="group/toggle flex min-w-0 flex-1 items-center gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           aria-expanded={expanded}
         >
+          {leadingIcon}
           <span className={titleClassName}>{title}</span>
           <Icon
             name={expanded ? 'arrow-down-s' : 'arrow-right-s'}
