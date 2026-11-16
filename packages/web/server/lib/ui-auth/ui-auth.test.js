@@ -130,13 +130,32 @@ describe('ui auth client credential seam', () => {
             expect(await auth.authorizeRelayRequest(wsReq)).toBe(false);
           }
         }
-        expect(await auth.authorizeRelayRequest({ method: 'GET', url: '/health', headers: {} })).toBe(false);
+        expect(await auth.authorizeRelayRequest({ method: 'GET', url: '/health', headers: {} })).toBe(true);
         expect(await auth.authorizeRelayRequest({ method: 'POST', url: '/auth/session', headers: { cookie: 'yuri_ui_session=owner' } })).toBe(false);
         expect(await auth.authorizeRelayRequest({ method: 'POST', url: '/api/client-auth/pairing/redeem', headers: {} })).toBe(true);
         expect(await auth.authorizeRelayRequest({ method: 'GET', url: '/api/client-auth/pairing/redeem', headers: {} })).toBe(false);
       } finally { auth.dispose(); }
     });
   }
+
+  it('admits only the legacy mobile public health probe before pairing', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const auth = createUiAuth({ requireClientAuth: true });
+    try {
+      expect(await auth.authorizeRelayRequest({ method: 'GET', url: '/health', headers: {} })).toBe(true);
+      for (const [method, url, headers] of [
+        ['POST', '/health', {}],
+        ['HEAD', '/health', {}],
+        ['GET', '/health/extra', {}],
+        ['GET', '/auth/session', {}],
+        ['GET', '/api/version', {}],
+        ['GET', '/api/session', {}],
+        ['GET', '/health', { upgrade: 'websocket' }],
+      ]) {
+        expect(await auth.authorizeRelayRequest({ method, url, headers })).toBe(false);
+      }
+    } finally { auth.dispose(); }
+  });
 
   it('accepts bearer client credentials when UI password auth is enabled', async () => {
     const createUiAuth = await loadCreateUiAuth();

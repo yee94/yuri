@@ -239,6 +239,10 @@ const startOrigin = async (options: { recoveryEvents?: boolean } = {}) => {
     void (async () => {
       const res = addResponseAdapter(rawRes);
       const pathname = new URL(req.url ?? '/', 'http://origin').pathname;
+      if (pathname === '/health' && req.method === 'GET') {
+        res.json({ status: 'ok' });
+        return;
+      }
       if (pathname === '/fixture-event') {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         if (options.recoveryEvents) {
@@ -753,6 +757,14 @@ describe('private relay compiled-process boundary', () => {
     });
 
     await eventually(() => host!.getStatus().state === 'connected' && client!.getStatus().state === 'connected', 'host and TypeScript client did not connect');
+    // 0.2.31 mobile checks health without a bearer before redeeming its pairing.
+    const health = await client.fetch('/health');
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({ status: 'ok' });
+    expect(health.headers.get('set-cookie')).toBeNull();
+    for (const route of ['/auth/session', '/api/e2e/initialization']) {
+      expect((await client.fetch(route)).status).toBe(403);
+    }
     const directSsh = await fetch(`http://127.0.0.1:${origin.port}/auth/url-token`, {
       method: 'POST', headers: { authorization: 'Bearer ssh-token' },
     });

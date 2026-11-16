@@ -533,6 +533,8 @@ export const createUiAuth = ({
 
   const authorizeRelayRequest = async (req) => {
     const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+    // 0.2.31 mobile probes this public route before redeeming a pairing secret.
+    if (req.method === 'GET' && pathname === '/health' && !req.headers?.upgrade) return true;
     // Pairing redeems its one-time secret before a client credential exists.
     if (req.method === 'POST' && pathname === '/api/client-auth/pairing/redeem') return true;
     try {
