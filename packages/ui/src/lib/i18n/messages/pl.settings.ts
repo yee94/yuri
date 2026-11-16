@@ -1678,6 +1678,7 @@ export const settingsDict = {
   'settings.remoteInstances.page.field.selectBindHostPlaceholder': 'Wybierz host powiązania',
   'settings.remoteInstances.page.field.selectInstallMethodPlaceholder': 'Wybierz metodę instalacji',
   'settings.remoteInstances.page.field.sshCommand': 'Polecenie SSH',
+  'settings.remoteInstances.page.sshSetupHint': 'Masz problem? Rozpocznij nową rozmowę i poproś AI: „Pomóż mi zainicjować zdalną instancję Yuri i połączyć się z nią”. Następnie wklej działające polecenie SSH.',
   'settings.remoteInstances.page.field.sshCommandPlaceholder': 'ssh user@host lub ssh user@host:22',
   'settings.remoteInstances.page.field.sshPasswordOptional': 'Hasło SSH (opcjonalnie)',
   'settings.remoteInstances.page.field.sshPasswordPlaceholder': 'Wpisz hasło SSH',

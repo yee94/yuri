@@ -1397,6 +1397,7 @@ export const settingsDict = {
   'settings.remoteInstances.page.section.portForwards': '端口转发',
   'settings.remoteInstances.page.section.portForwardsDescription': '可选的额外端口，可通过此 SSH 连接访问。',
   'settings.remoteInstances.page.field.sshCommand': 'SSH 命令',
+  'settings.remoteInstances.page.sshSetupHint': '遇到问题了？建议新建对话，让 AI 帮忙初始化。发送「请帮我初始化并连接好 Yuri 远程实例」，再粘贴你可用的 SSH 命令即可。',
   'settings.remoteInstances.page.field.sshCommandPlaceholder': 'ssh user@host 或 ssh user@host:22',
   'settings.remoteInstances.page.field.nickname': '昵称',
   'settings.remoteInstances.page.field.nicknamePlaceholder': '工作笔记本',

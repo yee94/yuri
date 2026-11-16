@@ -1314,6 +1314,7 @@ export const settingsDict = {
   'settings.remoteInstances.page.section.portForwards': 'Transferts de ports',
   'settings.remoteInstances.page.section.portForwardsDescription': 'Un SSH supplémentaire avance au-delà du tunnel principal.',
   'settings.remoteInstances.page.field.sshCommand': 'Commande SSH',
+  'settings.remoteInstances.page.sshSetupHint': 'Un problème ? Ouvrez une nouvelle conversation et demandez à l’IA : « Aide-moi à initialiser une instance Yuri distante et à m’y connecter. » Collez ensuite une commande SSH qui fonctionne pour vous.',
   'settings.remoteInstances.page.field.sshCommandPlaceholder': 'ssh user@host ou ssh user@host:22',
   'settings.remoteInstances.page.field.nickname': 'Surnom',
   'settings.remoteInstances.page.field.nicknamePlaceholder': 'Mon hôte distant',

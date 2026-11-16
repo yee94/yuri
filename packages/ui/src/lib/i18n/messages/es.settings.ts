@@ -1397,6 +1397,7 @@ export const settingsDict = {
   "settings.remoteInstances.page.section.portForwards": "Redirecciones de puerto",
   "settings.remoteInstances.page.section.portForwardsDescription": "Puertos adicionales opcionales que estarán disponibles a través de esta conexión SSH.",
   "settings.remoteInstances.page.field.sshCommand": "Comando SSH",
+  "settings.remoteInstances.page.sshSetupHint": "¿Tienes problemas? Abre una nueva conversación y pide a la IA: «Ayúdame a inicializar una instancia remota de Yuri y a conectarme a ella». Después, pega un comando SSH que te funcione.",
   "settings.remoteInstances.page.field.sshCommandPlaceholder": "ssh user@host o ssh user@host:22",
   "settings.remoteInstances.page.field.nickname": "Apodo",
   "settings.remoteInstances.page.field.nicknamePlaceholder": "Portátil de trabajo",

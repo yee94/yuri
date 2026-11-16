@@ -1737,6 +1737,7 @@ export const dict: Record<I18nKey, string> = {
   'directoryExplorerDialog.actions.addProject': 'プロジェクトを追加',
   'directoryExplorerDialog.actions.addLocalProject': 'ローカルプロジェクトを追加',
   'directoryExplorerDialog.actions.cloneRepository': 'リポジトリをクローン',
+  'directoryExplorerDialog.actions.addSshInstance': 'リモートインスタンスを追加（SSH）',
   'directoryExplorerDialog.actions.cloneAndAdd': 'クローンして追加',
   'directoryExplorerDialog.actions.cloning': 'クローン中...',
   'directoryExplorerDialog.actions.createAndAdd': '作成して追加',

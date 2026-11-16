@@ -2131,6 +2131,7 @@ export const dict: Record<I18nKey, string> = {
   'directoryExplorerDialog.actions.alreadyAdded': 'Już dodano',
   'directoryExplorerDialog.actions.cloneAndAdd': 'Sklonuj i dodaj',
   'directoryExplorerDialog.actions.cloneRepository': 'Sklonuj repozytorium',
+  'directoryExplorerDialog.actions.addSshInstance': 'Dodaj zdalną instancję (SSH)',
   'directoryExplorerDialog.actions.cloning': 'Klonowanie...',
   'directoryExplorerDialog.actions.createAndAdd': 'Utwórz i dodaj',
   'directoryExplorerDialog.actions.openInFinder': 'Otwórz w Finderze',

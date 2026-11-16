@@ -1271,6 +1271,7 @@
   'settings.remoteInstances.page.section.portForwards': '連接埠轉送',
   'settings.remoteInstances.page.section.portForwardsDescription': '除主 tunnel 外的額外 SSH 轉送。',
   'settings.remoteInstances.page.field.sshCommand': 'SSH 命令',
+  'settings.remoteInstances.page.sshSetupHint': '遇到問題了？建議開啟新對話，讓 AI 協助初始化。傳送「請幫我初始化並連接好 Yuri 遠端執行個體」，再貼上你可用的 SSH 命令即可。',
   'settings.remoteInstances.page.field.sshCommandPlaceholder': 'ssh user@host 或 ssh user@host:22',
   'settings.remoteInstances.page.field.nickname': '暱稱',
   'settings.remoteInstances.page.field.nicknamePlaceholder': '我的遠端主機',

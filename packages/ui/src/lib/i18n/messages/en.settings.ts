@@ -1430,6 +1430,7 @@ export const settingsDict = {
   'settings.remoteInstances.page.section.portForwards': 'Port Forwards',
   'settings.remoteInstances.page.section.portForwardsDescription': 'Optional extra ports to make available through this SSH connection.',
   'settings.remoteInstances.page.field.sshCommand': 'SSH command',
+  'settings.remoteInstances.page.sshSetupHint': 'Having trouble? Start a new conversation and ask AI: “Please help me initialize and connect to a remote Yuri instance.” Then paste an SSH command that works for you.',
   'settings.remoteInstances.page.field.sshCommandPlaceholder': 'ssh user@host or ssh user@host:22',
   'settings.remoteInstances.page.field.nickname': 'Nickname',
   'settings.remoteInstances.page.field.nicknamePlaceholder': 'Work laptop',

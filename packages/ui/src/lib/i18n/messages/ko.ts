@@ -1743,6 +1743,7 @@ export const dict: Record<I18nKey, string> = {
   'directoryExplorerDialog.actions.addProject': '프로젝트 추가',
   'directoryExplorerDialog.actions.addLocalProject': '로컬 프로젝트 추가',
   'directoryExplorerDialog.actions.cloneRepository': '저장소 복제',
+  'directoryExplorerDialog.actions.addSshInstance': '원격 인스턴스 추가(SSH)',
   'directoryExplorerDialog.actions.cloneAndAdd': '복제하고 추가',
   'directoryExplorerDialog.actions.cloning': '복제 중...',
   'directoryExplorerDialog.actions.createAndAdd': '생성하고 추가',

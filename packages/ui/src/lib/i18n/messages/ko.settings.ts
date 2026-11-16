@@ -1397,6 +1397,7 @@ export const settingsDict = {
   'settings.remoteInstances.page.section.portForwards': '포트 포워딩',
   'settings.remoteInstances.page.section.portForwardsDescription': '이 SSH 연결을 통해 추가로 사용할 포트를 설정합니다.',
   'settings.remoteInstances.page.field.sshCommand': 'SSH 명령어',
+  'settings.remoteInstances.page.sshSetupHint': '문제가 있나요? 새 대화에서 AI에게 “Yuri 원격 인스턴스의 초기 설정과 연결을 도와주세요”라고 요청한 다음, 사용 가능한 SSH 명령을 붙여넣으세요.',
   'settings.remoteInstances.page.field.sshCommandPlaceholder': 'ssh user@host 또는 ssh user@host:22',
   'settings.remoteInstances.page.field.nickname': '별칭',
   'settings.remoteInstances.page.field.nicknamePlaceholder': '업무용 노트북',

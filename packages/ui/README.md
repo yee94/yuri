@@ -125,6 +125,10 @@ editor directly. New entries remain unsaved drafts until Create or Connect;
 Connect saves the current fields first, and a failed save leaves the draft open.
 Closing an unsaved editor creates no connection. Logs and delete appear only for
 saved entries.
+In local desktop windows, the add-project directory footer replaces Clone with
+Add remote instance (SSH), closes the picker and opens that same new-connection
+editor in Settings. Runtimes without local desktop Host-management capability
+retain the Clone action.
 The SSH editor uses one shared Settings card, with connection, logs, delete and
 save actions in its header rather than a separate toolbar row. Managed
 connections expose command, name and SSH password; existing external connections

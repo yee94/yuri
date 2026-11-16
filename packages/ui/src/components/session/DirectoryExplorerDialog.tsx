@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui';
 import { IdentityDropdown } from '@/components/views/git/GitHeader';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { canManageDesktopHosts } from '@/lib/desktop';
 import { useDeviceInfo } from '@/lib/device';
 import { DirectoryExplorerSurface, DirectoryMachineActions, DirectoryMachineList } from './DirectoryExplorerViews';
 import { Icon } from "@/components/icon/Icon";
@@ -196,16 +197,18 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
     registry.assertCurrent();
     await catalog.refetch();
   }} />;
-  return <LocalDirectoryExplorerDialog {...props} machinePicker={machinePicker} discoveryError={catalog.error?.message} />;
+  return <LocalDirectoryExplorerDialog {...props} machinePicker={machinePicker} discoveryError={catalog.error?.message}
+    onAddSsh={canManageDesktopHosts() ? openSshSettings : undefined} />;
 };
 
-const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { machinePicker: React.ReactNode; discoveryError?: string }> = ({
+const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { machinePicker: React.ReactNode; discoveryError?: string; onAddSsh?: () => void }> = ({
   open,
   onOpenChange,
   forceMobile,
   origin,
   machinePicker,
   discoveryError,
+  onAddSsh,
 }) => {
   const { t } = useI18n();
   const homeDirectory = useDirectoryStore((s) => s.homeDirectory);
@@ -769,9 +772,11 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
           {isOpeningFinder ? t('directoryExplorerDialog.actions.openingFinder') : t('directoryExplorerDialog.actions.openInFinder')}
         </Button>
       ) : null}
-      <Button variant="ghost" size="xs" onClick={() => setIsCloneMode((value) => !value)} disabled={isConfirming || isOpeningFinder}>
+      {onAddSsh ? <Button variant="ghost" size="xs" onClick={onAddSsh} disabled={isConfirming || isOpeningFinder}>
+        {t('directoryExplorerDialog.actions.addSshInstance')}
+      </Button> : <Button variant="ghost" size="xs" onClick={() => setIsCloneMode((value) => !value)} disabled={isConfirming || isOpeningFinder}>
         {isCloneMode ? t('directoryExplorerDialog.actions.addLocalProject') : t('directoryExplorerDialog.actions.cloneRepository')}
-      </Button>
+      </Button>}
       <Button size="xs" onClick={() => void finalizeSelection(targetPath)} disabled={isCloneMode ? !canSubmitClone : !canAddProject}>
         {submitActionLabel}
       </Button>

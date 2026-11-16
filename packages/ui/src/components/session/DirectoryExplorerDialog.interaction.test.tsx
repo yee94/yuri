@@ -23,6 +23,7 @@ const fixture = vi.hoisted(() => {
   return {
   mobile: false,
   remoteSupported: false,
+  canManageDesktopHosts: false,
   catalogKnown: true,
   catalogPending: false,
   catalogError: null as Error | null,
@@ -84,6 +85,7 @@ vi.mock('@/hooks/useFileSystemAccess', () => ({
   useFileSystemAccess: () => ({ isDesktop: !fixture.mobile, requestAccess: fixture.requestAccess, startAccessing: fixture.startAccessing }),
 }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: fixture.mobile }) }));
+vi.mock('@/lib/desktop', () => ({ canManageDesktopHosts: () => fixture.canManageDesktopHosts }));
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: async () => new Response(JSON.stringify({ home: fixture.home })) }));
 vi.mock('@/lib/opencode/client', () => ({ opencodeClient: {
   listLocalDirectory: fixture.list, cloneRepository: fixture.clone, createDirectory: fixture.create,
@@ -139,6 +141,7 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
     fixture.mobile = mobile;
     fixture.remoteSupported = false;
+    fixture.canManageDesktopHosts = false;
     fixture.catalogKnown = true;
     fixture.catalogPending = false;
     fixture.catalogError = null;
@@ -222,6 +225,23 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     expect(fixture.list).toHaveBeenCalledWith('/workspace/');
     expect(button('settings.remoteInstances.sidebar.actions.addSshInstance')).toBeUndefined();
     expect(container.textContent).not.toContain('remoteProjects.machine');
+  });
+
+  test('local desktop footer replaces cloning with the shared new SSH connection editor even without saved hosts', async () => {
+    fixture.canManageDesktopHosts = true;
+    fixture.remoteSupported = true;
+    await mount();
+    const addSsh = button('directoryExplorerDialog.actions.addSshInstance');
+    expect(addSsh.closest('.yuri-directory-footer')).not.toBeNull();
+    expect(button('directoryExplorerDialog.actions.cloneRepository')).toBeUndefined();
+    expect(pathInput()).not.toBeNull();
+    await act(async () => addSsh.click());
+    expect(open).toBe(false);
+    expect(fixture.setSettingsRemoteInstancesSelectedId).toHaveBeenCalledExactlyOnceWith('new');
+    expect(fixture.setSettingsPage).toHaveBeenCalledExactlyOnceWith('remote-instances');
+    expect(fixture.setSettingsDialogOpen).toHaveBeenCalledExactlyOnceWith(true);
+    expect(fixture.clone).not.toHaveBeenCalled();
+    expect(fixture.add).not.toHaveBeenCalled();
   });
 
   test('machine keyboard navigation skips disabled rows and Enter continues without repeat or IME submissions', async () => {

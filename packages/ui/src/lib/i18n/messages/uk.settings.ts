@@ -1397,6 +1397,7 @@ export const settingsDict = {
   "settings.remoteInstances.page.section.portForwards": "Перенаправлення портів",
   "settings.remoteInstances.page.section.portForwardsDescription": "Додаткові порти, які можна зробити доступними через це SSH-підключення.",
   "settings.remoteInstances.page.field.sshCommand": "Команда SSH",
+  "settings.remoteInstances.page.sshSetupHint": "Виникли проблеми? Почніть нову розмову й попросіть ШІ: «Допоможи мені ініціалізувати віддалений екземпляр Yuri та підключитися до нього». Потім вставте команду SSH, яка у вас працює.",
   "settings.remoteInstances.page.field.sshCommandPlaceholder": "ssh user@host або ssh user@host:22",
   "settings.remoteInstances.page.field.nickname": "Назва",
   "settings.remoteInstances.page.field.nicknamePlaceholder": "Робочий ноутбук",

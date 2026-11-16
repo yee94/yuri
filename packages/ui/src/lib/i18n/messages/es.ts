@@ -1743,6 +1743,7 @@ export const dict: Record<I18nKey, string> = {
   "directoryExplorerDialog.actions.addProject": "Añadir proyecto",
   "directoryExplorerDialog.actions.addLocalProject": "Añadir proyecto local",
   "directoryExplorerDialog.actions.cloneRepository": "Clonar repositorio",
+  "directoryExplorerDialog.actions.addSshInstance": "Añadir instancia remota (SSH)",
   "directoryExplorerDialog.actions.cloneAndAdd": "Clonar y añadir",
   "directoryExplorerDialog.actions.cloning": "Clonando...",
   "directoryExplorerDialog.actions.createAndAdd": "Crear y añadir",

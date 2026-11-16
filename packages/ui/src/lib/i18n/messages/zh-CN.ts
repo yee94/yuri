@@ -1707,6 +1707,7 @@ export const dict: Record<I18nKey, string> = {
   'directoryExplorerDialog.actions.addProject': '添加项目',
   'directoryExplorerDialog.actions.addLocalProject': '添加本地项目',
   'directoryExplorerDialog.actions.cloneRepository': '克隆仓库',
+  'directoryExplorerDialog.actions.addSshInstance': '添加远程实例（SSH）',
   'directoryExplorerDialog.actions.cloneAndAdd': '克隆并添加',
   'directoryExplorerDialog.actions.cloning': '正在克隆...',
   'directoryExplorerDialog.actions.createAndAdd': '创建并添加',

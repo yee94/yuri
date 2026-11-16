@@ -1711,6 +1711,7 @@ export const dict: Record<I18nKey, string> = {
   'directoryExplorerDialog.actions.addProject': '新增專案',
   'directoryExplorerDialog.actions.addLocalProject': '新增本地專案',
   'directoryExplorerDialog.actions.cloneRepository': '複製儲存庫',
+  'directoryExplorerDialog.actions.addSshInstance': '新增遠端執行個體（SSH）',
   'directoryExplorerDialog.actions.cloneAndAdd': '複製並新增',
   'directoryExplorerDialog.actions.cloning': '正在複製...',
   'directoryExplorerDialog.actions.createAndAdd': '建立並新增',

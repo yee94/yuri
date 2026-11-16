@@ -84,9 +84,14 @@ it('managed SSH shows only command, name and SSH authentication in shared Settin
       fieldKey('sshCommand'), fieldKey('nickname'), fieldKey('sshPasswordOptional'),
     ]);
     expect(editor.host.querySelectorAll('.yuri-settings-group-card').length).toBe(1);
+    const hint = editor.host.querySelector('.yuri-settings-group-description')!;
+    expect(hint.textContent).toBe('settings.remoteInstances.page.sshSetupHint');
+    expect(editor.host.querySelector('.yuri-settings-group-card')!.contains(hint)).toBe(false);
     expect(editor.host.querySelectorAll('.yuri-settings-split-row').length).toBe(3);
     const header = editor.host.querySelector('[data-settings-action-header]')!;
     expect(header.classList.contains('pr-8')).toBe(false);
+    expect(header.classList.contains('py-0')).toBe(true);
+    expect(header.classList.contains('py-3')).toBe(false);
     expect(header.textContent).toContain('settings.remoteInstances.page.actions.logs');
     expect(header.textContent).toContain('connect');
     expect([...editor.host.querySelectorAll('button')].every((button) => header.contains(button))).toBe(true);
@@ -101,6 +106,7 @@ it('new SSH uses the full editor and saves once before selecting the created con
     expect(editor.host.querySelector(`input[aria-label="${fieldKey('sshPasswordOptional')}"]`)).not.toBeNull();
     expect(editor.deleteButton()).toBeNull();
     expect(editor.host.textContent).not.toContain('settings.remoteInstances.page.actions.logs');
+    expect(editor.host.querySelector('.yuri-settings-group-description')?.textContent).toBe('settings.remoteInstances.page.sshSetupHint');
     expect(editor.upsertInstance).not.toHaveBeenCalled();
     const create = [...editor.host.querySelectorAll('button')].find((node) => node.textContent === 'settings.common.actions.create')!;
     await act(async () => create.click());

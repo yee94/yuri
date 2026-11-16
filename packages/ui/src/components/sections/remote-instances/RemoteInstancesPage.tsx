@@ -2926,8 +2926,8 @@ export const RemoteInstancesPage: React.FC = () => {
 
   return (
     <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open && !isRemoving && !isSaving && !isPrimaryActionPending) setSelectedId(null); }}>
-      <DialogContent className="yuri-settings-workspace yuri-settings-workspace-desktop yuri-settings-section-stack sm:max-w-2xl">
-      <SettingsActionHeader actions={<>
+      <DialogContent className="yuri-settings-workspace yuri-settings-workspace-desktop yuri-settings-section-stack [--yuri-settings-section-stack-gap:var(--yuri-settings-section-gap)] sm:max-w-2xl">
+      <SettingsActionHeader className="py-0" actions={<>
         {!isNewInstance ? <><Button type="button" variant="ghost" size="icon" onClick={() => void handleRemoveInstance()} disabled={isSaving || isRemoving} aria-busy={isRemoving} aria-label={t('settings.common.actions.delete')}>
           <Icon name={isRemoving ? 'refresh' : 'delete-bin'} className={cn('size-4', isRemoving && 'animate-spin')} />
         </Button>
@@ -2962,7 +2962,10 @@ export const RemoteInstancesPage: React.FC = () => {
         <SshBootstrapErrorNotice errorCode={status?.errorCode} detail={status?.detail} />
       ) : null}
 
-      <SettingsGroup label={t('settings.remoteInstances.page.section.instance')}>
+      <SettingsGroup
+        label={t('settings.remoteInstances.page.section.instance')}
+        description={t('settings.remoteInstances.page.sshSetupHint')}
+      >
           <SettingsRow label={t('settings.remoteInstances.page.field.sshCommand')} className="yuri-settings-ssh-command-row">
             <Input
               value={draft.sshCommand}

@@ -1430,6 +1430,7 @@ export const settingsDict = {
   'settings.remoteInstances.page.section.portForwards': 'ポート転送',
   'settings.remoteInstances.page.section.portForwardsDescription': 'この SSH 接続を通じて利用可能にする追加のオプションポート。',
   'settings.remoteInstances.page.field.sshCommand': 'SSH コマンド',
+  'settings.remoteInstances.page.sshSetupHint': 'お困りですか？新しい会話で AI に「Yuri のリモートインスタンスの初期設定と接続を手伝ってください」と依頼し、接続に使える SSH コマンドを貼り付けてください。',
   'settings.remoteInstances.page.field.sshCommandPlaceholder': 'ssh user@host または ssh user@host:22',
   'settings.remoteInstances.page.field.nickname': 'ニックネーム',
   'settings.remoteInstances.page.field.nicknamePlaceholder': '仕事用ノートPC',

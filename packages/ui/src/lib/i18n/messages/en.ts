@@ -1742,6 +1742,7 @@ export const dict = {
   'directoryExplorerDialog.actions.addProject': 'Add project',
   'directoryExplorerDialog.actions.addLocalProject': 'Add local project',
   'directoryExplorerDialog.actions.cloneRepository': 'Clone repository',
+  'directoryExplorerDialog.actions.addSshInstance': 'Add remote instance (SSH)',
   'directoryExplorerDialog.actions.cloneAndAdd': 'Clone & add',
   'directoryExplorerDialog.actions.cloning': 'Cloning...',
   'directoryExplorerDialog.actions.createAndAdd': 'Create & add',
