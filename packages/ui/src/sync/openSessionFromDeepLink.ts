@@ -1,4 +1,6 @@
-import { resolveSessionForRoute } from '@/router/sessionLookup';
+import type { DesktopSessionLinkProbeResult } from '@/lib/desktop';
+import { findSessionIndexEntryById } from '@/lib/session-index-api';
+import { findSessionById, resolveSessionForRoute } from '@/router/sessionLookup';
 import { notifySessionOpenFailed } from '@/sync/openSessionWithFeedback';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUIStore } from '@/stores/useUIStore';
@@ -6,9 +8,25 @@ import { useUIStore } from '@/stores/useUIStore';
 export type SessionDeepLinkDetail = {
   sessionId?: string;
   directory?: string;
+  /**
+   * Desktop window probe outcome when no open window owned the id:
+   * `ambiguous` (several runtimes claim it) or `unconfirmed` (a window could not check).
+   */
+  probe?: 'ambiguous' | 'unconfirmed';
 };
 
 let navigationRevision = 0;
+
+/**
+ * Answer a desktop probe: does this window's runtime know the session id?
+ * Rejects when the runtime cannot answer, so absence stays authoritative.
+ */
+export async function probeSessionLink(sessionId: string): Promise<DesktopSessionLinkProbeResult> {
+  const memory = findSessionById(sessionId.trim());
+  if (memory) return { status: 'found', directory: memory.directory };
+  const hit = await findSessionIndexEntryById(sessionId);
+  return hit ? { status: 'found', directory: hit.directory } : { status: 'not-found' };
+}
 
 /**
  * Open a conversation from a `yuri://session/<id>?directory=<path>` link.
@@ -23,8 +41,14 @@ export async function openSessionFromDeepLink(detail: SessionDeepLinkDetail): Pr
   const directory = typeof detail.directory === 'string' ? detail.directory.trim() : '';
   const revision = ++navigationRevision;
   const isCurrent = () => revision === navigationRevision;
+  const missReason = detail.probe === 'unconfirmed' ? 'unresolved' : 'not-found';
 
   useUIStore.getState().setActiveMainTab('chat');
+
+  if (detail.probe === 'ambiguous') {
+    notifySessionOpenFailed(sessionId, 'unresolved');
+    return;
+  }
 
   const local = await resolveSessionForRoute(sessionId, { trySessionGet: false });
   if (!isCurrent()) return;
@@ -34,7 +58,7 @@ export async function openSessionFromDeepLink(detail: SessionDeepLinkDetail): Pr
   }
 
   if (!directory) {
-    notifySessionOpenFailed(sessionId, 'not-found');
+    notifySessionOpenFailed(sessionId, missReason);
     return;
   }
 
@@ -45,13 +69,13 @@ export async function openSessionFromDeepLink(detail: SessionDeepLinkDetail): Pr
       import('@/lib/remote-projects/navigation'),
     ]);
     if (!supportsRemoteProjects()) {
-      notifySessionOpenFailed(sessionId, 'not-found');
+      notifySessionOpenFailed(sessionId, missReason);
       return;
     }
     const catalog = await ensureRemoteHostCatalog();
     if (!isCurrent()) return;
     if (!catalog.supported) {
-      notifySessionOpenFailed(sessionId, 'not-found');
+      notifySessionOpenFailed(sessionId, missReason);
       return;
     }
     const hostIds = [...new Set(catalog.projects.map((project) => project.hostId))];
@@ -60,7 +84,7 @@ export async function openSessionFromDeepLink(detail: SessionDeepLinkDetail): Pr
       return owner ? [owner] : [];
     });
     if (owners.length !== 1) {
-      notifySessionOpenFailed(sessionId, 'not-found');
+      notifySessionOpenFailed(sessionId, missReason);
       return;
     }
     const [owner] = owners;
@@ -73,6 +97,6 @@ export async function openSessionFromDeepLink(detail: SessionDeepLinkDetail): Pr
       isNewSession: false,
     }, isCurrent);
   } catch {
-    if (isCurrent()) notifySessionOpenFailed(sessionId, 'not-found');
+    if (isCurrent()) notifySessionOpenFailed(sessionId, missReason);
   }
 }

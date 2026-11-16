@@ -234,8 +234,18 @@ export type DesktopMenuShortcutsBridge = {
   fallback(combo: string): Promise<boolean>;
 };
 
+export type DesktopSessionLinkProbeResult =
+  | { status: 'found'; directory: string }
+  | { status: 'not-found' };
+
+export type DesktopSessionLinksBridge = {
+  /** Answer main-process probes; a rejected handler reports "could not check". */
+  handleProbe(handler: (sessionId: string) => Promise<DesktopSessionLinkProbeResult>): () => void;
+};
+
 type DesktopBridgeGlobal = {
   isDocumentRestricted?: () => boolean;
+  sessionLinks?: DesktopSessionLinksBridge;
   menuShortcuts?: DesktopMenuShortcutsBridge;
   viewExport?: DesktopViewExportBridge;
   guiPlugins?: NativeGuiBridge;
@@ -335,6 +345,10 @@ export const getDesktopViewExportBridge = (): DesktopViewExportBridge | undefine
 /** Optional installer-owned window capability; absent on other runtimes and old shells. */
 export const getDesktopMenuShortcutsBridge = (): DesktopMenuShortcutsBridge | undefined =>
   isElectronShell() ? getDesktopBridge()?.menuShortcuts : undefined;
+
+/** Optional installer-owned window capability; absent on other runtimes and old shells. */
+export const getDesktopSessionLinksBridge = (): DesktopSessionLinksBridge | undefined =>
+  isElectronShell() ? getDesktopBridge()?.sessionLinks : undefined;
 
 export const invokeDesktop = async <T = unknown>(command: string, args?: Record<string, unknown>): Promise<T | null> => {
   const bridge = getDesktopBridge();

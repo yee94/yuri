@@ -17,7 +17,7 @@ export type TaskListItems = {
 };
 
 const ShelfCount = ({ count }: { count: number }) => (
-  <span className="mr-3 typography-micro tabular-nums text-muted-foreground/70">{count}</span>
+  <span className="text-[12px] tabular-nums text-muted-foreground/70">{count}</span>
 );
 
 type TaskListProps = {

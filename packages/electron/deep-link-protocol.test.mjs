@@ -64,6 +64,81 @@ describe('external deep-link compatibility', () => {
     }
   });
 
+  it('routes external session links to the probed owner window or the local Hub with the outcome', async () => {
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
+    const events = [];
+    const makeWindow = (runtime, extra = {}) => ({
+      __yuriLabel: 'window', __yuriRuntimeConfig: runtime,
+      isDestroyed: () => false, isMinimized: () => false,
+      restore() {}, show() {}, focus() { this.focused = true; },
+      webContents: { isLoading: () => false }, ...extra,
+    });
+    const remote = makeWindow({ apiBaseUrl: 'https://remote.example' });
+    const local = makeWindow({ apiBaseUrl: 'http://localhost:3000' });
+    const mini = makeWindow({ apiBaseUrl: 'http://localhost:3000' }, { __yuriMiniChat: true });
+    const restricted = makeWindow({ apiBaseUrl: 'http://localhost:3000' });
+    const windows = [remote, mini, local, restricted];
+    const queue = [];
+    let answer;
+    const probed = [];
+    const context = vm.createContext({
+      BrowserWindow: { getAllWindows: () => windows },
+      state: { mainWindow: remote, sidecarUrl: 'http://localhost:3000' },
+      sameOrigin: (a, b) => Boolean(a && b && new URL(a).origin === new URL(b).origin),
+      guiPluginHost: { isWindowOnly: (contents) => contents === restricted.webContents },
+      sessionLinkProbe: { locate: async (candidates, id) => { probed.push({ candidates, id }); return answer(); } },
+      initialStartupComplete: false, pendingDeepLinks: queue,
+      schedulePendingDeepLinkFlush() {}, log: { info() {}, warn() {} },
+      resolveMainWindowTarget: () => remote,
+      emitToWindow: (window, event, detail) => events.push({ window, event, detail }),
+    });
+    vm.runInContext(source.slice(source.indexOf('const isLocalWorkspaceDeepLink ='), source.indexOf('const flushPendingDeepLinks ='))
+      + '\nglobalThis.dispatch = dispatchDeepLink;', context);
+    const link = { raw: 'yuri://session/ses_1?directory=%2Fsrv', type: 'session', value: 'ses_1', directory: '/srv' };
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    context.dispatch(link);
+    expect(queue).toEqual([link]);
+    expect(probed).toEqual([]);
+    vm.runInContext('initialStartupComplete = true;', context);
+
+    answer = () => ({ outcome: 'found', window: remote, directory: '/data/repo' });
+    context.dispatch(queue.shift());
+    await settle();
+    expect(probed[0].id).toBe('ses_1');
+    expect(probed[0].candidates).toEqual([remote, local]);
+    expect(events.at(-1)).toEqual({ window: remote, event: 'yuri:open-session-link', detail: { sessionId: 'ses_1', directory: '/data/repo' } });
+    expect(remote.focused).toBe(true);
+
+    for (const [outcome, detail] of [
+      ['not-found', { sessionId: 'ses_1', directory: '/srv' }],
+      ['unconfirmed', { sessionId: 'ses_1', directory: '/srv', probe: 'unconfirmed' }],
+      ['ambiguous', { sessionId: 'ses_1', directory: '/srv', probe: 'ambiguous' }],
+    ]) {
+      answer = () => ({ outcome });
+      context.dispatch(link);
+      await settle();
+      expect(events.at(-1)).toEqual({ window: local, event: 'yuri:open-session-link', detail });
+    }
+
+    let release;
+    answer = () => new Promise((resolve) => { release = () => resolve({ outcome: 'found', window: remote, directory: '/stale' }); });
+    context.dispatch(link);
+    const stale = release;
+    answer = () => ({ outcome: 'not-found' });
+    context.dispatch(link);
+    await settle();
+    stale();
+    await settle();
+    expect(events.at(-1).detail).toEqual({ sessionId: 'ses_1', directory: '/srv' });
+
+    const before = probed.length;
+    context.dispatch({ type: 'session', value: 'ses_internal' });
+    expect(probed).toHaveLength(before);
+    expect(events.at(-1)).toEqual({ window: remote, event: 'yuri:open-session-link', detail: { sessionId: 'ses_internal', directory: undefined } });
+  });
+
   it.each(['yuri', 'openchamber', 'openchambery'])('admits %s without rewriting route, scope or payload', (scheme) => {
     const link = `${scheme}://connect?v=2&p=opaque%2Bpayload%2Fvalue`;
     const args = ['/path/to/app', '--flag', link];

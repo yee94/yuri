@@ -30,14 +30,14 @@ Never generate `yuri://connect?...` links yourself. They carry pairing credentia
 
 `sessionID` is the OpenCode session id (`ses_...`). `directory` is the absolute path of the project on the machine where the session runs. Always include it when you know it.
 
-Desktop Yuri resolves the link against its local Hub:
+Desktop Yuri resolves the link on the receiving computer:
 
-1. If the session id is in that Yuri's own session index, it opens it.
-2. Otherwise `directory` must belong to exactly one Remote Project already connected in that Yuri; Yuri then opens the session through that project.
-3. In every other case Yuri shows a "conversation not found" notice and opens nothing. It never guesses a machine, and never connects one automatically.
+1. Each open Yuri window checks the session id against its own connection's session index. If exactly one connection has it, that window opens it. This includes windows connected to other machines.
+2. Otherwise the local window tries its own index, then `directory` must belong to exactly one Remote Project already connected in that Yuri; Yuri then opens the session through that project.
+3. In every other case Yuri shows a notice and opens nothing. It never guesses a machine, and never connects one automatically.
 
-A remote link requires the receiving desktop Yuri to have that machine's project associated, using the target machine's own path. After a local-index miss, equal owning paths on different connected machines are ambiguous and will not open. A unique directory match selects the remote route; it does not confirm the session exists or that its content can load. Mobile does not perform this Remote Project lookup; its session links use the connected runtime's session navigation.
+Step 1 depends on what the recipient has open, which the generating Host cannot observe. Older desktop versions skip it. A remote link therefore either needs an open window connected to the owning machine, or the owning machine's project associated in the receiving Yuri using the target machine's own path. After a local-index miss, equal owning paths on different connected machines are ambiguous and will not open. A unique directory match selects the remote route; it does not confirm the session exists or that its content can load. Mobile does not perform this Remote Project lookup; its session links use the connected runtime's session navigation.
 
 ## Verification
 
-Report the link text, which branch should resolve it (local index or connected Remote Project), and the known limits above. Do not run `open "yuri://..."` to verify unless the user asks, because that moves their running Yuri window.
+Report the link text, which receiving-side route could resolve it (an open window connected to the owning machine, the local index or a connected Remote Project), and the known limits above. Facts checked on the generating Host do not confirm which route the recipient will use. Do not run `open "yuri://..."` to verify unless the user asks, because that moves their running Yuri window.

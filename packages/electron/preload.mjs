@@ -256,6 +256,48 @@ ipcRenderer.on('yuri:emit', (_evt, payload) => {
   dispatchNativeEvent(event, payload.detail);
 });
 
+// Session-link probes ask whether this window's runtime knows a session id.
+// Requests that arrive before the app registers its handler wait for it; main
+// times out windows that never answer.
+let sessionLinkProbeHandler = null;
+const queuedSessionLinkProbes = [];
+
+const answerSessionLinkProbe = async (request) => {
+  let result;
+  try {
+    result = await sessionLinkProbeHandler(request.sessionId);
+  } catch {
+    result = null;
+  }
+  const found = result?.status === 'found' && typeof result.directory === 'string';
+  ipcRenderer.send('yuri:session-link:probe-result', {
+    requestId: request.requestId,
+    status: found ? 'found' : result?.status === 'not-found' ? 'not-found' : 'error',
+    ...(found ? { directory: result.directory } : {}),
+  });
+};
+
+if (process.isMainFrame) {
+  ipcRenderer.on('yuri:session-link:probe', (_event, request) => {
+    if (typeof request?.requestId !== 'string' || typeof request.sessionId !== 'string') return;
+    if (sessionLinkProbeHandler) void answerSessionLinkProbe(request);
+    else queuedSessionLinkProbes.push(request);
+  });
+}
+
+const sessionLinksApi = process.isMainFrame
+  ? {
+      handleProbe: (handler) => {
+        if (typeof handler !== 'function') return () => {};
+        sessionLinkProbeHandler = handler;
+        for (const request of queuedSessionLinkProbes.splice(0)) void answerSessionLinkProbe(request);
+        return () => {
+          if (sessionLinkProbeHandler === handler) sessionLinkProbeHandler = null;
+        };
+      },
+    }
+  : undefined;
+
 // Virtual image asset bridge — local packaged/HMR UI only. Main still re-checks
 // isLocalSender; remote pages must not see these methods.
 const virtualAssetApi = isLocalPage
@@ -310,6 +352,7 @@ contextBridge.exposeInMainWorld('__YURI_DESKTOP__', {
   applicationId: readArgValue('--yuri-application-id'),
   shellApiVersion: 2,
   isDocumentRestricted: () => documentRestricted,
+  sessionLinks: sessionLinksApi,
   menuShortcuts: process.isMainFrame ? {
     claim: (combos) => ipcRenderer.invoke('yuri:menu-shortcuts:claim', combos),
     fallback: (combo) => ipcRenderer.invoke('yuri:menu-shortcuts:fallback', combo),

@@ -282,6 +282,8 @@ acceptance and Windows/Linux runtime verification remain separate.
 
 External project/session links (`project`, `open-project`, `new`, `new-session`, `session`) target a primary local-runtime window, regardless of focus or main-window order. If none exists, main creates a local window with local credentials, waits for loading to finish, then delivers the action and focuses it. Remote/Relay and Mini Chat windows are excluded; saved default-host choices do not control these links. Host/connect links retain their explicit host behavior. This routing change requires an updated desktop installer.
 
+External `session` links are first located by id across open workspace windows (`session-link-probe.mjs`). Main asks every non-Mini-Chat, non-window-only window, including direct Host and Relay windows, whether its own runtime's session index knows the id; loading windows are asked after `did-finish-load`, and each probe times out after 4 seconds. Only the probed window's main frame can answer its request ID. If exactly one runtime owns the id, that window is focused and receives `yuri:open-session-link` with the owning directory. Several owning runtimes are ambiguous and open nothing. A miss, an ambiguity or an unanswered/failed probe falls back to the local-runtime window above with `probe: 'ambiguous' | 'unconfirmed'`, so a failed window never masquerades as an authoritative miss. The newest link supersedes older probes. Closed saved Hosts are not probed. `new-session` and `open-project` are path-scoped and never probed; internal session navigation (Mini Chat, notifications) keeps its explicit target. The bridge is installer-owned: older shells keep local-runtime-only routing.
+
 New links use `yuri://`. Packaged OS registration and runtime handlers also accept `openchamber://` and `openchambery://` as receive-only aliases, including cold-start arguments, second-instance arguments and macOS `open-url`. They share the same route handling and pairing-v2 validation; payloads are not rewritten, expired pairing secrets stay invalid, and retired v1 credential links remain rejected. An updated installer is required to register schemes; UI OTA alone cannot do this. When old and new applications coexist, the OS/default-app selection determines the recipient of a legacy scheme.
 
 ## Remote desktop
@@ -306,6 +308,7 @@ After authorization, each pending/active capture owns a `prevent-display-sleep` 
 |------|---------|
 | `main.mjs` | Electron main process, app lifecycle, windows, menus, deep links, native IPC handlers, updates, local server startup |
 | `preload.mjs` | Safe bridge from the rendered UI to Electron IPC |
+| `session-link-probe.mjs` | Per-window session-id probes and owner selection for external `session` deep links |
 | `virtual-asset-protocol.mjs` | Opaque virtual image asset registry + `yuri-asset` streaming protocol helpers |
 | `preview-loopback-gateway.mjs` | Relay Preview loopback HTTP gateway (`127.0.0.1` + ephemeral port) — dumb byte pipe to the owner renderer |
 | `settings-store.mjs` | Process-local serialized `settings.json` read-modify-write shared by main, ssh-manager, and the in-process web settings runtime |

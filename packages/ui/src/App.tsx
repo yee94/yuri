@@ -20,7 +20,8 @@ import { usePwaInstallPrompt } from '@/hooks/usePwaInstallPrompt';
 import { useWindowTitle } from '@/hooks/useWindowTitle';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { hasModifier } from '@/lib/utils';
-import { isDesktopLocalOriginActive, isDesktopShell, isPackagedElectronShell, restartDesktopApp, invokeDesktop } from '@/lib/desktop';
+import { getDesktopSessionLinksBridge, isDesktopLocalOriginActive, isDesktopShell, isPackagedElectronShell, restartDesktopApp, invokeDesktop } from '@/lib/desktop';
+import type { SessionDeepLinkDetail } from '@/sync/openSessionFromDeepLink';
 import {
   getInjectedBootOutcome,
   getBootInjectionStatus,
@@ -638,9 +639,11 @@ function App({ apis }: AppProps) {
       openSessionFromNotification(detail ?? {});
     };
     const linkHandler = (event: Event) => {
-      const detail = (event as CustomEvent<{ sessionId?: string; directory?: string }>).detail;
+      const detail = (event as CustomEvent<SessionDeepLinkDetail>).detail;
       void import('@/sync/openSessionFromDeepLink').then(({ openSessionFromDeepLink }) => openSessionFromDeepLink(detail ?? {}));
     };
+    const stopSessionLinkProbe = getDesktopSessionLinksBridge()?.handleProbe((sessionId) =>
+      import('@/sync/openSessionFromDeepLink').then(({ probeSessionLink }) => probeSessionLink(sessionId)));
     const openAssistantHandler = (event: Event) => {
       const assistantID = (event as CustomEvent<{ assistantID?: string }>).detail?.assistantID;
       if (typeof assistantID === 'string' && assistantID.trim()) {
@@ -663,6 +666,7 @@ function App({ apis }: AppProps) {
     return () => {
       window.removeEventListener('yuri:open-session', handler as EventListener);
       window.removeEventListener('yuri:open-session-link', linkHandler as EventListener);
+      stopSessionLinkProbe?.();
       window.removeEventListener('yuri:open-assistant', openAssistantHandler as EventListener);
       window.removeEventListener('yuri:open-scheduled-task', openTaskHandler);
     };

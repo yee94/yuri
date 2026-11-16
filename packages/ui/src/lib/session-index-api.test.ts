@@ -29,6 +29,8 @@ vi.mock('@/lib/yuriEvents', async (importOriginal) => ({
 import { configureRuntimeUrlResolver, getRuntimeUrlResolver, setRuntimeUrlResolver } from './runtime-url';
 
 const {
+  findSessionIndexEntryById,
+  lookupSessionIndexById,
   loadSessionIndexSnapshot,
   startSessionIndexBackgroundSync,
   waitForSessionIndexInvalidation,
@@ -277,5 +279,26 @@ describe('session index background transport', () => {
     const third = await loadSessionIndexSnapshot();
     expect(loads).toBe(2);
     expect(third?.revision).toBe(2);
+  });
+
+  test('separates an authoritative session miss from a lookup that could not answer', async () => {
+    const respond = (status: number, body: unknown) => {
+      globalThis.fetch = async (input) => {
+        requests.push({ url: input instanceof Request ? input.url : String(input) });
+        return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+      };
+    };
+    respond(200, { available: true, session: { id: 'ses_1', directory: ' /repo ', title: 'T' } });
+    await expect(findSessionIndexEntryById(' ses_1 ')).resolves.toEqual({ id: 'ses_1', directory: '/repo', title: 'T', parentID: null });
+    expect(requests.at(-1)?.url).toContain('/api/yuri/session-index/session/ses_1');
+
+    respond(404, { error: 'session_not_found' });
+    await expect(findSessionIndexEntryById('ses_1')).resolves.toBeNull();
+
+    for (const [status, body] of [[501, {}], [503, {}], [200, { available: false }], [200, { available: true, session: { id: 'ses_1' } }]] as const) {
+      respond(status, body);
+      await expect(findSessionIndexEntryById('ses_1')).rejects.toThrow();
+      await expect(lookupSessionIndexById('ses_1')).resolves.toBeNull();
+    }
   });
 });

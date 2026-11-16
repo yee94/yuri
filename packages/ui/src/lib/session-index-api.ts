@@ -115,35 +115,46 @@ export const lookupSessionIndexById = async (
   sessionId: string,
   options?: { signal?: AbortSignal },
 ): Promise<SessionIndexLookupHit | null> => {
-  if (typeof window === 'undefined') return null;
-  const id = sessionId.trim();
-  if (!id) return null;
   try {
-    const response = await runtimeFetch(
-      `/api/yuri/session-index/session/${encodeURIComponent(id)}`,
-      { signal: options?.signal },
-    );
-    if (response.status === 404 || response.status === 501) return null;
-    await ensureOk(response);
-    const payload = await response.json() as {
-      available?: boolean;
-      session?: { id?: string; directory?: string; title?: string; parentID?: string | null };
-    };
-    if (payload.available !== true || !payload.session) return null;
-    const directory = typeof payload.session.directory === 'string'
-      ? payload.session.directory.trim()
-      : '';
-    const sid = typeof payload.session.id === 'string' ? payload.session.id : id;
-    if (!directory) return null;
-    return {
-      id: sid,
-      directory,
-      title: typeof payload.session.title === 'string' ? payload.session.title : undefined,
-      parentID: payload.session.parentID ?? null,
-    };
+    return await findSessionIndexEntryById(sessionId, options);
   } catch {
     return null;
   }
+};
+
+/**
+ * Authoritative variant of {@link lookupSessionIndexById}: `null` only when the
+ * runtime's index answers that the id is absent. Unavailable or failed lookups
+ * throw, so callers can tell "not here" from "could not check".
+ */
+export const findSessionIndexEntryById = async (
+  sessionId: string,
+  options?: { signal?: AbortSignal },
+): Promise<SessionIndexLookupHit | null> => {
+  if (typeof window === 'undefined') throw new Error('session index lookup requires a browser runtime');
+  const id = sessionId.trim();
+  if (!id) return null;
+  const response = await runtimeFetch(
+    `/api/yuri/session-index/session/${encodeURIComponent(id)}`,
+    { signal: options?.signal },
+  );
+  if (response.status === 404) return null;
+  await ensureOk(response);
+  const payload = await response.json() as {
+    available?: boolean;
+    session?: { id?: string; directory?: string; title?: string; parentID?: string | null };
+  };
+  if (payload.available !== true || !payload.session) throw new Error('session index lookup unavailable');
+  const directory = typeof payload.session.directory === 'string'
+    ? payload.session.directory.trim()
+    : '';
+  if (!directory) throw new Error('session index entry has no directory');
+  return {
+    id: typeof payload.session.id === 'string' ? payload.session.id : id,
+    directory,
+    title: typeof payload.session.title === 'string' ? payload.session.title : undefined,
+    parentID: payload.session.parentID ?? null,
+  };
 };
 
 export const loadSessionIndexSnapshot = async (

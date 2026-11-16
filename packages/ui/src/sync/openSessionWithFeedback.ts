@@ -10,6 +10,7 @@ export type OpenSessionFailureReason =
   | 'missing-session-id'
   | 'missing-directory'
   | 'not-found'
+  | 'unresolved'
   | 'tab-switch-blocked';
 
 export type OpenSessionResult =

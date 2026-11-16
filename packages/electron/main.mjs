@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { DesktopOta } from './desktop-ota.mjs';
 import { DEEP_LINK_PROTOCOLS, isAppDeepLink } from './deep-link-protocol.mjs';
+import { createSessionLinkProbe } from './session-link-probe.mjs';
 import { LEGACY_UI_PROTOCOL, prepareDesktopMigration, migrateDesktopOrigin } from './brand-migration.mjs';
 import { loadDesktopBackend } from './desktop-backend.mjs';
 import { createDesktopRemoteHostsAdapter } from './remote-hosts.mjs';
@@ -2541,8 +2542,41 @@ const resolveLocalDeepLinkWindow = () => {
   });
 };
 
+const isSessionLinkProbeWindow = (window) =>
+  !window.isDestroyed() && Boolean(window.__yuriLabel) && window.__yuriMiniChat !== true
+  && Boolean(window.__yuriRuntimeConfig) && !guiPluginHost.isWindowOnly(window.webContents);
+
+let sessionLinkRevision = 0;
+
+// External session links name only an id. Each open workspace window checks its
+// own runtime; exactly one owning runtime receives the link, otherwise the local
+// Hub window resolves it (Remote Project lookup) with the probe outcome attached.
+const routeSessionDeepLink = async (link) => {
+  const revision = ++sessionLinkRevision;
+  const windows = BrowserWindow.getAllWindows().filter(isSessionLinkProbeWindow);
+  const result = await sessionLinkProbe.locate(windows, link.value).catch(() => ({ outcome: 'unconfirmed' }));
+  if (revision !== sessionLinkRevision) return;
+  if (result.outcome === 'found' && !result.window.isDestroyed()) {
+    log.info('[electron] session deep-link located in an open window');
+    if (result.window.isMinimized()) result.window.restore();
+    result.window.show();
+    result.window.focus();
+    emitToWindow(result.window, 'yuri:open-session-link', { sessionId: link.value, directory: result.directory });
+    return;
+  }
+  dispatchDeepLink({ ...link, sessionProbe: result.outcome === 'found' ? 'unconfirmed' : result.outcome });
+};
+
 const dispatchDeepLink = (link) => {
   if (!link) return;
+  if (link.type === 'session' && link.raw && link.value && !link.sessionProbe) {
+    if (!initialStartupComplete) {
+      pendingDeepLinks.push(link);
+      return;
+    }
+    void routeSessionDeepLink(link);
+    return;
+  }
   let target;
   if (isLocalWorkspaceDeepLink(link)) {
     if (!initialStartupComplete) {
@@ -2596,7 +2630,8 @@ const dispatchDeepLink = (link) => {
     return;
   }
   if (link.type === 'session' && link.value) {
-    emit('yuri:open-session-link', { sessionId: link.value, directory: link.directory === link.value ? '' : link.directory });
+    const probe = link.sessionProbe === 'ambiguous' || link.sessionProbe === 'unconfirmed' ? { probe: link.sessionProbe } : {};
+    emit('yuri:open-session-link', { sessionId: link.value, directory: link.directory === link.value ? '' : link.directory, ...probe });
     return;
   }
   // Align with OpenCode: yuri://new-session?directory=${path}&prompt=…
@@ -2974,6 +3009,15 @@ const createBrowserWindow = ({ label, restoreGeometry, savedState, url, runtimeC
       if (remainingVisible <= 1) {
         debounceWindowStatePersist(browserWindow, true);
         event.preventDefault();
+        if (browserWindow.isFullScreen()) {
+          // Hiding a native-fullscreen window leaves its Space black on macOS;
+          // leave fullscreen first and hide once the transition finishes.
+          browserWindow.once('leave-full-screen', () => {
+            if (!browserWindow.isDestroyed()) browserWindow.hide();
+          });
+          browserWindow.setFullScreen(false);
+          return;
+        }
         browserWindow.hide();
         return;
       }
@@ -5800,6 +5844,8 @@ const guiPluginHost = createGuiPluginMainHost({
   report: (message, level = 'warn') => log[level](`[gui-plugin] ${message}`),
 });
 ipcMain.handle('yuri:gui-plugin', (event, action, input) => guiPluginHost.dispatch(event, action, input));
+
+const sessionLinkProbe = createSessionLinkProbe({ ipcMain });
 
 const menuShortcuts = createMenuShortcuts({
   BrowserWindow, Menu,
