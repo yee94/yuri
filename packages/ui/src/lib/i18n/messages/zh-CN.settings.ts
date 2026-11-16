@@ -1,4 +1,7 @@
 export const settingsDict = {
+  'settings.yuri.keyboardShortcuts.actions.unassign': '解除绑定',
+  'settings.yuri.keyboardShortcuts.field.unassigned': '未分配',
+  'settings.yuri.keyboardShortcuts.pluginPriority': '{plugin} · 优先级 {priority}',
   'settings.providers.custom.description': '中转网关、本地部署，或兼容 API',
   'settings.providers.delete.description': '删除用户、自定义及当前项目文件中的此服务配置，并移除其已保存的凭据。删除共享配置或凭据也会影响使用它们的其他项目。',
   'settings.providers.delete.success': '已删除提供商。',

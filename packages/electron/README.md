@@ -226,6 +226,44 @@ menu/Dock quit retains the scheduled-work risk confirmation. Updates/relaunches
 remain outside the shortcut guard. This main/preload change requires an updated
 desktop installer; UI/backend OTA alone cannot add it.
 
+### GUI plugin menu shortcut arbitration
+
+Windows without plugin claims skip shortcut parsing and native menu writes on
+key events, including after the last claim is released. Lifecycle tracking remains
+window-scoped so an old document cannot reclaim a shortcut during navigation.
+
+`menu-shortcuts.mjs` owns the optional preload `menuShortcuts.claim(combos)` and
+`fallback(combo)` bridge. Shared UI publishes only plugin-winning normalized
+bindings. Main compiles them into a bounded per-window key set (at most 4096,
+128 characters each); each `before-input-event` independently calls
+`setIgnoreMenuShortcuts` with the match result. It never prevents or synthesizes
+renderer events. Unmatched keys immediately restore native accelerators, other
+windows remain unchanged, and the existing Cmd+Q double-press guard stays reserved.
+
+When a plugin synchronously returns false, shared UI tries its built-in chain
+first, then may request native fallback if still unhandled. Fallback consumes
+only that window's most recent claimed real keyDown once, within one second,
+while focused. It invokes the existing registered menu item (including native
+Minimize/Cocoa editing roles), not a second renderer key event. Missing, disabled
+or unregistered actions return false. Claim replacement, focus loss and document
+navigation invalidate pending fallback; main-document navigation, renderer crash
+and destruction release claims. Same-document routing preserves claims.
+
+Only owned application main documents may call this bridge: local HMR/bundled
+app pages, window-only plugin documents, and the current saved remote-runtime app
+page. Preview/API documents, subframes, stale frames and arbitrary remote HTML
+are rejected in main. This does not grant native plugin, file, Shell, SSH or
+settings privileges. Web, VS Code, hosted/Capacitor mobile and old Electron
+installers omit the optional capability. Main/preload changes require a new
+desktop installer, not UI/backend OTA alone.
+
+`YURI_MENU_SHORTCUT_EVIDENCE=1` enables
+`scripts/menu-shortcuts-evidence.test.mjs`: real preload/IPC, HMR and bundled
+origins, one renderer key event per press, Cmd+Q guarding, actual native minimize
+fallback, unmatched-key reset and preview rejection. Its synthetic
+`sendInputEvent` does not exercise OS accelerator dispatch; physical-key/menu
+acceptance and Windows/Linux runtime verification remain separate.
+
 ## Deep-link compatibility
 
 External project/session links (`project`, `open-project`, `new`, `new-session`, `session`) target a primary local-runtime window, regardless of focus or main-window order. If none exists, main creates a local window with local credentials, waits for loading to finish, then delivers the action and focuses it. Remote/Relay and Mini Chat windows are excluded; saved default-host choices do not control these links. Host/connect links retain their explicit host behavior. This routing change requires an updated desktop installer.

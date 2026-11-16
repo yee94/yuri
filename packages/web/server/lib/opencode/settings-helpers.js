@@ -76,6 +76,7 @@ export const createSettingsHelpers = (dependencies) => {
   const SUMMARY_PROMPT_MAX_LENGTH = 16000;
   const VERSION_STRING_MAX_LENGTH = 128;
   const SHORTCUT_OVERRIDE_KEY_MAX_LENGTH = 128;
+  const PLUGIN_SHORTCUT_OVERRIDE_KEY_MAX_LENGTH = 1024;
   const SHORTCUT_OVERRIDE_VALUE_MAX_LENGTH = 128;
   const PWA_ORIENTATION_VALUES = new Set(['system', 'portrait', 'landscape']);
   const MOBILE_KEYBOARD_MODE_VALUES = new Set(['native', 'resize-content']);
@@ -92,6 +93,10 @@ export const createSettingsHelpers = (dependencies) => {
       const key = typeof rawKey === 'string' ? rawKey.trim() : '';
       const combo = typeof rawValue === 'string' ? rawValue.trim() : '';
       if (!key || !combo) continue;
+      if (key.startsWith('gui-plugin:')) {
+        if (key.length <= PLUGIN_SHORTCUT_OVERRIDE_KEY_MAX_LENGTH) result[key] = combo.slice(0, SHORTCUT_OVERRIDE_VALUE_MAX_LENGTH);
+        continue;
+      }
       result[key.slice(0, SHORTCUT_OVERRIDE_KEY_MAX_LENGTH)] = combo.slice(0, SHORTCUT_OVERRIDE_VALUE_MAX_LENGTH);
     }
     return result;

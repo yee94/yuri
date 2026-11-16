@@ -66,6 +66,7 @@ import { createGuiPluginMainHost } from './gui-plugin-host.mjs';
 import { createPluginDockIcons } from './plugin-dock-icons.mjs';
 import { isGuiPluginUiUrl } from './gui-plugin-origin.mjs';
 import { createViewExportHost, isViewExportSender } from './view-export.mjs';
+import { createMenuShortcuts, isMenuShortcutSender } from './menu-shortcuts.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -5799,6 +5800,23 @@ const guiPluginHost = createGuiPluginMainHost({
   report: (message, level = 'warn') => log[level](`[gui-plugin] ${message}`),
 });
 ipcMain.handle('yuri:gui-plugin', (event, action, input) => guiPluginHost.dispatch(event, action, input));
+
+const menuShortcuts = createMenuShortcuts({
+  BrowserWindow, Menu,
+  authorize: (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const savedHost = win?.__yuriHostId && readDesktopHostsConfig().hosts.some(host => host.id === win.__yuriHostId);
+    return isMenuShortcutSender(event, BrowserWindow, [
+      state.localOrigin, state.localUiOrigin, state.sidecarUrl,
+      ...(savedHost ? [win.__yuriRuntimeConfig?.apiBaseUrl] : []),
+    ]);
+  },
+});
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() === 'window') menuShortcuts.track(contents);
+});
+ipcMain.handle('yuri:menu-shortcuts:claim', (event, combos) => menuShortcuts.claim(event, combos));
+ipcMain.handle('yuri:menu-shortcuts:fallback', (event, combo) => menuShortcuts.fallback(event, combo));
 
 const viewExportHost = createViewExportHost({
   BrowserWindow, session, dialog,

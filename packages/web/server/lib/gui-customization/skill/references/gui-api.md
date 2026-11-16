@@ -4,7 +4,7 @@ The supported contract is OpenCode GUI SDK **2.2.0**. Consult current official d
 
 ## Window APIs
 
-- `Command`: command palette and plugin management execution; hidden commands can be called by `ctx.commands.run`. No GUI shortcut registration or slash autocomplete yet.
+- `Command`: palette, plugin management and window keyboard shortcuts. `bind` provides the default chord; hidden commands keep their shortcuts. Users can remap/unbind commands in Settings > Shortcuts. See [Command shortcuts](#command-shortcuts). Slash autocomplete and `ctx.keybinds` remain unsupported.
 - `TitlebarItem`: global action/status, independent of a session; reactive label/title/icon/busy/pressed. Direct SVG/data-URI icon strings, built-in names and upstream/Yuri differences: [icons](icons.md).
 - `Panel`: Solid `list/render`, reactive session/tab getters; file panels mount in existing file previews. An independent panel uses a dialog/mobile sheet, not upstream's full draggable workspace layout.
 - `LinkHandler`: match, exists and open file/custom links. Use `ctx.links.open({ href, base, session })` for navigation. Preserve workspace-relative identity; never resolve against a different session's directory.
@@ -21,6 +21,55 @@ The supported contract is OpenCode GUI SDK **2.2.0**. Consult current official d
 Unsupported registries include upstream `Server`, `ComposerPill`, `Slot`, `FileViewer`, native menu/embeds. Unsupported APIs reject rather than succeeding silently.
 
 Plugin renderers own their Solid/DOM content. Yuri does not implement upstream `ctx.ui` or expose its React components to plugins; follow [CSS variables and styling](plugin-styles.md) and [icons](icons.md) for visual consistency.
+
+## Command shortcuts
+
+Register one official Command; Yuri owns keyboard dispatch and cleanup:
+
+```ts
+import { Command, Contract, Plugin, Registry, type Command as GuiCommand } from "@opencode/plugin/gui"
+
+type YuriCommand = GuiCommand & { readonly priority?: number }
+
+export default Plugin.define({
+  setup(ctx) {
+    ctx.add(Registry.define("yuri.page"), {
+      id: "board", title: "Session board",
+      render: () => document.createElement("section"),
+    })
+    const pages = ctx.use(Contract.define<{ open(id: string): boolean }>("yuri.pages"))
+    const command: YuriCommand = {
+      id: "open-board",
+      title: "Open session board",
+      bind: "mod+m",
+      priority: 10,
+      run() {
+        const state = pages()
+        if (state.status === "active") state.value.open("board")
+      },
+    }
+    ctx.add(Command, command)
+  },
+})
+```
+
+`priority` is Yuri-only and finite; upstream hosts may ignore it. Higher wins.
+Built-in defaults have priority 0 and win ties, so a positive value can override
+them. Explicit user mappings always win over developer priority. Equal-priority
+plugins resolve by stable command identity, not asynchronous loading order.
+`mod` means Command on macOS Electron, Ctrl elsewhere (browsers keep their existing
+platform matcher). Electron menu overrides require an updated desktop installer;
+browser/OS/editor shortcuts intercepted before the page are not overridable here.
+
+Keep `enabled` reactive when command availability changes. `hidden` hides only
+the palette entry. `scope` limits focus to a CSS selector; unmodified keys yield
+to text fields unless `editable:true`. A synchronous `run()` return of `false`
+declines the key; asynchronous completion cannot undo event consumption.
+Already-consumed events, IME, terminal-owned keys, active leader follow-ups and
+Escape interruption retain host ownership. Prefer declarative commands to
+installing document listeners. Disabling, replacing, failing or unloading a
+plugin revokes its bindings without affecting other plugins.
+Electron's Cmd+Q quit guard remains reserved regardless of plugin priority.
 
 ## Yuri supplemental registries and contracts
 

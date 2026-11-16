@@ -22,12 +22,13 @@ import { createPreviewActions, PREVIEW_ACTIONS_CONTRACT, PreviewActionsContext }
 import type { toast } from 'sonner';
 import { GUI_PAGE_REGISTRY, GUI_PAGES_CONTRACT, guiPageKey, validateGuiPage, type GuiPage, type GuiPagesAPI } from './pages';
 import { GuiPluginAppearance, GUI_THEME_REGISTRY, GUI_BRANDING_REGISTRY } from './appearance';
+import { guiCommandShortcutId, type GuiCommandShortcut, type YuriGuiCommand } from './command-shortcuts';
 import { GUI_WORK_STATUS_REGISTRY, GuiWorkStatusCatalog, createWorkStatusState, type GuiWorkStatusEntry, type GuiWorkStatusInput, type GuiWorkStatusMount } from './work-status';
 
 export type PluginGuiBundle = PluginGuiOutput['data'];
 type Appearance = { locale: string; mode: 'light' | 'dark'; narrow: boolean };
 type Options = Appearance & { client: OpenCodeClient; files: FilesAPI; queryClient: QueryClient; transport: string; storage: globalThis.Storage; mobileNetworkRequired?: boolean; viewExport?: ViewExportAPI; toast?: typeof toast; focusFile?: (path: string, directory: string) => Promise<void>; openPage?: (key: string) => boolean };
-type CommandView = { key: string; pluginId?: string; title: string; description?: string; bind?: string; hidden?: boolean; run: () => void | Promise<void> };
+type CommandView = { key: string; pluginId?: string; commandId?: string; title: string; description?: string; bind?: string; hidden?: boolean; priority?: number; scope?: string; editable?: true; run: () => void | false | Promise<void> };
 type PanelView = { key: string; pluginId: string; title: string; active: boolean; file?: string; inline?: boolean };
 type TitlebarView = Omit<Gui.TitlebarItem, 'id' | 'run' | 'icon'> & { key: string; pluginId: string; actionable: boolean; icon?: string };
 export type GuiPluginSnapshot = Readonly<{
@@ -92,6 +93,7 @@ export class GuiPluginHost {
     readonly workStatus = new GuiWorkStatusCatalog();
     private instances = new Map<string, Instance>();
     private listeners = new Set<() => void>();
+    private commandShortcuts: readonly GuiCommandShortcut[] = Object.freeze([]);
     private panelMounts = new Set<() => void>();
     private fileViews = new Map<string, number>();
     private changes = createSignal(0);
@@ -480,8 +482,15 @@ export class GuiPluginHost {
                 if (pages.some((entry) => entry.id === page.id)) throw new Error('Duplicate yuri.page id');
                 pages.push(page);
             } else if (contribution.registry === Gui.Command.id) {
-                const command = value as Gui.Command;
-                if (command.enabled !== false) commands.push({ key: `${instance.id}.${command.id}`, pluginId: instance.id, title: command.title, description: command.description, bind: command.bind, hidden: command.hidden, run: () => this.invoke(instance, () => command.run()) });
+                const command = value as YuriGuiCommand;
+                const { priority = 0, bind, scope } = command;
+                if (typeof priority !== 'number' || !Number.isFinite(priority)) throw new Error('Invalid GUI command priority');
+                if (bind !== undefined && typeof bind !== 'string') throw new Error('Invalid GUI command binding');
+                if (scope !== undefined) {
+                    if (typeof scope !== 'string') throw new Error('Invalid GUI command scope');
+                    document.documentElement.matches(scope);
+                }
+                if (command.enabled !== false) commands.push({ key: `${instance.id}.${command.id}`, pluginId: instance.id, commandId: command.id, title: command.title, description: command.description, bind, hidden: command.hidden, priority, scope, editable: command.editable, run: () => this.invoke(instance, () => command.run()) });
             } else if (contribution.registry === Gui.TitlebarItem.id) {
                 const item = value as Gui.TitlebarItem;
                 titlebarItems.push({ key: JSON.stringify([instance.id, item.id]), pluginId: instance.id, label: item.label, title: item.title, icon: normalizeGuiTitlebarIcon(item.icon), busy: item.busy, pressed: item.pressed, actionable: Boolean(item.run), run: item.run });
@@ -511,6 +520,18 @@ export class GuiPluginHost {
         const layout = session ? this.layouts.get(session.key) : undefined;
         const instances = [...this.instances.values()];
         const active = instances.filter((instance) => instance.status === 'active');
+        const shortcuts = active.flatMap((instance) => instance.commands.map((command): GuiCommandShortcut => ({
+            id: guiCommandShortcutId(instance.id, command.commandId!), pluginId: instance.id, commandId: command.commandId!,
+            label: command.title, description: command.description, defaultCombo: command.bind ?? '',
+            priority: command.priority ?? 0, customizable: true,
+            scope: command.scope, editable: command.editable,
+        })));
+        if (shortcuts.length !== this.commandShortcuts.length || shortcuts.some((entry, index) => {
+            const previous = this.commandShortcuts[index];
+            return !previous || entry.id !== previous.id || entry.label !== previous.label || entry.description !== previous.description
+                || entry.defaultCombo !== previous.defaultCombo || entry.priority !== previous.priority
+                || entry.scope !== previous.scope || entry.editable !== previous.editable;
+        })) this.commandShortcuts = freezeRows(shortcuts);
         const panels = active.flatMap((instance) => instance.panels.map(({ tab }) => {
             const file = tab.file ? this.filePath(tab.file) : undefined;
             return { key: `${instance.id}:${tab.id}`, pluginId: instance.id, title: tab.title, file, inline: Boolean(file && this.fileViews.has(file)), active: layout?.shown === true && layout.active === `${instance.id}:${tab.id}` };
@@ -528,15 +549,29 @@ export class GuiPluginHost {
         for (const listener of this.listeners) listener();
     }
 
-    private invoke(instance: Instance, action: () => void | false | Promise<void>): void | Promise<void> {
+    private invoke(instance: Instance, action: () => void | Promise<void>): void | Promise<void>;
+    private invoke(instance: Instance, action: () => void | false | Promise<void>): void | false | Promise<void>;
+    private invoke(instance: Instance, action: () => void | false | Promise<void>): void | false | Promise<void> {
         if (instance.controller.signal.aborted) return;
         try {
             const result = runWithOwner(instance.owner ?? null, action);
             if (result instanceof Promise) return result.catch((error) => this.fail(instance, error));
+            return result;
         } catch (error) { this.fail(instance, error); }
     }
     private command(key: string): CommandView | undefined { return [...this.instances.values()].flatMap((instance) => instance.commands).find((command) => command.key === key); }
-    runCommand(key: string): void | Promise<void> { return this.command(key)?.run(); }
+    getCommandShortcuts(): readonly GuiCommandShortcut[] { return this.commandShortcuts; }
+    runShortcutCommand(pluginId: string, commandId: string): boolean {
+        const instance = this.instances.get(pluginId);
+        if (!instance || instance.status !== 'active' || instance.controller.signal.aborted) return false;
+        const command = instance.commands.find((entry) => entry.commandId === commandId);
+        if (!command) return false;
+        return command.run() !== false;
+    }
+    runCommand(key: string): void | Promise<void> {
+        const result = this.command(key)?.run();
+        if (result !== false) return result;
+    }
     runTitlebarItem(key: string): void | Promise<void> {
         for (const instance of this.instances.values()) {
             const item = instance.titlebarItems.find((item) => item.key === key);

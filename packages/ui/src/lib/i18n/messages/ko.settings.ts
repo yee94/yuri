@@ -1,4 +1,7 @@
 export const settingsDict = {
+  'settings.yuri.keyboardShortcuts.actions.unassign': '단축키 해제',
+  'settings.yuri.keyboardShortcuts.field.unassigned': '미지정',
+  'settings.yuri.keyboardShortcuts.pluginPriority': '{plugin} · 우선순위 {priority}',
   'settings.providers.custom.emptyModels': '아직 모델이 없습니다. + 를 눌러 추가하거나 모델을 동기화하세요.',
   'settings.providers.custom.description': '게이트웨이, 로컬 배포 또는 호환 API',
   'settings.providers.delete.description': '사용자, 사용자 지정 및 현재 프로젝트 파일에서 이 서비스 설정과 저장된 인증 정보를 삭제합니다. 공유 설정이나 인증 정보를 삭제하면 이를 사용하는 다른 프로젝트에도 영향을 줍니다.',

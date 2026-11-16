@@ -1,6 +1,6 @@
 ---
 name: yuri-customization
-description: Register local or remote Yuri projects, archive conversations (task-view 归档 or session archive), discover authorized remote machines and read/create/continue remote sessions, build `yuri://` deep links that open a conversation, project or new session, configure SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
+description: Register local or remote Yuri projects, archive conversations (task-view 归档 or session archive), discover authorized remote machines and read/create/continue remote sessions, resolve project/session ownership and build yuri:// deep links, configure SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
 ---
 
 # Yuri customization
@@ -11,7 +11,7 @@ For archiving conversations ("归档", moving tasks to the archived shelf, or se
 
 For adding a remote project on an authorized machine or working with its sessions, use the same bound project helper and the [remote project workflow](references/projects.md#connected-remote-projects-and-sessions). This grants no SSH setup or new connection permission.
 
-For a clickable `yuri://` link that opens a conversation, project or new session (for sharing in IM or from scheduled jobs), follow [deep links](references/deep-links.md). Links are navigation only and grant no access.
+For locating project/session resources, establish [resource identity and scope](references/projects.md#resource-identity-and-scope) through the available discovery tools. For navigation links, then follow [deep links](references/deep-links.md). Resource discovery, navigation support and authorization are separate capabilities.
 
 For SSH setup, configuration sync or Relay pairing, first check this session's pointer for its exact bound local desktop helper command. Without that command, report unavailable and stop this branch: a script file or another capability's binding does not enable it. With the command, follow [remote connections](references/remote-connections.md). For UI changes, use the plugin workflow below. Its GUI contracts describe Yuri's supported subset of the experimental OpenCode GUI SDK 2.2.0, not every capability in the newest upstream Desktop.
 

@@ -96,6 +96,47 @@ describe('custom provider native V2 persistence', () => {
     expect(JSON.stringify(response.body)).not.toContain('fixture-key');
   });
 
+  it.each([
+    '@opencode/ai/providers/openai-compatible',
+    '@opencode/ai/providers/openai-compatible/responses',
+  ])('discovers and saves all 12 models from a standard OpenAI list through the HTTP routes (%s)', async (pkg) => {
+    const ids = [
+      'gpt-6.1-terra', 'codex-auto-review', 'deepseek-flash', 'gpt-5.6-luna',
+      'gpt-6-astra', 'gpt-reserve', 'deepseek-v4-pro', 'gpt-5.6-sol',
+      'gpt-5.6-terra', 'gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol',
+    ];
+    const payload = {
+      data: ids.map((id) => ({ created: 1794458926, id, object: 'model', owned_by: 'openai' })),
+      object: 'list',
+    };
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(payload)));
+    configureOpenCodeCredentials(() => client);
+    const app = express(); registerCommonRequestMiddleware(app, { express });
+    registerOpenCodeRoutes(app, {});
+    const discovery = await request(app).post('/api/config/providers/custom/models').send({
+      package: pkg, baseURL: 'https://api.example.com/v1', apiKey: 'fixture-key',
+    }).expect(200);
+    expect(discovery.body).toEqual({ models: ids.map((id) => ({ id, name: id })) });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0].toString()).toBe('https://api.example.com/v1/models');
+    expect(fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer fixture-key');
+    expect(fs.existsSync(file)).toBe(false);
+    const config = {
+      name: 'Gateway', package: pkg, settings: { baseURL: 'https://api.example.com/v1' },
+      models: Object.fromEntries(discovery.body.models.map((model) => [model.id, {
+        name: model.name, capabilities: { tools: true, input: ['text'], output: ['text'] },
+      }])),
+    };
+    const saved = await request(app).post('/api/config/providers/custom').send({
+      config, apiKey: 'fixture-key',
+    }).expect(200);
+    const provider = readConfigFile(file).providers[saved.body.providerId];
+    expect(provider).toEqual(config);
+    expect(Object.keys(provider.models)).toEqual(ids);
+    expect(() => Schema.decodeUnknownSync(ConfigProvider.Info)(provider)).not.toThrow();
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('fixture-key');
+  });
+
   it('does not write for an invalid requested directory', async () => {
     configureOpenCodeCredentials(() => client);
     const app = express(); registerCommonRequestMiddleware(app, { express });

@@ -117,6 +117,7 @@ encoding, not removed V1 endpoints.
   - Missing theme preferences use `carbonfox-light` / `cursor-dark`, matching the shared UI defaults. Existing per-variant IDs and legacy explicitly selected theme IDs remain authoritative; changing the default does not rewrite a user's saved theme.
   - Project registry order and `projectSortOrder` are shared Host authority. After a successful changed write, `onProjectOrderChanged` emits `yuri:project-order-changed` on the existing Yuri SSE channel. Clients GET settings on initial mount, tip, and reconnect. Unchanged and failed writes emit no tip; older settings without a sort mode use `manual`.
 - `packages/web/server/lib/opencode/settings-helpers.js`: Settings payload sanitization/format helpers runtime for response shaping and persisted merge prep.
+  - GUI command shortcut overrides use `gui-plugin:` + a JSON tuple of plugin/local command IDs. Keys up to 1024 characters retain their complete identity; oversized plugin keys are omitted rather than truncated into another command's mapping. Existing built-in keys and explicit `__unassigned__` values retain their settings contract.
 - `packages/web/server/lib/opencode/settings-normalization-runtime.js`: path/settings normalization and sanitization helpers runtime used by settings/routes/config wiring.
 - `packages/web/server/lib/opencode/theme-runtime.js`: custom theme JSON validation and theme directory loading runtime for settings utility routes.
 - `packages/web/server/lib/opencode/proxy.js`: OpenCode API/SSE forwarding and readiness-gate route registration.

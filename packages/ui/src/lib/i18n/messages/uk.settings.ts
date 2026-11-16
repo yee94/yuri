@@ -1,4 +1,7 @@
 export const settingsDict = {
+  'settings.yuri.keyboardShortcuts.actions.unassign': 'Скасувати прив’язку',
+  'settings.yuri.keyboardShortcuts.field.unassigned': 'Не призначено',
+  'settings.yuri.keyboardShortcuts.pluginPriority': '{plugin} · Пріоритет {priority}',
   'settings.providers.custom.emptyModels': 'Моделей ще немає. Натисніть +, щоб додати модель, або синхронізуйте моделі.',
   'settings.providers.custom.description': 'Шлюзи, локальні розгортання або сумісні API',
   'settings.providers.delete.description': 'Видаляє конфігурацію цього сервісу з файлів користувача, власних файлів і поточного проєкту, а також збережені облікові дані. Видалення спільних налаштувань або облікових даних також впливає на інші проєкти, що їх використовують.',

@@ -13,6 +13,15 @@ are modified.
 `packages/ui/src/sync/DOCUMENTATION.md`; update it when either changes. It is
 navigation guidance only and adds no helper or authorization.
 
+The discovery pointers advertise resource ownership and navigation as capabilities,
+not individual delivery scenarios. `references/projects.md#resource-identity-and-scope`
+owns the common discovery/identity guidance; `references/deep-links.md` owns the
+receiving client's supported URL fields and prerequisites. Agents retain complete
+remote targets for resource operations while emitting only fields accepted by the
+navigation protocol. Existing instance discovery/binding does not imply support for
+identity-scoped session URLs; this skill update adds neither a self-identity helper
+nor a new deep-link parameter.
+
 Interactive Yuri contacts reuse this same shipped entry and references through
 the assistant-only pointer in `../assistants/builtin-skills.js`. Their pi tools
 run on the Host, so the pointer names the package-local resource directly rather

@@ -18,6 +18,70 @@ const bundle = (setup: string, revision = '1', declarations = ''): PluginGuiBund
 afterEach(() => { for (const item of hosts.splice(0)) item.dispose(); localStorage.clear(); document.body.replaceChildren(); });
 
 describe('GUI plugin host with the actual official Solid SDK', () => {
+    it('publishes hidden and unbound shortcut commands, with responsive scope, priority and enabled state', () => {
+        const value = host();
+        const calls = { count: 0 };
+        Reflect.set(globalThis, '__shortcutCalls', calls);
+        try {
+            value.install('keys', bundle(`
+                const enabled = S.createSignal(true);
+                const priority = S.createSignal(5);
+                ctx.add(G.Command, () => ({ id:'board', title:'Board', bind:'mod+m', hidden:true,
+                    enabled:enabled[0](), priority:priority[0](), scope:'.board', editable:true,
+                    run(){ globalThis.__shortcutCalls.count++; } }));
+                ctx.add(G.Command, { id:'unbound', title:'Unbound', run(){} });
+                ctx.add(G.Command, { id:'disable', title:'Disable', run(){enabled[1](false)} });
+                ctx.add(G.Command, { id:'priority', title:'Priority', run(){priority[1](10)} });
+            `));
+            expect(value.getSnapshot().commands.some((command) => command.key === 'keys.board')).toBe(false);
+            expect(value.getCommandShortcuts().find((command) => command.commandId === 'board')).toMatchObject({
+                pluginId: 'keys', defaultCombo: 'mod+m', priority: 5, scope: '.board', editable: true,
+            });
+            expect(value.getCommandShortcuts().find((command) => command.commandId === 'unbound')?.defaultCombo).toBe('');
+            expect(value.runShortcutCommand('keys', 'board')).toBe(true);
+            expect(calls.count).toBe(1);
+            value.runCommand('keys.priority');
+            expect(value.getCommandShortcuts().find((command) => command.commandId === 'board')?.priority).toBe(10);
+            value.runCommand('keys.disable');
+            expect(value.getCommandShortcuts().some((command) => command.commandId === 'board')).toBe(false);
+            expect(value.runShortcutCommand('keys', 'board')).toBe(false);
+            expect(calls.count).toBe(1);
+        } finally { Reflect.deleteProperty(globalThis, '__shortcutCalls'); }
+    });
+    it('keeps command metadata stable across 50 unrelated session changes and invokes the latest command', () => {
+        const value = host();
+        value.install('stable', bundle(`ctx.add(G.Command, {id:'run',title:'Run',bind:'mod+m',run(){return false}});`));
+        const commands = value.getCommandShortcuts();
+        for (let index = 0; index < 50; index++) value.setSession({ id: String(index), directory: '/work' });
+        expect(value.getCommandShortcuts()).toBe(commands);
+        expect(value.runShortcutCommand('stable', 'run')).toBe(false);
+        expect(value.runCommand('stable.run')).toBeUndefined();
+        value.install('stable', bundle(`ctx.add(G.Command, {id:'run',title:'Run',bind:'mod+x',run(){}});`, '2'));
+        expect(value.getCommandShortcuts()[0].defaultCombo).toBe('mod+x');
+        value.uninstall('stable');
+        expect(value.getCommandShortcuts()).toEqual([]);
+        expect(value.runShortcutCommand('stable', 'run')).toBe(false);
+    });
+    it('isolates invalid priority/scope and removes failed shortcuts without blocking other plugins', () => {
+        const value = host();
+        value.install('healthy', bundle(`ctx.add(G.Command,{id:'run',title:'Run',bind:'mod+m',run(){}})`));
+        for (const [id, fields] of [['priority', 'priority:Infinity'], ['scope', "scope:'['"], ['binding', 'bind:42'], ['scope-type', 'scope:42']]) {
+            value.install(id, bundle(`ctx.add(G.Command,{id:'run',title:'Run',bind:'mod+m',${fields},run(){}})`));
+            expect(value.getSnapshot().plugins.find((plugin) => plugin.id === id)?.status).toBe('failed');
+        }
+        value.install('throws', bundle(`ctx.add(G.Command,{id:'run',title:'Run',bind:'mod+x',run(){throw new Error('failed command')}})`));
+        value.runShortcutCommand('throws', 'run');
+        expect(value.getCommandShortcuts().map((command) => command.pluginId)).toEqual(['healthy']);
+    });
+    it('uses tuple identities and owner-local lookup for dotted command/plugin IDs', () => {
+        const value = host();
+        value.install('one.two', bundle(`ctx.add(G.Command,{id:'run',title:'First',run(){return false}})`));
+        value.install('one', bundle(`ctx.add(G.Command,{id:'two.run',title:'Second',run(){}})`));
+        const commands = value.getCommandShortcuts();
+        expect(commands[0].id).not.toBe(commands[1].id);
+        expect(value.runShortcutCommand('one.two', 'run')).toBe(false);
+        expect(value.runShortcutCommand('one', 'two.run')).toBe(true);
+    });
     it('blocks even CJS evaluation until the required mobile network is ready', () => {
         const value = host(undefined, undefined, true);
         const input = bundle(`document.body.dataset.guiSetup = 'yes'`);

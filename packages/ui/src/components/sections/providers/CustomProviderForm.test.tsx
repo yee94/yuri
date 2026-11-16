@@ -83,6 +83,35 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); cache.clear(); host.remove(); vi.useRealTimers(); });
 
 describe('custom provider form', () => {
+  it.each(['0', '1'])('displays, bulk-adds and submits all 12 discovered OpenAI models with protocol %s', async (protocol) => {
+    const ids = [
+      'gpt-6.1-terra', 'codex-auto-review', 'deepseek-flash', 'gpt-5.6-luna',
+      'gpt-6-astra', 'gpt-reserve', 'deepseek-v4-pro', 'gpt-5.6-sol',
+      'gpt-5.6-terra', 'gpt-6-luna', 'gpt-6-sol', 'gpt-6.1-sol',
+    ];
+    state.fetch.mockResolvedValueOnce(json({ models: ids.map((id) => ({ id, name: id })) }));
+    await mount(); await choose(protocol);
+    await fill('settings.providers.custom.name', 'Gateway');
+    await fill('settings.providers.custom.baseURL', 'https://api.example.com/v1');
+    await fill('settings.providers.page.auth.apiKeyLabel', 'fixture-key');
+    await settle();
+    const pkg = protocol === '0' ? '@opencode/ai/providers/openai-compatible' : '@opencode/ai/providers/openai-compatible/responses';
+    expect(state.fetch.mock.calls[0][0]).toBe('/api/config/providers/custom/models');
+    expect(JSON.parse(state.fetch.mock.calls[0][1].body)).toEqual({
+      package: pkg, baseURL: 'https://api.example.com/v1', apiKey: 'fixture-key',
+    });
+    expect([...host.querySelectorAll('[data-provider-model]')].map((row) => row.getAttribute('data-provider-model'))).toEqual(ids);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).not.toContain('settings.providers.custom.discoveryEmpty');
+    await clickButton('settings.providers.custom.addAllModels');
+    expect(host.querySelectorAll('[data-provider-model][data-added="true"]')).toHaveLength(12);
+    await submit();
+    const saved = JSON.parse(state.fetch.mock.calls.find(([url]) => url === '/api/config/providers/custom')![1].body);
+    expect(saved.config.package).toBe(pkg);
+    expect(Object.keys(saved.config.models)).toEqual(ids);
+    expect(state.select).toHaveBeenCalledExactlyOnceWith('gateway');
+  });
+
   it('keeps connection fields in equal columns and toggles the inset key without submitting or losing the draft', async () => {
     await mount();
     await fill('settings.providers.custom.name', 'Gateway');

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useEvent } from '@reactuses/core';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -9,7 +10,9 @@ import { isVSCodeRuntime } from '@/lib/desktop';
 import {
   formatShortcutForDisplay,
   getCustomizableShortcutActions,
+  getShortcutActions,
   getEffectiveShortcutCombo,
+  getEffectiveShortcutCombos,
   isRiskyBrowserShortcut,
   keyToShortcutToken,
   normalizeCombo,
@@ -18,6 +21,9 @@ import {
 } from '@/lib/shortcuts';
 import { useI18n } from '@/lib/i18n';
 import { SettingsGroup, SettingsRow } from '@/components/sections/shared/SettingsGroup';
+import { useCommandShortcuts } from '@/lib/gui-plugins/useCommandShortcuts';
+import { shortcutCombosConflict } from '@/lib/shortcut-bindings';
+import { isMacOS } from '@/lib/utils';
 
 const MODIFIER_KEYS = new Set(['shift', 'control', 'alt', 'meta']);
 
@@ -28,9 +34,10 @@ const keyboardEventToCombo = (event: React.KeyboardEvent<HTMLInputElement>): Sho
 
   const parts: string[] = [];
 
-  if (event.metaKey || event.ctrlKey) {
+  if (event.metaKey || (event.ctrlKey && !isMacOS())) {
     parts.push('mod');
   }
+  if (event.ctrlKey && isMacOS()) parts.push('ctrl');
   if (event.shiftKey) {
     parts.push('shift');
   }
@@ -54,14 +61,16 @@ export const KeyboardShortcutsSettings: React.FC = () => {
   const setShortcutOverride = useUIStore((state) => state.setShortcutOverride);
   const clearShortcutOverride = useUIStore((state) => state.clearShortcutOverride);
   const resetAllShortcutOverrides = useUIStore((state) => state.resetAllShortcutOverrides);
+  const pluginCommands = useCommandShortcuts();
+  const pluginCommandsById = React.useMemo(() => new Map(pluginCommands.map((command) => [command.id, command])), [pluginCommands]);
 
   const actions = React.useMemo(() => {
-    const all = getCustomizableShortcutActions();
+    const all = [...getCustomizableShortcutActions(), ...pluginCommands];
     if (!isVSCodeRuntime()) {
       return all;
     }
     return all.filter((action) => action.id !== 'toggle_prompt_navigator');
-  }, []);
+  }, [pluginCommands]);
   const actionLabel = React.useCallback((id: string, fallbackLabel: string): string => {
     const key = `settings.yuri.keyboardShortcuts.action.${id}.label`;
     const translated = tUnsafe(key);
@@ -75,32 +84,23 @@ export const KeyboardShortcutsSettings: React.FC = () => {
   const [pendingOverwrite, setPendingOverwrite] = React.useState<{
     actionId: string;
     combo: ShortcutCombo;
-    conflictActionId: string;
+    conflictActionIds: string[];
   } | null>(null);
 
   const persistShortcutOverrides = React.useCallback((nextOverrides: Record<string, ShortcutCombo>) => {
     void updateDesktopSettings({ shortcutOverrides: nextOverrides });
   }, []);
 
-  const findConflict = React.useCallback((actionId: string, combo: ShortcutCombo): string | null => {
-    const normalized = normalizeCombo(combo);
-    for (const action of actions) {
-      if (action.id === actionId) {
-        continue;
-      }
-      const existing = getEffectiveShortcutCombo(action.id, shortcutOverrides);
-      if (normalizeCombo(existing) === normalized) {
-        return action.id;
-      }
-    }
-    return null;
-  }, [actions, shortcutOverrides]);
+  const findConflicts = (actionId: string, combo: ShortcutCombo): string[] =>
+    [...getShortcutActions(), ...pluginCommands].filter((action) => action.id !== actionId
+      && getEffectiveShortcutCombos(action, shortcutOverrides).some((existing) => shortcutCombosConflict(existing, combo)))
+      .map((action) => action.id);
 
-  const saveCombo = React.useCallback((actionId: string, combo: ShortcutCombo) => {
+  const saveCombo = useEvent((actionId: string, combo: ShortcutCombo) => {
     const normalized = normalizeCombo(combo);
-    const conflictActionId = findConflict(actionId, normalized);
-    if (conflictActionId) {
-      setPendingOverwrite({ actionId, combo: normalized, conflictActionId });
+    const conflictActionIds = findConflicts(actionId, normalized);
+    if (conflictActionIds.length) {
+      setPendingOverwrite({ actionId, combo: normalized, conflictActionIds });
       setErrorText('');
       return;
     }
@@ -116,19 +116,19 @@ export const KeyboardShortcutsSettings: React.FC = () => {
       delete rest[actionId];
       return rest;
     });
-  }, [findConflict, persistShortcutOverrides, setShortcutOverride, shortcutOverrides, t]);
+  });
 
-  const confirmOverwrite = React.useCallback(() => {
+  const confirmOverwrite = useEvent(() => {
     if (!pendingOverwrite) {
       return;
     }
 
     const nextOverrides = {
       ...shortcutOverrides,
-      [pendingOverwrite.conflictActionId]: UNASSIGNED_SHORTCUT,
+      ...Object.fromEntries(pendingOverwrite.conflictActionIds.map((id) => [id, UNASSIGNED_SHORTCUT])),
       [pendingOverwrite.actionId]: pendingOverwrite.combo,
     };
-    setShortcutOverride(pendingOverwrite.conflictActionId, UNASSIGNED_SHORTCUT);
+    for (const id of pendingOverwrite.conflictActionIds) setShortcutOverride(id, UNASSIGNED_SHORTCUT);
     setShortcutOverride(pendingOverwrite.actionId, pendingOverwrite.combo);
     persistShortcutOverrides(nextOverrides);
     setPendingOverwrite(null);
@@ -139,7 +139,7 @@ export const KeyboardShortcutsSettings: React.FC = () => {
       delete rest[pendingOverwrite.actionId];
       return rest;
     });
-  }, [pendingOverwrite, persistShortcutOverrides, setShortcutOverride, shortcutOverrides, t]);
+  });
 
   const resetOne = React.useCallback((actionId: string) => {
     const nextOverrides = { ...shortcutOverrides };
@@ -217,7 +217,9 @@ export const KeyboardShortcutsSettings: React.FC = () => {
       )}
 
         {actions.map((action) => {
-          const effective = getEffectiveShortcutCombo(action.id, shortcutOverrides);
+          const effective = getEffectiveShortcutCombo(action, shortcutOverrides);
+          const pluginCommand = pluginCommandsById.get(action.id);
+          const label = pluginCommand ? action.label : actionLabel(action.id, action.label);
           const draft = draftByAction[action.id];
           const displayCombo = draft ?? effective;
           const hasDraft = typeof draft === 'string' && normalizeCombo(draft) !== normalizeCombo(effective);
@@ -225,11 +227,18 @@ export const KeyboardShortcutsSettings: React.FC = () => {
           return (
             <SettingsRow
               key={action.id}
-              label={actionLabel(action.id, action.label)}
+              label={label}
+              description={pluginCommand ? t('settings.yuri.keyboardShortcuts.pluginPriority', {
+                plugin: pluginCommand.pluginId, priority: pluginCommand.priority ?? 0,
+              }) : undefined}
             >
                 <Input
                   readOnly
-                  value={capturingActionId === action.id ? t('settings.yuri.keyboardShortcuts.field.pressKeys') : formatShortcutForDisplay(displayCombo)}
+                  data-shortcut-capture
+                  aria-label={label}
+                  value={capturingActionId === action.id ? t('settings.yuri.keyboardShortcuts.field.pressKeys')
+                    : !displayCombo || displayCombo === UNASSIGNED_SHORTCUT ? t('settings.yuri.keyboardShortcuts.field.unassigned')
+                      : formatShortcutForDisplay(displayCombo)}
                   onFocus={() => {
                     setCapturingActionId(action.id);
                     setErrorText('');
@@ -279,6 +288,11 @@ export const KeyboardShortcutsSettings: React.FC = () => {
                   disabled={!hasDraft}
                 >
                   {t('settings.common.actions.saveChanges')}
+                </Button>
+                <Button type="button" size="xs" variant="ghost"
+                  onClick={() => saveCombo(action.id, UNASSIGNED_SHORTCUT)}
+                  disabled={!effective}>
+                  {t('settings.yuri.keyboardShortcuts.actions.unassign')}
                 </Button>
                 <Button type="button" size="xs" className="!font-normal" variant="ghost" onClick={() => resetOne(action.id)}>
                   {t('settings.common.actions.reset')}

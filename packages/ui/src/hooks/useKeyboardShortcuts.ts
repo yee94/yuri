@@ -29,6 +29,7 @@ import { locationKey } from '@/lib/remote-projects/location';
 import { opencodeClient } from '@/lib/opencode/client';
 import { toast } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
+import { useGuiPluginKeyboardShortcuts } from './useGuiPluginKeyboardShortcuts';
 import { activateSidebarNumberedSession } from '@/sync/sidebar-numbered-navigation';
 import {
   closeActiveTerminalTab,
@@ -163,6 +164,7 @@ export const executeLeaderCompact = async ({
 
 export const useKeyboardShortcuts = () => {
   const { t } = useI18n();
+  const { match: matchPluginShortcut, run: runPluginShortcut } = useGuiPluginKeyboardShortcuts();
   const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
   const armAbortPrompt = useSessionUIStore((s) => s.armAbortPrompt);
   const clearAbortPrompt = useSessionUIStore((s) => s.clearAbortPrompt);
@@ -479,7 +481,7 @@ export const useKeyboardShortcuts = () => {
         return;
       }
 
-      if (!leaderCombo || !eventMatchesShortcut(e, leaderCombo)) {
+      if (!leaderCombo || !eventMatchesShortcut(e, leaderCombo) || matchPluginShortcut(e)) {
         return;
       }
 
@@ -681,6 +683,8 @@ export const useKeyboardShortcuts = () => {
       if (e.isComposing || e.keyCode === 229) {
         return;
       }
+
+      if (runPluginShortcut(e)) return;
 
       // The terminal capture handler owns Cmd/Ctrl+W before Ghostty consumes it.
       if (eventMatchesShortcut(e, combo('close_context_panel_tab'))) {
@@ -1387,6 +1391,8 @@ export const useKeyboardShortcuts = () => {
     activeProject?.id,
     activeProject?.path,
     shortcutOverrides,
+    matchPluginShortcut,
+    runPluginShortcut,
     t,
   ]);
 

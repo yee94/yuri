@@ -1,4 +1,7 @@
 ﻿export const settingsDict = {
+  'settings.yuri.keyboardShortcuts.actions.unassign': '解除綁定',
+  'settings.yuri.keyboardShortcuts.field.unassigned': '未指派',
+  'settings.yuri.keyboardShortcuts.pluginPriority': '{plugin} · 優先順序 {priority}',
   'settings.providers.custom.emptyModels': '暫無模型，點擊 + 新增或同步模型。',
   'settings.providers.custom.description': '中轉閘道、本機部署，或相容 API',
   'settings.providers.delete.description': '刪除使用者、自訂及目前專案檔案中的此服務設定，並移除已儲存的憑證。刪除共用設定或憑證也會影響使用它們的其他專案。',

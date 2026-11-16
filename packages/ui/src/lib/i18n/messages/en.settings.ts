@@ -1,4 +1,7 @@
 export const settingsDict = {
+  'settings.yuri.keyboardShortcuts.actions.unassign': 'Unbind',
+  'settings.yuri.keyboardShortcuts.field.unassigned': 'Unassigned',
+  'settings.yuri.keyboardShortcuts.pluginPriority': '{plugin} · Priority {priority}',
   'settings.providers.custom.emptyModels': 'No models yet. Click + to add one, or sync models.',
   'settings.providers.custom.description': 'Gateways, local deployments, or compatible APIs',
   'settings.providers.delete.description': 'Delete this provider’s configuration from the user, custom and current project files, and remove its saved credentials. Removing shared configuration or credentials also affects other projects that use them.',

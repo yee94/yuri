@@ -1,4 +1,7 @@
 export const settingsDict = {
+  'settings.yuri.keyboardShortcuts.actions.unassign': 'Desvincular',
+  'settings.yuri.keyboardShortcuts.field.unassigned': 'Não atribuído',
+  'settings.yuri.keyboardShortcuts.pluginPriority': '{plugin} · Prioridade {priority}',
   'settings.providers.custom.emptyModels': 'Ainda não há modelos. Clique em + para adicionar um ou sincronize os modelos.',
   'settings.providers.custom.description': 'Gateways, implantações locais ou APIs compatíveis',
   'settings.providers.delete.description': 'Exclui a configuração deste serviço dos arquivos de usuário, personalizados e do projeto atual, além das credenciais salvas. A exclusão de configurações ou credenciais compartilhadas também afeta outros projetos que as utilizam.',

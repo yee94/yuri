@@ -1,4 +1,7 @@
 export const settingsDict = {
+  'settings.yuri.keyboardShortcuts.actions.unassign': 'Usuń przypisanie',
+  'settings.yuri.keyboardShortcuts.field.unassigned': 'Nieprzypisany',
+  'settings.yuri.keyboardShortcuts.pluginPriority': '{plugin} · Priorytet {priority}',
   'settings.providers.custom.emptyModels': 'Brak modeli. Kliknij +, aby dodać model, lub zsynchronizuj modele.',
   'settings.providers.custom.description': 'Bramy, wdrożenia lokalne lub zgodne API',
   'settings.providers.delete.description': 'Usuwa konfigurację tej usługi z plików użytkownika, niestandardowych i bieżącego projektu oraz zapisane dane logowania. Usunięcie współdzielonej konfiguracji lub danych logowania wpływa również na inne korzystające z nich projekty.',

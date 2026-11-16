@@ -1,4 +1,7 @@
 export const settingsDict = {
+  'settings.yuri.keyboardShortcuts.actions.unassign': '割り当てを解除',
+  'settings.yuri.keyboardShortcuts.field.unassigned': '未割り当て',
+  'settings.yuri.keyboardShortcuts.pluginPriority': '{plugin} · 優先度 {priority}',
   'settings.providers.custom.emptyModels': 'モデルがありません。+ で追加するか、モデルを同期してください。',
   'settings.providers.custom.description': 'ゲートウェイ、ローカル環境、互換 API',
   'settings.providers.delete.description': 'ユーザー、カスタム、現在のプロジェクトのファイルからこのサービスの設定と保存済みの認証情報を削除します。共有設定や認証情報の削除は、それらを使用する他のプロジェクトにも影響します。',

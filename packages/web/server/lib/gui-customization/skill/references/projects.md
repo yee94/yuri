@@ -5,6 +5,25 @@ session's Yuri customization pointer. This is a Host capability, not a GUI plugi
 or a desktop deep link. Registration does not create files, clone a repository,
 open a conversation or switch an existing active project.
 
+## Resource identity and scope
+
+Resolve ownership before operating on a project/session or composing a navigation link:
+
+1. Discover this caller's capabilities through the bound helper's `describe`, or the contact's granted project tools. Use the returned operations and their scope; a missing binding or unsupported capability is an explicit limit.
+2. For bound-Host resources, use exact IDs and raw directories from this session's context or the relevant `list` / `task-sessions` result. The bound Host is the helper's execution target, not necessarily the computer displaying Yuri. Index results have the completeness limits described below.
+3. For remote resources, discover the project or machine through `remote-projects` / `remote-hosts`, then query its sessions with `sessions` or `read-session`. Keep the returned `target:{hubId,hostId,instanceId}` with each resource's raw directory and session ID:
+
+   | Field | Meaning |
+   |---|---|
+   | `hubId` | The Hub whose authorized connections this caller is using. |
+   | `hostId` | A connection identity within that Hub, not a universal machine ID. |
+   | `instanceId` | The target Yuri instance's identity, independent of which connection reaches it. |
+
+   Different Hubs can use different connection IDs for the same instance. A worker on the target instance need not know another Hub's connection ID. Use identities actually returned to this caller; names, addresses, equal paths and session-ID structure are not ownership evidence.
+4. Preserve the complete reference for operations that accept it. Each operation or navigation route independently defines which fields it accepts; discovering an identity does not enable another protocol or grant access. For links, serialize only the fields documented in [deep links](deep-links.md).
+
+When ownership is unknown or ambiguous, report what is missing and use authorized discovery or ask for clarification. A failed lookup stays unconfirmed; changing the target or creating a replacement resource is a separate user decision.
+
 ## Local project registration
 
 1. Resolve the user-requested directory to an absolute path on the bound Yuri

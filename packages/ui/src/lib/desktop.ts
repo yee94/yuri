@@ -229,8 +229,14 @@ export type DesktopSettings = {
   draftStartersCraftGoalAdded?: boolean;
 };
 
+export type DesktopMenuShortcutsBridge = {
+  claim(combos: string[]): Promise<void>;
+  fallback(combo: string): Promise<boolean>;
+};
+
 type DesktopBridgeGlobal = {
   isDocumentRestricted?: () => boolean;
+  menuShortcuts?: DesktopMenuShortcutsBridge;
   viewExport?: DesktopViewExportBridge;
   guiPlugins?: NativeGuiBridge;
   invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -325,6 +331,10 @@ export const getDesktopGuiPluginWindowBridge = (): NativeGuiBridge | undefined =
 /** Device-owned export stays available when the app connects to a remote runtime. */
 export const getDesktopViewExportBridge = (): DesktopViewExportBridge | undefined =>
   isElectronShell() ? getDesktopBridge()?.viewExport : undefined;
+
+/** Optional installer-owned window capability; absent on other runtimes and old shells. */
+export const getDesktopMenuShortcutsBridge = (): DesktopMenuShortcutsBridge | undefined =>
+  isElectronShell() ? getDesktopBridge()?.menuShortcuts : undefined;
 
 export const invokeDesktop = async <T = unknown>(command: string, args?: Record<string, unknown>): Promise<T | null> => {
   const bridge = getDesktopBridge();

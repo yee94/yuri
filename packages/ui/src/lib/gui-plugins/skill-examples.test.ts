@@ -24,6 +24,14 @@ function fixture() {
     hosts.push(host);
     return { host, openPage, files };
 }
+it('runs the shipped priority shortcut example through the official Command registry', async () => {
+    const { host, openPage } = fixture();
+    host.install('board', { code: await example('gui-api'), options: {}, revision: '1' });
+    expect(host.getSnapshot().plugins[0].status).toBe('active');
+    expect(host.getCommandShortcuts()[0]).toMatchObject({ defaultCombo: 'mod+m', priority: 10 });
+    expect(host.runShortcutCommand('board', 'open-board')).toBe(true);
+    expect(openPage).toHaveBeenCalledWith(JSON.stringify(['board', 'board']));
+});
 it('loads the shipped direct-CJS example without transpilation and cleans its contributions', async () => {
     const { host } = fixture();
     host.install('skin', { code: await example('workflow', 'js'), options: {}, revision: '1' });

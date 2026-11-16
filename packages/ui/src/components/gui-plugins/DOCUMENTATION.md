@@ -148,9 +148,16 @@ Initial plugin discovery is silent in the palette: no loading row or empty group
 is shown. Loaded commands remain usable during discovery and other plugins' failures;
 failed loading never adds an error/retry entry.
 
-Plugin keyboard shortcuts and slash-command autocomplete are not supported in
-this first version. Command-palette and manager actions are the available command
-entry points; contributed shortcut bindings are not installed by this UI.
+Enabled plugin commands install their `bind` through the shared window shortcut
+dispatcher. Hidden commands retain their bindings and appear in shortcut settings,
+not in the palette. Commands without a default binding can also be assigned there.
+Settings support remapping, explicit unbinding and reset; overwrite clears every
+conflicting command, including aliases. User choices outrank plugin priorities.
+The host's command metadata snapshot is separate from palette visibility and
+retains its reference across unrelated session/panel changes. Shortcut matching
+uses precompiled key buckets rather than scanning plugin catalogs while typing.
+See `lib/gui-plugins/DOCUMENTATION.md#命令快捷键` for priority, scope, lifecycle
+and runtime semantics. Slash-command autocomplete remains unsupported.
 
 ## Preloading and preview preparation
 

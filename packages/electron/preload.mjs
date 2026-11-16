@@ -310,6 +310,10 @@ contextBridge.exposeInMainWorld('__YURI_DESKTOP__', {
   applicationId: readArgValue('--yuri-application-id'),
   shellApiVersion: 2,
   isDocumentRestricted: () => documentRestricted,
+  menuShortcuts: process.isMainFrame ? {
+    claim: (combos) => ipcRenderer.invoke('yuri:menu-shortcuts:claim', combos),
+    fallback: (combo) => ipcRenderer.invoke('yuri:menu-shortcuts:fallback', combo),
+  } : undefined,
   guiPlugins: isLocalPage && process.isMainFrame ? {
     request: async (action, input) => {
       const reply = await ipcRenderer.invoke('yuri:gui-plugin', action, input);

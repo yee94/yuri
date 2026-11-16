@@ -12,6 +12,7 @@ describe('assistant built-in skill pointers', () => {
     expect(prompt).toContain('read_opencode_skill({"id":"opencode"})');
     expect(prompt).toContain('nextOffset');
     expect(prompt).toContain('adding a directory as a project in Yuri');
+    expect(prompt).toContain('project/session resource ownership or yuri:// deep links');
     expect(prompt).toContain('granted yuri.projects tools');
     expect(prompt).toContain('no bound local desktop helper');
     expect(prompt).toContain('does not create that authorization');

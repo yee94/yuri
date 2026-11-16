@@ -279,6 +279,16 @@ describe('settings helpers', () => {
       shortcutOverrides: {},
     });
   });
+  it('round-trips qualified GUI command identities without truncating colliding prefixes', () => {
+    const helpers = createTestHelpers();
+    const prefix = `gui-plugin:${JSON.stringify(['package-name'.repeat(15), 'first'])}`;
+    const second = `gui-plugin:${JSON.stringify(['package-name'.repeat(15), 'second'])}`;
+    const shortcutOverrides = { [prefix]: 'mod+m', [second]: '__unassigned__', open_settings: 'mod+comma' };
+    expect(helpers.sanitizeSettingsUpdate({ shortcutOverrides })).toEqual({ shortcutOverrides });
+    expect(helpers.sanitizeSettingsUpdate({
+      shortcutOverrides: { [`gui-plugin:${'a'.repeat(1024)}`]: 'mod+m', ...shortcutOverrides },
+    })).toEqual({ shortcutOverrides });
+  });
 
   it('accepts OpenCode update notification preference as a persisted shared setting', () => {
     const helpers = createTestHelpers();

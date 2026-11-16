@@ -14,6 +14,7 @@ export interface ShortcutAction {
   label: string;
   description?: string;
   customizable?: boolean;
+  priority?: number;
 }
 
 interface ParsedShortcut {
@@ -591,20 +592,24 @@ export function getShortcutAction(id: string): ShortcutAction | undefined {
   return SHORTCUT_ACTIONS.find((action) => action.id === id);
 }
 
+export function getShortcutActions(): ReadonlyArray<ShortcutAction> {
+  return SHORTCUT_ACTIONS;
+}
+
 export function getCustomizableShortcutActions(): ReadonlyArray<ShortcutAction> {
   return SHORTCUT_ACTIONS.filter((action) => action.customizable === true);
 }
 
 export function getEffectiveShortcutCombo(
-  actionId: string,
+  actionId: string | ShortcutAction,
   overrides?: Record<string, ShortcutCombo>
 ): ShortcutCombo {
-  const action = getShortcutAction(actionId);
+  const action = typeof actionId === 'string' ? getShortcutAction(actionId) : actionId;
   if (!action) {
     return '';
   }
 
-  const override = overrides?.[actionId];
+  const override = overrides?.[action.id];
   if (typeof override === 'string') {
     if (override.trim().toLowerCase() === UNASSIGNED_SHORTCUT) {
       return '';
@@ -624,10 +629,10 @@ export function getEffectiveShortcutCombo(
 }
 
 export function getEffectiveShortcutCombos(
-  actionId: string,
+  actionId: string | ShortcutAction,
   overrides?: Record<string, ShortcutCombo>,
 ): ReadonlyArray<ShortcutCombo> {
-  const action = getShortcutAction(actionId);
+  const action = typeof actionId === 'string' ? getShortcutAction(actionId) : actionId;
   if (!action) {
     return [];
   }

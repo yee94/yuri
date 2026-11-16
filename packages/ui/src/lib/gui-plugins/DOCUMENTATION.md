@@ -150,7 +150,7 @@ options 只在所属插件 context 的内存中，不进入页面 snapshot/URL/�
 
 | 能力 | 首批边界 |
 | --- | --- |
-| Command | 命令面板与插件管理页执行；hidden 命令可通过 `ctx.commands.run` 调用。首批不注册快捷键或 slash autocomplete |
+| Command | 命令面板、插件管理页与窗口快捷键执行；hidden 命令保留快捷键与 `ctx.commands.run`。slash autocomplete 暂不支持 |
 | TitlebarItem | 全局窗口入口，不依赖当前会话；支持响应式 label/title/icon/busy/pressed、点击与仅展示状态 |
 | LinkHandler | 匹配、存在性与打开；交给会话文件/layout 管理 |
 | Panel | `list/render`、标签与 session side/mobile 面板；保持 session/tab getter 响应性 |
@@ -163,6 +163,40 @@ options 只在所属插件 context 的内存中，不进入页面 snapshot/URL/�
 | sessions / files / layout | 已实现的当前会话、文件和面板操作；不推定所有 Host API 成员可用 |
 | RPC | 通过当前连接服务的官方 client 调用服务端插件契约 |
 | toast | 官方 `ctx.toast.show`，当前客户端的全局提示；支持纯文本、default/success/error/loading、duration/persistent 和 dismiss，icon/actions 明确 unsupported |
+
+### 命令快捷键
+
+官方 `Command.bind` 是默认绑定；`mod` 在 macOS Electron 对应 Command，其他平台
+对应 Ctrl，继续复用共享 matcher 的浏览器差异。Yuri 在同一 Command 对象上提供
+可选有限数值 `priority`，类型为 `Gui.Command & { priority?: number }`，不修改 SDK、
+不要求另一份命令注册。缺省为 0，可为负数；内置默认动作同为 0。
+
+- 用户在快捷键设置中显式保存的绑定优先于所有开发者 priority。其次 priority 大者
+  优先；同分内置默认动作优先；插件同分按稳定命令身份排序，不依赖 bundle 到达顺序。
+  插件可用正数覆盖内置默认动作，但不能绕过文本编辑器已消费事件、IME、终端、
+  已开始的 leader chord 或 Escape 中断等既有交互所有权。
+  Electron 的 Cmd+Q 双按退出保护仍由 shell 保留，不能被插件 priority 覆盖。
+- `hidden` 仅隐藏命令面板条目，不禁用键位。无 `bind` 的命令也可由用户分配。
+  `enabled:false`、失败、撤销、卸载、revision 替换和切 runtime 撤销旧命令；
+  执行时重新按 plugin/local command ID 检查当前实例，不调用快照里的过期闭包。
+- 保留官方 `scope` 焦点 CSS selector 与 `editable:true`。无 Ctrl/Command/Alt 的
+  绑定默认让位于输入框；显式 editable 才可接管。非法 selector/priority 失败只归所属插件。
+  `run()` 同步返回 false 放行按键；Promise 视为已接受，异步失败沿用插件失败路径。
+  按住按键不会重复执行命令。普通 DOM 按钮/输入框可先消费事件。
+- `getCommandShortcuts()` 发布独立不可变元数据，含 hidden、不含 disabled；无关 session
+  变动保留引用。React 只订阅 host 身份和这个稳定快照，按键路径只查预编译 key bucket。
+  bucket 包含实际修饰键，因此输入普通 `p` 不扫描绑定到 `mod+p` 的命令。
+  无可用插件命令时不编译命令表；无原生绑定时不安装额外焦点监听、不发送菜单 claim。
+  原生未声明绑定的窗口按键也不解析、不调用菜单 API；解绑后恢复同一空闲路径。
+  原有 palette snapshot、静默预加载与命令错误归属不变，不因快捷键触发额外下载或轮询。
+- 持久化设置键为 `gui-plugin:` + `JSON.stringify([pluginId, localCommandId])`，
+  不与内置动作混名，也不受 ID 中句点/冒号影响；使用已有 shortcutOverrides。
+  设置页可覆盖、解除绑定、恢复默认，确认覆盖时清理全部冲突动作及其默认 aliases。
+- Web、Electron、VS Code、hosted/Capacitor mobile 的真实 DOM 硬件键盘事件共用此分发；
+  浏览器/编辑器/OS 在送达页面前保留的按键不能被插件保证覆盖。原生 iOS 输入控件、
+  跨域 iframe、Electron webview 与操作系统全局快捷键不在窗口 DOM 分发范围。
+  Electron 原生菜单让位由 shell 的按窗口窄桥实现，需要新版安装包；不是原生插件 main 权限。
+  `ctx.keybinds` 和 slash autocomplete 仍不在本次支持范围。
 
 本地 Electron 支持 `main`、`ctx.main(Ipc)`、`ctx.use(Ipc)`、schema 编解码、每窗口 state/events、调用取消及 `os` 限制；其他运行时仍拒绝 native IPC、main-only 和带 `os` 限制的定义。未支持 `WebContentsView`/embeds、server sources、slots、原生菜单及其他未实现 Host API。访问未支持能力必须产生可见错误，不能用空对象或成功 no-op 冒充支持。
 
