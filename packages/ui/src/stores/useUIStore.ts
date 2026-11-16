@@ -2559,18 +2559,23 @@ export const useUIStore = create<UIStore>()(
             // Add to front, limit to 5
             const recentModels = [entry, ...filtered].slice(0, 5);
 
+            // Using a model promotes its provider to the front of the persisted provider order.
+            const providerOrder = state.providerOrder[0] === providerID
+              ? state.providerOrder
+              : [providerID, ...state.providerOrder.filter((id) => id !== providerID)];
+
             // Selecting a favorited model updates that favorite's remembered variant
             // in place without changing favorite order.
             const favoriteIndex = state.favoriteModels.findIndex(
               (fav) => fav.providerID === providerID && fav.modelID === modelID
             );
             if (favoriteIndex === -1) {
-              return { recentModels };
+              return { recentModels, providerOrder };
             }
 
             const previous = state.favoriteModels[favoriteIndex];
             if (previous.variant === variant) {
-              return { recentModels };
+              return { recentModels, providerOrder };
             }
 
             const nextFavorite = variant === undefined
@@ -2578,7 +2583,7 @@ export const useUIStore = create<UIStore>()(
               : { providerID: previous.providerID, modelID: previous.modelID, variant };
             const favoriteModels = state.favoriteModels.slice();
             favoriteModels[favoriteIndex] = nextFavorite;
-            return { recentModels, favoriteModels };
+            return { recentModels, favoriteModels, providerOrder };
           });
         },
 

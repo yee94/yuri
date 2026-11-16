@@ -436,6 +436,7 @@ describe('updateDesktopSettings', () => {
       useUIStore.setState({
         hiddenModels: [{ providerID: 'openai', modelID: 'gpt-5' }],
         collapsedModelProviders: ['openai'],
+        providerOrder: ['google', 'openai'],
         recentModels: [{ providerID: 'google', modelID: 'gemini-pro', variant: 'medium' }],
         recentAgents: ['build'],
         recentEfforts: { 'openai/gpt-5': ['low'] },
@@ -448,6 +449,7 @@ describe('updateDesktopSettings', () => {
         favoriteModels: [{ providerID: 'anthropic', modelID: 'claude-haiku-4', variant: 'high' }],
         hiddenModels: [{ providerID: 'openai', modelID: 'gpt-5' }],
         collapsedModelProviders: ['openai'],
+        providerOrder: ['google', 'openai'],
         recentModels: [{ providerID: 'google', modelID: 'gemini-pro', variant: 'medium' }],
         recentAgents: ['build'],
         recentEfforts: { 'openai/gpt-5': ['low'] },

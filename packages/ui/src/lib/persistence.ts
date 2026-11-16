@@ -669,6 +669,14 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
     }
   }
 
+  if (Array.isArray(settings.providerOrder)) {
+    const current = store.providerOrder;
+    const next = settings.providerOrder;
+    if (!areStringArraysEqual(current, next)) {
+      useUIStore.setState({ providerOrder: next });
+    }
+  }
+
   if (Array.isArray(settings.recentModels)) {
     const current = store.recentModels;
     const next = mergeModelRefsPreservingVariants(current, settings.recentModels);
@@ -1148,6 +1156,11 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
   const collapsedModelProviders = sanitizeStringArray(candidate.collapsedModelProviders);
   if (collapsedModelProviders) {
     result.collapsedModelProviders = collapsedModelProviders;
+  }
+
+  const providerOrder = sanitizeStringArray(candidate.providerOrder);
+  if (providerOrder) {
+    result.providerOrder = providerOrder;
   }
 
   const recentModels = sanitizeModelRefs(candidate.recentModels, 16, { preserveVariant: true });

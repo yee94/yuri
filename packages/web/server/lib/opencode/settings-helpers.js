@@ -676,6 +676,10 @@ export const createSettingsHelpers = (dependencies) => {
       result.collapsedModelProviders = normalizeStringArray(candidate.collapsedModelProviders);
     }
 
+    if (Array.isArray(candidate.providerOrder)) {
+      result.providerOrder = normalizeStringArray(candidate.providerOrder);
+    }
+
     if (Array.isArray(candidate.recentAgents)) {
       result.recentAgents = normalizeStringArray(candidate.recentAgents);
     }

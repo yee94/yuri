@@ -5,6 +5,19 @@ beforeEach(() => {
   useUIStore.setState({
     favoriteModels: [],
     recentModels: [],
+    providerOrder: [],
+  });
+});
+
+describe('useUIStore provider order', () => {
+  test('addRecentModel promotes the used provider to the front of the persisted order', () => {
+    useUIStore.setState({ providerOrder: ['openai', 'anthropic', 'google'] });
+
+    useUIStore.getState().addRecentModel('google', 'gemini-pro');
+    expect(useUIStore.getState().providerOrder).toEqual(['google', 'openai', 'anthropic']);
+
+    useUIStore.getState().addRecentModel('cursor', 'claude');
+    expect(useUIStore.getState().providerOrder).toEqual(['cursor', 'google', 'openai', 'anthropic']);
   });
 });
 

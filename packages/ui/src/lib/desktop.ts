@@ -195,6 +195,7 @@ export type DesktopSettings = {
   favoriteModels?: Array<{ providerID: string; modelID: string; variant?: string }>;
   hiddenModels?: Array<{ providerID: string; modelID: string }>;
   collapsedModelProviders?: string[];
+  providerOrder?: string[];
   recentModels?: Array<{ providerID: string; modelID: string; variant?: string }>;
   recentAgents?: string[];
   recentEfforts?: Record<string, string[]>;

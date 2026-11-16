@@ -6,6 +6,7 @@ type ModelPrefsPayload = {
   favoriteModels: ModelRef[];
   hiddenModels: Array<{ providerID: string; modelID: string }>;
   collapsedModelProviders: string[];
+  providerOrder: string[];
   recentModels: ModelRef[];
   recentAgents: string[];
   recentEfforts: Record<string, string[]>;
@@ -57,6 +58,7 @@ const snapshotModelPrefs = (): ModelPrefsPayload => {
     favoriteModels: state.favoriteModels,
     hiddenModels: state.hiddenModels,
     collapsedModelProviders: state.collapsedModelProviders,
+    providerOrder: state.providerOrder,
     recentModels: state.recentModels,
     recentAgents: state.recentAgents,
     recentEfforts: state.recentEfforts,
@@ -67,6 +69,7 @@ const modelPrefsEqual = (a: ModelPrefsPayload, b: ModelPrefsPayload): boolean =>
   refsEqual(a.favoriteModels, b.favoriteModels) &&
   hiddenRefsEqual(a.hiddenModels, b.hiddenModels) &&
   stringsEqual(a.collapsedModelProviders, b.collapsedModelProviders) &&
+  stringsEqual(a.providerOrder, b.providerOrder) &&
   refsEqual(a.recentModels, b.recentModels) &&
   stringsEqual(a.recentAgents, b.recentAgents) &&
   recentEffortsEqual(a.recentEfforts, b.recentEfforts)
@@ -76,6 +79,7 @@ const cloneModelPrefs = (prefs: ModelPrefsPayload): ModelPrefsPayload => ({
   favoriteModels: prefs.favoriteModels.slice(),
   hiddenModels: prefs.hiddenModels.slice(),
   collapsedModelProviders: prefs.collapsedModelProviders.slice(),
+  providerOrder: prefs.providerOrder.slice(),
   recentModels: prefs.recentModels.slice(),
   recentAgents: prefs.recentAgents.slice(),
   recentEfforts: Object.fromEntries(Object.entries(prefs.recentEfforts).map(([key, variants]) => [key, variants.slice()])),
@@ -119,6 +123,7 @@ export const startModelPrefsAutoSave = () => {
       favoriteModels: state.favoriteModels,
       hiddenModels: state.hiddenModels,
       collapsedModelProviders: state.collapsedModelProviders,
+      providerOrder: state.providerOrder,
       recentModels: state.recentModels,
       recentAgents: state.recentAgents,
       recentEfforts: state.recentEfforts,
@@ -127,6 +132,7 @@ export const startModelPrefsAutoSave = () => {
       favoriteModels: prevState.favoriteModels,
       hiddenModels: prevState.hiddenModels,
       collapsedModelProviders: prevState.collapsedModelProviders,
+      providerOrder: prevState.providerOrder,
       recentModels: prevState.recentModels,
       recentAgents: prevState.recentAgents,
       recentEfforts: prevState.recentEfforts,
