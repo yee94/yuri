@@ -20,6 +20,11 @@ on:
         required: false
         default: false
         type: boolean
+      skip_ios:
+        description: 'Skip the iOS build and TestFlight upload (including the external group)'
+        required: false
+        default: false
+        type: boolean
       resume_run_id:
         description: 'Resume a draft or failed post-publication deployment using verified installers from this completed Release run (no rebuild or iOS re-upload)'
         required: false
@@ -600,8 +605,8 @@ jobs:
       # native-mode betas and ALL stable releases build + upload iOS (betas
       # internal-only, stable also publishes the external group); web-only
       # (mode: ota) betas skip iOS entirely — existing shells update via OTA.
-      build_ios: ${{ needs.create-release.outputs.plan_mode == 'native' || !contains(needs.create-release.outputs.version, '-') }}
-      publish_external_testflight: ${{ !contains(needs.create-release.outputs.version, '-') }}
+      build_ios: ${{ !inputs.skip_ios && (needs.create-release.outputs.plan_mode == 'native' || !contains(needs.create-release.outputs.version, '-')) }}
+      publish_external_testflight: ${{ !inputs.skip_ios && !contains(needs.create-release.outputs.version, '-') }}
       # Bake OTA channel into the native shell at mobile:sync. Prerelease tags
       # stay on beta; plain semver store builds use stable.
       ota_channel: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}

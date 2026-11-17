@@ -116,6 +116,17 @@ gh workflow run release.yml --repo yee94/yuri --ref <release-branch> \
 
 此路径保留桌面、Android、npm、Relay 与正常 Release 发布，跳过整个 `mobile-native-targets` job（包括 OTA bundle、nativeTargets 与部署）。iOS 仍由原生变更计划决定。不要另行推送 `v*` tag，以免触发不带该输入的第二次发布；Release 的 tag 由 CI 按本次 `github.sha` 创建。默认 tag 发布仍包含同版本 OTA。对于 OpenCode 2 预览分支，使用该分支的实际 ref，不合并到稳定发布分支。
 
+### 明确不发布 TestFlight
+
+用户明确要求跳过 iOS / TestFlight 时（例如稳定版只发桌面与 Android），同样通过 `workflow_dispatch` 传入 `skip_ios=true`：
+
+```bash
+gh workflow run release.yml --repo yee94/yuri --ref main \
+  -f version="$VERSION" -f dry_run=false -f skip_ios=true
+```
+
+`skip_ios=true` 会让 `mobile-release` 不构建、不上传 iOS，也不发布外测组，其余桌面、Android、npm、Relay 与同版本 OTA 照常发布。不要另行推送 `v*` tag；同一版本只走这一次入口。
+
 ### 默认 tag 发布
 
 tag 是正式发布的标准入口。精确推送当前 tag，避免把本地历史 tag 一并推送：
