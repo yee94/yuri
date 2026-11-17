@@ -89,7 +89,7 @@ describe('i18n dictionaries', () => {
       }
     }
     expect(zhCnDict['assistants.title']).toBe('助理');
-    expect(enDict['contextSidebar.breakdown.assistant']).toBe('Assistant');
+    expect(enDict['contextSidebar.stats.assistant']).toBe('Assistant');
     expect(enDict['commandPalette.message.assistant']).toBe('Assistant');
   });
 });

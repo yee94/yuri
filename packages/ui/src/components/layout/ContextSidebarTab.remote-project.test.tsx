@@ -34,7 +34,6 @@ vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: () => { fixture.l
 vi.mock('@/sync/sync-context', () => ({ useSessions: () => { fixture.local(); return []; }, useSessionMessageRecords: () => { fixture.local(); return []; } }));
 vi.mock('@/stores/useConfigStore', () => ({ useConfigStore: () => { fixture.local(); return []; } }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: fixture.t }), getCurrentIntlLocale: () => 'en-US' }));
-vi.mock('@/components/code/WorkerHighlightedCode', () => ({ WorkerHighlightedCode: ({ code }: { code: string }) => <pre>{code}</pre> }));
 
 let root: Root, node: HTMLDivElement;
 const makeScope = (hostId: string): HostRuntimeContextValue => {
@@ -48,21 +47,18 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); node.remove(); });
 
-it('keeps the complete real context statistics and expandable raw messages on explicit Host data', async () => {
+it('keeps the complete real context statistics and window card on explicit Host data', async () => {
   const scope = makeScope('host-a'); await render(scope);
   expect(node.textContent).toContain('REMOTE host-a');
   expect(node.textContent).toContain('Remote Provider / Remote Model');
-  expect(node.textContent).toContain('Remote user prompt');
+  expect(node.textContent).toContain('contextSidebar.window.title');
+  expect(node.textContent).toContain('contextSidebar.stats.messages');
   expect(fixture.config).toHaveBeenCalledWith('/workspace', scope.entry);
   expect(fixture.demand).toHaveBeenCalledWith('same-session');
-  const raw = node.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!;
-  await act(async () => raw.click());
-  expect(node.querySelector('pre')?.textContent).toContain('Remote answer bytes');
-  expect(node.querySelector('[aria-label="contextSidebar.actions.copyJson"]')).not.toBeNull();
   expect(fixture.local).not.toHaveBeenCalled();
 });
 
-it('retains visible remote context through failure/retry and isolates expanded state on same-ID cross-Host navigation', async () => {
+it('retains visible remote context through failure/retry and isolates state on same-ID cross-Host navigation', async () => {
   await render(makeScope('host-a'));
   await act(async () => fixture.onError?.(new Error('remote offline')));
   expect(node.querySelector('[role="alert"]')).toBeNull();
@@ -73,11 +69,9 @@ it('retains visible remote context through failure/retry and isolates expanded s
   await act(async () => document.querySelector<HTMLButtonElement>('[data-remote-host-error-popup] button')!.click());
   expect(fixture.refresh).toHaveBeenCalled();
   expect(node.querySelector('[role="alert"]')).toBeNull();
-  await act(async () => node.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());
   fixture.hostId = 'host-b'; await render(makeScope('host-b'));
   expect(node.textContent).toContain('REMOTE host-b');
   expect(node.textContent).not.toContain('REMOTE host-a');
-  expect(node.querySelector('pre')).toBeNull();
   expect(fixture.local).not.toHaveBeenCalled();
 });
 
@@ -86,9 +80,9 @@ it('releases hidden overview demand and performs no transcript subscription whil
   await act(async () => root.render(<HostRuntimeContext.Provider value={scope}><ContextPanelContent active={false} /></HostRuntimeContext.Provider>));
   expect(fixture.demand).toHaveBeenLastCalledWith(null);
   expect(fixture.subscribe).not.toHaveBeenCalled();
-  expect(node.textContent).not.toContain('Remote user prompt');
+  expect(node.textContent).not.toContain('Remote Provider / Remote Model');
   await render(scope);
   expect(fixture.demand).toHaveBeenLastCalledWith('same-session');
   expect(fixture.subscribe).toHaveBeenCalled();
-  expect(node.textContent).toContain('Remote user prompt');
+  expect(node.textContent).toContain('Remote Provider / Remote Model');
 });

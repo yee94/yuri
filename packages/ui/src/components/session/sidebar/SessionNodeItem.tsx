@@ -1363,7 +1363,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       <div className={cn('flex h-5 w-full min-w-0 items-center gap-1 overflow-hidden', actionPaddingClass)}>
                         <TaskProjectBadge project={secondaryMeta?.project} />
                         {cardUnread && !cardWaiting ? <TaskUnreadDot /> : null}
-                        <span className={cn('min-w-0 flex-1 truncate typography-micro leading-4', rowIsEmphasized ? 'text-foreground/80' : 'text-muted-foreground')}>
+                        <span className={cn('min-w-0 flex-1 truncate text-xs leading-4', rowIsEmphasized ? 'text-foreground/80' : 'text-muted-foreground')}>
                           {secondaryMeta?.projectLabel}
                         </span>
                         <span className={cn('shrink-0', cardStatusHiddenClass)}>{cardStatusSlot}</span>
@@ -1374,7 +1374,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       <div
                         className={cn(
                           'block min-w-0 flex-1 truncate text-foreground',
-                          isSlimRow ? 'typography-meta' : 'typography-ui-label',
+                          isSlimRow ? 'typography-meta' : isCardRow ? 'text-[0.8125rem]' : 'typography-ui-label',
                           isSlimRow && !rowIsEmphasized && 'text-muted-foreground',
                           cardUnread ? 'font-medium' : 'font-normal',
                           isTitleGenerating && 'animate-text-shimmer',
