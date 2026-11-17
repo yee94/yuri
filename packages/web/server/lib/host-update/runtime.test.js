@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHostUpdateRuntime, writeUpdateState } from './runtime.js';
-import { discoverCliRelease, compareVersions } from './releases.js';
+import { discoverCliRelease, discoverPortableRelease, compareVersions } from './releases.js';
 
 let directory;
 let stateFile;
@@ -138,4 +138,19 @@ it('compares beta sequence numbers and never selects beta in the stable channel'
   expect(await discoverCliRelease('stable', '2.0.0', fetch)).toMatchObject({ version: '2.1.0', releaseNotes: 'Notes' });
   expect(await discoverCliRelease('beta', '2.0.0', fetch)).toMatchObject({ version: '2.1.1-beta.10' });
   await expect(discoverCliRelease('stable', '2.0.0', async () => new Response('', { status: 503 }))).rejects.toThrow('registry');
+});
+
+it('binds a self-contained release to its archive checksum and fails when the archive is not published', async () => {
+  const digest = 'a'.repeat(64);
+  const fetch = vi.fn(async (url) => {
+    const text = String(url);
+    if (text.includes('registry')) return Response.json({
+      'dist-tags': { latest: '2.1.0' }, versions: { '2.1.0': { version: '2.1.0', dist: { integrity: 'sha512-npm' } } },
+    });
+    if (text.endsWith('yuri-2.1.0-linux-x64.tar.gz.sha256')) return new Response(`${digest}  yuri-2.1.0-linux-x64.tar.gz\n`);
+    return Response.json({ body: 'Notes' });
+  });
+  expect(await discoverPortableRelease('stable', '2.0.0', fetch, 'x64')).toMatchObject({ version: '2.1.0', integrity: digest, releaseNotes: 'Notes' });
+  expect(await discoverPortableRelease('stable', '2.1.0', fetch, 'x64')).toBeNull();
+  await expect(discoverPortableRelease('stable', '2.0.0', fetch, 'arm64')).rejects.toThrow('checksum');
 });

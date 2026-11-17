@@ -6,7 +6,8 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { detectPackageManagerDetails } from '../package-manager.js';
 import { writeUpdateState } from './runtime.js';
-import { releaseParts } from './releases.js';
+import { fetchPortableChecksum, releaseParts } from './releases.js';
+import { readPortableInstallation } from '../portable-installation.js';
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -19,13 +20,7 @@ function run(command, args, options = {}) {
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; } };
 const send = (message) => new Promise((resolve, reject) => process.send(message, (error) => error ? reject(error) : resolve()));
 
-function prepare(config) {
-  if (!Number.isInteger(config.port) || !Number.isInteger(config.pid) || !releaseParts(config.release?.version ?? '0.0.0')) throw new Error('Invalid update configuration');
-  const details = detectPackageManagerDetails();
-  if (!['install-path-owner', 'global-root-owner', 'cached'].includes(details.reason)
-    || fs.realpathSync(details.packagePath) !== fs.realpathSync(config.packageRoot)) throw new Error('Package manager does not own this installation');
-  const installationPath = details.globalNodeModulesRoot && path.join(details.globalNodeModulesRoot, '@yuriai', 'web');
-  if (!installationPath || fs.realpathSync(installationPath) !== fs.realpathSync(config.packageRoot)) throw new Error('Cannot resolve the stable global package entry');
+function registeredDaemon(config) {
   const runDir = path.join(config.dataDir, 'run');
   const instance = JSON.parse(fs.readFileSync(path.join(runDir, `yuri-${config.port}.json`), 'utf8'));
   const pid = Number(fs.readFileSync(path.join(runDir, `yuri-${config.port}.pid`), 'utf8'));
@@ -35,8 +30,64 @@ function prepare(config) {
     const otherPid = Number(fs.readFileSync(path.join(runDir, file), 'utf8'));
     if (Number.isInteger(otherPid) && otherPid > 0 && alive(otherPid)) throw new Error('Stop other CLI instances before updating this installation');
   }
+  return instance;
+}
+
+function prepareNpm(config) {
+  const details = detectPackageManagerDetails();
+  if (!['install-path-owner', 'global-root-owner', 'cached'].includes(details.reason)
+    || fs.realpathSync(details.packagePath) !== fs.realpathSync(config.packageRoot)) throw new Error('Package manager does not own this installation');
+  const installationPath = details.globalNodeModulesRoot && path.join(details.globalNodeModulesRoot, '@yuriai', 'web');
+  if (!installationPath || fs.realpathSync(installationPath) !== fs.realpathSync(config.packageRoot)) throw new Error('Cannot resolve the stable global package entry');
+  const instance = registeredDaemon(config);
   fs.accessSync(config.packageRoot, fs.constants.W_OK);
-  return { details, instance, installationPath };
+  return { kind: 'npm', details, instance, installationPath };
+}
+
+// An installer-managed layout is <install-dir>/versions/<release>/lib with a
+// <install-dir>/current symlink; manual extractions have no stable entry.
+function preparePortable(config) {
+  const portable = readPortableInstallation(config.packageRoot);
+  if (!portable) throw new Error('Not a self-contained installation');
+  const installationPath = path.resolve(portable.root, '../..');
+  if (path.basename(path.dirname(portable.root)) !== 'versions'
+    || fs.realpathSync(path.join(installationPath, 'current')) !== fs.realpathSync(portable.root)) throw new Error('Self-contained installation is not the active installer-managed release');
+  const instance = registeredDaemon(config);
+  fs.accessSync(installationPath, fs.constants.W_OK);
+  return { kind: 'portable', instance, installationPath, root: portable.root, launcher: path.join(installationPath, 'current', 'yuri') };
+}
+
+function prepare(config) {
+  if (!Number.isInteger(config.port) || !Number.isInteger(config.pid) || !releaseParts(config.release?.version ?? '0.0.0')) throw new Error('Invalid update configuration');
+  return config.installation === 'portable' ? preparePortable(config) : prepareNpm(config);
+}
+
+async function assertReleaseIntegrity(config, prepared) {
+  if (prepared.kind === 'portable') {
+    if (await fetchPortableChecksum(config.release.version) !== config.release.integrity) throw new Error('Package integrity changed');
+    return;
+  }
+  const metadataResponse = await fetch(`https://registry.npmjs.org/@yuriai/web/${config.release.version}`, { signal: AbortSignal.timeout(10000) });
+  if (!metadataResponse.ok || (await metadataResponse.json()).dist?.integrity !== config.release.integrity) throw new Error('Package integrity changed');
+}
+
+async function installRelease(config, prepared) {
+  const timeout = 10 * 60_000;
+  if (prepared.kind === 'portable') {
+    // The bundled installer verifies the checksum and preflight, then atomically
+    // switches `current`; a failed install leaves the running release intact.
+    await run('bash', [path.join(prepared.root, 'install.sh'), '--version', config.release.version, '--install-dir', prepared.installationPath, '--no-link'], { timeout });
+    const installed = JSON.parse(fs.readFileSync(path.join(prepared.installationPath, 'current', 'portable.json'), 'utf8'));
+    if (installed.version !== config.release.version) throw new Error('Installed version mismatch');
+    return;
+  }
+  const { details, installationPath } = prepared;
+  const target = `@yuriai/web@${config.release.version}`;
+  const args = details.packageManager === 'yarn' ? ['global', 'add', target]
+    : details.packageManager === 'npm' ? ['install', '-g', target, '--force'] : ['add', '-g', target];
+  await run(details.packageManagerCommand, args, { timeout });
+  const installed = JSON.parse(fs.readFileSync(path.join(installationPath, 'package.json'), 'utf8'));
+  if (installed.version !== config.release.version) throw new Error('Installed version mismatch');
 }
 
 function acquireLock(packageRoot) {
@@ -68,11 +119,11 @@ process.on('message', (message) => {
     let accepted = false;
     try {
       const config = message;
-      const { details, instance, installationPath } = prepare(config);
+      const prepared = prepare(config);
+      const { instance, installationPath } = prepared;
       if (config.mode === 'probe') { await send({ ready: true }); return; }
       releaseLock = acquireLock(installationPath);
-      const metadataResponse = await fetch(`https://registry.npmjs.org/@yuriai/web/${config.release.version}`, { signal: AbortSignal.timeout(10000) });
-      if (!metadataResponse.ok || (await metadataResponse.json()).dist?.integrity !== config.release.integrity) throw new Error('Package integrity changed');
+      await assertReleaseIntegrity(config, prepared);
       const state = config.state;
       const report = async (patch) => {
         const persisted = JSON.parse(fs.readFileSync(config.stateFile, 'utf8'));
@@ -89,21 +140,17 @@ process.on('message', (message) => {
         await delay(100);
       }
       await report({ status: 'installing' });
-      const target = `@yuriai/web@${config.release.version}`;
-      const args = details.packageManager === 'yarn' ? ['global', 'add', target]
-        : details.packageManager === 'npm' ? ['install', '-g', target, '--force'] : ['add', '-g', target];
       let installFailed = false;
-      try {
-        await run(details.packageManagerCommand, args, { timeout: 10 * 60_000 });
-        const installed = JSON.parse(fs.readFileSync(path.join(installationPath, 'package.json'), 'utf8'));
-        if (installed.version !== config.release.version) throw new Error('Installed version mismatch');
-      } catch { installFailed = true; }
+      try { await installRelease(config, prepared); } catch { installFailed = true; }
       await report({ status: installFailed ? 'failed' : 'restarting', error: installFailed ? 'cli_install_failed' : null });
       // Password stays in the inherited environment, never argv or task state.
-      const restartArgs = [path.join(installationPath, 'bin', 'cli.js'), 'serve', '--port', String(config.port), '--json'];
-      if (instance.host) restartArgs.push('--host', instance.host);
-      if (instance.apiOnly) restartArgs.push('--api-only');
-      await run(process.execPath, restartArgs, { env: { ...process.env, ...(instance.uiPassword ? { YURI_UI_PASSWORD: instance.uiPassword } : {}) }, timeout: 60000 });
+      const serveArgs = ['serve', '--port', String(config.port), '--json'];
+      if (instance.host) serveArgs.push('--host', instance.host);
+      if (instance.apiOnly) serveArgs.push('--api-only');
+      const [restartCommand, restartArgs] = prepared.kind === 'portable'
+        ? [prepared.launcher, serveArgs]
+        : [process.execPath, [path.join(installationPath, 'bin', 'cli.js'), ...serveArgs]];
+      await run(restartCommand, restartArgs, { env: { ...process.env, ...(instance.uiPassword ? { YURI_UI_PASSWORD: instance.uiPassword } : {}) }, timeout: 60000 });
       if (!installFailed) {
         const host = instance.host && !['0.0.0.0', '::'].includes(instance.host) ? instance.host : '127.0.0.1';
         const response = await fetch(`http://${host.includes(':') ? `[${host}]` : host}:${config.port}/health`, { signal: AbortSignal.timeout(10000) });

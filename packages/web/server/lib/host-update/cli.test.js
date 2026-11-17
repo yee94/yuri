@@ -2,13 +2,16 @@ import { EventEmitter } from 'node:events';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { createCliUpdateAdapter } from './cli.js';
 
-const fixture = vi.hoisted(() => ({ fork: vi.fn(), inspect: vi.fn(), reject: false, children: [], portable: false }));
+const fixture = vi.hoisted(() => ({ fork: vi.fn(), inspect: vi.fn(), portableInspect: vi.fn(), reject: false, children: [], portable: false }));
 vi.mock('node:child_process', () => ({ fork: (...args) => fixture.fork(...args) }));
 vi.mock('node:fs', () => ({ existsSync: (file) => fixture.portable && file.endsWith('/portable.json') }));
-vi.mock('./releases.js', () => ({ discoverCliRelease: (...args) => fixture.inspect(...args) }));
+vi.mock('./releases.js', () => ({
+  discoverCliRelease: (...args) => fixture.inspect(...args),
+  discoverPortableRelease: (...args) => fixture.portableInspect(...args),
+}));
 
 beforeEach(() => {
-  fixture.reject = false; fixture.children = []; fixture.inspect.mockReset(); fixture.fork.mockReset();
+  fixture.reject = false; fixture.children = []; fixture.inspect.mockReset(); fixture.portableInspect.mockReset(); fixture.fork.mockReset();
   fixture.portable = false;
   fixture.fork.mockImplementation(() => {
     const child = Object.assign(new EventEmitter(), {
@@ -59,14 +62,34 @@ it('advertises development and externally supervised installations as unsupporte
   expect(fixture.fork).not.toHaveBeenCalled();
 });
 
-it('advertises portable installs as unsupported without package-manager probes or shutdown', async () => {
+it('advertises manual or service-managed self-contained installs as unsupported without probes or shutdown', async () => {
   fixture.portable = true;
   const shutdown = vi.fn();
-  const host = adapter(shutdown);
+  const host = createCliUpdateAdapter({ packageRoot: '/extracted/yuri/lib', dataDir: '/data', getPort: () => 3000, currentVersion: '2.0.0', shutdown, env: {} });
   expect(host.supported).toBe(false);
   expect(host.reason).toBe('portable_installation_requires_release');
   await host.refreshSupport();
   await expect(host.assertReady()).rejects.toThrow('installer');
   expect(fixture.fork).not.toHaveBeenCalled();
   expect(shutdown).not.toHaveBeenCalled();
+});
+
+it('updates installer-managed self-contained releases through the release archive, not npm', async () => {
+  fixture.portable = true;
+  const host = createCliUpdateAdapter({ packageRoot: '/share/yuri/versions/2.0.0-linux-x64/lib', dataDir: '/data', getPort: () => 3000, currentVersion: '2.0.0', shutdown: vi.fn(), env: {} });
+  expect(host.supported).toBe(process.platform === 'linux');
+  await host.inspect('stable');
+  expect(fixture.portableInspect).toHaveBeenCalledWith('stable', '2.0.0');
+  expect(fixture.inspect).not.toHaveBeenCalled();
+  if (process.platform !== 'linux') return;
+  await host.assertReady();
+  expect(fixture.children[0].send).toHaveBeenCalledWith(expect.objectContaining({ mode: 'probe', installation: 'portable' }));
+});
+
+it('does not treat a container as unsupported, but still honors service managers', () => {
+  const container = createCliUpdateAdapter({ packageRoot: '/installation/node_modules/@yuriai/web', dataDir: '/data', env: { container: 'docker', CONTAINER: '1' } });
+  expect(container.supported).toBe(process.platform !== 'win32');
+  const managed = createCliUpdateAdapter({ packageRoot: '/installation/node_modules/@yuriai/web', dataDir: '/data', env: { INVOCATION_ID: 'unit' } });
+  expect(managed.supported).toBe(false);
+  expect(managed.reason).toBe('managed_or_development_installation');
 });

@@ -27,7 +27,8 @@ import { sessionEvents } from '@/lib/sessionEvents';
 import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
 import { createInstanceScopedStorageAdapter } from '@/lib/instanceScopedStorage';
 import { isRuntimeInstanceChange, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
-import { useGitRepoStatusMap } from '@/stores/useGitStore';
+import { useGitRepoStatusMap, useGitStore } from '@/stores/useGitStore';
+import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
 import { NewWorktreeDialog } from './NewWorktreeDialog';
@@ -2001,6 +2002,32 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     taskItemCacheRef.current = next;
     return result;
   }, [gitRepoStatus, homeDirectory, pinnedSessions, projectRootBranches, runStartTimes, sessionOwnership, sessionSidebarMetaById, sortedProjects, t, taskBuckets, taskShelves.settledLimit, taskShelves.settledOpen, worktreeMetadata]);
+
+  // Task cards span many projects, but useProjectRepoStatus only fetches git
+  // for the active one. Request status on demand for rows still showing the
+  // branch placeholder; ensureStatus dedups in-flight and fresh fetches.
+  const { git: gitApi } = useRuntimeAPIs();
+  const ensureGitStatus = useGitStore((state) => state.ensureStatus);
+  const loadingBranchProjectPaths = React.useMemo(() => {
+    if (!taskItems) return EMPTY_PATH_LIST;
+    const pathById = new Map(sortedProjects.map((project) => [project.id, project.normalizedPath]));
+    const paths = new Set<string>();
+    for (const list of [taskItems.pinned, taskItems.active, taskItems.settled]) {
+      for (const item of list) {
+        if (item.secondaryMeta?.branchState !== "loading" || !item.projectId) continue;
+        const path = pathById.get(item.projectId);
+        if (path) paths.add(path);
+      }
+    }
+    return paths.size ? [...paths].sort() : EMPTY_PATH_LIST;
+  }, [sortedProjects, taskItems]);
+  const loadingBranchProjectKey = loadingBranchProjectPaths.join("\0");
+  React.useEffect(() => {
+    if (!isVisible || !taskViewActive || !gitApi) return;
+    for (const path of loadingBranchProjectPaths) void ensureGitStatus(path, gitApi);
+    // Key-based: re-run only when the set of loading projects changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ensureGitStatus, gitApi, isVisible, loadingBranchProjectKey, taskViewActive]);
 
   // The pinned section renders the same card rows as the task list; remote
   // rows and the manual pinned order are kept as they are.

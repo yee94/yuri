@@ -46,15 +46,19 @@ appearing successful. Package installation failure is not package rollback.
   session, refuses URL-auth tokens, unauthenticated loopback and cross-site cookie
   requests. All paired device kinds can update their Host. This is the same
   authorization over direct HTTP and Relay; Relay grants no privilege.
-- `releases.js` selects installable exact npm versions from `latest` / `beta`
-  tags with beta sequence ordering. GitHub tag release notes are optional; a
-  failed registry lookup is not optional.
+- `releases.js` selects installable exact versions from the npm `latest` / `beta`
+  tags with beta sequence ordering. A self-contained host additionally binds the
+  plan to that version's `yuri-<version>-linux-<arch>.tar.gz.sha256` release
+  asset; a missing asset is a discovery failure, not an npm fallback. GitHub tag
+  release notes are optional; a failed registry lookup is not optional.
 - `cli.js` launches a hidden detached Node helper and awaits its preflight before
   gracefully stopping the Host. Synchronous package-manager ownership probes run
   in that helper, never on an Electron/server main thread.
-- `cli-worker.js` verifies the global install and registered daemon, locks the
-  stable installation entry, revalidates registry integrity, waits for the old
-  process to exit, installs the exact version, restarts through the global CLI
+- `cli-worker.js` verifies the installation (npm global or installer-managed
+  self-contained release) and registered daemon, locks the
+  stable installation entry, revalidates registry integrity or the archive
+  checksum, waits for the old
+  process to exit, installs the exact version, restarts through the stable CLI
   entry and verifies `/health` version/identity. Runtime, bind host, port,
   API-only mode and password environment are preserved. Passwords never enter
   task state or helper argv. Install failure attempts to restart the surviving
@@ -68,18 +72,26 @@ appearing successful. Package installation failure is not package rollback.
 
 ## Deliberate limitations
 
-Automatic CLI installation currently requires one registered, writable global
-POSIX daemon. Development checkouts, containers, Windows CLI installations,
-foreground/service-managed launches and concurrent registered CLI daemons report
-unsupported or fail preflight without stopping the Host. Use their installation
-or service manager instead. Other data scopes sharing one global installation
+Automatic CLI installation requires one registered, writable POSIX daemon on
+either distribution. An npm global installation is updated by its owning package
+manager. A self-contained Linux release is updated only when it was placed by
+`install-portable.sh` (`<install-dir>/versions/<release>` with a `current`
+symlink): the helper revalidates the archive's published SHA-256 against the
+plan, runs the bundled `install.sh --no-link` (checksum, preflight, atomic
+`current` switch, old release retained), then restarts through
+`current/yuri` and verifies `/health`. A failed download/checksum/preflight
+leaves `current` untouched. It never falls back to an npm copy. Manually
+extracted archives report `portable_installation_requires_release`.
+Containers are not excluded: the same daemon/writable/single-instance checks
+decide, and an installation on a persistent volume survives. Development
+checkouts, Windows CLI installations, systemd/PM2-managed launches,
+foreground launches and concurrent registered CLI daemons report unsupported
+or fail preflight without stopping the Host. Use their installation or service
+manager instead. Other data scopes sharing one global installation
 must be administratively drained; the installation lock prevents competing
 remote helpers but does not coordinate arbitrary external package managers.
-A self-contained Linux release reports
-`portable_installation_requires_release` without probing a package manager.
-Stop it and use its bundled release installer, or reconnect through an updated
-desktop for SSH version alignment. Neither HTTP updates nor `yuri update` may
-fall back to installing a global npm copy.
+`yuri update` on a self-contained release still refuses and points to the
+bundled installer; only the Host-owned update flow above switches releases.
 A helper killed before its `finally` cleanup leaves an installation lock in the
 user cache; an operator must verify no helper remains before removing that lock.
 Workers deliberately do not race to reap presumed stale locks.

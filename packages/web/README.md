@@ -122,9 +122,11 @@ Alternatively install the npm distribution manually:
 `bun add -g @yuriai/web` (or npm, pnpm, yarn).
 That distribution still requires Node.js 22+ and a compatible OpenCode v2 CLI
 (PATH or `OPENCODE_BINARY`; missing OpenCode is downloaded automatically).
-The self-contained distribution refuses npm-based `yuri update` and HTTP Host
-self-update; stop the Host and use its bundled `install.sh --version <version>`,
-or let an updated desktop align an SSH-managed Host on reconnect.
+`yuri update` on the self-contained distribution still refuses npm-based updates.
+An installer-managed Host can update itself over HTTP (Host self-update, which
+downloads the matching release archive); manually extracted archives must stop
+the Host and use the bundled `install.sh --version <version>`, or let an updated
+desktop align an SSH-managed Host on reconnect.
 See `scripts/portable/DOCUMENTATION.md` for build and verification boundaries.
 
 ## Usage

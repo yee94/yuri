@@ -51,8 +51,11 @@ before replacing the selected release. Portable native failures are errors,
 never automatic target-side rebuilds. SSH bundle upload is not implemented.
 
 Portable installations are not npm-owned. `yuri update` fails before stopping
-anything and points to the bundled installer; HTTP Host self-update explicitly
-reports unsupported. Stop the Host and run the installer for a specific release,
-or reconnect from the updated desktop to align the SSH Host. This first version
-does not introduce a second automatic update protocol or claim automatic rollback
-of database/state changes. Existing global npm updates are unchanged.
+anything and points to the bundled installer. HTTP Host self-update is supported
+only for installer-managed layouts (`versions/<release>` plus `current`): the
+host-update helper runs this same `install.sh --no-link` for the exact planned
+release (archive checksum bound at plan time), then restarts through
+`current/yuri`. Manual extractions report unsupported; stop the Host and run the
+installer, or reconnect from the updated desktop to align the SSH Host. There is
+no second download protocol and no automatic rollback of database/state changes.
+Existing global npm updates are unchanged.
