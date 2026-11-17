@@ -701,7 +701,16 @@ const sshManager = new ElectronSshManager({
   settingsStore,
   appVersion: APP_VERSION,
   getLocalSyncExecutor,
-  emit: (event, detail) => emitToAllWindows(event, detail),
+  emit: (event, detail) => {
+    emitToAllWindows(event, detail);
+    // App-level broadcasts reach only the main window, but every window bound
+    // to this SSH Host must learn about a replacement token to stay signed in.
+    if (event !== 'yuri:ssh-instance-status' || !detail?.id) return;
+    const main = resolveMainWindowTarget();
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win !== main && !win.isDestroyed() && desktopWindowHostId(win) === detail.id) emitToWindow(win, event, detail);
+    }
+  },
 });
 
 const directConfigSync = createDirectConfigSyncController({
@@ -3517,7 +3526,7 @@ const resolveDesktopStartupTarget = async (hostId, { localUrl, localUiUrl, local
     }
     if (!probe || !['ok', 'update-recommended'].includes(probe.status)) {
       try {
-        await sshManager.connect(hostId);
+        await sshManager.ensureConnected(hostId);
         config = readDesktopHostsConfig();
         host = config.hosts.find((entry) => entry.id === hostId);
         probe = null;
@@ -4335,7 +4344,9 @@ const prepareDesktopHost = async (hostId, browserWindow) => {
       if (host.relay) return host;
       throw new Error('SSH preparation requires a local desktop page');
     }
-    await sshManager.connect(hostId);
+    // Reuse a ready session: a forced reconnect re-mints the host token and
+    // revokes the one every already-open window of this host is holding.
+    await sshManager.ensureConnected(hostId);
     host = readDesktopHostsConfig().hosts.find((entry) => entry.id === hostId);
     if (!host) throw new Error('Host not found after SSH preparation');
   }
@@ -4994,8 +5005,14 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const localUiUrl = shouldUsePackagedUi()
         ? buildPackagedUiUrl('/index.html')
         : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
-      const host = config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID
-        ? await prepareDesktopHost(config.defaultHostId, browserWindow)
+      // A new window opens on the machine of the window it was requested from;
+      // the global default only applies when no live source window is bound.
+      const sourceHostId = browserWindow && !browserWindow.isDestroyed() ? desktopWindowHostId(browserWindow) : null;
+      const targetHostId = sourceHostId && (sourceHostId === LOCAL_HOST_ID || config.hosts.some((entry) => entry.id === sourceHostId))
+        ? sourceHostId
+        : config.defaultHostId;
+      const host = targetHostId && targetHostId !== LOCAL_HOST_ID
+        ? await prepareDesktopHost(targetHostId, browserWindow)
         : null;
       const relayHost = host && host.relay && typeof host.relay === 'object' ? host : null;
       if (relayHost) {
@@ -5240,6 +5257,16 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return null;
     }
 
+    case 'desktop_ssh_host_token_refresh': {
+      const id = String(args.hostId || '').trim();
+      if (!sshManager.readInstances().instances.some((entry) => entry.id === id)) throw new Error('SSH host not found');
+      await sshManager.ensureHostToken(id, async (host) => {
+        const probe = await probeHostWithTimeout(host.apiUrl || host.url, 3_000, host.clientToken || '', sanitizeRuntimeRequestHeaders(host.requestHeaders || {}));
+        return probe.status === 'auth';
+      });
+      return null;
+    }
+
     case 'desktop_ssh_disconnect': {
       const id = String(args.id || '').trim();
       await sshManager.disconnect(id);
@@ -5480,7 +5507,7 @@ const buildMacMenu = () => {
     {
       label: labels.file,
       submenu: [
-        { label: labels.newWindow, accelerator: 'Cmd+Shift+N', click: () => void handleInvoke(null, 'desktop_new_window') },
+        { label: labels.newWindow, accelerator: 'Cmd+Shift+N', click: () => void handleInvoke(getMenuTargetWindow(), 'desktop_new_window') },
         { type: 'separator' },
         { label: labels.newSession, accelerator: 'Cmd+N', click: () => dispatchAction('new-session') },
         // registerAccelerator:false → show the shortcut hint but let the
@@ -5595,7 +5622,7 @@ const buildAutoHiddenMenu = () => {
     {
       label: labels.file,
       submenu: [
-        { label: labels.newWindow, accelerator: 'Ctrl+Shift+N', click: () => void handleInvoke(null, 'desktop_new_window') },
+        { label: labels.newWindow, accelerator: 'Ctrl+Shift+N', click: () => void handleInvoke(getMenuTargetWindow(), 'desktop_new_window') },
         { type: 'separator' },
         { label: labels.newSession, accelerator: 'Ctrl+N', click: () => dispatchAction('new-session') },
         { type: 'separator' },
@@ -5702,7 +5729,7 @@ const setupDockMenu = () => {
   };
 
   app.dock.setMenu(Menu.buildFromTemplate([
-    { label: labels.newWindow, click: () => void handleInvoke(null, 'desktop_new_window') },
+    { label: labels.newWindow, click: () => void handleInvoke(getMenuTargetWindow(), 'desktop_new_window') },
     { type: 'separator' },
     {
       label: labels.newSession,

@@ -412,6 +412,40 @@ describe('ElectronSshManager', () => {
     }]);
   });
 
+  test('ensureHostToken keeps an accepted token and re-mints only a rejected one', async () => {
+    let logins = 0;
+    const server = http.createServer(async (req, res) => {
+      if (req.method === 'POST' && req.url === '/auth/session') {
+        logins += 1;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ authenticated: true, clientToken: 'renewed-ssh-token' }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    const localUrl = await listen(server);
+    const localPort = Number(new URL(localUrl).port);
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-ssh-manager-test-'));
+    tempDirs.push(tempDir);
+    const settingsFilePath = path.join(tempDir, 'settings.json');
+    fs.writeFileSync(settingsFilePath, JSON.stringify({ desktopHosts: [{ id: 'ssh-1', url: localUrl, apiUrl: localUrl, clientToken: 'current-ssh-token' }] }));
+    const emitted = [];
+    const manager = new ElectronSshManager({ settingsFilePath, appVersion: '0.0.0-test', emit: (event, detail) => emitted.push([event, detail]) });
+    manager.ensureConnected = vi.fn(async () => undefined);
+    manager.sessions.set('ssh-1', { localPort, uiPassword: 'ephemeral-secret', instance: { id: 'ssh-1', nickname: 'SSH Host' } });
+    manager.statuses.set('ssh-1', { id: 'ssh-1', phase: 'ready' });
+
+    await manager.ensureHostToken('ssh-1', async () => false);
+    expect(logins).toBe(0);
+    expect(emitted).toEqual([]);
+
+    await manager.ensureHostToken('ssh-1', async (host) => host.clientToken === 'current-ssh-token');
+    expect(logins).toBe(1);
+    expect(JSON.parse(fs.readFileSync(settingsFilePath, 'utf8')).desktopHosts[0].clientToken).toBe('renewed-ssh-token');
+    expect(emitted).toEqual([['yuri:ssh-instance-status', { id: 'ssh-1', phase: 'ready' }]]);
+    expect(manager.ensureConnected).toHaveBeenCalledTimes(2);
+  });
+
   test('getRoutingTable includes only ready sessions with a finite localPort', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-ssh-manager-test-'));
     tempDirs.push(tempDir);

@@ -74,6 +74,12 @@ only its own short `::before` scrim in both live and mirrored headers.
 The desktop scrim sits flush with the workspace top and is 4.5rem tall, fading vertically
 and through an alpha mask over its left/right 20% edges; the avatar/name
 control keeps a separate 0.5rem top gap (below the system safe area on phone).
+The desktop workspace also exposes window-drag segments at `--yuri-header-height`,
+only over chrome with no behavior of its own: the two flanks beside the header
+identity (`AssistantDragSegment`, sibling elements, so they never overlap the
+identity button) and the catalog header row, whose add and mark-all-read buttons
+carry `app-region-no-drag`. Header-less desktop states (loading, unavailable,
+onboarding) use one full-width strip. Phone renders none of them.
 Only its dark-theme avatar has a silhouette drop shadow; light-theme avatars
 have no filter shadow. Light surfaces use their role-specific elevation tokens. Keyboard focus
 retains an explicit outline. Incoming bubbles use the panel surface here; outgoing

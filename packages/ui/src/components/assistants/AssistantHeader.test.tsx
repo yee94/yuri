@@ -78,6 +78,20 @@ test('desktop identity is the only conversation header action and opens the curr
   expect(state.settings).toHaveBeenLastCalledWith('bot-b', undefined);
 });
 
+test('desktop drag regions never overlap the header controls', async () => {
+  await act(async () => root.render(<AssistantView />));
+  const header = host.querySelector('.yuri-assistant-conversation-header')!;
+  const identity = header.querySelector('.yuri-assistant-header-identity')!;
+  const segments = [...header.children].filter((child) => child.classList.contains('app-region-drag'));
+  expect(segments).toHaveLength(2);
+  expect(segments[0].compareDocumentPosition(identity) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(segments[1].compareDocumentPosition(identity) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  expect(identity.closest('.app-region-drag')).toBeNull();
+  const catalogHeader = host.querySelector('.yuri-assistant-catalog-panel > header')!;
+  expect(catalogHeader.classList.contains('app-region-drag')).toBe(true);
+  for (const button of catalogHeader.querySelectorAll('button')) expect(button.classList.contains('app-region-no-drag')).toBe(true);
+});
+
 test('phone identity uses its Settings stack while Back remains independently available', async () => {
   state.mobile = true;
   const back = vi.fn();

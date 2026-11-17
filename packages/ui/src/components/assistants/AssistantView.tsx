@@ -30,6 +30,20 @@ type MobileAssistantConversationHeaderProps = {
   onOpenSettings?: (assistantID: string) => void;
 };
 
+/**
+ * Window drag segment at titlebar height. Segments only occupy chrome that has
+ * no behavior of its own (the flanks beside the header identity, the catalog
+ * header row), so no interactive control ever overlaps a drag region.
+ */
+function AssistantDragSegment() {
+  return <div aria-hidden className="app-region-drag h-[var(--yuri-header-height,3rem)] min-w-0 flex-1" />;
+}
+
+/** Full-width variant for desktop states that render no header at all. */
+function AssistantDesktopDragStrip() {
+  return <div aria-hidden className="app-region-drag absolute inset-x-0 top-0" style={{ height: 'var(--yuri-header-height, 3rem)' }} />;
+}
+
 function AssistantHeaderIdentity({ assistant, onClick }: {
   assistant: NonNullable<MobileAssistantConversationHeaderProps['assistant']>;
   onClick: () => void;
@@ -200,11 +214,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
     assistantCount: snapshot?.assistants.length ?? 0,
     hasAssistant: Boolean(assistant),
   });
-  const renderState = (icon: 'cloud-off' | 'error-warning' | 'ai-agent', title: string, description?: string, action?: React.ReactNode) => <div className="yuri-assistant-wallpaper yuri-assistant-workspace relative flex h-full min-h-0 flex-col overflow-clip" data-assistant-layout={isMobileSurface ? 'mobile' : 'desktop'}>{isMobileSurface ? <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} /> : null}<div className="yuri-assistant-state flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-[calc(max(0.25rem,var(--yuri-safe-area-top,0px))+var(--yuri-mobile-detail-navigation-height,3.5rem))] text-center"><Icon name={icon} className="size-6 text-muted-foreground" /><h1 className="mt-4 typography-ui-header font-semibold">{title}</h1>{description ? <p className="mt-2 max-w-md typography-ui text-muted-foreground">{description}</p> : null}{action ? <div className="mt-5">{action}</div> : null}</div></div>;
+  const renderState = (icon: 'cloud-off' | 'error-warning' | 'ai-agent', title: string, description?: string, action?: React.ReactNode) => <div className="yuri-assistant-wallpaper yuri-assistant-workspace relative flex h-full min-h-0 flex-col overflow-clip" data-assistant-layout={isMobileSurface ? 'mobile' : 'desktop'}>{isMobileSurface ? <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} /> : <AssistantDesktopDragStrip />}<div className="yuri-assistant-state flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-[calc(max(0.25rem,var(--yuri-safe-area-top,0px))+var(--yuri-mobile-detail-navigation-height,3.5rem))] text-center"><Icon name={icon} className="size-6 text-muted-foreground" /><h1 className="mt-4 typography-ui-header font-semibold">{title}</h1>{description ? <p className="mt-2 max-w-md typography-ui text-muted-foreground">{description}</p> : null}{action ? <div className="mt-5">{action}</div> : null}</div></div>;
   if (workspaceState === 'loading') {
     return (
       <div className="yuri-assistant-wallpaper yuri-assistant-workspace relative flex h-full min-h-0 flex-col overflow-clip" data-assistant-layout={isMobileSurface ? 'mobile' : 'desktop'}>
-        {isMobileSurface ? <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} /> : null}
+        {isMobileSurface ? <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} /> : <AssistantDesktopDragStrip />}
         <div
           className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-[calc(max(0.25rem,var(--yuri-safe-area-top,0px))+var(--yuri-mobile-detail-navigation-height,3.5rem))] text-center"
           aria-busy="true"
@@ -224,14 +238,14 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
     <div className="relative flex h-full min-h-0 overflow-clip yuri-assistant-wallpaper yuri-assistant-workspace" data-presentation="workspace" data-assistant-layout={isMobileSurface ? 'mobile' : 'desktop'}>
       {isMobileSurface ? null : (
         <section className="flex h-full min-h-0 w-[clamp(15rem,20vw,17.5rem)] shrink-0 flex-col overflow-clip yuri-assistant-catalog-panel">
-          <header className="flex shrink-0 items-center gap-3 px-4 py-4 sm:px-5">
+          <header className="app-region-drag flex shrink-0 select-none items-center gap-3 px-4 py-4 sm:px-5">
             <h1 className="min-w-0 truncate typography-ui-label font-semibold text-foreground">{t('assistants.title')}</h1>
             <AssistantMarkAllReadButton snapshot={snapshot} compact rowClassName="flex min-w-0 flex-1 justify-end" />
             <Button
               type="button"
               variant="mobileGlass"
               size="mobileIcon"
-              className="size-8 min-h-0 min-w-0"
+              className="app-region-no-drag size-8 min-h-0 min-w-0"
               aria-label={t('assistants.settings.create')}
               onClick={openCreateSettings}
             >
@@ -276,7 +290,9 @@ export const AssistantView: React.FC<AssistantViewProps> = ({ activeOverride, on
           <MobileAssistantConversationHeader assistant={assistant} onBack={handleMobileBack} onOpenSettings={onMobileOpenSettings} />
         ) : (
           <header className="yuri-assistant-conversation-header">
+            <AssistantDragSegment />
             <AssistantHeaderIdentity assistant={assistant} onClick={openConversationSettings} />
+            <AssistantDragSegment />
           </header>
         )}
         <AssistantConversationSurface

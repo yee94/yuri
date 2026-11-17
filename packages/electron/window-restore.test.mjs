@@ -198,7 +198,7 @@ describe('startup instance resolution', () => {
     const probe = vi.fn(async () => ({ status: 'ok' }));
     const context = vm.createContext({
       readDesktopHostsConfig: () => ({ hosts: [host], defaultHostId: 'local' }),
-      sshManager: { readInstances: () => ({ instances: hostOverrides.ssh ? [{ id: host.id }] : [] }), connect },
+      sshManager: { readInstances: () => ({ instances: hostOverrides.ssh ? [{ id: host.id }] : [] }), ensureConnected: connect },
       readDesktopLocalClientToken: () => 'fixture-local-token',
       sanitizeRuntimeRequestHeaders: (headers) => headers,
       shouldUsePackagedUi: () => mode === 'bundled', probeHostWithTimeout: probe,

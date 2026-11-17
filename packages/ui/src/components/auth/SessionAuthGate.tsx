@@ -20,7 +20,8 @@ import { activateRelayTunnel, deactivateRelayTunnel, getActiveRelayTunnel } from
 import { getRuntimeAuthGeneration, getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
 import { getActiveRelayDescriptor, getRuntimeApiBaseUrl, getRuntimeGeneration, getRuntimeKey, isRuntimeEndpointIdentityChange, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 import { desktopHostsGet, desktopHostsSet, desktopOpenLocalHostSettings, getDesktopHostApiUrl, isPairedDesktopHost, normalizeHostUrl } from '@/lib/desktopHosts';
-import { getInjectedBootOutcome } from '@/lib/desktopBoot';
+import { listenDesktopSshStatus } from '@/lib/desktopSsh';
+import { resolveActiveDesktopHostId, resyncDesktopSshHostRuntime, type DesktopSshHostResync } from '@/lib/desktopSshHostRuntime';
 import { resolveStatusCheckFailureState, type GateState } from './sessionAuthGateState';
 import {
   authenticateWithPasskey,
@@ -43,6 +44,9 @@ const STATUS_CHECK_ENDPOINT = '/auth/session';
 // answers (200/401/429) are never retried.
 const TRANSIENT_RETRY_MAX_ATTEMPTS = 4;
 const TRANSIENT_RETRY_BASE_DELAY_MS = 1_500;
+// Bounded shell re-mints for a rejected SSH host token before settling on the
+// reconnect screen; reset whenever the session authenticates.
+const SSH_RESYNC_MAX_ATTEMPTS = 2;
 const TRUST_DEVICE_STORAGE_KEY = 'yuri.uiAuth.trustDevice';
 const LOCAL_DESKTOP_CLIENT_KIND = 'desktop-local';
 const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
@@ -169,9 +173,7 @@ const shouldUseDesktopShellPasswordLogin = (): boolean => {
 const activePairedDesktopHost = async () => {
   if (!isDesktopShell()) return null;
   const runtimeKey = getRuntimeKey();
-  const boot = getInjectedBootOutcome();
-  const hostId = runtimeKey.startsWith('host:') ? runtimeKey.slice(5)
-    : boot?.target === 'remote' && boot.status === 'ok' && sameOrigin(boot.url, getRuntimeApiBaseUrl()) ? boot.hostId : null;
+  const hostId = resolveActiveDesktopHostId();
   if (!hostId) return null;
   const config = await desktopHostsGet().catch(() => null);
   if (getRuntimeKey() !== runtimeKey || !config) return undefined;
@@ -422,6 +424,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   const transientRetryAttemptRef = React.useRef(0);
   const transientRetryTimerRef = React.useRef<number | null>(null);
   const checkStatusRef = React.useRef<(() => Promise<void>) | null>(null);
+  const sshResyncAttemptRef = React.useRef(0);
 
   const clearTransientRetry = React.useCallback(() => {
     if (transientRetryTimerRef.current !== null) {
@@ -479,6 +482,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
 
         if (response.ok) {
           resetTransientRetry();
+          sshResyncAttemptRef.current = 0;
           setState('authenticated');
           setIsTunnelLocked(false);
           setErrorMessage('');
@@ -486,6 +490,27 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           return;
         }
         if (response.status === 401 || (response.status === 403 && (relay || isDesktopShell()))) {
+          if (!relay && isDesktopShell()) {
+            // SSH hosts carry an ephemeral remote UI password the user never
+            // sees: a rejected token means a reconnect superseded it, so follow
+            // the stored token (re-minting through the shell a bounded number
+            // of times) instead of showing a password prompt nobody can answer.
+            const refresh = sshResyncAttemptRef.current < SSH_RESYNC_MAX_ATTEMPTS;
+            if (refresh) sshResyncAttemptRef.current += 1;
+            const resync = await resyncDesktopSshHostRuntime({ refresh }).catch((): DesktopSshHostResync => 'not-ssh');
+            if (resync === 'switched') {
+              void checkStatusRef.current?.();
+              return;
+            }
+            if (resync !== 'not-ssh') {
+              if (!isCurrent()) return;
+              resetTransientRetry();
+              setIsTunnelLocked(false);
+              setRetryAfter(undefined);
+              setState('ssh-expired');
+              return;
+            }
+          }
           const host = relay ? true : await activePairedDesktopHost();
           if (!isCurrent()) return;
           if (host === undefined) {
@@ -590,6 +615,27 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
     }, { desktop: isDesktopShell() });
   }, [checkStatus, resetTransientRetry, skipAuth, state]);
 
+  // An SSH (re)connect mints a replacement token that revokes the previous one.
+  // Follow it as soon as the tunnel reports ready so bound windows never 401.
+  React.useEffect(() => {
+    if (skipAuth || !isDesktopShell()) return;
+    let disposed = false;
+    let unlisten: (() => Promise<void>) | null = null;
+    void listenDesktopSshStatus((status) => {
+      if (status.phase !== 'ready') return;
+      void resyncDesktopSshHostRuntime({ hostId: status.id }).then((result) => {
+        if (!disposed && result === 'switched') void checkStatusRef.current?.();
+      }).catch(() => undefined);
+    }).then((stop) => {
+      if (disposed) void stop();
+      else unlisten = stop;
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      void unlisten?.();
+    };
+  }, [skipAuth]);
+
   // The startup splash lives outside the React root so App can retain it while
   // session startup is in progress. When authentication blocks App from
   // mounting, however, App cannot dismiss that layer and it would cover this
@@ -641,7 +687,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   }, [checkStatus, resetTransientRetry, skipAuth]);
 
   React.useEffect(() => {
-    if (!skipAuth && (state === 'locked' || state === 'pairing-expired')) {
+    if (!skipAuth && (state === 'locked' || state === 'pairing-expired' || state === 'ssh-expired')) {
       hasResyncedRef.current = false;
       setSettingsReady(false);
     }
@@ -943,6 +989,29 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           </div>
           <Button type="button" className="w-full" onClick={() => { void desktopOpenLocalHostSettings().catch(() => toast.error(t('sessionAuth.error.networkTitle'))); }}>
             {t('settings.remoteInstances.openLocalManager')}
+          </Button>
+          <DesktopHostSwitcherInline />
+        </div>
+      </AuthShell>
+    );
+  }
+
+  if (state === 'ssh-expired') {
+    return (
+      <AuthShell>
+        <div className="flex w-full max-w-xs flex-col items-center gap-6 text-center">
+          <Icon name="computer" className="size-8 text-muted-foreground" />
+          <div className="space-y-2">
+            <h1 className="text-xl font-semibold">{t('sessionAuth.sshExpired.title')}</h1>
+            <p className="typography-meta text-muted-foreground">{t('sessionAuth.sshExpired.description')}</p>
+          </div>
+          <Button type="button" className="w-full" onClick={() => {
+            sshResyncAttemptRef.current = 0;
+            resetTransientRetry();
+            setState('pending');
+            void checkStatus();
+          }}>
+            {t('sessionAuth.sshExpired.reconnect')}
           </Button>
           <DesktopHostSwitcherInline />
         </div>

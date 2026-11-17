@@ -36,7 +36,7 @@ describe('stored SSH relay authorization', () => {
   });
 });
 
-const fixture = (ssh = true, packaged = true, local = true, paired = false, application = local) => {
+const fixture = (ssh = true, packaged = true, local = true, paired = false, application = local, sourceHostId = null) => {
   let host = { id: 'ssh-test', url: 'http://127.0.0.1:4000', clientToken: 'old-test-token',
     ...(paired ? { relay: { serverId: 'fixture', relayUrl: 'wss://relay.example', hostEncPubJwk: {} } } : {}) };
   let finish;
@@ -50,11 +50,12 @@ const fixture = (ssh = true, packaged = true, local = true, paired = false, appl
   const createWindow = vi.fn();
   const context = vm.createContext({
     URL,
-    browserWindow: { webContents: {} },
+    browserWindow: { webContents: {}, isDestroyed: () => false },
+    desktopWindowHostId: () => sourceHostId,
     isLocalSender: () => local,
     isLocalUiSender: () => application,
     readDesktopHostsConfig: () => ({ hosts: [host], defaultHostId: host.id }),
-    sshManager: { readInstances: () => ({ instances: ssh ? [{ id: host.id }] : [] }), connect },
+    sshManager: { readInstances: () => ({ instances: ssh ? [{ id: host.id }] : [] }), ensureConnected: connect },
     LOCAL_HOST_ID: 'local',
     state: { localUiOrigin: 'http://localhost:5173', sidecarUrl: 'http://localhost:3000', unreachableHosts: new Set() },
     shouldUsePackagedUi: () => packaged,
@@ -96,6 +97,13 @@ describe('SSH preparation before opening desktop windows', () => {
     }
   }
 
+  it('opens a new window on the source window machine instead of the global default', async () => {
+    const f = fixture(true, true, true, false, true, 'local');
+    await f.invoke('desktop_new_window');
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.createWindow).toHaveBeenCalledWith('yuri-ui://app/index.html', expect.objectContaining({ apiBaseUrl: 'http://localhost:3000' }));
+  });
+
   it('leaves non-SSH hosts on their ordinary connection path', async () => {
     const f = fixture(false);
     await f.invoke('desktop_new_window_for_host', { hostId: 'ssh-test' });
@@ -131,7 +139,7 @@ describe('SSH preparation before opening desktop windows', () => {
     const context = vm.createContext({
       readDesktopHostsConfig: () => ({ hosts: [host] }), isLocalSender: () => false,
       isLocalUiSender: () => false,
-      sshManager: { readInstances: () => ({ instances: [{ id: host.id }] }), connect },
+      sshManager: { readInstances: () => ({ instances: [{ id: host.id }] }), ensureConnected: connect },
     });
     vm.runInContext(`${prepareSource}\nglobalThis.prepare = prepareDesktopHost;`, context);
     await expect(context.prepare(host.id, { webContents: {} })).resolves.toEqual(host);

@@ -22,7 +22,7 @@ export function AssistantMarkAllReadButton({ snapshot, rowClassName, compact = f
   });
   const hasUnread = snapshot.assistants.some((assistant) => (assistant.unreadCount ?? 0) > 0);
   if (!compact && !hasUnread) return null;
-  return <div className={rowClassName} style={compact && !hasUnread ? { visibility: 'hidden' } : undefined}><Button type="button" variant={mobile ? 'mobileGlass' : 'ghost'} size={mobile ? 'mobileIcon' : 'icon'} onClick={markAll}
+  return <div className={rowClassName} style={compact && !hasUnread ? { visibility: 'hidden' } : undefined}><Button type="button" variant={mobile ? 'mobileGlass' : 'ghost'} size={mobile ? 'mobileIcon' : 'icon'} className="app-region-no-drag" onClick={markAll}
     aria-label={t('assistants.unread.markAll')}
     title={t('assistants.unread.markAll')}
     disabled={pending || !snapshot.assistants.some((assistant) => (assistant.unreadCount ?? 0) > 0 && assistant.readTip)}

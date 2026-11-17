@@ -153,6 +153,7 @@ let runtimeFetchRejects = true;
 let runtimeStatus = 401;
 let runtimeKey = 'auth-gate-test-runtime';
 let desktopHosts: unknown[] = [];
+let sshResync: 'not-ssh' | 'unchanged' | 'switched' | 'failed' = 'not-ssh';
 const listeners = new Map<string, Set<() => void>>();
 let relayStatus: RelayTunnelStatus | null = null;
 const relayListeners = new Set<() => void>();
@@ -288,6 +289,15 @@ mock.module('@/lib/desktopHosts', () => ({
   normalizeHostUrl: mock(() => ''),
 }));
 
+mock.module('@/lib/desktopSsh', () => ({
+  listenDesktopSshStatus: mock(() => Promise.resolve(async () => {})),
+}));
+
+mock.module('@/lib/desktopSshHostRuntime', () => ({
+  resolveActiveDesktopHostId: () => (runtimeKey.startsWith('host:') ? runtimeKey.slice(5) : null),
+  resyncDesktopSshHostRuntime: mock(() => Promise.resolve(sshResync)),
+}));
+
 mock.module('@/lib/passkeys', () => ({
   authenticateWithPasskey: mock(() => Promise.resolve(null)),
   cancelPasskeyCeremony: mock(() => undefined),
@@ -367,6 +377,17 @@ describe('SessionAuthGate status-check failure behavior', () => {
       expect(collectText(await renderGate())).toContain('sessionAuth.locked.unlockTitle');
     }
   });
+  test('a rejected SSH host token shows reconnect instead of the ephemeral UI password', async () => {
+    for (const result of ['unchanged', 'failed'] as const) {
+      resetHarness(); desktopShell = true; runtimeFetchRejects = false; runtimeStatus = 401;
+      runtimeKey = 'host:ssh'; sshResync = result;
+      const text = collectText(await renderGate());
+      expect(text).toContain('sessionAuth.sshExpired.title');
+      expect(text).not.toContain('sessionAuth.locked.unlockTitle');
+    }
+    sshResync = 'not-ssh'; runtimeKey = 'auth-gate-test-runtime';
+  });
+
   test('a rejected paired desktop host shows re-pairing instead of a password', async () => {
     resetHarness();
     desktopShell = true;

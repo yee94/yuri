@@ -3418,4 +3418,7 @@ export const dict: Record<I18nKey, string> = {
   "opencodeUpgrade.screen.failedGeneric": "A instalação não terminou. O OpenCode continua na versão anterior.",
   "opencodeUpgrade.screen.guide": "Guia de instalação",
   "opencodeUpgrade.screen.manualGuidance": "A instalação automática não está disponível neste runtime. Atualize o OpenCode você mesmo e verifique novamente.",
+  "sessionAuth.sshExpired.title": "A conexão SSH precisa ser refeita",
+  "sessionAuth.sshExpired.description": "A conexão SSH foi renovada, então o login desta janela não é mais válido. Reconecte para continuar; nenhuma senha é necessária.",
+  "sessionAuth.sshExpired.reconnect": "Reconectar",
 };

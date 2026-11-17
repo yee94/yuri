@@ -21,6 +21,7 @@ import type { AttachedFile, SessionContextUsage, SessionWorktreeAttachment } fro
 import type { WorktreeMetadata } from "@/types/worktree"
 import { resolveAgentSendIdentity } from "@/lib/opencode/agent-identity"
 import { opencodeClient } from "@/lib/opencode/client"
+import { isVSCodeRuntime } from "@/lib/desktop"
 import { resolveSendSelection } from "@/sync/session-send-selection"
 export { resolveSendSelection } from "@/sync/session-send-selection"
 import { runtimeFetch, setRuntimeInteractiveSessionRequestId } from "@/lib/runtime-fetch"
@@ -751,6 +752,15 @@ const persistDraftTarget = (target: PersistedDraftTarget): void => {
 const resolveDraftProjectForDirectory: typeof resolveProjectForSessionDirectory = (projects, worktrees, directory) =>
   resolveProjectForSessionDirectory(projects.filter((project) => !project.hostId), worktrees, directory)
 
+// A session created outside every registered project never appears in the project list
+// (e.g. the runtime root on a fresh install), so the draft target is registered on send.
+const draftLacksLocalProject = (draft: NewSessionDraftState, directory: string | null): boolean => {
+  if (isVSCodeRuntime()) return false
+  const projects = useProjectsStore.getState().projects.filter((project) => !project.hostId)
+  if (draft.selectedProjectId && projects.some((project) => project.id === draft.selectedProjectId)) return false
+  return resolveDraftProjectForDirectory(projects, useSessionUIStore.getState().availableWorktreesByProject, directory) === null
+}
+
 const getAttachmentForSession = (sessionId: string | null | undefined): SessionWorktreeAttachment | undefined => {
   if (!sessionId) return undefined
   return useSessionWorktreeStore.getState().getAttachment(sessionId)
@@ -1133,14 +1143,18 @@ async function finalizeDraftSession(
 
 async function resolveDraftDirectory(draft: NewSessionDraftState): Promise<{ directory: string | null; projectId: string | null }> {
   let directoryOverride = draft.bootstrapPendingDirectory ?? draft.directoryOverride ?? null
-  const projectId = draft.selectedProjectId ?? null
+  let projectId = draft.selectedProjectId ?? null
   if (draft.pendingWorktreeRequestId) {
     directoryOverride = await waitForPendingDraftWorktreeRequest(draft.pendingWorktreeRequestId)
     useSessionUIStore.getState().resolvePendingDraftWorktreeTarget(draft.pendingWorktreeRequestId, directoryOverride)
   }
   await waitForWorktreeBootstrapIfConfigured(directoryOverride, projectId)
   const resolvedDir = directoryOverride ?? opencodeClient.getDirectory()
-  return { directory: normalizePath(resolvedDir), projectId }
+  const directory = normalizePath(resolvedDir)
+  if (directory && draftLacksLocalProject(draft, directory)) {
+    projectId = useProjectsStore.getState().addProject(directory)?.id ?? projectId
+  }
+  return { directory, projectId }
 }
 
 async function materializeClaimedDraftSession(selection: {

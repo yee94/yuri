@@ -132,6 +132,17 @@ waits for this bounded recovery rather than rendering the local runtime after te
 seconds. Transport and SSH command timeouts remain owned by their respective
 modules. Exhausted recovery renders the remote-unavailable screen. An unavailable
 or deleted target retains its recovery state instead of silently becoming local.
+New windows (menu or `desktop_new_window`) open on the Host of the window they
+were requested from; the global default Host applies only without a bound source
+window. Opening, switching to or restoring an SSH Host reuses a ready session
+(`ensureConnected`) instead of forcing a reconnect, because every SSH bootstrap
+mints a replacement `desktop-local` client token that revokes the previous one.
+After a reconnect or re-mint, the ready SSH status makes each window bound to that
+Host adopt the stored token without reloading. A window whose token is still
+rejected calls `desktop_ssh_host_token_refresh`, which re-mints with the in-memory
+session password only when the stored token fails its probe; SSH windows never
+show the UI password prompt for the ephemeral remote password and fall back to a
+reconnect screen instead.
 Startup/quit snapshots cannot overwrite the session with partially opened/closed
 windows, and shutdown waits for the final settings write. Legacy settings without
 `desktopWindowStates` retain single-window geometry/default-Host behavior. An

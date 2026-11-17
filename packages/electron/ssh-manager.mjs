@@ -1660,6 +1660,22 @@ export class ElectronSshManager {
     return token;
   }
 
+  /**
+   * Ensure a ready tunnel, then re-mint the stored host token only when the
+   * forwarded server rejects it. A healthy stored token is left untouched so
+   * windows of the same host never revoke each other's credential.
+   */
+  async ensureHostToken(instanceId, isTokenRejected) {
+    const id = String(instanceId || '').trim();
+    await this.ensureConnected(id);
+    const host = this.readSettingsRoot().desktopHosts?.find((entry) => entry?.id === id);
+    if (host?.clientToken && !(await isTokenRejected(host))) return;
+    if (!(await this.mintSshHostToken(id))) throw new Error('SSH host token could not be renewed');
+    // Announce the replacement so every window bound to this host adopts it.
+    const status = this.statuses.get(id);
+    if (status) this.emit(SSH_STATUS_EVENT, status);
+  }
+
   extractCookieHeader(response) {
     const getSetCookie = typeof response.headers?.getSetCookie === 'function'
       ? response.headers.getSetCookie.bind(response.headers)
