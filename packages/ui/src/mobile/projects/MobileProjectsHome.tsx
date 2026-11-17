@@ -23,7 +23,6 @@ import { PINNED_SESSION_ORDER_SCOPE } from '@/components/session/sidebar/pinnedS
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
-import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
 import {
   useSessionActivity,
   useSessionPermissions,
@@ -104,7 +103,6 @@ export type MobileProjectsHomeProps = {
   renderRemoteProject?: (project: import('@/lib/remote-projects/types').RemoteProject) => React.ReactNode;
   remoteProjects?: import('@/lib/remote-projects/types').RemoteProject[];
   projectOrderIds?: string[];
-  remoteError?: string;
   hostRegistry?: HostRuntimeRegistry;
   projects: MobileProjectHomeItem[];
   pinnedSessions: MobileSessionTreeNode[];
@@ -546,7 +544,6 @@ export function MobileProjectsHome({
   renderRemoteProject,
   remoteProjects,
   projectOrderIds,
-  remoteError,
   hostRegistry,
   projects,
   pinnedSessions,
@@ -572,6 +569,7 @@ export function MobileProjectsHome({
   task,
 }: MobileProjectsHomeProps) {
   const { t } = useI18n();
+  const visibleRemoteProjects = renderRemoteProject ? remoteProjects ?? [] : [];
   const [pinnedExpanded, setPinnedExpanded] = React.useState(true);
   const [menuOpen, setMenuOpen] = React.useState(false);
 
@@ -705,7 +703,7 @@ export function MobileProjectsHome({
         </MobileFloatingSurface>
       ) : null}
 
-      {task?.view === 'tasks' ? null : projects.length === 0 && !remoteProjects?.length ? (
+      {task?.view === 'tasks' ? null : projects.length === 0 && !visibleRemoteProjects.length ? (
         <section className="flex min-h-[52dvh] flex-col items-center justify-center px-6 text-center">
           <span className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-[var(--surface-muted)] text-muted-foreground">
             <Icon name="folder-add" className="size-6" />
@@ -718,10 +716,10 @@ export function MobileProjectsHome({
           </Button>
         </section>
       ) : (
-        [...projects.map((project) => ({ kind: 'local' as const, project })), ...(remoteProjects ?? []).map((project) => ({ kind: 'remote' as const, project }))]
+        [...projects.map((project) => ({ kind: 'local' as const, project })), ...visibleRemoteProjects.map((project) => ({ kind: 'remote' as const, project }))]
           .sort((a, b) => projectOrderIds ? projectOrderIds.indexOf(a.project.id) - projectOrderIds.indexOf(b.project.id) : 0)
           .map((entry) => {
-          if (entry.kind === 'remote') return renderRemoteProject ? <React.Fragment key={entry.project.id}>{renderRemoteProject(entry.project)}</React.Fragment> : <div key={entry.project.id} className="text-xs text-muted-foreground"><span>{entry.project.label || entry.project.path} · {entry.project.hostId}</span><p role={remoteError ? 'alert' : 'status'}>{remoteError || t(supportsRemoteProjects() ? 'remoteProjects.state.connecting' : 'remoteProjects.unsupported')}</p></div>;
+          if (entry.kind === 'remote') return <React.Fragment key={entry.project.id}>{renderRemoteProject?.(entry.project)}</React.Fragment>;
           const project = entry.project;
           const projectExpanded = project.expanded;
 

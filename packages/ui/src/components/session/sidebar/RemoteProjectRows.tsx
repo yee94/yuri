@@ -4,7 +4,11 @@ import { Icon } from '@/components/icon/Icon';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { useI18n } from '@/lib/i18n';
-import { cn } from '@/lib/utils';
+import { cn, formatDirectoryName } from '@/lib/utils';
+import type { RemoteProject } from '@/lib/remote-projects/types';
+import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
+import { PendingRemoteHostIndicator } from '../RemoteHostIndicator';
+import { useRemoteHostDisplayName } from '@/lib/remote-projects/host-names';
 import { SessionBusyIndicator } from '../SessionBusyIndicator';
 import { SortableProjectItem } from './sortableItems';
 import { renderHighlightedText } from './utils';
@@ -25,6 +29,23 @@ function DesktopRemoteProjectShell({ project, registry, label, collapsed, active
     hideDirectoryControls={false} mobileVariant={false} alwaysShowActions={false} reorderEnabled={reorderEnabled} onToggle={actions.toggle} onNewSession={actions.newSession}
     onNewWorktreeSession={actions.newWorktree} onSyncSessions={actions.sync} onRenameStart={actions.edit} onClose={actions.close}
     openSidebarMenuKey={menu} setOpenSidebarMenuKey={setMenu}>{children}</SortableProjectItem>;
+}
+
+/** Same row as a resolved project, rendered before a host registry exists; only its host tag differs (loading + status tooltip). */
+export function PendingRemoteProjectRow({ project, loading, error, mobile, reorderEnabled }: { project: RemoteProject; loading: boolean; error?: string; mobile: boolean; reorderEnabled?: boolean }) {
+  const { t } = useI18n();
+  const [menu, setMenu] = React.useState<string | null>(null);
+  const noop = () => undefined;
+  const status = t(loading ? 'remoteProjects.state.connecting' : supportsRemoteProjects() ? 'remoteProjects.state.offline' : 'remoteProjects.unsupported');
+  const hostName = useRemoteHostDisplayName(project.hostId) ?? project.hostId;
+  return <SortableProjectItem id={project.id} hostId={project.hostId} remoteState={project.remoteState}
+    hostTag={<PendingRemoteHostIndicator hostId={project.hostId} name={hostName} loading={loading} status={status} error={loading ? undefined : error} />}
+    projectLabel={project.label || formatDirectoryName(project.path) || project.path} projectDescription={project.path}
+    projectIcon={project.icon ?? undefined} projectColor={project.color ?? undefined}
+    isCollapsed isActiveProject={false} isRepo={false}
+    hideDirectoryControls mobileVariant={mobile} alwaysShowActions={false} reorderEnabled={reorderEnabled}
+    showCreateButtons={false} onToggle={noop} onNewSession={noop} onSyncSessions={noop} onRenameStart={noop} onClose={noop}
+    openSidebarMenuKey={menu} setOpenSidebarMenuKey={setMenu} />;
 }
 
 export function RemoteSummaryRow({ session, active, search, selected, pending, pinDisabled = pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, depth = 1, onSelect, onMultiSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {

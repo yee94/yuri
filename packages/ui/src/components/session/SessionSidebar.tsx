@@ -2920,10 +2920,11 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       <SidebarProjectsList
         remoteProjects={remoteProjects}
         hostRegistry={remoteNavigation.registry}
+        remoteCatalogLoading={remoteNavigation.catalog.isLoading}
+        remoteCatalogError={remoteNavigation.catalog.error?.message}
         projectOrderIds={sortProjectEntries(allProjects, projectSortOrder).map((project) => project.id)}
         onRemoteActivityItems={handleRemoteActivityItems}
         remoteSearch={sessionSearchQuery}
-        remoteError={remoteNavigation.catalog.error?.message}
         onRemoteNavigationTargets={handleRemoteNavigationTargets}
         topContent={topContent}
         tabLeadingContent={pinnedInsideTab ? pinnedSection : undefined}

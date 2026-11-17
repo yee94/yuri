@@ -11,7 +11,8 @@ export function useRemoteProjectNavigation(enabled = true) {
   const catalog = useRemoteHostCatalog(enabled && hasRemoteProjects);
   const registry = catalog.data?.supported ? getHostRuntimeRegistry(catalog.data) : undefined;
   React.useEffect(() => {
-    if (catalog.data?.supported) useProjectsStore.getState().reconcileRemoteProjects(catalog.data.projects, catalog.data.hubId);
+    // A runtime that is not a PC Hub owns no Remote Project references; any left in the cache belong to another Hub.
+    if (catalog.data) useProjectsStore.getState().reconcileRemoteProjects(catalog.data.supported ? catalog.data.projects : [], catalog.data.hubId);
   }, [catalog.data]);
   return { registry, catalog };
 }

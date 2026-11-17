@@ -24,6 +24,8 @@ export interface SortableProjectItemProps {
   hostId?: string;
   remoteState?: RemoteProject['remoteState'];
   hostRegistry?: HostRuntimeRegistry;
+  /** Host tag shown before a registry exists; ignored once `hostRegistry` is present. */
+  hostTag?: React.ReactNode;
   disabled?: boolean;
   projectLabel: string;
   projectDescription: string;
@@ -64,6 +66,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
   hostId,
   remoteState,
   hostRegistry,
+  hostTag,
   disabled = false,
   projectLabel,
   projectDescription,
@@ -164,6 +167,10 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
     onToggle();
   }, [onToggle]);
 
+  const remoteHostTag = hostId && hostRegistry
+    ? <RemoteHostIndicator registry={hostRegistry} hostId={hostId} remoteState={remoteState} compactName />
+    : hostTag ?? null;
+  const isRemote = remoteHostTag !== null;
   const remoteActionCount = Number(!hideDirectoryControls)
     + Number(showCreateButtons && Boolean(onNewSession))
     + Number(showCreateButtons && worktreeActionAvailable && !hideDirectoryControls && Boolean(onNewWorktreeSession));
@@ -196,11 +203,11 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                       onMouseDown={handleToggleMouseDown}
                       onClick={handleToggleClick}
                        {...(reorderEnabled ? listeners : {})}
-                       style={hostId && hostRegistry ? { '--project-actions-clip': `${remoteActionCount * 1.75 + 0.25}rem` } as React.CSSProperties : undefined}
+                       style={isRemote ? { '--project-actions-clip': `${remoteActionCount * 1.75 + 0.25}rem` } as React.CSSProperties : undefined}
                       className={cn(
                         'flex-1 min-w-0 flex items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-md transition-[padding]',
                         reorderEnabled ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
-                        hostId && hostRegistry
+                        isRemote
                           ? [
                             'pr-0 [--project-title-mask:linear-gradient(to_right,#000_calc(100%-var(--project-actions-clip)-8px),transparent_calc(100%-var(--project-actions-clip)))]',
                             remoteActionCount > 0 && (alwaysShowActions || isMenuOpen
@@ -214,7 +221,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                     >
                     <Tooltip>
                     <TooltipTrigger asChild>
-                    <span className={cn('flex min-w-0 items-center gap-1.5', hostId && hostRegistry && 'max-w-[60%] shrink-0')}>
+                    <span className={cn('flex min-w-0 items-center gap-1.5', isRemote && 'max-w-[60%] shrink-0')}>
                     <span
                       className="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center overflow-hidden text-foreground"
                     >
@@ -232,7 +239,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                           )}>
                             {isCollapsed ? <Icon name="arrow-right-s" className="h-3.5 w-3.5" /> : <Icon name="arrow-down-s" className="h-3.5 w-3.5" />}
                           </span>
-                          <span className={cn(hostId && hostRegistry ? 'inline-flex items-center' : 'relative top-px', alwaysShowActions ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden')}>
+                          <span className={cn(isRemote ? 'inline-flex items-center' : 'relative top-px', alwaysShowActions ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden')}>
                             {projectIconSlot ?? (projectIconImage ? (
                               <ProjectIconImage
                                 project={{ id, iconImage: projectIconImage }}
@@ -246,7 +253,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                     </span>
                     <span className={cn(
                       'text-[14px] font-normal truncate lowercase',
-                      hostId && hostRegistry && 'leading-5',
+                      isRemote && 'leading-5',
                       isActiveProject ? 'text-foreground' : 'text-foreground group-hover/project:text-foreground',
                     )}>
                       {projectLabel}
@@ -257,15 +264,15 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                   {projectDescription}
                 </TooltipContent>
               </Tooltip>
-                    {hostId && hostRegistry ? <RemoteHostIndicator registry={hostRegistry} hostId={hostId} remoteState={remoteState} compactName /> : null}
+                    {remoteHostTag}
                   </button>
 
-              <div className={cn(hostId && hostRegistry ? [
+              <div className={cn(isRemote ? [
                 'absolute right-0.5 top-1/2 z-10 flex h-8 -translate-y-1/2 items-center gap-1 rounded-r-lg pl-3 pr-0.5',
                 alwaysShowActions || isMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-has-[:focus-visible]/project:opacity-100 group-has-[:focus-visible]/project:pointer-events-auto',
               ] : 'contents')}>
               <div className={cn(
-                hostId && hostRegistry ? 'contents' : ['absolute top-1/2 z-10 flex -translate-y-1/2 items-center gap-1', showCreateButtons ? 'right-7' : 'right-0.5'],
+                isRemote ? 'contents' : ['absolute top-1/2 z-10 flex -translate-y-1/2 items-center gap-1', showCreateButtons ? 'right-7' : 'right-0.5'],
               )}>
                 {showCreateButtons && worktreeActionAvailable && !hideDirectoryControls && onNewWorktreeSession ? (
                   <Tooltip>
@@ -278,7 +285,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                         }}
                         className={cn(
                         'inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:text-foreground transition-opacity',
-                          alwaysShowActions || (hostId && hostRegistry && isMenuOpen) ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-has-[:focus-visible]/project:opacity-100 group-has-[:focus-visible]/project:pointer-events-auto',
+                          alwaysShowActions || (isRemote && isMenuOpen) ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-has-[:focus-visible]/project:opacity-100 group-has-[:focus-visible]/project:pointer-events-auto',
                         )}
                         aria-label={t('sessions.sidebar.project.actions.newWorktree')}
                       >
@@ -323,7 +330,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
               </div>
 
               {showCreateButtons && onNewSession ? (
-                <div className={cn(!(hostId && hostRegistry) && 'absolute right-0.5 top-1/2 z-10 -translate-y-1/2')}>
+                <div className={cn(!isRemote && 'absolute right-0.5 top-1/2 z-10 -translate-y-1/2')}>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -334,7 +341,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                         }}
                         className={cn(
                           'inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition-opacity',
-                          alwaysShowActions || (hostId && hostRegistry && isMenuOpen) ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-has-[:focus-visible]/project:opacity-100 group-has-[:focus-visible]/project:pointer-events-auto',
+                          alwaysShowActions || (isRemote && isMenuOpen) ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/project:opacity-100 group-hover/project:pointer-events-auto group-has-[:focus-visible]/project:opacity-100 group-has-[:focus-visible]/project:pointer-events-auto',
                         )}
                         aria-label={isRepo
                           ? t('sessions.sidebar.project.actions.newDraftSession')

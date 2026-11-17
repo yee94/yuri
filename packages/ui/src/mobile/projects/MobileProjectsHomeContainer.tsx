@@ -710,7 +710,6 @@ export function MobileProjectsHomeContainer({
         hostRegistry={remoteNavigation.registry}
         projectOrderIds={sortProjectEntries(projects, projectSortOrder).map((project) => project.id)}
         renderRemoteProject={remoteNavigation.registry ? (project) => <RemoteProjectSection project={project} registry={remoteNavigation.registry!} mobile reorderEnabled={false} onActivityItems={handleRemoteActivityItems} /> : undefined}
-        remoteError={remoteNavigation.catalog.error?.message}
         className={className}
         projects={model.projects}
         pinnedSessions={pinnedSessions}

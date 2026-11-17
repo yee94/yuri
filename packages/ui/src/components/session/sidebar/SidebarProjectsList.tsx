@@ -32,8 +32,8 @@ import { scrollFocusedSessionRowIntoView } from './scrollFocusedSessionRow';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import type { RemoteProject } from '@/lib/remote-projects/types';
 import { RemoteProjectSection } from './RemoteProjectSection';
+import { PendingRemoteProjectRow } from './RemoteProjectRows';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
-import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
 
 const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 8 } };
 const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
@@ -67,7 +67,8 @@ type ProjectSection = {
 type Props = {
   remoteProjects?: RemoteProject[];
   remoteSearch?: string;
-  remoteError?: string;
+  remoteCatalogLoading?: boolean;
+  remoteCatalogError?: string;
   projectOrderIds?: string[];
   onRemoteActivityItems?: (projectId: string, items: import('./SidebarPinnedSessions').PinnedItem[]) => void;
   onRemoteNavigationTargets?: (projectId: string, targets: SessionNavigationTarget[]) => void;
@@ -139,8 +140,9 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
   const remoteSection = (id: string) => {
     const project = remoteById.get(id);
     if (!project) return null;
+    // Until the host catalog resolves there is no registry: show the same project row, with only its loading state.
     return props.hostRegistry ? <RemoteProjectSection key={id} project={project} registry={props.hostRegistry} search={props.remoteSearch} mobile={props.mobileVariant} reorderEnabled={props.projectReorderEnabled} onNavigationTargets={props.onRemoteNavigationTargets} onActivityItems={props.onRemoteActivityItems} />
-      : <div key={id} className="px-2 py-1 text-xs text-muted-foreground"><span>{project.label || project.path} · {project.hostId}</span><p role={props.remoteError ? 'alert' : 'status'}>{props.remoteError || t(supportsRemoteProjects() ? 'remoteProjects.state.connecting' : 'remoteProjects.unsupported')}</p></div>;
+      : <PendingRemoteProjectRow key={id} project={project} loading={props.remoteCatalogLoading === true} error={props.remoteCatalogError} mobile={props.mobileVariant} reorderEnabled={props.projectReorderEnabled} />;
   };
   const projectSensors = useSensors(
     useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),

@@ -10,6 +10,7 @@ import { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import { parseHostCatalog, parseRemoteProject, type HostCatalog, type RemoteProject } from '@/lib/remote-projects/types';
 import { parseRemoteHostSummaries, remoteHostSummariesKey } from '@/lib/remote-projects/summaries';
 import { getHostRuntimeServices } from '@/lib/remote-projects/runtime';
+import { rememberRemoteHostNames } from '@/lib/remote-projects/host-names';
 export type { RemoteHostSummaries } from '@/lib/remote-projects/summaries';
 
 export const supportsRemoteProjects = (): boolean => !isVSCodeRuntime() && (isDesktopShell() || isCapacitorApp());
@@ -46,6 +47,7 @@ export const remoteHostCatalogQueryOptions = () => {
         throw new Error('Remote Host catalog belongs to an inactive Hub');
       }
       const catalog = parseHostCatalog(payload);
+      rememberRemoteHostNames(catalog);
       if (catalog.supported) getHostRuntimeRegistry(catalog).applyCatalog(catalog);
       return catalog;
     },

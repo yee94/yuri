@@ -15,7 +15,7 @@ export function RemoteProjectsBootstrap() {
 function RemoteCatalogBootstrap() {
   const { catalog } = useRemoteProjectRuntime(true, true);
   useEffect(() => {
-    if (catalog?.supported) useProjectsStore.getState().reconcileRemoteProjects(catalog.projects, catalog.hubId);
+    if (catalog) useProjectsStore.getState().reconcileRemoteProjects(catalog.supported ? catalog.projects : [], catalog.hubId);
   }, [catalog]);
   return null;
 }
