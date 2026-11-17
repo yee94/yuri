@@ -81,13 +81,15 @@ it('managed SSH shows only command, name and SSH authentication in shared Settin
   const editor = await renderEditor();
   try {
     expect([...editor.host.querySelectorAll('input')].map((input) => input.getAttribute('aria-label'))).toEqual([
-      fieldKey('sshCommand'), fieldKey('nickname'), fieldKey('sshPasswordOptional'),
+      fieldKey('sshCommand'), fieldKey('nickname'),
     ]);
     expect(editor.host.querySelectorAll('.yuri-settings-group-card').length).toBe(1);
     const hint = editor.host.querySelector('.yuri-settings-group-description')!;
-    expect(hint.textContent).toBe('settings.remoteInstances.page.sshSetupHint');
+    expect(hint.textContent).toContain('settings.remoteInstances.page.sshCommandExamplesIntro');
+    expect(hint.textContent).toContain('settings.remoteInstances.page.sshSetupHint');
+    expect([...hint.querySelectorAll('code')].map((node) => node.textContent)).toContain('ssh -i ~/.ssh/id_ed25519 user@host');
     expect(editor.host.querySelector('.yuri-settings-group-card')!.contains(hint)).toBe(false);
-    expect(editor.host.querySelectorAll('.yuri-settings-split-row').length).toBe(3);
+    expect(editor.host.querySelectorAll('.yuri-settings-split-row').length).toBe(2);
     const header = editor.host.querySelector('[data-settings-action-header]')!;
     expect(header.classList.contains('pr-8')).toBe(false);
     expect(header.classList.contains('py-0')).toBe(true);
@@ -103,10 +105,10 @@ it('managed SSH shows only command, name and SSH authentication in shared Settin
 it('new SSH uses the full editor and saves once before selecting the created connection', async () => {
   const editor = await renderEditor(fixture(), undefined, true);
   try {
-    expect(editor.host.querySelector(`input[aria-label="${fieldKey('sshPasswordOptional')}"]`)).not.toBeNull();
+    expect(editor.host.querySelector('input[type="password"]')).toBeNull();
     expect(editor.deleteButton()).toBeNull();
     expect(editor.host.textContent).not.toContain('settings.remoteInstances.page.actions.logs');
-    expect(editor.host.querySelector('.yuri-settings-group-description')?.textContent).toBe('settings.remoteInstances.page.sshSetupHint');
+    expect(editor.host.querySelector('.yuri-settings-group-description')?.textContent).toContain('settings.remoteInstances.page.sshSetupHint');
     expect(editor.upsertInstance).not.toHaveBeenCalled();
     const create = [...editor.host.querySelectorAll('button')].find((node) => node.textContent === 'settings.common.actions.create')!;
     await act(async () => create.click());

@@ -995,6 +995,14 @@ const normalizeForSave = (instance: DesktopSshInstance): DesktopSshInstance => {
   };
 };
 
+const SSH_COMMAND_EXAMPLES = [
+  'ssh user@host',
+  'ssh -p 2222 user@host',
+  'ssh -i ~/.ssh/id_ed25519 user@host',
+  'ssh -J jump@bastion user@host',
+  'ssh my-host',
+];
+
 const SshConnectionButton = ({ phase, onAction }: { phase?: string; onAction: () => Promise<unknown> }) => {
   const { t } = useI18n();
   const [pending, setPending] = React.useState(false);
@@ -1824,18 +1832,6 @@ export const RemoteInstancesPage: React.FC = () => {
     if (!normalized.sshCommand.trim()) {
       toast.error(t('settings.remoteInstances.page.toast.sshCommandRequired'));
       return;
-    }
-
-    if (
-      normalized.auth.sshPassword?.enabled &&
-      normalized.auth.sshPassword.value?.trim() &&
-      normalized.auth.sshPassword.store !== 'settings'
-    ) {
-      const store = window.confirm(t('settings.remoteInstances.page.confirm.storeSshPasswordPlaintext'));
-      normalized.auth.sshPassword.store = store ? 'settings' : 'never';
-      if (!store) {
-        normalized.auth.sshPassword.value = undefined;
-      }
     }
 
     if (
@@ -2964,7 +2960,15 @@ export const RemoteInstancesPage: React.FC = () => {
 
       <SettingsGroup
         label={t('settings.remoteInstances.page.section.instance')}
-        description={t('settings.remoteInstances.page.sshSetupHint')}
+        description={<>
+          <span className="block">{t('settings.remoteInstances.page.sshCommandExamplesIntro')}</span>
+          <ul className="my-1 list-disc space-y-0.5 pl-5">
+            {SSH_COMMAND_EXAMPLES.map((example) => (
+              <li key={example}><code className="font-mono text-foreground select-all">{example}</code></li>
+            ))}
+          </ul>
+          <span className="block">{t('settings.remoteInstances.page.sshSetupHint')}</span>
+        </>}
       >
           <SettingsRow label={t('settings.remoteInstances.page.field.sshCommand')} className="yuri-settings-ssh-command-row">
             <Input
@@ -3024,29 +3028,6 @@ export const RemoteInstancesPage: React.FC = () => {
               emptyLabel={t('settings.remoteInstances.page.field.auto')}
             />
           </SettingsRow> : null}
-          <SettingsRow label={t('settings.remoteInstances.page.field.sshPasswordOptional')}>
-            <Input
-              type="password"
-              value={draft.auth.sshPassword?.value || ''}
-              aria-label={t('settings.remoteInstances.page.field.sshPasswordOptional')}
-              disabled={isRemoving}
-              onChange={(event) =>
-                updateDraft((current) => ({
-                  ...current,
-                  auth: {
-                    ...current.auth,
-                    sshPassword: {
-                      enabled: event.target.value.trim().length > 0,
-                      value: event.target.value,
-                      store: current.auth.sshPassword?.store || 'never',
-                    },
-                  },
-                }))
-              }
-              placeholder={t('settings.remoteInstances.page.field.sshPasswordPlaceholder')}
-            />
-          </SettingsRow>
-
           {draft.remoteYuri.mode === 'external' || selectedInstance?.auth.yuriPassword?.enabled ? <SettingsRow label={t('settings.remoteInstances.page.field.uiPasswordOptional')}>
             <Input
               type="password"

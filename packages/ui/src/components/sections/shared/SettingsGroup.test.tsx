@@ -131,7 +131,7 @@ describe('SettingsGroup', () => {
       </SettingsField>,
     );
 
-    const cardEnd = markup.indexOf('</div><p class="yuri-settings-group-description');
+    const cardEnd = markup.indexOf('</div><div class="yuri-settings-group-description');
     expect(cardEnd).toBeGreaterThan(-1);
     expect(markup.indexOf('A longer explanation', cardEnd)).toBeGreaterThan(cardEnd);
   });

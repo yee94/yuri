@@ -63,9 +63,9 @@ export function SettingsGroup({
         {children}
       </div>
       {description ? (
-        <p className="yuri-settings-group-description text-muted-foreground">
+        <div className="yuri-settings-group-description text-muted-foreground">
           {description}
-        </p>
+        </div>
       ) : null}
     </section>
   );
