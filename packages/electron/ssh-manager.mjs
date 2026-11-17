@@ -801,12 +801,17 @@ export const formatMasterExitError = (stderrTail) => {
 };
 
 const runOutput = async (command, args, options = {}) => {
+  const { input, ...spawnOptions } = options;
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       ...WINDOWS_HIDDEN_SPAWN_OPTIONS,
-      ...options,
+      ...spawnOptions,
     });
+    if (input != null) {
+      child.stdin?.on('error', () => {});
+      child.stdin?.end(input);
+    }
 
     let stdout = '';
     let stderr = '';
@@ -831,6 +836,16 @@ const buildSshArgs = (parsed, preDestinationArgs = [], remoteCommand = null) => 
 
 const REMOTE_COMMAND_MARKER = '__YURI_SSH_COMMAND_STARTED__\n';
 const buildRemoteShellCommand = (script) => `env ENV= BASH_ENV= /bin/sh -c ${shellQuote(`printf '${REMOTE_COMMAND_MARKER}'\n${script}`)}`;
+// macOS caps unix-socket sends at net.local.stream.sendspace (8 KiB); a long argv through the
+// ssh ControlMaster mux fails with "mm_send_fd: sendmsg: Message too long". Long scripts go over stdin.
+const REMOTE_COMMAND_ARGV_LIMIT_BYTES = 2048;
+const prepareRemoteShellCommand = (script) => {
+  const body = `printf '${REMOTE_COMMAND_MARKER}'\n${script}`;
+  if (Buffer.byteLength(body) <= REMOTE_COMMAND_ARGV_LIMIT_BYTES) {
+    return { command: buildRemoteShellCommand(script), input: null };
+  }
+  return { command: `env ENV= BASH_ENV= /bin/sh -c ${shellQuote('eval "$(cat)"')}`, input: body };
+};
 const remoteCommandBody = (stdout) => {
   const marker = Buffer.isBuffer(stdout) ? Buffer.from(REMOTE_COMMAND_MARKER) : REMOTE_COMMAND_MARKER;
   const index = stdout.indexOf(marker);
@@ -839,13 +854,14 @@ const remoteCommandBody = (stdout) => {
 };
 
 const runRemoteCommand = async (parsed, controlPath, script, timeoutSec = DEFAULT_CONNECTION_TIMEOUT_SEC) => {
+  const { command, input } = prepareRemoteShellCommand(script);
   const args = buildSshArgs(parsed, [
     '-o', 'ControlMaster=no',
     '-o', `ControlPath=${controlPath}`,
     '-o', `ConnectTimeout=${timeoutSec}`,
     '-T',
-  ], buildRemoteShellCommand(script));
-  const { code, stdout, stderr } = await runOutput('ssh', args);
+  ], command);
+  const { code, stdout, stderr } = await runOutput('ssh', args, input == null ? {} : { input });
   if (code !== 0) {
     throw new Error((stderr || stdout || 'Remote command failed').trim());
   }
@@ -921,18 +937,23 @@ const runRemoteCommandWithInput = async (parsed, controlPath, script, input, tim
  * @returns {Promise<Buffer>}
  */
 const runRemoteCommandBinary = async (parsed, controlPath, script, timeoutSec = DEFAULT_CONNECTION_TIMEOUT_SEC) => {
+  const { command, input } = prepareRemoteShellCommand(script);
   const args = buildSshArgs(parsed, [
     '-o', 'ControlMaster=no',
     '-o', `ControlPath=${controlPath}`,
     '-o', `ConnectTimeout=${timeoutSec}`,
     '-T',
-  ], buildRemoteShellCommand(script));
+  ], command);
 
   return await new Promise((resolve, reject) => {
     const child = spawn('ssh', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [input == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       ...WINDOWS_HIDDEN_SPAWN_OPTIONS,
     });
+    if (input != null) {
+      child.stdin?.on('error', () => {});
+      child.stdin?.end(input);
+    }
     /** @type {Buffer[]} */
     const chunks = [];
     let stderr = '';

@@ -757,6 +757,25 @@ describe('managed remote command isolation', () => {
       else expect(await command).toBe('isolated');
     } finally { process.env.PATH = oldPath; process.env.HOME = oldHome; }
   });
+
+  test('sends long scripts over stdin so ssh argv stays under the mux socket buffer', async () => {
+    const home = await makeTempDir();
+    const bin = path.join(home, 'bin');
+    await fsp.mkdir(bin);
+    const argvLog = path.join(home, 'argv.log');
+    await fsp.writeFile(path.join(bin, 'ssh'), `#!/bin/sh\nfor last do :; done\nprintf '%s' "$last" > '${argvLog}'\nexec /bin/sh -c "$last"\n`, { mode: 0o755 });
+    const oldPath = process.env.PATH;
+    const oldHome = process.env.HOME;
+    process.env.PATH = `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`;
+    process.env.HOME = home;
+    try {
+      const manager = new ElectronSshManager({ settingsFilePath: path.join(home, 'settings.json'), appVersion: '1.2.3', emit() {} });
+      const padding = `# ${'x'.repeat(9000)}`;
+      const output = await manager.runManagedRemoteCommand({ args: [], destination: 'fixture' }, 'control', `${padding}\nprintf long-ok`);
+      expect(output).toBe('long-ok');
+      expect((await fsp.readFile(argvLog, 'utf8')).length).toBeLessThan(1024);
+    } finally { process.env.PATH = oldPath; process.env.HOME = oldHome; }
+  });
 });
 
 describe('first-install configuration sync', () => {
