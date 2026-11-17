@@ -1,6 +1,7 @@
 import {
   eventMatchesShortcut,
   getEffectiveShortcutCombos,
+  getShortcutOverride,
   keyToShortcutToken,
   normalizeCombo,
   UNASSIGNED_SHORTCUT,
@@ -32,6 +33,27 @@ export function shortcutCombosConflict(left: string, right: string): boolean {
   return eventMatchesShortcut(shortcutComboToEvent(left), right) || eventMatchesShortcut(shortcutComboToEvent(right), left);
 }
 
+const comboKeyToken = (combo: string) => keyToShortcutToken(normalizeCombo(combo).split('+').pop() ?? '');
+
+/**
+ * Actions whose effective bindings collide with `combo`. An action scoped to a
+ * context shadows global actions inside that context, so only actions in the
+ * same context (or both global) can conflict.
+ */
+export function findShortcutConflicts(
+  target: Pick<ShortcutAction, 'id' | 'context'>,
+  combo: string,
+  actions: readonly ShortcutAction[],
+  overrides: Record<string, string>,
+): ShortcutAction[] {
+  if (!combo || normalizeCombo(combo) === UNASSIGNED_SHORTCUT) return [];
+  const token = comboKeyToken(combo);
+  return actions.filter((action) => action.id !== target.id
+    && action.context === target.context
+    && getEffectiveShortcutCombos(action, overrides).some((existing) =>
+      existing && comboKeyToken(existing) === token && shortcutCombosConflict(existing, combo)));
+}
+
 function eventSignature(event: KeyboardEvent): string {
   let key = event.key;
   if ((!key || key === 'Dead') && event.code === 'Backquote') key = '`';
@@ -49,7 +71,7 @@ export function compileShortcutBindings(
     for (const combo of getEffectiveShortcutCombos(action, overrides)) {
       const normalized = normalizeCombo(combo);
       if (!normalized || normalized === UNASSIGNED_SHORTCUT) continue;
-      const override = overrides[action.id];
+      const override = getShortcutOverride(action.id, overrides);
       const binding = { action, combo: normalized, customized: typeof override === 'string' && normalizeCombo(override) === normalized };
       const parts = normalized.split('+');
       const key = parts.pop()!;

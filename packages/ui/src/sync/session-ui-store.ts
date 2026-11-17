@@ -231,6 +231,24 @@ function retainPendingUserMessageForSession(
   })
 }
 
+async function notifyForkSuccess(title: string | undefined): Promise<void> {
+  const { toast } = await import("sonner")
+  const { useI18nStore, formatMessage } = await import("@/lib/i18n/store")
+  const { dictionary } = useI18nStore.getState()
+  toast.success(
+    title
+      ? formatMessage(dictionary, "chat.fork.toast.forked", { title })
+      : formatMessage(dictionary, "chat.fork.toast.forkedUntitled"),
+  )
+}
+
+async function notifyForkFailure(): Promise<void> {
+  const { toast } = await import("sonner")
+  const { useI18nStore, formatMessage } = await import("@/lib/i18n/store")
+  const { dictionary } = useI18nStore.getState()
+  toast.error(formatMessage(dictionary, "chat.fork.toast.failed"))
+}
+
 async function notifyRevertFailure(error: unknown): Promise<void> {
   const { toast } = await import("sonner")
   const { useI18nStore, formatMessage } = await import("@/lib/i18n/store")
@@ -2675,8 +2693,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
           sessionId,
           messageId,
         })
-        const { toast } = await import("sonner")
-        toast.error("Failed to fork session")
+        await notifyForkFailure()
         return
       }
       console.info("[session-fork] forkFromMessage starting transition", {
@@ -2706,13 +2723,12 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
         return
       }
 
-      const { toast } = await import("sonner")
       console.info("[session-fork] forkFromMessage completed", {
         operationId,
         sessionId,
         messageId,
       })
-      toast.success(`Forked from ${existingSession?.title ?? "session"}`)
+      await notifyForkSuccess(existingSession?.title)
     } catch (error) {
       console.error("[session-fork] forkFromMessage failed", {
         operationId,
@@ -2720,8 +2736,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
         messageId,
         error,
       })
-      const { toast } = await import("sonner")
-      toast.error("Failed to fork session")
+      await notifyForkFailure()
     } finally {
       set((state) => state.forkTransition?.operationId === operationId
         ? { forkTransition: null }
@@ -2756,8 +2771,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
         console.warn("[session-fork] forkCurrentSession missing directory", {
           sessionId,
         })
-        const { toast } = await import("sonner")
-        toast.error("Failed to fork session")
+        await notifyForkFailure()
         return
       }
       console.info("[session-fork] forkCurrentSession starting transition", {
@@ -2785,20 +2799,18 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
         return
       }
 
-      const { toast } = await import("sonner")
       console.info("[session-fork] forkCurrentSession completed", {
         operationId,
         sessionId,
       })
-      toast.success(`Forked from ${existingSession?.title ?? "session"}`)
+      await notifyForkSuccess(existingSession?.title)
     } catch (error) {
       console.error("[session-fork] forkCurrentSession failed", {
         operationId,
         sessionId,
         error,
       })
-      const { toast } = await import("sonner")
-      toast.error("Failed to fork session")
+      await notifyForkFailure()
     } finally {
       set((state) => state.forkTransition?.operationId === operationId
         ? { forkTransition: null }

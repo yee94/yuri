@@ -524,6 +524,12 @@
   --yuri-settings-desktop-value-max-width: 18rem;
 }
 
+/* Keybinding rows hold several keycaps plus hover actions, so they need a
+   wider value column than ordinary Settings values. */
+.yuri-settings-workspace-desktop .yuri-settings-shortcut-row {
+  --yuri-settings-desktop-value-max-width: 18rem;
+}
+
 /* SSH command and extra port-forward endpoints are longer than ordinary
    Settings values; keep them on one labeled row without truncating the host. */
 .yuri-settings-workspace-desktop .yuri-settings-ssh-command-row,

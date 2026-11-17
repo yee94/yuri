@@ -582,18 +582,7 @@ export const useKeyboardShortcuts = () => {
         return;
       }
 
-      if (eventMatchesShortcut(e, combo('toggle_terminal'))) {
-        const { isMobile } = useUIStore.getState();
-        if (isMobile) {
-          return;
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        toggleBottomTerminal();
-        return;
-      }
-
-      if (eventMatchesShortcut(e, combo('toggle_bottom_panel'))) {
+      if (combos('toggle_terminal').some((shortcut) => eventMatchesShortcut(e, shortcut))) {
         const { isMobile } = useUIStore.getState();
         if (isMobile) {
           return;
@@ -1033,7 +1022,7 @@ export const useKeyboardShortcuts = () => {
         return;
       }
 
-      if (eventMatchesShortcut(e, combo('toggle_terminal'))) {
+      if (combos('toggle_terminal').some((shortcut) => eventMatchesShortcut(e, shortcut))) {
         const { isMobile } = useUIStore.getState();
         if (isMobile) {
           return;
@@ -1053,16 +1042,6 @@ export const useKeyboardShortcuts = () => {
           return;
         }
         e.preventDefault();
-        return;
-      }
-
-      if (eventMatchesShortcut(e, combo('toggle_bottom_panel'))) {
-        const { isMobile } = useUIStore.getState();
-        if (isMobile) {
-          return;
-        }
-        e.preventDefault();
-        toggleBottomTerminal();
         return;
       }
 

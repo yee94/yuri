@@ -235,12 +235,6 @@ export const HelpDialog: React.FC = () => {
           keys: '',
         },
         {
-          id: 'toggle_bottom_panel',
-          descriptionKey: 'helpDialog.item.toggleBottomPanel',
-          icon: "window",
-          keys: '',
-        },
-        {
           id: 'toggle_terminal_expanded',
           descriptionKey: 'helpDialog.item.toggleTerminalExpanded',
           icon: "window",

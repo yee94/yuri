@@ -870,7 +870,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'shortcuts',
     titleKey: 'settings.yuri.keyboardShortcuts.title',
     descriptionKey: 'settings.yuri.keyboardShortcuts.tooltip',
-    keywords: ['keyboard', 'hotkeys', 'bindings'],
+    keywords: ['keyboard', 'hotkeys', 'bindings', 'keybinding', 'shortcut', 'conflict', '快捷键', '冲突'],
   },
   {
     id: 'voice.playback',

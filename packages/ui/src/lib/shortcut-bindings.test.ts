@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { compileShortcutBindings, shortcutCombosConflict } from './shortcut-bindings';
+import { compileShortcutBindings, findShortcutConflicts, shortcutCombosConflict } from './shortcut-bindings';
 import { getEffectiveShortcutCombo, UNASSIGNED_SHORTCUT, type ShortcutAction } from './shortcuts';
 import * as shortcuts from './shortcuts';
 
@@ -58,6 +58,20 @@ describe('command shortcut arbitration', () => {
     expect(shortcutCombosConflict('mod+comma', 'mod+shift+comma')).toBe(false);
     expect(shortcutCombosConflict(UNASSIGNED_SHORTCUT, UNASSIGNED_SHORTCUT)).toBe(false);
     expect(shortcutCombosConflict('', '')).toBe(false);
+  });
+  test('conflict lookup honours overrides, aliases and contexts', () => {
+    const open: ShortcutAction = { id: 'open', label: 'Open', defaultCombo: 'mod+o', defaultAliases: ['mod+k'] };
+    const find: ShortcutAction = { id: 'find', label: 'Find', defaultCombo: 'mod+f' };
+    const terminalFind: ShortcutAction = { id: 'terminal-find', label: 'Terminal find', defaultCombo: 'mod+f', context: 'terminal' };
+    const terminalOpen: ShortcutAction = { id: 'terminal-open', label: 'Terminal open', defaultCombo: 'mod+o', context: 'terminal' };
+    const all = [open, find, terminalFind, terminalOpen];
+    expect(findShortcutConflicts(find, 'mod+k', all, {}).map((action) => action.id)).toEqual(['open']);
+    expect(findShortcutConflicts(find, 'mod+o', all, { [open.id]: 'mod+x' }).map((action) => action.id)).toEqual([]);
+    expect(findShortcutConflicts(find, 'mod+o', all, {}).map((action) => action.id)).toEqual(['open']);
+    expect(findShortcutConflicts(find, 'mod+f', all, {})).toEqual([]);
+    expect(findShortcutConflicts(terminalFind, 'mod+o', all, {}).map((action) => action.id)).toEqual(['terminal-open']);
+    expect(findShortcutConflicts(find, UNASSIGNED_SHORTCUT, all, {})).toEqual([]);
+    expect(findShortcutConflicts(find, 'mod+k', all, { [open.id]: UNASSIGNED_SHORTCUT })).toEqual([]);
   });
   test('ordinary typing only examines the matching key bucket, never the entire catalog', () => {
     let reads = 0;

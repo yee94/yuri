@@ -15,6 +15,8 @@ export interface ShortcutAction {
   description?: string;
   customizable?: boolean;
   priority?: number;
+  /** Surface that owns the binding. Inside its context it shadows global actions, so it only conflicts with actions in the same context. */
+  context?: 'terminal';
 }
 
 interface ParsedShortcut {
@@ -144,15 +146,9 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
   {
     id: 'toggle_terminal',
     defaultCombo: 'ctrl+backtick',
+    defaultAliases: ['mod+j'],
     label: 'Toggle terminal',
     description: 'Toggle the integrated terminal',
-    customizable: true,
-  },
-  {
-    id: 'toggle_bottom_panel',
-    defaultCombo: 'mod+j',
-    label: 'Toggle bottom panel',
-    description: 'Toggle the bottom panel dock',
     customizable: true,
   },
   {
@@ -168,6 +164,7 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     label: 'New terminal tab',
     description: 'Create a new terminal tab when the terminal is focused',
     customizable: true,
+    context: 'terminal',
   },
   {
     id: 'open_new_terminal',
@@ -182,6 +179,7 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     label: 'Previous terminal tab',
     description: 'Switch to the previous terminal tab when the terminal is focused',
     customizable: true,
+    context: 'terminal',
   },
   {
     id: 'next_terminal_tab',
@@ -189,12 +187,7 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     label: 'Next terminal tab',
     description: 'Switch to the next terminal tab when the terminal is focused',
     customizable: true,
-  },
-  {
-    id: 'toggle_files',
-    defaultCombo: 'mod+shift+f',
-    label: 'Toggle files',
-    description: 'Toggle the files panel',
+    context: 'terminal',
   },
   {
     id: 'toggle_sidebar',
@@ -536,6 +529,10 @@ function isValidShortcutCombo(combo: ShortcutCombo): boolean {
   }
 
   const parsed = parseShortcut(combo);
+  // Option+letter on macOS reports a symbol such as "∫"; the matcher compares the physical key, so it can never match.
+  if (parsed.modifiers.has('alt') && /^[^\p{ASCII}]$/u.test(parsed.key)) {
+    return false;
+  }
   return parsed.key.trim().length > 0;
 }
 
@@ -600,34 +597,33 @@ export function getCustomizableShortcutActions(): ReadonlyArray<ShortcutAction> 
   return SHORTCUT_ACTIONS.filter((action) => action.customizable === true);
 }
 
-export function getEffectiveShortcutCombo(
-  actionId: string | ShortcutAction,
-  overrides?: Record<string, ShortcutCombo>
-): ShortcutCombo {
-  const action = typeof actionId === 'string' ? getShortcutAction(actionId) : actionId;
-  if (!action) {
-    return '';
-  }
+/** Actions folded into another one; users' saved overrides for the old id still apply. */
+const LEGACY_SHORTCUT_IDS: Readonly<Record<string, readonly string[]>> = {
+  toggle_terminal: ['toggle_bottom_panel'],
+};
 
-  const override = overrides?.[action.id];
-  if (typeof override === 'string') {
-    if (override.trim().toLowerCase() === UNASSIGNED_SHORTCUT) {
-      return '';
-    }
-
-    const normalized = normalizeCombo(override);
-    if (normalized === UNASSIGNED_SHORTCUT) {
-      return UNASSIGNED_SHORTCUT;
-    }
-
-    if (isValidShortcutCombo(normalized)) {
-      return normalized;
-    }
-  }
-
-  return action.defaultCombo;
+export function getLegacyShortcutIds(actionId: string): readonly string[] {
+  return LEGACY_SHORTCUT_IDS[actionId] ?? [];
 }
 
+export function getShortcutOverride(
+  actionId: string,
+  overrides?: Record<string, ShortcutCombo>,
+): ShortcutCombo | undefined {
+  for (const id of [actionId, ...getLegacyShortcutIds(actionId)]) {
+    const value = overrides?.[id];
+    if (typeof value === 'string') return value;
+  }
+  return undefined;
+}
+
+export const SHORTCUT_COMBO_SEPARATOR = ' ';
+
+export function getDefaultShortcutCombos(action: ShortcutAction): ShortcutCombo[] {
+  return [action.defaultCombo, ...(action.defaultAliases ?? [])];
+}
+
+/** An override holds one or more combos separated by whitespace; a single combo is the legacy form. */
 export function getEffectiveShortcutCombos(
   actionId: string | ShortcutAction,
   overrides?: Record<string, ShortcutCombo>,
@@ -637,12 +633,33 @@ export function getEffectiveShortcutCombos(
     return [];
   }
 
-  const effectiveCombo = getEffectiveShortcutCombo(actionId, overrides);
-  if (effectiveCombo !== action.defaultCombo) {
-    return effectiveCombo ? [effectiveCombo] : [];
+  const override = getShortcutOverride(action.id, overrides);
+  if (typeof override === 'string') {
+    if (override.trim().toLowerCase() === UNASSIGNED_SHORTCUT) {
+      return [];
+    }
+    const combos = [...new Set(override.split(/\s+/).filter(Boolean).map(normalizeCombo).filter(isValidShortcutCombo))];
+    if (combos.length > 0) {
+      return combos;
+    }
   }
 
-  return [action.defaultCombo, ...(action.defaultAliases ?? [])];
+  return getDefaultShortcutCombos(action);
+}
+
+export function getEffectiveShortcutCombo(
+  actionId: string | ShortcutAction,
+  overrides?: Record<string, ShortcutCombo>
+): ShortcutCombo {
+  return getEffectiveShortcutCombos(actionId, overrides)[0] ?? '';
+}
+
+/** True only when the saved override changes what the action actually uses. */
+export function isShortcutCustomized(action: ShortcutAction, overrides?: Record<string, ShortcutCombo>): boolean {
+  if (getShortcutOverride(action.id, overrides) === undefined) return false;
+  const effective = getEffectiveShortcutCombos(action, overrides);
+  const defaults = getDefaultShortcutCombos(action).map(normalizeCombo);
+  return effective.length !== defaults.length || effective.some((combo, index) => combo !== defaults[index]);
 }
 
 export function isRiskyBrowserShortcut(combo: ShortcutCombo): boolean {
