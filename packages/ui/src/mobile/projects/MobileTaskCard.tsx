@@ -49,26 +49,42 @@ type TaskCardProps = {
   onRestore?: (sessionId: string) => void;
 };
 
-function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin, onArchive, archived, onRestore }: TaskCardProps) {
-  const { t } = useI18n();
+function MobileTaskCardImpl(props: TaskCardProps) {
+  const { task } = props;
   const running = useSessionActivity(task.id);
   const { unread, onToggleRead } = useSessionReadMenuAction(task, undefined, running);
   const permissions = useSessionPermissions(task.id, task.directory, { bootstrap: false });
   const questions = useSessionQuestions(task.id, task.directory, { bootstrap: false });
+  return <MobileTaskCardSurface {...props} running={running} unread={unread} onToggleRead={onToggleRead}
+    hasPendingQuestion={questions.length > 0} hasPendingPermission={permissions.length > 0} />;
+}
+
+export function MobileTaskCardSurface({ task, runStartedAt, onSelect, onOpenActions, onPin, onArchive, archived, onRestore,
+  running, unread, onToggleRead, hasPendingQuestion = false, hasPendingPermission = false, remoteHost, projectBadge,
+}: Omit<TaskCardProps, 'onPin' | 'onArchive'> & Partial<Pick<TaskCardProps, 'onPin' | 'onArchive'>> & {
+  running: boolean;
+  unread: boolean;
+  onToggleRead?: () => void;
+  hasPendingQuestion?: boolean;
+  hasPendingPermission?: boolean;
+  remoteHost?: string;
+  projectBadge?: React.ReactNode;
+}) {
+  const { t } = useI18n();
   const indicator = resolveMobileSessionIndicator({
-    hasPendingQuestion: questions.length > 0,
-    hasPendingPermission: permissions.length > 0,
+    hasPendingQuestion,
+    hasPendingPermission,
     running,
     unread,
   });
   const longPressRef = React.useRef<MobileLongPressController | null>(null);
   const handleArchive = () => {
-    if (!running && !archived) onArchive(task.id);
+    if (!running && !archived) onArchive?.(task.id);
   };
   const handleRestore = () => {
     if (archived) onRestore?.(task.id);
   };
-  const fullSwipeAction = archived ? (onRestore ? handleRestore : undefined) : (!running ? handleArchive : undefined);
+  const fullSwipeAction = archived ? (onRestore ? handleRestore : undefined) : (!running && onArchive ? handleArchive : undefined);
   const swipe = useMobileSwipeActions(archived ? `${task.id}:restore` : task.id, () => onSelect(task.id), false, fullSwipeAction);
   if (!longPressRef.current) longPressRef.current = createMobileLongPressController();
   React.useEffect(() => () => longPressRef.current?.reset(), []);
@@ -155,12 +171,12 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
             onClick: handleRestore,
           },
         ] : [
-          {
+          ...(onPin ? [{
             label: t(task.pinned ? 'sessions.sidebar.session.menu.unpin' : 'sessions.sidebar.session.menu.pin'),
             icon: task.pinned ? 'unpin' as const : 'pushpin' as const,
             onClick: () => onPin(task.id),
-          },
-          ...(!running ? [{
+          }] : []),
+          ...(!running && onArchive ? [{
             label: t('sessions.sidebar.bulkActions.archive'),
             icon: 'inbox-archive' as const,
             destructive: true,
@@ -194,7 +210,10 @@ function MobileTaskCardImpl({ task, runStartedAt, onSelect, onOpenActions, onPin
           onContextMenu={handleContextMenu}
         >
           <span className="yuri-mobile-task-avatar" aria-hidden="true">
-            <TaskProjectBadge project={task.project} />
+            {remoteHost ? <span data-remote-host={remoteHost} className="inline-flex size-3! shrink-0 text-muted-foreground">
+              <Icon name="computer" className="size-3!" />
+            </span> : null}
+            {projectBadge ?? <TaskProjectBadge project={task.project} />}
           </span>
           <span className="flex h-4 items-center gap-1.5 pr-9">
             {indicator === 'completed-unread' ? <TaskUnreadDot /> : null}

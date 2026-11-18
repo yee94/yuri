@@ -104,10 +104,10 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
         return { node: { session: { ...session, id: identity }, children: [], worktree: null }, projectId: project.id, groupDirectory: directory,
           identity, remoteSessionId: session.id, pinned: data.pinnedIds.has(session.id), secondaryMeta,
           remoteStatus: { running: online && (status === 'busy' || status === 'retry'), unread: rowProps.unread },
-          content: <RemoteSummaryRow {...rowProps} depth={0} /> };
+          content: mobile ? <MobileRemoteSummaryRow {...rowProps} taskHost={project.hostId} /> : <RemoteSummaryRow {...rowProps} depth={0} /> };
       }));
   });
-  React.useLayoutEffect(() => { publishTasks(); }, [publishTasks, data.rows, data.pinnedIds, snapshot, host?.name, online, pending, model.selectedSession, project, registry, props.onTaskItems]);
+  React.useLayoutEffect(() => { publishTasks(); }, [publishTasks, data.rows, data.pinnedIds, snapshot, host?.name, online, pending, model.selectedSession, project, registry, props.onTaskItems, mobile]);
   const { onTaskItems } = props;
   React.useEffect(() => () => onTaskItems?.(project.id, []), [project.id, onTaskItems]);
   const saveProject = useEvent(async ({ label, icon, color, iconBackground }: ProjectIdentitySaveData) => {

@@ -107,6 +107,15 @@ export function MobileProjectsHomeContainer({
   const sharingAvailable = isSessionSharingAvailable();
   const model = useMobileProjectsHomeModel();
   const [remoteActivityItems, setRemoteActivityItems] = React.useState<Map<string, PinnedItem[]>>(() => new Map());
+  const [remoteTaskItems, setRemoteTaskItems] = React.useState<Map<string, PinnedItem[]>>(() => new Map());
+  const handleRemoteTaskItems = useEvent((projectId: string, items: PinnedItem[]) => {
+    setRemoteTaskItems((previous) => {
+      if (!items.length && !previous.has(projectId)) return previous;
+      const next = new Map(previous);
+      if (items.length) next.set(projectId, items); else next.delete(projectId);
+      return next;
+    });
+  });
   const handleRemoteActivityItems = useEvent((projectId: string, items: PinnedItem[]) => {
     setRemoteActivityItems((previous) => {
       if (!items.length && !previous.has(projectId)) return previous;
@@ -134,7 +143,6 @@ export function MobileProjectsHomeContainer({
   const setSessionSettled = useSetSessionSettled();
   const [taskStatus, setTaskStatus] = React.useState<MobileTaskStatus>('active');
   const [settledLimit, setSettledLimit] = React.useState(SETTLED_SHELF_PAGE_SIZE);
-  const taskModel = useMobileTaskViewModel(model, { enabled: homeView === 'tasks', status: taskStatus, settledLimit });
   const handleTaskStatusChange = useEvent((status: MobileTaskStatus) => {
     setTaskStatus(status);
     setSettledLimit(SETTLED_SHELF_PAGE_SIZE);
@@ -156,6 +164,8 @@ export function MobileProjectsHomeContainer({
   const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
   const remoteNavigation = useRemoteProjectNavigation();
   const remoteProjects = React.useMemo(() => projects.filter((project) => project.hostId).map(parseRemoteProject), [projects]);
+  const remoteTasks = React.useMemo(() => remoteProjects.flatMap((project) => remoteTaskItems.get(project.id) ?? []), [remoteProjects, remoteTaskItems]);
+  const taskModel = useMobileTaskViewModel(model, { enabled: homeView === 'tasks', status: taskStatus, settledLimit, remoteTasks });
   const remoteTopItems = React.useMemo(() => remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []).map((item) => ({
     pinned: Boolean(item.pinned), time: getSessionActivityUpdatedAt(item.node.session),
     session: { id: item.identity!, title: item.node.session.title || '', content: item.content },
@@ -705,6 +715,10 @@ export function MobileProjectsHomeContainer({
         onPointerMoveCapture={cancelPrefetch}
         onPointerCancelCapture={cancelPrefetch}
       >
+      {homeView === 'tasks' && taskStatus !== 'archived' && remoteNavigation.registry ? remoteProjects.map((project) => (
+        <RemoteProjectSection key={project.id} project={project} registry={remoteNavigation.registry!}
+          mobile reorderEnabled={false} onTaskItems={handleRemoteTaskItems} />
+      )) : null}
       <MobileProjectsHome
         remoteProjects={remoteProjects}
         hostRegistry={remoteNavigation.registry}

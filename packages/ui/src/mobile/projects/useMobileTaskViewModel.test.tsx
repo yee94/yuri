@@ -93,15 +93,23 @@ test('unread tab keeps only unread tasks and reports the filtered total', () => 
   const root = createRoot(document.createElement('div'));
   let latest: MobileTaskViewModel | null = null;
   function Harness({ status }: { status: 'active' | 'unread' }) {
-    latest = useMobileTaskViewModel(model, { enabled: true, status, settledLimit: 30 });
+    const remoteTasks = [
+      { id: 'host-a:b', unread: 0, pinned: true },
+      { id: 'host-b:b', unread: 1, pinned: false },
+      { id: 'host-c:b', unread: 0, pinned: false },
+    ].map(({ id, unread, pinned }) => ({
+      node: { session: { ...sessions[1], id, time: { created: 2, updated: 2 } }, children: [], worktree: null },
+      projectId: id, groupDirectory: '/remote', secondaryMeta: {}, pinned, remoteStatus: { unread, running: false }, content: <span>{id}</span>,
+    }));
+    latest = useMobileTaskViewModel(model, { enabled: true, status, settledLimit: 30, remoteTasks });
     return null;
   }
   try {
     act(() => root.render(<Harness status="active" />));
-    expect((latest as MobileTaskViewModel | null)?.total).toBe(2);
+    expect((latest as MobileTaskViewModel | null)?.items.map((node) => node.id)).toEqual(['host-a:b', 'host-b:b', 'b', 'host-c:b', 'a']);
     act(() => root.render(<Harness status="unread" />));
-    expect((latest as MobileTaskViewModel | null)?.items.map((node) => node.id)).toEqual(['b']);
-    expect((latest as MobileTaskViewModel | null)?.total).toBe(1);
+    expect((latest as MobileTaskViewModel | null)?.items.map((node) => node.id)).toEqual(['host-b:b', 'b']);
+    expect((latest as MobileTaskViewModel | null)?.total).toBe(2);
   } finally {
     act(() => root.unmount());
     fixtures.counts = {};

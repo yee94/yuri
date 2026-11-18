@@ -542,9 +542,8 @@ test('100 inbox rows isolate 50 pointer moves and unrelated parent updates to th
     pointer(main, 'pointerdown', 200);
     for (let move = 1; move <= 50; move++) pointer(main, 'pointermove', 200 - move * 2);
     pointer(main, 'pointerup', 100);
-    expect([...fixtures.activityReads.keys()]).toEqual([tasks[0].id]);
-    // Only read-action, close and long-press callbacks need committed stable identity.
-    expect(useEvent).toHaveBeenCalledTimes(fixtures.activityReads.get(tasks[0].id)! * 3);
+    // Swiping updates presentation without re-reading session activity.
+    expect(fixtures.activityReads.size).toBe(0);
     expect(measure).toHaveBeenCalledOnce();
     expect(rail.getAttribute('aria-hidden')).toBe('false');
   } finally {

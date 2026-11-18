@@ -785,7 +785,7 @@ function MobileTaskView({ task, model, onPinSession, onArchiveSession, onNewSess
       {model.items.length > 0 ? (
         <section className="flex flex-col" aria-label={t('sessions.sidebar.view.tasks')}>
           {model.items.map((node) => (
-            <MobileTaskCard
+            model.remoteContent?.has(node.id) ? <React.Fragment key={node.id}>{model.remoteContent.get(node.id)}</React.Fragment> : <MobileTaskCard
               key={node.id}
               task={node}
               runStartedAt={model.runStartTimes.get(node.id) ?? null}

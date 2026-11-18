@@ -208,7 +208,7 @@ test('remote running and unread sessions join the shared leading list and disapp
   expect(activity.mock.lastCall?.[1]).toEqual([]);
 });
 
-test('remote task feed publishes unpinned and pinned rows as task cards and draws no project tree', async () => {
+test.each([false, true])('remote task feed publishes unpinned and pinned rows as task cards without a project tree (mobile=%s)', async (mobile) => {
   const value = snapshot('a');
   const base = value.directories[0].sessions[0];
   const data = { ...value, pinnedSessionIds: ['pin-a'], unread: { revision: 1, sessions: { plain: { directory: project('a').path, unreadCount: 2, hasError: false, manual: false, revision: 1 } } }, directories: [{ ...value.directories[0], sessions: [
@@ -218,7 +218,7 @@ test('remote task feed publishes unpinned and pinned rows as task cards and draw
   ] }] };
   const tasks = vi.fn();
   const entry = registry(async () => json(data));
-  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} onTaskItems={tasks} /></QueryClientProvider>));
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} mobile={mobile} onTaskItems={tasks} /></QueryClientProvider>));
   await flush(); await flush();
   expect(container.querySelector('[data-remote-project]')).toBeNull();
   const items = tasks.mock.lastCall?.[1] as Array<{ remoteSessionId: string; pinned: boolean; remoteStatus: { running: boolean; unread: number }; content: React.ReactNode }>;
@@ -229,6 +229,13 @@ test('remote task feed publishes unpinned and pinned rows as task cards and draw
   const hostRoot = createRoot(host);
   try {
     await act(async () => hostRoot.render(<>{items.map((item) => <React.Fragment key={item.remoteSessionId}>{item.content}</React.Fragment>)}</>));
+    if (mobile) {
+      const cards = [...host.querySelectorAll('.yuri-mobile-task-card')];
+      expect(cards).toHaveLength(2);
+      expect(cards.every((card) => card.querySelector('.yuri-mobile-task-avatar [data-remote-host="a"]'))).toBe(true);
+      expect(cards[1].querySelector('.yuri-mobile-session-actions')?.textContent).not.toContain('sessions.sidebar.bulkActions.archive');
+      return;
+    }
     expect(host.querySelectorAll('[data-session-title]')).toHaveLength(2);
     expect([...host.querySelectorAll('[data-session-title] > div:first-child')].every((header) => header.querySelector('[data-remote-host="a"]') && header.textContent?.includes('Project a'))).toBe(true);
     const card = host.querySelector('[data-remote-session="plain"]')!;

@@ -25,6 +25,7 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionIdsWithPendingRequests } from '@/sync/sync-context';
 
 import type { MobileTaskNode } from './MobileTaskCard';
+import type { PinnedItem } from '@/components/session/sidebar/SidebarPinnedSessions';
 import {
   findExactWorktreeMatch,
   formatRelativeShort,
@@ -69,6 +70,7 @@ export type MobileTaskViewModel = {
   /** Rows matching the selected tab before paging. */
   total: number;
   runStartTimes: ReadonlyMap<string, number>;
+  remoteContent?: ReadonlyMap<string, React.ReactNode>;
 };
 
 /**
@@ -78,9 +80,9 @@ export type MobileTaskViewModel = {
  */
 export function useMobileTaskViewModel(
   model: Pick<MobileProjectsHomeModel, 'allSessions' | 'ownership' | 'projectMetaById'>,
-  options: { enabled: boolean; status: MobileTaskStatus; settledLimit: number },
+  options: { enabled: boolean; status: MobileTaskStatus; settledLimit: number; remoteTasks?: readonly PinnedItem[] },
 ): MobileTaskViewModel | null {
-  const { enabled, status, settledLimit } = options;
+  const { enabled, status, settledLimit, remoteTasks } = options;
   const { t } = useI18n();
   const pinnedSessionIds = usePinnedSessionIds();
   const settledIds = useSettledSessionIds();
@@ -112,6 +114,14 @@ export function useMobileTaskViewModel(
 
   return React.useMemo(() => {
     if (!enabled) return null;
+    const remoteById = new Map((remoteTasks ?? []).map((item) => [item.node.session.id, item]));
+    const unseen = { ...unseenBySession };
+    const remoteOpen: Session[] = [];
+    const remotePinned: Session[] = [];
+    for (const [id, item] of remoteById) {
+      unseen[id] = item.remoteStatus?.unread ?? 0;
+      (item.pinned ? remotePinned : remoteOpen).push(item.node.session);
+    }
     const buckets = deriveTaskBuckets({
       sessions: model.allSessions,
       pinnedSessionIds,
@@ -120,9 +130,11 @@ export function useMobileTaskViewModel(
       settledAtBySessionId: indexMembership?.settledAtById,
       runningSessionIds,
       pendingRequestSessionIds,
-      unseenBySession,
+      unseenBySession: unseen,
+      remoteSessions: remoteOpen,
     });
-    const pinnedSessions = derivePinnedSessions(model.allSessions, pinnedSessionIds, pinnedOrder)
+    const pinnedSessions = derivePinnedSessions([...model.allSessions, ...remotePinned],
+      new Set([...pinnedSessionIds, ...remotePinned.map(({ id }) => id)]), pinnedOrder)
       .filter(isTaskViewSession);
     const colorByProjectId = new Map(registryProjects.map((project) => [project.id, project.color ?? undefined]));
     const untitled = t('mobile.sessions.untitled');
@@ -130,6 +142,12 @@ export function useMobileTaskViewModel(
     const previous = previousNodesRef.current;
     const next = new Map<string, MobileTaskNode>();
     const toNode = (session: Session, pinned: boolean): MobileTaskNode => {
+      const remote = remoteById.get(session.id);
+      if (remote) return {
+        id: session.id, title: session.title?.trim() || untitled,
+        projectLabel: remote.secondaryMeta?.projectLabel ?? unassigned, project: null,
+        unread: unseen[session.id] > 0, pinned: Boolean(remote.pinned), active: false,
+      };
       const owner = model.ownership.bySessionId.get(session.id);
       const meta = owner ? model.projectMetaById.get(owner.projectId) : undefined;
       const worktree = meta && owner?.kind === 'worktree'
@@ -161,7 +179,7 @@ export function useMobileTaskViewModel(
       next.set(session.id, node);
       return node;
     };
-    const isUnread = (session: Session): boolean => (unseenBySession[session.id] ?? 0) > 0;
+    const isUnread = (session: Session): boolean => (unseen[session.id] ?? 0) > 0;
     const open = [...pinnedSessions, ...buckets.active];
     const scoped = status === 'archived' ? buckets.settled : open;
     const matching = status === 'unread' ? scoped.filter(isUnread) : scoped;
@@ -170,6 +188,7 @@ export function useMobileTaskViewModel(
       items: visible.map((session) => toNode(session, pinnedSessionIds.has(session.id))),
       total: matching.length,
       runStartTimes,
+      remoteContent: new Map([...remoteById].map(([id, item]) => [id, item.content])),
     };
     previousNodesRef.current = next;
     return result;
@@ -186,6 +205,7 @@ export function useMobileTaskViewModel(
     pinnedOrder,
     pinnedSessionIds,
     registryProjects,
+    remoteTasks,
     runStartTimes,
     runningSessionIds,
     settledIds,
