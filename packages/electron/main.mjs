@@ -4852,8 +4852,14 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case 'desktop_install_id_get':
       return getOrCreateDesktopInstallId();
 
-    case 'desktop_host_probe':
-      return probeHostWithTimeout(String(args.url || ''), 2_000, String(args.clientToken || ''), args.requestHeaders || {}, String(args.expectedServerId || ''));
+    case 'desktop_host_probe': {
+      const probeUrl = String(args.url || '');
+      // Remote-runtime documents cannot read the local token, so their Local row
+      // would always probe as 'auth'. Main attaches it without exposing it.
+      const probeToken = String(args.clientToken || '')
+        || (isLocalRuntimeUrl(normalizeHostUrl(probeUrl)) ? readDesktopLocalClientToken() : '');
+      return probeHostWithTimeout(probeUrl, 2_000, probeToken, args.requestHeaders || {}, String(args.expectedServerId || ''));
+    }
 
     case 'desktop_remote_password_login':
       return loginRemoteAndIssueClientToken({
