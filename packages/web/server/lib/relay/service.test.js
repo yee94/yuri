@@ -90,7 +90,7 @@ describe('resolveEffectiveRelayUrl', () => {
     delete process.env.YURI_RELAY_URL;
   });
 
-  it('prefers a valid env URL, then settings, then the default', () => {
+  it('prefers saved settings over a valid env URL, and uses env only as a fallback', () => {
     expect(resolveEffectiveRelayUrl()).toBe(PRODUCT_RELAY_URL);
     expect(PRODUCT_RELAY_URL).toBe('wss://relay.useyuri.top/ws');
     expect(
@@ -100,11 +100,12 @@ describe('resolveEffectiveRelayUrl', () => {
     ).toBe('wss://settings.example/ws');
 
     process.env.YURI_RELAY_URL = 'wss://env.example/ws?x=1#frag';
+    expect(resolveEffectiveRelayUrl()).toBe('wss://env.example/ws');
     expect(
       resolveEffectiveRelayUrl({
         settings: { privateRelay: { relayUrl: 'wss://settings.example/ws' } },
       }),
-    ).toBe('wss://env.example/ws');
+    ).toBe('wss://settings.example/ws');
   });
 
   it('ignores an invalid env URL and falls through to settings', () => {
@@ -194,13 +195,17 @@ describe('relay service pairing endpoint', () => {
     expect(relayMocks.starts).toEqual([]);
   });
 
-  it('keeps an environment-pinned endpoint authoritative', async () => {
+  it('restores saved primary and additional endpoints despite a changed environment', async () => {
     process.env.YURI_RELAY_URL = 'wss://pinned.example/ws';
-    const { service } = createTestRelayService();
-
-    const candidate = await service.ensureEnabledForPairing('wss://ignored.example/ws');
-    expect(candidate.relayUrl).toBe('wss://pinned.example/ws');
-    expect(relayMocks.starts).toEqual(['wss://pinned.example/ws']);
+    const { service, settings } = createTestRelayService({ hasRelayDemand: async () => true });
+    await settings.write({ privateRelay: { enabled: true, relayUrl: DEFAULT_RELAY_URL, extraRelayUrls: ['wss://saved.example/ws'] } });
+    try {
+      await service.reconcile();
+      expect((await service.getPairingCandidate()).relayUrl).toBe(DEFAULT_RELAY_URL);
+      expect(relayMocks.starts).toEqual([DEFAULT_RELAY_URL, 'wss://saved.example/ws']);
+    } finally {
+      service.stop();
+    }
   });
 
   it('returns 400 from enable when the endpoint embeds userinfo instead of falling back', async () => {
@@ -264,23 +269,23 @@ describe('relay service pairing endpoint', () => {
     expect(onRelayUrlChanged).toHaveBeenCalledTimes(1);
   });
 
-  it('does not invoke onRelayUrlChanged for an env-pinned relay and still uses the pin', async () => {
+  it('lets a stored pairing or explicit primary change take precedence over the environment', async () => {
     process.env.YURI_RELAY_URL = 'wss://pinned.example/ws';
     const onRelayUrlChanged = vi.fn(async () => {});
     const { service } = createTestRelayService({ onRelayUrlChanged });
     const app = express();
     service.registerRoutes(app);
 
-    const candidate = await service.ensureEnabledForPairing('wss://ignored.example/ws');
-    expect(candidate.relayUrl).toBe('wss://pinned.example/ws');
+    const candidate = await service.ensureEnabledForPairing('wss://custom.example/ws');
+    expect(candidate.relayUrl).toBe('wss://custom.example/ws');
     expect(onRelayUrlChanged).not.toHaveBeenCalled();
 
     await request(app)
       .post('/api/yuri/relay/enable')
-      .send({ relayUrl: 'wss://ignored.example/ws' })
+      .send({ relayUrl: 'wss://custom.example/ws' })
       .expect(200);
-    expect(onRelayUrlChanged).not.toHaveBeenCalled();
-    expect((await service.getStatus()).relayUrl).toBe('wss://pinned.example/ws');
+    expect(onRelayUrlChanged).toHaveBeenCalledOnce();
+    expect(await service.getStatus()).toMatchObject({ relayUrl: 'wss://custom.example/ws', relayUrlLocked: false });
   });
 
   it('continues the primary switch when onRelayUrlChanged fails', async () => {

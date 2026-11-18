@@ -224,6 +224,43 @@ describe('cli args', () => {
     });
   });
 
+  it.each([true, 'wss://pinned.example/ws'])('keeps saved relay endpoints on managed startup with --relay-host=%s', async (relayHost) => {
+    const { applyRelayHostOptIn } = await import('./lib/commands-serve.js');
+    const previous = process.env.YURI_RELAY_URL;
+    try {
+      await withTempYuriDataDir(async (dir) => {
+        const settingsPath = path.join(dir, 'settings.json');
+        const saved = {
+          enabled: true,
+          relayUrl: 'wss://primary.example/ws',
+          extraRelayUrls: ['wss://paired.example/relay/ws', 'wss://backup.example/ws'],
+        };
+        fs.writeFileSync(settingsPath, JSON.stringify({ privateRelay: saved, theme: 'dark' }));
+
+        applyRelayHostOptIn({ relayHost });
+        const expected = { ...saved, relayUrl: relayHost === true ? saved.relayUrl : relayHost };
+        expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8'))).toEqual({ privateRelay: expected, theme: 'dark' });
+
+        delete process.env.YURI_RELAY_URL;
+        applyRelayHostOptIn({ relayHost: true });
+        expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).privateRelay).toEqual(expected);
+      });
+    } finally {
+      if (previous === undefined) delete process.env.YURI_RELAY_URL;
+      else process.env.YURI_RELAY_URL = previous;
+    }
+  });
+
+  it('does not replace unreadable settings with defaults on managed relay startup', async () => {
+    const { applyRelayHostOptIn } = await import('./lib/commands-serve.js');
+    await withTempYuriDataDir(async (dir) => {
+      const settingsPath = path.join(dir, 'settings.json');
+      fs.writeFileSync(settingsPath, '{incomplete');
+      expect(() => applyRelayHostOptIn({ relayHost: true })).toThrow(/settings/i);
+      expect(fs.readFileSync(settingsPath, 'utf8')).toBe('{incomplete');
+    });
+  });
+
   it('parses connect-url api-only help', () => {
     const parsed = parseArgs(['connect-url', '--api-only', '--help']);
 
@@ -810,9 +847,9 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
     });
   });
 
-  it('restart --port restarts a live unmanaged server through the shared explicit-port discovery path', async () => {
+  it.each(['web', 'ssh-remote'])('restart --port preserves the discovered %s runtime', async (runtime) => {
     await withTempYuriDataDir(async () => {
-      const server = await startMockYuriServer();
+      const server = await startMockYuriServer({ runtime });
       const calls = [];
       const host = '127.0.0.1';
       try {
@@ -821,7 +858,7 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
             calls.push(['stop', options.port, options.host]);
           },
           serve: async (options) => {
-            calls.push(['serve', options.port, options.host]);
+            calls.push(['serve', options.port, options.host, options.restartRuntime]);
             return options.port;
           },
         }, { explicitPort: true, port: server.port, host, json: true }));
@@ -829,7 +866,7 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
         const payload = JSON.parse(output);
         expect(calls).toEqual([
           ['stop', server.port, host],
-          ['serve', server.port, host],
+          ['serve', server.port, host, runtime],
         ]);
         expect(payload.restartedCount).toBe(1);
         expect(payload.results).toEqual([

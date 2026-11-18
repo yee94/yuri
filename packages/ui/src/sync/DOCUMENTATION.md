@@ -871,7 +871,10 @@ server-cache-first). On the client, TanStack Query owns that GET as transport-
 scoped SWR (`queryKeys.sessionIndex.snapshot(transport)`), while a separate
 runtimeKey-scoped persistent snapshot (`yuri.sessionIndexStartupCache`, at most
 eight runtime entries and 1 MiB) seeds
-stale first paint so a paired host can reuse LAN↔relay cold-start rows. The
+stale first paint so one saved connection can reuse LAN↔relay cold-start rows.
+On mobile, different Relay addresses for the same Host remain separate
+connections with separate runtime keys and snapshots, even with shared LAN
+candidates. The
 persistent payload is only the public session-index summary (revision, sync
 progress, directory session rows) — never credentials, tokens, messages, or
 attachments. Query/local storage accelerate paint only; server SQLite + GET

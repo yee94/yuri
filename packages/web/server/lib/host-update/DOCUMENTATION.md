@@ -59,8 +59,11 @@ appearing successful. Package installation failure is not package rollback.
   stable installation entry, revalidates registry integrity or the archive
   checksum, waits for the old
   process to exit, installs the exact version, restarts through the stable CLI
-  entry and verifies `/health` version/identity. Runtime, bind host, port,
-  API-only mode and password environment are preserved. Passwords never enter
+   entry and verifies `/health` version/identity. Runtime, bind host, port,
+   API-only mode and password environment are preserved. The restarted Host
+   reads its saved primary and additional Relay endpoints from the same data
+   directory; inherited `YURI_RELAY_URL` cannot override a saved address.
+   The update does not replay `--relay-host` or rewrite Relay settings. Passwords never enter
   task state or helper argv. Install failure attempts to restart the surviving
   CLI files but cannot promise recovery from a partially replaced package.
 - Electron injects `host-update.mjs` through `startWebUiServer` and shares

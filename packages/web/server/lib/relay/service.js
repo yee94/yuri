@@ -100,19 +100,12 @@ const normalizeExtraRelayUrls = (value) => {
   return result;
 };
 
-// A deployment can pin the relay endpoint via env (e.g. a self-hosted relay on
-// your own Cloudflare account/domain). When set and valid it overrides the
-// stored setting entirely, so the host connection, the pairing offer, and the
-// status all point at it — clients then inherit it from the offer automatically.
-const envRelayUrlOverride = (env = process.env) => {
-  const raw = env?.YURI_RELAY_URL;
-  if (typeof raw !== 'string' || !raw.trim()) return null;
-  return canonicalizeRelayUrl(raw);
-};
-
-// Env (`YURI_RELAY_URL`) → settings.privateRelay.relayUrl → DEFAULT_RELAY_URL.
+// An environment URL bootstraps hosts without a saved primary; it never
+// replaces an endpoint explicitly configured on the Host.
 export const resolveEffectiveRelayUrl = ({ settings = null, env = process.env } = {}) =>
-  envRelayUrlOverride(env) ?? normalizeRelayUrl(settings?.privateRelay?.relayUrl);
+  canonicalizeRelayUrl(settings?.privateRelay?.relayUrl)
+  ?? canonicalizeRelayUrl(env?.YURI_RELAY_URL)
+  ?? DEFAULT_RELAY_URL;
 
 /**
  * @param {{
@@ -183,7 +176,6 @@ export const createRelayService = ({
   const readConfig = async () => {
     const settings = await readSettingsFromDiskMigrated();
     const stored = settings?.privateRelay;
-    const override = envRelayUrlOverride();
     const primary = resolveEffectiveRelayUrl({ settings });
     const extras = normalizeExtraRelayUrls(stored?.extraRelayUrls).filter((url) => url !== primary);
     return {
@@ -194,9 +186,6 @@ export const createRelayService = ({
       // domains. The primary stays authoritative for push and default pairing.
       extraRelayUrls: extras,
       relayUrls: [primary, ...extras].filter(Boolean),
-      // True when the endpoint is pinned by YURI_RELAY_URL (a self-hosted
-      // relay); the stored setting is ignored while it is set.
-      relayUrlLocked: override !== null,
     };
   };
 
@@ -439,7 +428,7 @@ export const createRelayService = ({
       relayUrl: config.relayUrl,
       relayUrls: config.relayUrls,
       endpoints,
-      relayUrlLocked: config.relayUrlLocked,
+      relayUrlLocked: false,
       ...(live.lastError ? { lastError: live.lastError } : {}),
     };
   };
@@ -495,7 +484,7 @@ export const createRelayService = ({
     const config = await readConfig();
     let targetUrl = config.relayUrl;
     let extraRelayUrls = config.extraRelayUrls;
-    if (!config.relayUrlLocked && requestedRelayUrl !== undefined) {
+    if (requestedRelayUrl !== undefined) {
       const canonical = canonicalizeRelayUrl(requestedRelayUrl);
       if (!canonical) {
         const error = new Error('Relay URL must use ws:// or wss://');

@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import {
   deleteMobileConnection,
   loadMobileConnections,
+  mobileConnectionKey,
   upsertMobileConnection,
   validateMobileConnectionSession,
   type MobileRelayConfig,
@@ -141,17 +142,17 @@ describe('mobile connection storage', () => {
     }
   });
 
-  test('same serverId with a different Relay endpoint stays a separate connection', async () => {
+  test('different Relay endpoints keep separate runtime snapshot keys and tokens even with the same LAN URL', async () => {
     try {
       installTestWindow();
       await upsertMobileConnection({
         label: 'Stable',
-        candidates: [{ kind: 'relay', relay: testRelay }],
+        candidates: [{ kind: 'direct', url: 'http://host.example' }, { kind: 'relay', relay: testRelay }],
         clientToken: 'stable-token',
       });
       await upsertMobileConnection({
         label: 'Preview',
-        candidates: [{
+        candidates: [{ kind: 'direct', url: 'http://host.example' }, {
           kind: 'relay',
           relay: { ...testRelay, relayUrl: 'wss://self-hosted.example/ws' },
         }],
@@ -161,6 +162,8 @@ describe('mobile connection storage', () => {
       const connections = await loadMobileConnections();
       expect(connections).toHaveLength(2);
       expect(connections.map((c) => c.label).sort()).toEqual(['Preview', 'Stable']);
+      expect(new Set(connections.map(mobileConnectionKey)).size).toBe(2);
+      expect(connections.map((c) => c.clientToken).sort()).toEqual(['preview-token', 'stable-token']);
     } finally {
       restoreGlobals();
     }

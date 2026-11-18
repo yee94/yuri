@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
+import { randomUUID } from 'node:crypto';
 import { EXIT_CODE, TunnelCliError } from './cli-errors.js';
 import { buildLocalUrl, resolveServeHost, assertSafeBrowserPort, hasUiPasswordConfigured, assertAuthenticatedNetworkExposure } from './cli-network.js';
 import { fetchSystemInfoFromPort } from './cli-http.js';
@@ -13,7 +14,7 @@ import { getPidFilePath, getInstanceFilePath, writePidFile, writeInstanceOptions
 import { isNetworkExposedBindHost } from '../../server/lib/security/bind-host.js';
 import {
   canonicalizeRelayUrl,
-  DEFAULT_RELAY_URL,
+  resolveEffectiveRelayUrl,
 } from '../../server/lib/relay/service.js';
 import {
   intro as clackIntro,
@@ -46,8 +47,7 @@ function assertServeRelayHostAllowed(serveRuntime, options) {
 }
 
 // Persist privateRelay.enabled before the server starts so reconcile /
-// startIfEnabled sees the opt-in. Optional URL pins the endpoint in settings
-// and YURI_RELAY_URL (env override stays authoritative while set).
+// startIfEnabled sees the opt-in. An explicit URL updates the saved primary.
 function applyRelayHostOptIn(options) {
   if (!options?.relayHost) return;
 
@@ -60,33 +60,36 @@ function applyRelayHostOptIn(options) {
         EXIT_CODE.USAGE_ERROR,
       );
     }
-    process.env.YURI_RELAY_URL = pinnedUrl;
   }
 
   const settingsPath = path.join(getDataDir(), SETTINGS_FILE_NAME);
   let settings = {};
   try {
     settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) settings = {};
-  } catch {
-    settings = {};
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      throw new Error('Expected a settings object');
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw new Error('Cannot read Yuri settings; existing Relay configuration was not changed.', { cause: error });
+    }
   }
 
-  const existingUrl = typeof settings?.privateRelay?.relayUrl === 'string'
-    ? settings.privateRelay.relayUrl
-    : null;
-  const relayUrl = pinnedUrl
-    ?? (canonicalizeRelayUrl(existingUrl) || DEFAULT_RELAY_URL);
-
-  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-  fs.writeFileSync(
-    settingsPath,
-    `${JSON.stringify({
-      ...settings,
-      privateRelay: { enabled: true, relayUrl },
-    }, null, 2)}\n`,
-    'utf8',
-  );
+  const stored = settings.privateRelay;
+  const relayUrl = pinnedUrl ?? resolveEffectiveRelayUrl({ settings });
+  if (stored?.enabled !== true || stored.relayUrl !== relayUrl) {
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    const tempPath = `${settingsPath}.tmp-${randomUUID()}`;
+    try {
+      fs.writeFileSync(tempPath, `${JSON.stringify({
+        ...settings,
+        privateRelay: { ...stored, enabled: true, relayUrl },
+      }, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+      fs.renameSync(tempPath, settingsPath);
+    } finally {
+      fs.rmSync(tempPath, { force: true });
+    }
+  }
 }
 
 function createServeCommand({
@@ -169,7 +172,9 @@ async function serveCommand(options) {
     // package scripts. Selecting Bun merely because it is installed makes an
     // otherwise valid CLI launch fail before the Host can report readiness.
     const runtimeBin = process.execPath;
-    const serveRuntime = resolveServeRuntime();
+    const serveRuntime = options.restartRuntime === undefined
+      ? resolveServeRuntime()
+      : resolveServeRuntime({ YURI_RUNTIME: options.restartRuntime });
     assertServeRelayHostAllowed(serveRuntime, options);
     applyRelayHostOptIn(options);
 

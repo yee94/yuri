@@ -435,7 +435,7 @@ describe('apns runtime push relay derivation and re-register', () => {
     expect(registerUrls(fetchMock)).toEqual(['https://explicit.test/v1/push/register-token']);
   });
 
-  it('derives the push send URL from settings then env relay URLs', async () => {
+  it('keeps the Push destination on the saved Relay when the Relay environment changes', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ ok: true, results: [] }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -451,8 +451,8 @@ describe('apns runtime push relay derivation and re-register', () => {
 
     fetchMock.mockClear();
     process.env.YURI_RELAY_URL = 'wss://env.example/ws';
-    await runtime.addOrUpdateApnsToken('s1', 'tokenA');
-    expect(registerUrls(fetchMock)).toEqual(['https://env.example/v1/push/register-token']);
+    await runtime.addOrUpdateApnsToken('s2', 'tokenB');
+    expect(registerUrls(fetchMock)).toEqual(['https://settings.example/v1/push/register-token']);
   });
 
   it('does not send tokens to an unconfigured hosted endpoint', async () => {

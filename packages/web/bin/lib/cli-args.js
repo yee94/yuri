@@ -333,7 +333,7 @@ ENVIRONMENT:
   YURI_UI_PASSWORD      Alternative to --ui-password flag
   YURI_API_ONLY         Set to true/1 to start API routes only
   YURI_DATA_DIR         Override Yuri data directory
-  YURI_RELAY_URL        Pin private relay endpoint (ws:// or wss://)
+  YURI_RELAY_URL        Initial private relay endpoint if none is saved (ws:// or wss://)
   OPENCODE_HOST               External OpenCode server base URL, e.g. http://hostname:4096
   OPENCODE_PORT               Port of external OpenCode server to connect to
   OPENCODE_SKIP_START          Skip starting OpenCode, use external server

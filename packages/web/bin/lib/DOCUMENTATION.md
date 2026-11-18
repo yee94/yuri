@@ -23,11 +23,12 @@ Command modules implement user-facing commands and preserve output contracts acr
   - The Host process always inherits the CLI's Node executable. Do not select Bun based on PATH availability: the Web API owns `better-sqlite3` and requires the prepared Node ABI.
   - The self-contained launcher passes `--title=yuri`; propagate that explicit title to its daemon so lifecycle identity checks continue to work after relocation to a directory not named Yuri.
   - Sets `YURI_RUNTIME=web` for ordinary CLI serve (foreground and daemon) so a leftover desktop env cannot host or probe the private relay. Preserves `YURI_RUNTIME=ssh-remote` when SSH manager already set it.
-  - `--relay-host [url]` is valid only when `YURI_RUNTIME=ssh-remote`. It enables the private relay host before startup: writes `settings.privateRelay.enabled=true` (and optional pinned `relayUrl`), and when a URL is provided also sets `YURI_RELAY_URL`. Ordinary `web` serve rejects the flag.
+  - `--relay-host [url]` is valid only in the `ssh-remote` runtime. It enables the private relay host before startup, keeping the saved primary and extra endpoints. An explicit URL updates only the saved primary. `YURI_RELAY_URL` only seeds a missing primary. An unreadable settings file is never overwritten. Ordinary `web` serve rejects the flag.
 
 - `commands-lifecycle.js`
   - Implements `yuri stop` and `yuri restart`.
   - Owns lifecycle stop/restart semantics, desktop-managed port rejection, unmanaged instance shutdown attempts, PID/instance cleanup, and restart reuse of stored instance options.
+  - `restart` and CLI `update` reuse the discovered runtime and read Relay configuration from the Host settings; they do not replay the SSH opt-in.
 
 - `commands-status.js`
   - Implements `yuri status`.
@@ -46,7 +47,7 @@ Command modules implement user-facing commands and preserve output contracts acr
   - Finds or starts a local instance and prints the browser/connect URL according to the selected output mode.
   - Emits a **pairing v2** link (`yuri://connect?v=2&p=<base64url>`): it creates a one-time pairing session in the shared store (`client-pairing-sessions.json`) and encodes the pairing id + secret + transport candidates. The client redeems the secret over whichever candidate connects first (`/api/client-auth/pairing/redeem`). No standalone token is embedded — the QR itself is the single-use credential.
   - The default form advertises the resolved server URL as a direct (lan/tunnel) candidate and folds in a relay candidate when the host relay is enabled, so one link works on-LAN and off-network.
-  - `--relay` builds a relay-only pairing link (the sole candidate is the relay transport), for sharing with a device that is not on the host's network — no server URL, no auto-start. The relay endpoint follows `YURI_RELAY_URL` / the stored setting / the default, matching the running host; the host must be running with the relay enabled to serve the redeem over the tunnel.
+  - `--relay` builds a relay-only pairing link (the sole candidate is the relay transport), for sharing with a device that is not on the host's network — no server URL, no auto-start. The relay endpoint follows the stored setting / `YURI_RELAY_URL` / the default, matching the running host; the host must be running with the relay enabled to serve the redeem over the tunnel.
 
 - `commands-update.js`
   - Implements `yuri update`.

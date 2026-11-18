@@ -15,7 +15,7 @@ import { getInstanceFilePath, readInstanceOptions } from './cli-process.js';
 import { createRemoteClientAuthRuntime } from '../../server/lib/client-auth/remote-clients.js';
 import { createClientPairingRuntime } from '../../server/lib/client-auth/pairing.js';
 import { createRelayIdentityRuntime } from '../../server/lib/relay/identity.js';
-import { DEFAULT_RELAY_URL } from '../../server/lib/relay/service.js';
+import { resolveEffectiveRelayUrl } from '../../server/lib/relay/service.js';
 import { bytesToBase64Url } from '../../server/lib/relay/e2ee.js';
 import {
   intro as clackIntro,
@@ -30,27 +30,6 @@ import {
 const REMOTE_CLIENTS_FILE_NAME = 'remote-clients.json';
 const SETTINGS_FILE_NAME = 'settings.json';
 const PAIRING_SESSIONS_FILE_NAME = 'client-pairing-sessions.json';
-
-function isValidRelayUrl(value) {
-  if (typeof value !== 'string') return false;
-  try {
-    const url = new URL(value.trim());
-    return url.protocol === 'ws:' || url.protocol === 'wss:';
-  } catch {
-    return false;
-  }
-}
-
-// Resolve the relay endpoint the same way the running host does (service.js):
-// YURI_RELAY_URL env override, then the stored setting, then the default —
-// so the pairing link points at the same relay the host connects out to.
-function resolveRelayUrl(settings) {
-  const envUrl = process.env.YURI_RELAY_URL;
-  if (isValidRelayUrl(envUrl)) return envUrl.trim();
-  const stored = settings?.privateRelay?.relayUrl;
-  if (isValidRelayUrl(stored)) return stored.trim();
-  return DEFAULT_RELAY_URL;
-}
 
 // Minimal settings.json read/write for the relay identity runtime. It reads the
 // whole object and writes it back with the relay keys added, so other settings
@@ -80,7 +59,7 @@ function createSettingsAccessors() {
 async function buildRelayPairingCandidate() {
   const accessors = createSettingsAccessors();
   const settings = await accessors.readSettingsFromDiskMigrated();
-  const relayUrl = resolveRelayUrl(settings);
+  const relayUrl = resolveEffectiveRelayUrl({ settings });
   const identityRuntime = createRelayIdentityRuntime({ crypto, ...accessors });
   const identity = await identityRuntime.getRelayIdentity();
   return {

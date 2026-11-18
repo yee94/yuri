@@ -228,21 +228,17 @@ const secureTokenKeyOf = (connection: {
 
 export const mobileConnectionKey = secureTokenKeyOf;
 
-// Two candidate sets are the same instance if they share a relay identity
-// (serverId + relayUrl) or a normalized direct URL. Hostname is never an
-// identity: one machine can run several servers, and those servers may use
-// different relay endpoints.
+// Relay-backed entries match only by relay identity (serverId + relayUrl).
+// A shared LAN address cannot merge their credentials or startup snapshots.
+// Direct-only entries match by normalized URL, never by hostname alone.
 const candidateSetsMatch = (a: MobileTransportCandidate[], b: MobileTransportCandidate[]): boolean => {
-  const aRelay = a.find((c) => c.kind === 'relay');
-  const aServerId = aRelay && aRelay.kind === 'relay' ? aRelay.relay.serverId : null;
-  const aRelayUrl = aRelay && aRelay.kind === 'relay' ? aRelay.relay.relayUrl.trim() : null;
-  const aUrls = new Set(a.filter((c) => c.kind === 'direct').map((c) => getConnectionStorageKey((c as { url: string }).url)));
-  return b.some((c) => {
-    if (c.kind === 'relay') {
-      return aServerId !== null && c.relay.serverId === aServerId && c.relay.relayUrl.trim() === aRelayUrl;
-    }
-    return aUrls.has(getConnectionStorageKey(c.url));
-  });
+  const aRelay = relayCandidateOf({ candidates: a });
+  const bRelay = relayCandidateOf({ candidates: b });
+  if (aRelay || bRelay) {
+    return aRelay !== null && bRelay !== null && relayConnectionRuntimeKey(aRelay) === relayConnectionRuntimeKey(bRelay);
+  }
+  const aUrls = new Set(directCandidates({ candidates: a }).map((c) => getConnectionStorageKey(c.url)));
+  return directCandidates({ candidates: b }).some((c) => aUrls.has(getConnectionStorageKey(c.url)));
 };
 
 const connectionDraftsMatch = (

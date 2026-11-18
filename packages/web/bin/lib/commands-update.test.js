@@ -6,9 +6,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { createUpdateCommand } from './commands-update.js';
 
 const portableFixture = vi.hoisted(() => ({ installation: null }));
+const lifecycle = vi.hoisted(() => ({
+  discoverRunningInstances: vi.fn(async () => []),
+  requestServerShutdown: vi.fn(async () => true),
+  stopInstanceProcess: vi.fn(async () => true),
+}));
 vi.mock('../../server/lib/portable-installation.js', async (original) => ({
   ...await original(),
   readPortableInstallation: () => portableFixture.installation,
+}));
+vi.mock('./cli-lifecycle.js', () => ({ discoverRunningInstances: lifecycle.discoverRunningInstances }));
+vi.mock('./cli-http.js', () => ({ requestServerShutdown: lifecycle.requestServerShutdown }));
+vi.mock('./cli-process.js', async (original) => ({
+  ...await original(),
+  stopInstanceProcess: lifecycle.stopInstanceProcess,
 }));
 
 async function withTempYuriDataDir(fn) {
@@ -40,14 +51,21 @@ describe('update command', () => {
     } finally { portableFixture.installation = null; }
   });
 
-  it('uses the package-manager helpers on the update-available path', async () => {
-    await withTempYuriDataDir(async () => {
+  it('updates a managed daemon and restarts it from saved Relay settings without replaying the opt-in', async () => {
+    await withTempYuriDataDir(async (dir) => {
       const originalWrite = process.stdout.write;
       process.stdout.write = vi.fn(() => true);
+      const instanceFilePath = path.join(dir, 'instance.json');
+      const port = 3100;
+      fs.writeFileSync(instanceFilePath, JSON.stringify({ port, host: '127.0.0.1' }));
+      lifecycle.discoverRunningInstances.mockResolvedValueOnce([
+        { port, host: '127.0.0.1', pid: 500, runtime: 'ssh-remote', instanceFilePath, pidFilePath: path.join(dir, 'instance.pid') },
+      ]);
       const executeUpdate = vi.fn(() => ({ success: true, exitCode: 0 }));
+      const serveCommand = vi.fn();
       const updateCommand = createUpdateCommand({
         packageManagerPath: '/fake/package-manager.js',
-        serveCommand: vi.fn(),
+        serveCommand,
         importFromFilePath: vi.fn(async () => ({
           checkForUpdates: vi.fn(async () => ({ available: true, version: '9.9.9' })),
           detectPackageManager: vi.fn(() => 'npm'),
@@ -60,6 +78,8 @@ describe('update command', () => {
         await updateCommand({ json: true });
 
         expect(executeUpdate).toHaveBeenCalledWith('npm', { silent: true });
+        expect(serveCommand).toHaveBeenCalledWith(expect.objectContaining({ port, restartRuntime: 'ssh-remote' }));
+        expect(serveCommand.mock.calls[0][0]).not.toHaveProperty('relayHost');
       } finally {
         process.stdout.write = originalWrite;
       }

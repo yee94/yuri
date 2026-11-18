@@ -349,6 +349,7 @@ async function restartCommand(options, serveCommand) {
         const restartedPort = await runServe({
           port: restartPort,
           host: instanceHost,
+          restartRuntime: instance.runtime,
           explicitPort: true,
           uiPassword: options.explicitUiPassword ? options.uiPassword : (storedOptions.uiPassword || options.uiPassword),
           apiOnly: storedOptions.apiOnly === true || options.apiOnly === true,

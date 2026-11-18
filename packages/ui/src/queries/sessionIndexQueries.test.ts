@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import type { SessionIndexSnapshot } from '@/lib/session-index-api';
+import { relayConnectionRuntimeKey } from '@/apps/mobileConnections';
 import {
   ensureSessionIndexRevisionQuery,
   ensureSessionIndexSnapshotQuery,
@@ -151,6 +152,18 @@ describe('sessionIndexQueries', () => {
 
     expect(direct.state.data).toEqual(snapshot(6, '/paired'));
     expect(relay.state.data).toEqual(snapshot(6, '/paired'));
+  });
+
+  test('restores separate startup snapshots for the same Host reached through Relay A and B', () => {
+    const storage = memoryStorage();
+    const relay = { serverId: 'server-1', relayUrl: 'wss://a.example/ws', hostEncPubJwk: {} };
+    const a = relayConnectionRuntimeKey(relay);
+    const b = relayConnectionRuntimeKey({ ...relay, relayUrl: 'wss://b.example/ws' });
+    writeSessionIndexStartupSnapshot(a, snapshot(6, '/relay-a'), storage);
+    writeSessionIndexStartupSnapshot(b, snapshot(9, '/relay-b'), storage);
+
+    expect(readSessionIndexStartupSnapshot(a, storage)).toEqual(snapshot(6, '/relay-a'));
+    expect(readSessionIndexStartupSnapshot(b, storage)).toEqual(snapshot(9, '/relay-b'));
   });
 
   test('persists successful live snapshots under the matching runtimeKey and never writes null', async () => {

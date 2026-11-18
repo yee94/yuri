@@ -111,6 +111,7 @@ function createUpdateCommand({ importFromFilePath, packageManagerPath, serveComm
         await serveCommand({
           port: storedOptions.port || instance.port,
           host: storedOptions.host,
+          restartRuntime: instance.runtime,
           explicitPort: true,
           uiPassword: storedOptions.uiPassword,
           suppressStartupSummary: true,
