@@ -17,6 +17,7 @@ import { DirectoryExplorerSurface, DirectoryMachineActions, DirectoryMachineList
 import { Icon } from "@/components/icon/Icon";
 import { opencodeClient } from '@/lib/opencode/client';
 import { useI18n } from '@/lib/i18n';
+import { partitionByFuzzyQuery } from '@/lib/search/fuzzySearch';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useMobileNavigationStore } from '@/mobile/useMobileNavigationStore';
 import { resolveDirectoryExplorerMobileLayout } from './directoryExplorerLayout';
@@ -357,11 +358,9 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   }, [browseDirectoryAbsolutePath, open]);
 
   const filteredEntries = React.useMemo(() => {
-    const lowerFilter = browseFilterQuery.toLowerCase();
     const includeHidden = showHidden || browseFilterQuery.startsWith('.');
-    return entries.filter((entry) => (
-      entry.name.toLowerCase().startsWith(lowerFilter) && (includeHidden || !entry.name.startsWith('.'))
-    ));
+    const visible = entries.filter((entry) => includeHidden || !entry.name.startsWith('.'));
+    return partitionByFuzzyQuery(visible, browseFilterQuery, (entry) => entry.name).matching;
   }, [browseFilterQuery, entries, showHidden]);
 
   const rows = React.useMemo<BrowseRow[]>(() => {

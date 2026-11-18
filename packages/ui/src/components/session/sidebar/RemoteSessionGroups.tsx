@@ -52,7 +52,7 @@ export function RemoteSessionGroups({ model, project, registry }: {
     const source = { folders: folders?.foldersMap[scope] ?? [], actionsDisabled: !online || model.pending,
       pagination: { hasMore: data.directories.find((entry) => entry.directory === group.directory)?.hasMore ?? false, loadingMore: data.loadingMore } };
     return <SessionGroupSection key={key} group={group} groupKey={key} projectId={project.id} projectLabel={model.projectProps.label}
-      onVisibleSessions={model.reportGroupTargets}
+      onVisibleSessions={model.reportGroupTargets} isArchivedLoading={data.unsynced}
       source={source} hideGroupLabel={group.isMain} hasSessionSearchQuery={Boolean(query)} normalizedSessionSearchQuery={query} groupSearchDataByGroup={searchData}
       visibleSessionCount={limits[key]} collapsedGroups={collapsed} collapsedFolderIds={new Set(folders?.collapsedFolderIds ?? [])}
       toggleFolderCollapse={(id) => folderCommand(scope, id)?.onToggle()} renameFolder={(directory, id, name) => folderCommand(directory, id)?.onRename(name)}

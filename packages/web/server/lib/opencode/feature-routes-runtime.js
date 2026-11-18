@@ -316,12 +316,12 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     });
 
     const assistantAllowedRoots = [];
-    const refreshAssistantAllowedRoots = async () => {
-      const settings = await readSettingsFromDiskMigrated();
+    const updateAssistantAllowedRoots = (settings) => {
       assistantAllowedRoots.splice(0, assistantAllowedRoots.length, ...sanitizeProjects(settings?.projects ?? [])
         .map((project) => project.path)
         .filter((value) => typeof value === 'string'));
     };
+    const refreshAssistantAllowedRoots = async () => updateAssistantAllowedRoots(await readSettingsFromDiskMigrated());
     await refreshAssistantAllowedRoots();
     const projectRegistry = createProjectRegistry({ persistSettings, validateDirectoryPath });
     registerProjectsSkill(app, {
@@ -329,6 +329,10 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, hasAssistant,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
       registerProject: (input) => projectRegistry.register(input), readSettingsFromDiskStrict, sanitizeProjects,
+      removeProject: async (input) => {
+        const { settings } = await projectRegistry.remove(input);
+        updateAssistantAllowedRoots(settings);
+      },
       sessionLifecycle: createProjectSessionLifecycle({
         sessionIndexService, sessionArchiveService, sessionMetadataStore, publishSessionIndexChange,
       }),

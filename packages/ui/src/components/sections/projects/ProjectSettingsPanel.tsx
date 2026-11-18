@@ -13,12 +13,16 @@ type ProjectSettingsPanelProps = {
   project: ProjectEntry | null;
   onIdentitySave: (data: ProjectIdentitySaveData) => void | Promise<void>;
   compact?: boolean;
+  storedIconPreview?: React.ReactNode;
+  readOnly?: boolean;
 };
 
 export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
   project,
   onIdentitySave,
   compact = false,
+  storedIconPreview,
+  readOnly = false,
 }) => {
   const { t } = useI18n();
   const form = useProjectIdentityForm(project);
@@ -30,7 +34,7 @@ export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
     return { id: project.id, path: project.path };
   }, [project]);
 
-  useProjectIdentityAutoSave(form, onIdentitySave);
+  useProjectIdentityAutoSave(form, onIdentitySave, !readOnly);
 
   if (!project || !projectRef) {
     return null;
@@ -49,8 +53,8 @@ export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
         </p>
       </div>
 
-      <ProjectIdentityFields form={form} />
-      <WorktreeSectionContent projectRef={projectRef} collapsible={compact} />
+      <ProjectIdentityFields form={form} showDefaultModel={!project.hostId} storedIconPreview={storedIconPreview} readOnly={readOnly} />
+      {!project.hostId && <WorktreeSectionContent projectRef={projectRef} collapsible={compact} />}
     </div>
   );
 };

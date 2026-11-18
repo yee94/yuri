@@ -1695,6 +1695,7 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
           >
             <Icon name="global" className="h-3.5 w-3.5" />
             <span className="flex-1">{t('contextPanel.browser.open')}</span>
+            <span className="typography-micro text-muted-foreground">{shortcutLabel('open_browser_panel')}</span>
             {isContextBrowserActive ? (
               <Icon name="check" className="h-3.5 w-3.5 text-foreground" />
             ) : null}

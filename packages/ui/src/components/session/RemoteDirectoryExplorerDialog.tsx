@@ -8,6 +8,8 @@ import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import type { RemoteProject } from '@/lib/remote-projects/types';
 import { Icon } from '@/components/icon/Icon';
 import { useRemoteDirectoryExplorerModel } from './useRemoteDirectoryExplorerModel';
+import { asDirectoryInput, parentDirectoryInput, trimDirectoryPath } from './remoteDirectoryBrowsePath';
+import { partitionByFuzzyQuery } from '@/lib/search/fuzzySearch';
 import { DirectoryExplorerSurface } from './DirectoryExplorerViews';
 
 interface Props {
@@ -25,29 +27,31 @@ interface Props {
 export function RemoteDirectoryExplorerDialog({ open, onOpenChange, forceMobile, origin, registry, hostId, machinePicker, onRegistered }: Props) {
   const { t } = useI18n();
   const device = useDeviceInfo();
-  const { directory, setPath, pending, error, home, listing, submit } = useRemoteDirectoryExplorerModel({ open, registry, hostId, onOpenChange, onRegistered });
+  const { input, browse, setPath, pending, error, home, listing, submit } = useRemoteDirectoryExplorerModel({ open, registry, hostId, onOpenChange, onRegistered });
+  const entries = React.useMemo(() => partitionByFuzzyQuery(listing.data ?? [], browse.filter, (child) => child.name).matching, [listing.data, browse.filter]);
   const body = <div className="yuri-directory-content">
     <div className="yuri-directory-inputs">
       <fieldset disabled={pending} className="min-w-0">{machinePicker}</fieldset>
       <div className="yuri-directory-field">
         <Icon name="folder-add" className="size-4 shrink-0 text-muted-foreground" />
-        <Input className="min-w-0 flex-1 font-mono" aria-label={t('directoryExplorerDialog.pathInput.placeholder')} value={directory} onChange={(event) => setPath(event.target.value)} disabled={pending} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+        <Input className="min-w-0 flex-1 font-mono" aria-label={t('directoryExplorerDialog.pathInput.placeholder')} value={input} onChange={(event) => setPath(event.target.value)} disabled={pending} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
       </div>
     </div>
     <ScrollableOverlay className="yuri-directory-list" outerClassName="yuri-directory-results" disableHorizontal>
       {listing.isFetching || home.isPending ? <p role="status" className="yuri-directory-name flex items-center justify-center gap-2 py-3 text-muted-foreground"><Icon name="refresh" className="size-3.5 animate-spin" />{t('directoryExplorerDialog.browse.loading')}</p> : null}
       {!home.isPending && !listing.isPending ? <><div className="yuri-directory-row hover:bg-interactive-hover/50">
-        <button type="button" className="yuri-directory-entry" disabled={pending || !directory || directory === '/'} onClick={() => setPath(directory.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '') || '/')} aria-label={t('remoteProjects.parent')}>
+        <button type="button" className="yuri-directory-entry" disabled={pending || !browse.directory || browse.directory === '/'} onClick={() => setPath(parentDirectoryInput(browse.directory))} aria-label={t('remoteProjects.parent')}>
           <Icon name="arrow-left-s" className="size-4 shrink-0 text-muted-foreground" /><span className="yuri-directory-name">..</span>
         </button>
       </div>
-      {listing.data?.map((child) => <div key={child.path} className="yuri-directory-row hover:bg-interactive-hover/50">
-        <button type="button" className="yuri-directory-entry" disabled={pending} onClick={() => setPath(child.path)}>
+      {entries.map((child) => <div key={child.path} className="yuri-directory-row hover:bg-interactive-hover/50">
+        <button type="button" className="yuri-directory-entry" disabled={pending} onClick={() => setPath(asDirectoryInput(child.path))}>
           <Icon name="folder-6" className="size-4 shrink-0 text-muted-foreground" /><span className="yuri-directory-name truncate">{child.name}</span>
         </button>
       </div>)}</> : null}
     </ScrollableOverlay>
   </div>;
+  const directory = trimDirectoryPath(input);
   const footer = <div className="yuri-directory-actions">
     <Button variant="ghost" size="xs" disabled={pending || !directory} onClick={() => void submit(true)}>{t('directoryExplorerDialog.actions.createAndAdd')}</Button>
     <Button size="xs" disabled={pending || !directory || listing.isError || listing.isPending} onClick={() => void submit(false)}>{t(pending ? 'directoryExplorerDialog.actions.adding' : 'directoryExplorerDialog.actions.addProject')}</Button>

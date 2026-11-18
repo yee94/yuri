@@ -13,9 +13,12 @@ type ProjectIdentityFormState = ReturnType<typeof useProjectIdentityForm>;
 
 type ProjectIdentityFieldsProps = {
   form: ProjectIdentityFormState;
+  showDefaultModel?: boolean;
+  storedIconPreview?: React.ReactNode;
+  readOnly?: boolean;
 };
 
-export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ form }) => {
+export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ form, showDefaultModel = true, storedIconPreview, readOnly = false }) => {
   const { t } = useI18n();
   const { currentTheme } = useThemeSystem();
   const {
@@ -56,6 +59,7 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
   const currentColorVar = color ? (COLOR_MAP[color] ?? null) : null;
 
   return (
+    <fieldset className="min-w-0" disabled={readOnly}>
     <SettingsGroup>
       <SettingsRow
         label={t('settings.projects.page.field.projectName')}
@@ -69,7 +73,7 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
         />
       </SettingsRow>
 
-      <SettingsRow
+      {showDefaultModel && <SettingsRow
         label={t('settings.yuri.defaults.field.defaultModel')}
         itemId="projects.default-model"
       >
@@ -81,7 +85,7 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
           placeholder={t('settings.yuri.defaults.option.default')}
           showIcon={false}
         />
-      </SettingsRow>
+      </SettingsRow>}
 
       <SettingsRow
         label={t('settings.projects.page.field.accentColor')}
@@ -185,7 +189,7 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
                     onError={() => setPreviewImageFailed(true)}
                   />
                 ) : (
-                  <ProjectIconImage
+                  storedIconPreview ?? <ProjectIconImage
                     project={{ ...project, iconImage: currentIconImage ?? project.iconImage }}
                     options={{
                       themeVariant: currentTheme.metadata.variant,
@@ -275,5 +279,6 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
         )}
       >{null}</SettingsRow>
     </SettingsGroup>
+    </fieldset>
   );
 };

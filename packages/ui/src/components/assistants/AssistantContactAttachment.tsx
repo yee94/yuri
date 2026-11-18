@@ -14,10 +14,13 @@ import { useI18n } from '@/lib/i18n'
 
 const imageClass = 'rounded-[var(--contact-bubble-radius,1.125rem)] border border-border/40 cursor-zoom-in'
 
-function CachedAttachment({ assistantID, descriptor, onShowPopup }: {
+type OpenAttachmentImage = (descriptor: AssistantAttachmentDescriptor, source: HTMLImageElement) => void
+
+function CachedAttachment({ assistantID, descriptor, onShowPopup, onOpenImage }: {
   assistantID: string
   descriptor: AssistantAttachmentDescriptor
   onShowPopup?: (content: ToolPopupContent) => void
+  onOpenImage?: OpenAttachmentImage
 }) {
   const { t } = useI18n()
   const transport = useRuntimeTransportIdentity()
@@ -78,18 +81,8 @@ function CachedAttachment({ assistantID, descriptor, onShowPopup }: {
     }
   })
   const name = filename || t(image ? 'assistants.contact.attachment.image' : 'assistants.contact.attachment.file')
-  // Same viewer contract as chat attachment images: pass the leased display URL;
-  // the lease lives with this row, and assistant switches close the viewer first.
   const openPreview = useEvent((event: React.SyntheticEvent<HTMLImageElement>) => {
-    if (!onShowPopup || !url) return
-    onShowPopup({
-      open: true,
-      title: name,
-      content: '',
-      metadata: { tool: 'image-preview', filename: name, mime },
-      previewSource: event.currentTarget,
-      image: { url, mimeType: mime, filename: name, size, gallery: [{ url, mimeType: mime, filename: name, size }], index: 0 },
-    })
+    onOpenImage?.(stableDescriptor, event.currentTarget)
   })
   // Full-size viewing belongs to the preview; the transcript shows a small,
   // height-stable thumbnail so a failed or tiny image never leaves a large empty frame.
@@ -168,13 +161,14 @@ function LegacyAttachment({ part, onShowPopup }: { part: AssistantContactFilePar
   </div>
 }
 
-export function AssistantContactAttachment({ assistantID, part, onShowPopup }: {
+export function AssistantContactAttachment({ assistantID, part, onShowPopup, onOpenImage }: {
   assistantID: string
   part: AssistantContactFilePart
   onShowPopup?: (content: ToolPopupContent) => void
+  onOpenImage?: OpenAttachmentImage
 }) {
   const transport = useRuntimeTransportIdentity()
   return 'attachmentID' in part
-    ? <CachedAttachment key={`${transport}:${assistantID}:${part.attachmentID}:${part.sha256}`} assistantID={assistantID} descriptor={part} onShowPopup={onShowPopup} />
+    ? <CachedAttachment key={`${transport}:${assistantID}:${part.attachmentID}:${part.sha256}`} assistantID={assistantID} descriptor={part} onShowPopup={onShowPopup} onOpenImage={onOpenImage} />
     : <LegacyAttachment key={`${transport}:${part.url}`} part={part} onShowPopup={onShowPopup} />
 }

@@ -21,6 +21,10 @@ import { RemoteHostIndicator } from '../RemoteHostIndicator';
 import { RemoteSessionGroups } from './RemoteSessionGroups';
 import { RemoteMobileSessionGroups } from './RemoteMobileSessionGroups';
 import { toast } from '@/components/ui';
+import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
+import type { ProjectIdentitySaveData } from '@/components/sections/projects/useProjectIdentityForm';
+import { remoteProjectMetadata } from '@/queries/remoteProjectQueries';
+import { useProjectsStore } from '@/stores/useProjectsStore';
 
 export const RemoteProjectSection = React.memo(function RemoteProjectSection(props: RemoteProjectSectionOptions & {
   onActivityItems?: (projectId: string, items: PinnedItem[]) => void;
@@ -35,6 +39,11 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
   React.useEffect(() => {
     if (data.error) toast.error(data.error, { id: `remote-project:${project.id}:load` });
   }, [data.error, project.id]);
+  const { unsynced } = data;
+  React.useEffect(() => {
+    // Ask the Hub to re-read a never-synced project; the request is shared and the Host sync stays bounded.
+    if (unsynced) void registry.connectHost(project.hostId, { verify: true }).catch(() => {});
+  }, [unsynced, registry, project.hostId]);
   const publishActivity = useEvent(() => {
     if (!props.onActivityItems) return;
     const sessions = data.rows.map(({ session }) => session);
@@ -101,9 +110,16 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
   React.useLayoutEffect(() => { publishTasks(); }, [publishTasks, data.rows, data.pinnedIds, snapshot, host?.name, online, pending, model.selectedSession, project, registry, props.onTaskItems]);
   const { onTaskItems } = props;
   React.useEffect(() => () => onTaskItems?.(project.id, []), [project.id, onTaskItems]);
-  const editorDialog = editor ? <Dialog open onOpenChange={(open) => { if (!open && !pending) model.setEditor(null); }}><DialogContent><DialogHeader><DialogTitle>{t(editor.kind === 'title' ? 'sessions.sidebar.session.menu.rename' : editor.kind === 'project' ? 'sessions.sidebar.project.actions.edit' : 'remoteProjects.newFolder')}</DialogTitle></DialogHeader>
+  const saveProject = useEvent(async ({ label, icon, color, iconBackground }: ProjectIdentitySaveData) => {
+    const updated = await remoteProjectMetadata(registry, project, { label, icon, color, iconBackground });
+    useProjectsStore.getState().upsertRemoteProject(updated, registry.hubId);
+  });
+  const projectEditor = model.projectEditOpen ? <ProjectEditDialog
+    open onOpenChange={model.setProjectEditOpen} project={project} onSave={saveProject} readOnly={!online}
+    storedIconPreview={project.iconImage ? <RemoteProjectIcon project={project} registry={registry} className="size-full" /> : undefined}
+  /> : null;
+  const editorDialog = editor ? <Dialog open onOpenChange={(open) => { if (!open && !pending) model.setEditor(null); }}><DialogContent><DialogHeader><DialogTitle>{t(editor.kind === 'title' ? 'sessions.sidebar.session.menu.rename' : 'remoteProjects.newFolder')}</DialogTitle></DialogHeader>
     <form onSubmit={(event) => { event.preventDefault(); model.saveEditor(); }}><Input aria-label={t('sessions.sidebar.session.menu.rename')} value={editor.value} onChange={(event) => model.setEditor({ ...editor, value: event.target.value })} autoFocus disabled={pending} />
-      {editor.kind === 'project' ? <><Input aria-label={t('remoteProjects.icon')} value={model.projectIcon} onChange={(event) => model.setProjectIcon(event.target.value)} /><Input aria-label={t('remoteProjects.color')} value={model.projectColor} onChange={(event) => model.setProjectColor(event.target.value)} /></> : null}
       <DialogFooter><Button type="submit" disabled={pending || !online || !editor.value.trim()}>{t('sessions.sidebar.session.rename.save')}</Button></DialogFooter></form>
   </DialogContent></Dialog> : null;
   const deleteDialog = model.deleteTargets ? <Dialog open onOpenChange={(open) => { if (!open) model.dismissDelete(); }}><DialogContent showCloseButton={false} className="max-w-sm">
@@ -131,6 +147,7 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
       {mobile ? <RemoteMobileSessionGroups model={model} project={project} /> : <RemoteSessionGroups model={model} project={project} registry={registry} />}
       {editorDialog}
     </div>
+    {projectEditor}
     {deleteDialog}
     {model.worktreeOpen ? <HostRuntimeProvider registry={registry} location={{ hubId: registry.hubId, hostId: project.hostId, directory: project.path }}><NewWorktreeDialog projectId={project.id} open onOpenChange={model.setWorktreeOpen} onWorktreeCreated={() => { if (mobile) useMobileNavigationStore.getState().openRemoteProject(); }} /></HostRuntimeProvider> : null}
   </RemoteProjectShell>;

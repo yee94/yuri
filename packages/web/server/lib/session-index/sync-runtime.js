@@ -82,6 +82,7 @@ export const createSessionIndexSyncRuntime = ({
   projectSessions = null,
   fetchFn = globalThis.fetch,
   createFetchBatch = null,
+  fetchExactDirectory = null,
   resolveDirectory = (value) => value,
   isDirectoryMissing = null,
   now = Date.now,
@@ -185,6 +186,102 @@ export const createSessionIndexSyncRuntime = ({
   const readDirectory = (directory) => sessionIndexService.snapshot().directories
     .find((entry) => entry.directory === directory);
 
+  const scanDirectory = async (directory, readPage, signal) => {
+    /** @type {object[]} raw upstream sessions collected across pages */
+    const collected = [];
+    let pages = 0;
+    let cursorToken = null;
+    let upstreamHasMore = false;
+    let hitPageBudget = false;
+    let lastCursorToken = null;
+    const seenCursor = new Set();
+
+    while (collected.length < SESSION_LIMIT * 3 && pages < ARCHIVE_SKIP_PAGE_BUDGET) {
+      const url = new URL(buildOpenCodeUrl('/session'));
+      url.searchParams.set('directory', directory);
+      url.searchParams.set('limit', String(SESSION_LIMIT));
+      if (cursorToken) {
+        url.searchParams.set('cursor', cursorToken);
+      }
+
+      const response = await readPage(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
+        signal,
+      });
+      if (response === null) return null;
+      if (!response.ok) {
+        const error = new Error(`OpenCode session list failed (${response.status})`);
+        error.status = response.status;
+        throw error;
+      }
+      const payload = await response.json();
+      const sessions = Array.isArray(payload) ? payload : payload?.data;
+      if (!Array.isArray(sessions)) throw new Error('Invalid OpenCode session list payload');
+      pages += 1;
+
+      for (const session of sessions) {
+        if (session?.id) collected.push(session);
+      }
+
+      // v2: exhaust by cursor.next when present. A short page with next is
+      // still more data (archived skips / filtered upstream). Bare arrays
+      // have no cursor — length < limit means end of list.
+      const isEnvelope = payload && typeof payload === 'object' && !Array.isArray(payload);
+      const nextToken = isEnvelope
+        ? extractSessionListCursorToken(payload.cursor)
+        : null;
+      const pageFull = sessions.length === SESSION_LIMIT;
+      if (nextToken) lastCursorToken = nextToken;
+
+      if (nextToken) {
+        upstreamHasMore = true;
+        if (seenCursor.has(nextToken)) {
+          // Duplicate cursor → stop (broken upstream) rather than loop forever.
+          hitPageBudget = true;
+          break;
+        }
+        seenCursor.add(nextToken);
+        if (pages >= ARCHIVE_SKIP_PAGE_BUDGET) {
+          hitPageBudget = true;
+          break;
+        }
+        cursorToken = nextToken;
+        continue;
+      }
+
+      // An envelope without a next token is authoritative exhaustion, even
+      // when its terminal page is full. Bare arrays still use the page size.
+      if (isEnvelope || !pageFull) {
+        upstreamHasMore = false;
+        break;
+      }
+      // Full page without cursor — cannot continue safely.
+      upstreamHasMore = true;
+      hitPageBudget = true;
+      break;
+    }
+
+    return { collected, upstreamHasMore, hitPageBudget, lastCursorToken };
+  };
+
+  const project = (collected) => {
+    if (typeof projectSessions === 'function') {
+      try {
+        const next = projectSessions(collected);
+        if (!Array.isArray(next)) {
+          throw new Error('projectSessions must return an array');
+        }
+        return next;
+      } catch (error) {
+        // Failure is not empty success — keep prior directory rows.
+        console.warn('[session-index] projectSessions failed; keeping prior directory:', error?.message ?? error);
+        throw error;
+      }
+    }
+    return collected;
+  };
+
   const fetchDirectory = async (task) => {
     if (isDirectoryMissing && await isDirectoryMissing(task.directory)) {
       if (stopped || task.runtimeKey !== sessionIndexService.getRuntimeKey()) return 'discarded';
@@ -201,96 +298,27 @@ export const createSessionIndexSyncRuntime = ({
     currentWasPreempted = false;
     const timeout = setTimer(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      /** @type {object[]} raw upstream sessions collected across pages */
-      const collected = [];
-      let pages = 0;
-      let cursorToken = null;
-      let upstreamHasMore = false;
-      let hitPageBudget = false;
-      let lastCursorToken = null;
-      let seenCursor = new Set();
       batchFetch ??= createFetchBatch?.() ?? fetchFn;
-
-      while (collected.length < SESSION_LIMIT * 3 && pages < ARCHIVE_SKIP_PAGE_BUDGET) {
-        const url = new URL(buildOpenCodeUrl('/session'));
-        url.searchParams.set('directory', task.directory);
-        url.searchParams.set('limit', String(SESSION_LIMIT));
-        if (cursorToken) {
-          url.searchParams.set('cursor', cursorToken);
-        }
-
-        const response = await (batchFetch ?? fetchFn)(url, {
-          method: 'GET',
-          headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          const error = new Error(`OpenCode session list failed (${response.status})`);
-          error.status = response.status;
-          throw error;
-        }
-        const payload = await response.json();
-        const sessions = Array.isArray(payload) ? payload : payload?.data;
-        if (!Array.isArray(sessions)) throw new Error('Invalid OpenCode session list payload');
-        pages += 1;
-
-        for (const session of sessions) {
-          if (session?.id) collected.push(session);
-        }
-
-        // v2: exhaust by cursor.next when present. A short page with next is
-        // still more data (archived skips / filtered upstream). Bare arrays
-        // have no cursor — length < limit means end of list.
-        const isEnvelope = payload && typeof payload === 'object' && !Array.isArray(payload);
-        const nextToken = isEnvelope
-          ? extractSessionListCursorToken(payload.cursor)
-          : null;
-        const pageFull = sessions.length === SESSION_LIMIT;
-        if (nextToken) lastCursorToken = nextToken;
-
-        if (nextToken) {
-          upstreamHasMore = true;
-          if (seenCursor.has(nextToken)) {
-            // Duplicate cursor → stop (broken upstream) rather than loop forever.
-            hitPageBudget = true;
-            break;
+      const { collected, upstreamHasMore, hitPageBudget, lastCursorToken } = await scanDirectory(task.directory, batchFetch, controller.signal);
+      let projected = project(collected);
+      let fullSync = true;
+      if (hitPageBudget && projected.filter(isRootActiveCandidate).length < SESSION_LIMIT && fetchExactDirectory) {
+        const exact = await scanDirectory(task.directory, fetchExactDirectory, controller.signal);
+        if (exact) {
+          // Exact-directory history cannot prove that missing alias rows disappeared.
+          const byID = new Map();
+          for (const row of [...collected, ...exact.collected]) byID.set(row.id, row);
+          const fresh = project([...byID.values()]);
+          if (fresh.some(isRootActiveCandidate)) {
+            const cached = readDirectory(task.directory)?.sessions ?? [];
+            projected = [...fresh, ...project(cached.filter((row) => !byID.has(row.id)))]
+              .sort((left, right) => updatedAt(right) - updatedAt(left) || right.id.localeCompare(left.id));
+            fullSync = false;
           }
-          seenCursor.add(nextToken);
-          if (pages >= ARCHIVE_SKIP_PAGE_BUDGET) {
-            hitPageBudget = true;
-            break;
-          }
-          cursorToken = nextToken;
-          continue;
-        }
-
-        // An envelope without a next token is authoritative exhaustion, even
-        // when its terminal page is full. Bare arrays still use the page size.
-        if (isEnvelope || !pageFull) {
-          upstreamHasMore = false;
-          break;
-        }
-        // Full page without cursor — cannot continue safely.
-        upstreamHasMore = true;
-        hitPageBudget = true;
-        break;
-      }
-
-      // Re-project the full collected set at commit time (current Host authority).
-      let projected = collected;
-      if (typeof projectSessions === 'function') {
-        try {
-          const next = projectSessions(collected);
-          if (!Array.isArray(next)) {
-            throw new Error('projectSessions must return an array');
-          }
-          projected = next;
-        } catch (error) {
-          // Failure is not empty success — keep prior directory rows.
-          console.warn('[session-index] projectSessions failed; keeping prior directory:', error?.message ?? error);
-          throw error;
         }
       }
+      controller.signal.throwIfAborted();
+      if (stopped || task.runtimeKey !== sessionIndexService.getRuntimeKey()) return 'discarded';
 
       // Root + system filters before filling the active-20 capacity.
       const active = [];
@@ -304,11 +332,11 @@ export const createSessionIndexSyncRuntime = ({
         active.push(session);
       }
 
-      if (hitPageBudget && active.length < SESSION_LIMIT) {
+      if (fullSync && hitPageBudget && active.length < SESSION_LIMIT) {
         throw new Error('Directory scan incomplete; retaining prior session index');
       }
       const oldest = active[active.length - 1];
-      const cursorNumber = lastCursorToken && Number.isFinite(Number(lastCursorToken))
+      const cursorNumber = fullSync && lastCursorToken && Number.isFinite(Number(lastCursorToken))
         ? Number(lastCursorToken)
         : (updatedAt(oldest) || null);
       sessionIndexService.replaceDirectory({
@@ -316,7 +344,7 @@ export const createSessionIndexSyncRuntime = ({
         sessions: active,
         cursor: cursorNumber,
         hasMore: upstreamHasMore || hitPageBudget || hasOverflowSessions,
-        fullSync: true,
+        fullSync,
         now: now(),
       });
       for (const session of active) {

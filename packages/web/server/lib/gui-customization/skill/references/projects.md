@@ -1,6 +1,6 @@
 # Projects
 
-Register an existing directory through the **bound project API helper** in this
+Manage project registrations through the **bound project API helper** in this
 session's Yuri customization pointer. This is a Host capability, not a GUI plugin
 or a desktop deep link. Registration does not create files, clone a repository,
 open a conversation or switch an existing active project.
@@ -9,7 +9,7 @@ open a conversation or switch an existing active project.
 
 Resolve ownership before operating on a project/session or composing a navigation link:
 
-1. Discover this caller's capabilities through the bound helper's `describe`, or the contact's granted project tools. Use the returned operations and their scope; a missing binding or unsupported capability is an explicit limit.
+1. Discover this caller's capabilities through the bound helper's `describe`, or the contact's granted project tools. For registration, prefer the granted project tool when available. Use the returned operations and their scope; a missing binding or unsupported capability is an explicit limit.
 2. For bound-Host resources, use exact IDs and raw directories from this session's context or the relevant `list` / `task-sessions` result. The bound Host is the helper's execution target, not necessarily the computer displaying Yuri. Index results have the completeness limits described below.
 3. For remote resources, discover the project or machine through `remote-projects` / `remote-hosts`, then query its sessions with `sessions` or `read-session`. Keep the returned `target:{hubId,hostId,instanceId}` with each resource's raw directory and session ID:
 
@@ -56,6 +56,20 @@ with the same path: registration is idempotent. A failure is unconfirmed, never 
 empty-success result. Missing paths, files and inaccessible directories fail
 without implicit filesystem creation. A `terminal:true` helper error stops this
 workflow until a new supported session's bound describe succeeds.
+
+## Local project removal
+
+1. Run the bound `describe` command. Continue only if it returns `commands.remove`.
+2. Run `commands.list` and match the user's requested scope to exact project IDs
+   on the bound Host. Resolve ambiguous names before writing. Remote projects
+   are not in this list and are not supported by this operation.
+3. Run `commands.remove` once per selected ID with JSON on stdin:
+   `{"projectId":"…"}` (replace the placeholder with the exact listed ID).
+   This unregisters the project from Yuri without deleting its directory,
+   files, sessions or tasks. It does not navigate an open client.
+4. Count only `{"projectId":"…","removed":true}` as a confirmed removal. Report
+   failures separately; after an interrupted response, re-list the same Host
+   to check whether the ID is still registered before retrying.
 
 ## Interface and scope
 

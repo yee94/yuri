@@ -3808,6 +3808,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             turnAttachmentScope,
           });
           tools.push(...createYuriContactTools({
+            remoteHostGateway,
             registerProject: typeof registerProject === 'function' ? async (input, signal) => {
               signal?.throwIfAborted();
               if (!path.isAbsolute(input.path)) {

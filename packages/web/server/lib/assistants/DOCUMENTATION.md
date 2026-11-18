@@ -20,6 +20,14 @@ Ordinary prompt construction reads only saved remote project metadata. Explicit
 `list_projects` discovers local project registries on the already authorized saved
 Hosts, returns machine names/targets and reports per-Host discovery failures as
 partial results. It cannot configure SSH, change credentials or create pairings.
+That remote catalog does not establish Hub sidebar membership. For an explicit
+Remote Projects registration request, load `yuri.projects` and call
+`register_remote_project` with the discovered target and absolute remote path.
+`list_remote_hosts` can discover exact targets even when no project is listed.
+These two tools are granted only on a Hub with a supported remote gateway. They
+reuse the session skill’s gateway operations; a successful registration returns
+the saved Hub reference and `created:false` means the reference already existed.
+Registration alone never opens a session or inspects the Hub filesystem.
 Remote `list_sessions` uses official, bounded `session.list` calls against remote
 registered roots and verified worktrees, not the Hub's session index. `nextPages`
 contains exact target/projectPath/before continuation references. Failed reads are
@@ -434,7 +442,7 @@ available domain names and short descriptions, not every deferred schema:
 
 | Domain | Deferred tools | Owning behavior |
 | --- | --- | --- |
-| `yuri.projects` | `register_project` | Register an existing directory through shared `projects/registry.js` |
+| `yuri.projects` | `register_project`, `list_remote_hosts`, `register_remote_project` | Register locally through `projects/registry.js`; discover authorized Hosts and associate remote projects through the shared remote gateway |
 | `yuri.assistants` | `create_assistant`, `delete_assistant` | Existing Bot creation and `removeAssistant` owners |
 | `yuri.tasks` | `schedule_task`, `update_scheduled_task` | Existing task creation/update/pause/resume owners |
 | `opencode.web` | `websearch`, `list_websearch_providers` | Existing authenticated SDK search; provider listing is optional, not a search prerequisite |
@@ -581,7 +589,7 @@ read-only background reviews and do not change ordinary Session instructions.
 The customization pointer follows the OpenCode Session capability set: when the turn
 has `bash` and `resolveCustomizationSkill(assistantID)` returns a binding, it names the
 staged skill and the bound project and (with the Electron adapter) SSH/Relay helper
-commands, so archive (`settle-session`), remote sessions, SSH and pairing work through
+commands, so local project removal, archive (`settle-session`), remote sessions, SSH and pairing work through
 the same Host APIs. Otherwise SSH, config sync and Relay pairing stay unavailable,
 without a filesystem, credential or internal-HTTP fallback. `service.hasAssistant`
 backs the bridge's caller check. GUI authoring instructions do not authorize

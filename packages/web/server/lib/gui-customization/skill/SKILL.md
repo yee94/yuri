@@ -1,19 +1,17 @@
 ---
 name: yuri-customization
-description: Register local or remote Yuri projects, archive conversations (task-view 归档 or session archive), discover authorized remote machines and read/create/continue remote sessions, resolve project/session ownership and build yuri:// deep links, configure SSH connections, configuration sync and Relay pairing, or customize its GUI through plugins for appearance, pages, widgets, previews, panels and settings.
+description: Yuri project registration and removal, task and session lifecycle, remote hosts and sessions, resource identity and deep links, connection and configuration management, and GUI customization.
 ---
 
 # Yuri customization
 
-For adding an existing directory to Yuri's project list, follow [projects](references/projects.md) using this session's bound project API helper. Registration is separate from creating files, cloning or opening a conversation.
+Load only the matching reference. Bound helpers expose the operations available
+to the current caller through `describe`; the references do not grant access.
 
-For archiving conversations ("归档", moving tasks to the archived shelf, or session-level archive), use the same bound project helper and [archiving conversations](references/projects.md#archiving-conversations-task-archive-vs-session-archive). The task-view 「归档」 is `settle-session`; do not call UI-authenticated routes or edit Host databases.
-
-For adding a remote project on an authorized machine or working with its sessions, use the same bound project helper and the [remote project workflow](references/projects.md#connected-remote-projects-and-sessions). This grants no SSH setup or new connection permission.
-
-For locating project/session resources, establish [resource identity and scope](references/projects.md#resource-identity-and-scope) through the available discovery tools. For navigation links, then follow [deep links](references/deep-links.md). Resource discovery, navigation support and authorization are separate capabilities.
-
-For SSH setup, configuration sync or Relay pairing, first check this session's pointer for its exact bound local desktop helper command. Without that command, report unavailable and stop this branch: a script file or another capability's binding does not enable it. With the command, follow [remote connections](references/remote-connections.md). For UI changes, use the plugin workflow below. Its GUI contracts describe Yuri's supported subset of the experimental OpenCode GUI SDK 2.2.0, not every capability in the newest upstream Desktop.
+- [Projects](references/projects.md): project registration and removal, task and session lifecycle, remote hosts and sessions.
+- [Resource identity and scope](references/projects.md#resource-identity-and-scope) and [deep links](references/deep-links.md).
+- [Remote connections](references/remote-connections.md): SSH, configuration sync and Relay pairing.
+- GUI customization: plugin capabilities and workflow below.
 
 ## Workflow
 
@@ -36,10 +34,6 @@ For SSH setup, configuration sync or Relay pairing, first check this session's p
 
 References distinguish host contracts from illustrative templates and case studies. Choose rendering, authentication and file formats for the current requirement; case-study protocols and dependencies belong to those integrations.
 
-## Source fallback
-
-If the references and target UI leave the relevant selector, style owner or extension behavior unclear, inspect the implementation at https://github.com/yee94/yuri. Prefer the tag matching the installed Yuri version; use `main` for development builds. Start from the source-owner paths in [UI structure and styles](references/ui-surfaces.md) or the matching capability reference, and read the owning component/style/host module to resolve the specific uncertainty. Repository source is a lookup fallback; customization still goes in the plugin.
-
 ## Boundaries
 
 - `Style` can affect the whole document. A GUI plugin is trusted JavaScript, not a sandbox. Prefer tokens and narrow, stable selectors; arbitrary CSS can hide controls or trigger network requests.
@@ -48,3 +42,18 @@ If the references and target UI leave the relevant selector, style owner or exte
 - macOS customization means the running Dock icon only. Keep signed `.app` resources, Finder/Launchpad icons, bundle identifiers and update origins unchanged.
 - Native `main` runs only for trusted local Electron connections. Remote/Relay, Web, VS Code and mobile cannot execute local Node/Electron code. Use supported window APIs there; never bypass the native gate.
 - Pre-JavaScript startup screens retain Yuri's built-in branding. Plugins load after the usable shell; never delay startup to apply a skin.
+
+## Open-source reference
+
+When the matching reference does not cover an operation and Yuri may expose an
+API for it, research the repository before concluding it is unavailable. Use
+the tag matching the installed Yuri version when known (`main` for development
+builds). Verify the interface, supported runtime and required authorization in
+the owning docs, implementation or tests. Use the verified API to help the user
+when it is accessible to the current caller and the requested action is
+authorized. Source visibility does not grant access to internal routes or replace
+a required bound helper. If no supported interface can be verified, report that
+limit. GUI source can clarify extension behavior; customization still belongs in
+the plugin.
+
+https://github.com/yee94/yuri

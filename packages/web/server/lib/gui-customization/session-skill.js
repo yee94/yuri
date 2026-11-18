@@ -41,10 +41,10 @@ export function createCustomizationSkillInstaller({ yuriDataDir }) {
   };
   const install = async (client, sessionID, { remoteBinding, projectBinding } = {}) => {
     const { file, projectsCommand, remoteCommand } = await resolve({ sessionID }, { remoteBinding, projectBinding });
-    const projects = projectsCommand ? ` For local/remote project registration, task/session archive and restore, discovering authorized remote machines, or reading/creating/continuing remote sessions, read references/projects.md and run the bound project API helper.\nBound project helper: ${projectsCommand}\n` : ' No bound project helper is provided; project registration, task/session archive and remote project/session access are unavailable through this session skill.';
-    const remote = remoteCommand ? ` For SSH setup/config sync or Relay pairing, use only this bound helper after reading references/remote-connections.md. Bound local desktop helper: ${remoteCommand}` : ' No bound SSH/Relay command is provided: these operations are unavailable in this session. Report that limit and stop this branch; use native Settings or a new supported local desktop session. A script or another capability\'s binding does not enable it. There is no credential/filesystem fallback for this capability.';
+    const projects = projectsCommand ? `\nBound project helper: ${projectsCommand}\n` : ' No bound project helper is provided.';
+    const remote = remoteCommand ? ` Bound local desktop helper: ${remoteCommand}` : ' No bound SSH/Relay command is provided.';
     await client.session.instructions.entry.put({ sessionID, key: 'yuri.customization',
-      value: `Yuri customization: for adding a directory as a project in Yuri (local or remote), task/session archive or restore (归档/恢复), remote sessions, project/session resource ownership or yuri:// deep links, SSH connections, configuration sync, Relay pairing, appearance (themes, CSS/layout, Logo, macOS Dock), work-status widgets, global pages/tabs, custom file parsing/previews, preview exports, or GUI panels/commands/settings, read ${JSON.stringify(file)} first. Use the matching reference and apply changes only when requested.${projects}${remote}`,
+      value: `Yuri customization covers project management, task and session lifecycle, remote hosts and sessions, resource identity and yuri:// deep links, SSH, configuration sync, Relay pairing and GUI customization. For these capabilities, read ${JSON.stringify(file)} first, then load only the matching reference.${projects}${remote}`,
     });
   };
   install.resolve = resolve;

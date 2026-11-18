@@ -1,5 +1,11 @@
 # Session Sidebar Documentation
 
+Desktop local and remote project rows share `SortableProjectItem` and its context
+menu. Their Edit action opens the same `ProjectEditDialog` and identity controls.
+Remote edits persist through the captured Hub's project-reference endpoint and
+render stored icons through the corresponding Host. Local default-model and
+worktree-management controls do not run against a remote directory.
+
 ## Task navigation icons and hover details
 
 The desktop task-view header's add button opens the existing add-project dialog,

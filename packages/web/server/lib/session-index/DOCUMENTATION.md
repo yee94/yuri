@@ -41,8 +41,12 @@ Explicit directory lists fetch session pages without initializing an upstream
 Location and retain only records whose physical directory matches the request.
 This discovers old aliases outside the index without admitting sibling worktrees.
 Opaque next/previous cursors stay upstream-owned; filtered short/empty pages with
-a continuation are partial, not exhausted. The existing five-page sync budget and
-`hasMore` partial-result contract still apply. Explicit remote upstreams retain
+a continuation are partial, not exhausted. When a five-page physical scan cannot
+fill the recent head, one bounded exact-directory read recovers canonical history
+without scanning unrelated projects again. Its rows merge with known aliases;
+coverage remains partial (`hasMore`) and does not advance the full-sync clock.
+An error or insufficient coverage with no visible candidates cannot clear the
+previous index. Explicit remote upstreams retain
 their directory query behavior; extension-only VS Code has no Host identity layer.
 
 Within one explicit-directory sync batch, the local physical-directory adapter

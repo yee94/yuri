@@ -13,8 +13,12 @@ are modified.
 `packages/ui/src/sync/DOCUMENTATION.md`; update it when either changes. It is
 navigation guidance only and adds no helper or authorization.
 
-The discovery pointers advertise resource ownership and navigation as capabilities,
-not individual delivery scenarios. `references/projects.md#resource-identity-and-scope`
+The discovery pointers advertise capability categories, not individual scenarios,
+operation names or API recipes. The skill routes to the relevant reference; a
+bound helper's `describe` is authoritative for the current caller. The skill
+ends with the open-source repository as a research fallback for undocumented
+capabilities, not as an alternative to runtime authorization.
+`references/projects.md#resource-identity-and-scope`
 owns the common discovery/identity guidance; `references/deep-links.md` owns the
 receiving client's supported URL fields and prerequisites. Agents retain complete
 remote targets for resource operations while emitting only fields accepted by the
@@ -45,7 +49,7 @@ and verification criteria are separate from illustrative templates and case
 studies. Runmark and Eficy remain integration references; their service protocols,
 renderers and compatibility choices are not requirements for unrelated plugins.
 
-`references/projects.md` routes project registration through the bound projects
+`references/projects.md` routes project registration and local removal through the bound projects
 API helper, before plugin authoring. Shared-service admission supplies its binding
 independently of Electron's remote-connections adapter. `projects-client.mjs` is
 staged as `projects.mjs`; it and the remote helper share the staged
@@ -56,13 +60,16 @@ their granted `yuri.projects` `register_project` tool for the assign flow and al
 reach every other operation through the same helper, bound to their `assistantID`.
 
 `projects.js` owns `POST /api/yuri/session-skills/projects` (`describe`, `list`,
-`add`, `task-sessions`, `session-state`, `settle-session`, `unsettle-session`, `archive-session`, `unarchive-session`, `remote-hosts`, `add-remote`, `remote-projects`, `sessions`, `read-session`, `create-session`, `prompt-session`). `projects-remote.js` uses the injected `remoteHostGateway` and its immutable task leases; discovery returns authenticated `{hubId,hostId,instanceId}` targets, and explicit targets never fall back to local. `remote-hosts` includes authorized machines with no associated project, reports per-machine failures and releases each probe. `add-remote` uses `gateway.registerProject`, shared with the UI: the target validates/canonicalizes and registers the directory before the Hub saves a deduplicated reference and broadcasts project-order invalidation. A Hub write failure leaves the remote project intact; retrying the same target/path completes association. Paths are never resolved on the Hub filesystem. Lease cleanup runs on every outcome. Remote SDK requests preserve generated request data through the lease; bounded message reads use the existing Host turn-page route. No remote bodies are persisted on Hub. Session creation/prompt require stable caller IDs for ambiguous-result inspection, not automatic replay. This capability neither uses nor grants the desktop SSH helper. The global gate and route require the existing loopback service credential,
+`add`, `remove`, `task-sessions`, `session-state`, `settle-session`, `unsettle-session`, `archive-session`, `unarchive-session`, `remote-hosts`, `add-remote`, `remote-projects`, `sessions`, `read-session`, `create-session`, `prompt-session`). `projects-remote.js` uses the injected `remoteHostGateway` and its immutable task leases; discovery returns authenticated `{hubId,hostId,instanceId}` targets, and explicit targets never fall back to local. `remote-hosts` includes authorized machines with no associated project, reports per-machine failures and releases each probe. `add-remote` uses `gateway.registerProject`, shared with the UI: the target validates/canonicalizes and registers the directory before the Hub saves a deduplicated reference and broadcasts project-order invalidation. A Hub write failure leaves the remote project intact; retrying the same target/path completes association. Paths are never resolved on the Hub filesystem. Lease cleanup runs on every outcome. Remote SDK requests preserve generated request data through the lease; bounded message reads use the existing Host turn-page route. No remote bodies are persisted on Hub. Session creation/prompt require stable caller IDs for ambiguous-result inspection, not automatic replay. This capability neither uses nor grants the desktop SSH helper. The global gate and route require the existing loopback service credential,
 no browser Origin, shared-service ownership and the session's admitted Host origin.
 The bridge reuses `projects/registry.js`, just like the UI directory API and contact
 tools: strict reads, canonical path deduplication, serialized persistence and
 existing project-order SSE notifications remain with their owners. Registration
 preserves an existing active selection and returns only `{project, created}` after
-persistence, never settings/credentials. List errors remain errors. There is no
+persistence, never settings/credentials. Removal returns `{projectId, removed:true}`
+after persistence; an absent ID is 404. It updates the existing Assistant allowed
+roots from the saved registry and does not delete files, sessions, tasks or remote
+project references. List errors remain errors. There is no
 cloning, directory creation or desktop window navigation. Remote conversation creation is explicit and separate from local registration.
 Web/Electron/connected-mobile shared-service sessions operate on their bound Host;
 private/external OpenCode and standalone VS Code have no session helper admission.
@@ -186,7 +193,7 @@ sessions across backend upgrades.
 ## Validation
 
 `projects.test.js` exercises project bridge validation, authentication, binding,
-persisted idempotent registration and failure receipts. Shared-service admission
+persisted idempotent registration, local removal and failure receipts. Shared-service admission
 tests execute the exact staged project helper through the real global auth gate.
 `projects-lifecycle.test.js` executes the staged lifecycle commands through that
 gate with UI password protection enabled, real temporary SQLite/metadata stores

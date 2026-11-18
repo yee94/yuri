@@ -16,6 +16,8 @@ const fingerprint = (host) => crypto.createHash('sha256').update(JSON.stringify(
 const directoryKey = (value) => value.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
 const TOPOLOGY_PROBE_DIRECTORY_MS = 60_000;
 const TOPOLOGY_PROBE_CONNECTION_MS = 15_000;
+const RESYNC_DELAY_MS = 3_000;
+const RESYNC_MAX_ATTEMPTS = 8;
 const statusEvent = (payload) => /^(session\.(created|updated|deleted|renamed|moved|status|idle|error|execution\.(started|succeeded|failed|interrupted)|retry|model\.selected|inbox\.(enqueued|delivered))|yuri:session-(index-changed|status|activity|metadata|folders-changed|order-changed|unread-changed)|yuri:project.*|yuri:worktree-topology-changed|yuri:notification)$/.test((payload?.type || '').replace(/\.\d+$/, ''));
 export const projectRemoteStatusEvent = (payload) => {
   if (!statusEvent(payload)) return null;
@@ -149,6 +151,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
   };
   const closeConnection = (connection) => {
     connection.controller.abort();
+    clearTimeout(connection.resyncTimer);
     connection.reader?.stop();
     connection.transport?.close();
     for (const [id, lease] of leases) if (lease.hostId === connection.host.id) {
@@ -377,6 +380,23 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       store.saveReceipt(connection.host.id, { lastSyncedAt: Date.now(), lastError: undefined });
       connection.snapshotReady = !snapshot.sync?.active || snapshot.directories.length > 0;
       emit(connection.host.id, { type: 'yuri:session-index-changed', properties: { cause: 'change' } });
+      // The remote scan is asynchronous and its completion event can be missed: a project directory that is still
+      // syncing or was never synced must be re-read, otherwise its sessions stay hidden behind an empty summary.
+      const syncing = snapshot.sync?.active === true;
+      const unsynced = references.some((project) => {
+        const entry = snapshot.directories.find((row) => directoryKey(row.directory) === directoryKey(project.path));
+        return !entry || entry.lastSyncedAt === 0;
+      });
+      if (!syncing && !unsynced) connection.resyncAttempts = 0;
+      else if ((connection.resyncAttempts = (connection.resyncAttempts || 0) + 1) <= RESYNC_MAX_ATTEMPTS) {
+        if (!syncing) connection.topologyDirty = true;
+        clearTimeout(connection.resyncTimer);
+        connection.resyncTimer = setTimeout(() => {
+          connection.resyncTimer = null;
+          if (current(connection)) enqueueRefresh(connection);
+        }, RESYNC_DELAY_MS);
+        connection.resyncTimer.unref?.();
+      }
     } catch (error) {
       if (!controller.signal.aborted) setState(connection, 'degraded', error);
     } finally {
@@ -436,6 +456,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       onConnect: () => {
         if (!current(connection)) return;
         connection.failures = 0;
+        connection.resyncAttempts = 0;
         connection.topologyDirty = true;
         connection.snapshotReady = false;
         store.saveReceipt(id, { lastConnectedAt: Date.now(), lastError: undefined });

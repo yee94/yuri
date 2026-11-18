@@ -31,6 +31,8 @@ import { toast } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
 import { useGuiPluginKeyboardShortcuts } from './useGuiPluginKeyboardShortcuts';
 import { activateSidebarNumberedSession } from '@/sync/sidebar-numbered-navigation';
+import { requestBrowserAddressFocus } from '@/components/layout/browserAddressFocus';
+import { activateNumberedAssistant, NUMBERED_ASSISTANT_SLOTS } from '@/components/assistants/assistantNumberedNavigation';
 import {
   closeActiveTerminalTab,
   createAndActivateTerminalTab,
@@ -964,6 +966,20 @@ export const useKeyboardShortcuts = () => {
         return;
       }
 
+      if (eventMatchesShortcut(e, combo('open_browser_panel'))) {
+        if (useUIStore.getState().isMobile) {
+          return;
+        }
+        const directory = resolveShortcutLocationKey();
+        if (!directory) {
+          return;
+        }
+        e.preventDefault();
+        useUIStore.getState().openContextBrowser(directory);
+        requestBrowserAddressFocus();
+        return;
+      }
+
       if (eventMatchesShortcut(e, combo('cycle_right_sidebar_tab'))) {
         const { isMobile, rightSidebarTab } = useUIStore.getState();
         if (isMobile) {
@@ -1017,6 +1033,16 @@ export const useKeyboardShortcuts = () => {
           continue;
         }
         if (activateSidebarNumberedSession(slotNumber)) {
+          e.preventDefault();
+        }
+        return;
+      }
+
+      for (let slotNumber = 1; slotNumber <= NUMBERED_ASSISTANT_SLOTS; slotNumber += 1) {
+        if (!eventMatchesShortcut(e, combo(`switch_assistant_${slotNumber}`))) {
+          continue;
+        }
+        if (!isMobile && activateNumberedAssistant(slotNumber)) {
           e.preventDefault();
         }
         return;

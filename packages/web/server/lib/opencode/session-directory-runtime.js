@@ -134,5 +134,9 @@ export const createSessionDirectoryRuntime = ({
     };
     return (input, init) => fetchSessionList(input, init, readPage);
   };
-  return { isLocal, resolveDirectory, isDirectoryMissing, projectSession, projectEvent, fetchSessionList, createFetchBatch };
+  const fetchExactSessionList = async (input, init) => {
+    const directory = new URL(input).searchParams.get('directory');
+    return directory && localPath(directory) ? fetchFn(input, init) : null;
+  };
+  return { isLocal, resolveDirectory, isDirectoryMissing, projectSession, projectEvent, fetchSessionList, createFetchBatch, fetchExactSessionList };
 };

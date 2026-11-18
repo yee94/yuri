@@ -11,25 +11,28 @@ const validInput = (operation, input) => {
   if (remoteProjectOperations.includes(operation)) return validRemoteProjectInput(operation, input);
   if (lifecycleOperations.includes(operation)) return validLifecycleInput(operation, input);
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
-  const allowed = operation === 'add' ? ['path', 'label'] : [];
+  const allowed = operation === 'add' ? ['path', 'label'] : operation === 'remove' ? ['projectId'] : [];
   if (Object.keys(input).some((key) => !allowed.includes(key))) return false;
   if (Object.entries(input).some(([key, value]) => typeof value !== 'string' || !value.trim()
     || value.length > (key === 'label' ? 80 : 4096) || /[\x00-\x1f]/.test(value))) return false;
-  return operation !== 'add' || (typeof input.path === 'string' && path.isAbsolute(input.path.trim()));
+  if (operation === 'add') return typeof input.path === 'string' && path.isAbsolute(input.path.trim());
+  if (operation === 'remove') return typeof input.projectId === 'string' && input.projectId === input.projectId.trim();
+  return true;
 };
 
 /** Session-bound Host registration; the shared project registry owns persistence. */
-export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, createClient, registerProject, readSettingsFromDiskStrict, sanitizeProjects, remoteHostGateway, sessionLifecycle, hasAssistant }) {
+export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, createClient, registerProject, removeProject, readSettingsFromDiskStrict, sanitizeProjects, remoteHostGateway, sessionLifecycle, hasAssistant }) {
   app.post(PROJECTS_SKILL_PATH, express.json({ limit: '16kb' }), async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!getIsSharedOpenCodeService() || !authorizeScheduledTaskSkillRequest(req, getOpenCodeAuthHeaders())) return res.status(403).json({ error: 'Forbidden' });
     const { operation, input = {} } = req.body ?? {};
     const caller = parseSkillCaller(req.body);
     if (!caller
-      || !['describe', 'list', 'add', ...lifecycleOperations, ...remoteProjectOperations].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid project input' });
+      || !['describe', 'list', 'add', 'remove', ...lifecycleOperations, ...remoteProjectOperations].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid project input' });
     try {
       if (!await isBoundSkillCaller(req, caller, { createClient, hasAssistant })) return res.status(403).json({ error: 'Caller is not bound to this Host' });
       if (operation === 'describe') return res.json({ supported: true, remoteSupported: Boolean(remoteHostGateway?.supported && remoteHostGateway?.acquireTask), lifecycleSupported: Boolean(sessionLifecycle), inputs: { add: '{path: existing absolute Host directory, label?: display name}', list: '{}',
+        ...(removeProject ? { remove: '{projectId: exact ID from list} removes only the bound Host registration; preserves files, sessions and remote projects' } : {}),
         'task-sessions': '{directory?: absolute bound-Host directory, cursor?: returned nextCursor} bounded Host index metadata, not full upstream history',
         'session-state': '{sessionID} read Host archive authority and nullable task projection; not upstream existence or live UI state',
         'settle-session': '{sessionID} task-view 「归档」: moves the session to the archived shelf; reversible, returns to active on new activity', 'unsettle-session': '{sessionID} restores a task-view-archived session to active',
@@ -67,6 +70,11 @@ export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService
           || (settings.projects !== undefined && !Array.isArray(settings.projects))) throw new Error('Invalid project settings');
         return res.json({ projects: (sanitizeProjects(settings.projects) || []).map(projectResult) });
       }
+      if (operation === 'remove') {
+        if (!removeProject) return res.status(501).json({ code: 'unsupported', error: 'Project removal is unavailable on this Host' });
+        await removeProject(input);
+        return res.json({ projectId: input.projectId, removed: true });
+      }
       const { project, created } = await registerProject(input);
       return res.json({ project: projectResult(project), created });
     } catch (error) {
@@ -75,6 +83,10 @@ export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService
         const status = [400, 403, 404, 409, 501, 503].includes(error?.status) ? error.status : 503;
         const code = ['unsupported', 'session_not_found', 'session_archived', 'not_found', 'directory_mismatch', 'validation_error'].includes(error?.code) ? error.code : 'session_operation_failed';
         return res.status(status).json({ code, error: 'Session operation not confirmed; inspect the same session on the bound Host before retrying.' });
+      }
+      if (operation === 'remove') {
+        if (error?.code === 'not_found') return res.status(404).json({ code: 'not_found', error: 'Project is not registered on this Host' });
+        return res.status(503).json({ code: 'project_operation_failed', error: 'Project removal was not confirmed; inspect the same project on the bound Host before retrying.' });
       }
       const code = ['validation_error', 'project_unavailable', 'remote_unavailable', 'remote_target_mismatch', 'remote_response_invalid'].includes(error?.code) ? error.code : 'project_operation_failed';
       return res.status(code === 'validation_error' ? 400 : 503).json({ code, error: 'Project operation was not confirmed; inspect the same target before retrying. Never retry against the local Host.' });

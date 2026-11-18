@@ -28,9 +28,26 @@ test('Hub-confirmed references retain host, Hub and raw Windows path through per
   useProjectsStore.setState({ projects: [], activeProjectId: null });
   store.resetForRuntimeSwitch();
   expect(useProjectsStore.getState().projects).toEqual([
-    expect.objectContaining({ id: 'remote-a', hubId: 'hub', hostId: 'a', remoteProjectId: 'remote-id', path: 'C:\\Raw Path\\', sidebarCollapsed: true }),
     expect.objectContaining({ id: 'remote-b', hubId: 'hub', hostId: 'b', path: 'C:\\Raw Path\\' }),
+    expect.objectContaining({ id: 'remote-a', hubId: 'hub', hostId: 'a', remoteProjectId: 'remote-id', path: 'C:\\Raw Path\\', sidebarCollapsed: true }),
   ]);
+});
+
+test('a newly added remote project leads the list, ahead of local and earlier remote projects', () => {
+  const store = useProjectsStore.getState();
+  const local = store.addProject('/local-lead');
+  store.upsertRemoteProject(remote('a'), 'hub');
+  store.upsertRemoteProject(remote('b'), 'hub');
+  expect(useProjectsStore.getState().projects.map((project) => project.id)).toEqual(['remote-b', 'remote-a', local!.id]);
+  store.reconcileRemoteProjects([remote('a'), remote('b'), remote('c')], 'hub');
+  expect(useProjectsStore.getState().projects.map((project) => project.id)).toEqual(['remote-c', 'remote-b', 'remote-a', local!.id]);
+});
+
+test('a cold catalog restore keeps the persisted order instead of promoting every reference', () => {
+  const store = useProjectsStore.getState();
+  const local = store.addProject('/local-cold');
+  store.reconcileRemoteProjects([remote('a'), remote('b')], 'hub');
+  expect(useProjectsStore.getState().projects.map((project) => project.id)).toEqual([local!.id, 'remote-a', 'remote-b']);
 });
 
 test('same raw project path on local and two Hosts never deduplicates to another machine', () => {
@@ -103,7 +120,7 @@ test('remote layout/order/selection never writes remote paths into local setting
 test('a metadata change for one Host preserves other Hosts project object references', () => {
   const store = useProjectsStore.getState();
   store.upsertRemoteProject(remote('a'), 'hub'); store.upsertRemoteProject(remote('b'), 'hub');
-  const beforeB = useProjectsStore.getState().projects[1];
+  const beforeB = useProjectsStore.getState().projects[0];
   store.reconcileRemoteProjects([{ ...remote('a'), label: 'changed' }, remote('b')], 'hub');
-  expect(useProjectsStore.getState().projects[1]).toBe(beforeB);
+  expect(useProjectsStore.getState().projects[0]).toBe(beforeB);
 });

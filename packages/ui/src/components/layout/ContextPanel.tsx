@@ -58,6 +58,7 @@ import {
   normalizeBrowserUrl,
   resolveBrowserPaneNavigation,
 } from './browserPaneNavigation';
+import { subscribeBrowserAddressFocus } from './browserAddressFocus';
 import {
   createContextPanelNavigationState,
   createContextPanelSessionSurfaceId,
@@ -1407,8 +1408,18 @@ type DesktopBrowserPaneProps = {
   initialUrl: string;
   directory: string;
   tabID: string;
+  active: boolean;
   partition?: string;
 };
+
+function useBrowserAddressFocus(active: boolean) {
+  const addressInputRef = React.useRef<HTMLInputElement | null>(null);
+  React.useEffect(() => {
+    if (!active) return;
+    return subscribeBrowserAddressFocus(() => addressInputRef.current);
+  }, [active]);
+  return addressInputRef;
+}
 
 const isElectronBrowserRuntime = (): boolean => {
   return typeof window !== 'undefined' && Boolean(window.__YURI_ELECTRON__);
@@ -1433,10 +1444,11 @@ function useBrowserAnnotationTarget() {
   return { annotationSessionKey, addAttachedFile };
 }
 
-const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID }) => {
+const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID, active }) => {
   const host = useHostRuntime();
   const entry = host?.entry;
   const { t } = useI18n();
+  const addressInputRef = useBrowserAddressFocus(active);
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
   const setContextPanelTabTargetPath = useUIStore((state) => state.setContextPanelTabTargetPath);
   const normalized = normalizeBrowserUrl(initialUrl);
@@ -1638,6 +1650,7 @@ const IframeBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dire
         </Button>
         <form className="min-w-0 flex-1" onSubmit={(event) => { event.preventDefault(); applyUrl(urlInput); }}>
           <input
+            ref={addressInputRef}
             value={urlInput}
             onChange={(event) => setUrlInput(event.target.value)}
             className="h-7 w-full rounded-md border border-border/50 bg-[var(--surface-elevated)] px-2 typography-micro text-foreground outline-none focus:border-[var(--interactive-focus-ring)]"
@@ -1705,8 +1718,9 @@ const ElectronBrowserPane: React.FC<DesktopBrowserPaneProps> = (props) => {
     : <DesktopBrowserPane key={scopeKey} {...props} />;
 };
 
-const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID, partition = 'persist:yuri-browser' }) => {
+const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, directory, tabID, active, partition = 'persist:yuri-browser' }) => {
   const { t } = useI18n();
+  const addressInputRef = useBrowserAddressFocus(active);
   const webviewRef = React.useRef<WebviewElement | null>(null);
   const setContextPanelTabTargetPath = useUIStore((state) => state.setContextPanelTabTargetPath);
   const normalized = normalizeBrowserUrl(initialUrl);
@@ -1937,6 +1951,7 @@ const DesktopBrowserPane: React.FC<DesktopBrowserPaneProps> = ({ initialUrl, dir
         </Button>
         <form className="min-w-0 flex-1" onSubmit={(event) => { event.preventDefault(); loadUrl(urlInput); }}>
           <input
+            ref={addressInputRef}
             value={urlInput}
             onChange={(event) => setUrlInput(event.target.value)}
             className="h-7 w-full rounded-md border border-border/50 bg-[var(--surface-elevated)] px-2 typography-micro text-foreground outline-none focus:border-[var(--interactive-focus-ring)]"
@@ -2905,7 +2920,7 @@ const ContextPanelContentView: React.FC<ContextPanelProps & { remoteSessions?: A
               activeTab?.id !== tab.id && 'hidden'
             )}
           >
-            <BrowserPane initialUrl={tab.targetPath ?? ''} directory={directoryKey} tabID={tab.id} />
+            <BrowserPane initialUrl={tab.targetPath ?? ''} directory={directoryKey} tabID={tab.id} active={previewVisible && activeTab?.id === tab.id} />
           </div>
         ))}
         {diffTabs.map((tab) => {

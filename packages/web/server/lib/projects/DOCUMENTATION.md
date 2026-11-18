@@ -12,8 +12,9 @@ before registration. Paths are validated and canonicalized before deduplication.
 Concurrent registrations apply against the latest settings under the existing
 Host/Electron exclusive write lock, preserving unrelated settings and projects
 (including temporarily unavailable directories). Existing IDs, ordering, custom
-labels and metadata survive repeat registration. It does not add project label-edit
-or removal APIs, and never deletes files, sessions or task storage.
+labels and metadata survive repeat registration. Removal matches one local project
+ID under the same lock and leaves files, sessions and task storage intact. The
+settings writer selects a remaining active project if needed.
 
 Trusted registry operations use the settings owner's functional update form.
 It performs a strict read inside the same persistence lock and follows the normal
@@ -23,7 +24,7 @@ missing directories: callers validate the affected resource. Corrupt reads and
 failed writes are errors, not empty state or successful registration. No new
 database, settings file or client sync protocol is added. The session skill's
 `POST /api/yuri/session-skills/projects` bridge adds authenticated `describe`,
-`list` and `add` operations without exposing the full settings API; its admission
+`list`, `add` and local `remove` operations without exposing the full settings API; its admission
 and result contract live in `../gui-customization/DOCUMENTATION.md`.
 
 `registry.test.js` covers canonical alias deduplication, concurrent append/settings

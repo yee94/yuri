@@ -11,7 +11,7 @@ import { createSettingsNormalizationRuntime } from '../opencode/settings-normali
 import { createProjectDirectoryRuntime } from '../opencode/project-directory-runtime.js';
 import { registerProjectsSkill, PROJECTS_SKILL_PATH } from './projects.js';
 
-describe('session project registration API', () => {
+describe('bound project registry API', () => {
   let root, workspace, settingsPath, runtime, server, origin, getSession, binding, registerProject, shared, failWrites, tips, gateway, hasAssistant;
   const auth = { Authorization: `Basic ${Buffer.from('opencode:fixture').toString('base64')}` };
   beforeEach(async () => {
@@ -34,7 +34,7 @@ describe('session project registration API', () => {
     const app = express();
     gateway = { supported: true, acquireTask: vi.fn(), registerProject: vi.fn(), list: vi.fn(async () => ({ supported: true, hubId: 'hub', hosts: [], projects: [] })) };
     registerProjectsSkill(app, { express, getIsSharedOpenCodeService: () => shared, getOpenCodeAuthHeaders: () => auth,
-      createClient: () => ({ session: { get: getSession } }), registerProject, readSettingsFromDiskStrict: runtime.readSettingsFromDiskStrict,
+      createClient: () => ({ session: { get: getSession } }), registerProject, removeProject: registry.remove, readSettingsFromDiskStrict: runtime.readSettingsFromDiskStrict,
       sanitizeProjects: normalization.sanitizeProjects,
       remoteHostGateway: gateway, hasAssistant,
     });
@@ -74,6 +74,42 @@ describe('session project registration API', () => {
     expect((await call({ assistantID: 'ast_gone', operation: 'list', input: {} })).status).toBe(403);
     expect((await call({ assistantID: 'ast_live', sessionID: 'ses_one', operation: 'list', input: {} })).status).toBe(400);
     expect((await call({ operation: 'list', input: {} })).status).toBe(400);
+  });
+
+  it('lets a bound Assistant discover and remove only the selected local registration', async () => {
+    const file = path.join(workspace, 'keep.txt');
+    await fs.writeFile(file, 'keep');
+    const { project } = await (await request('add', { path: workspace })).json();
+    const offline = { id: createProjectIdFromPath(path.join(root, 'offline')), path: path.join(root, 'offline') };
+    const layout = { hubId: 'hub', order: ['remote-ref'], collapsed: {} };
+    await runtime.persistSettings((settings) => ({ projects: [...settings.projects, offline], hubProjectLayout: layout }));
+    tips.mockClear();
+    const call = (operation, input = {}, assistantID = 'ast_live') => fetch(`${origin}${PROJECTS_SKILL_PATH}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ assistantID, operation, input }),
+    });
+    expect((await (await call('describe')).json()).inputs.remove).toContain('projectId');
+    const input = { projectId: project.id };
+    expect((await call('remove', input, 'ast_gone')).status).toBe(403);
+    expect((await call('remove', { ...input, target: { hostId: 'remote' } })).status).toBe(400);
+    expect((await call('remove', { projectId: 'remote-ref' })).status).toBe(404);
+    failWrites = true;
+    const failed = await call('remove', input);
+    expect(failed.status).toBe(503);
+    expect(await failed.text()).not.toContain('private-write-error');
+    expect((await (await call('list')).json()).projects).toContainEqual(project);
+    expect(tips).not.toHaveBeenCalled();
+    failWrites = false;
+    expect(await (await call('remove', input)).json()).toEqual({ ...input, removed: true });
+    expect(await (await call('list')).json()).toEqual({ projects: [offline] });
+    expect(await runtime.readSettingsFromDiskStrict()).toMatchObject({ activeProjectId: offline.id, hubProjectLayout: layout });
+    expect(await fs.readFile(file, 'utf8')).toBe('keep');
+    expect((await call('remove', input)).status).toBe(404);
+    expect(tips).toHaveBeenCalledTimes(1);
+    expect(gateway.acquireTask).not.toHaveBeenCalled();
+    expect(await (await call('remove', { projectId: offline.id })).json()).toEqual({ projectId: offline.id, removed: true });
+    expect(await (await call('list')).json()).toEqual({ projects: [] });
+    expect(await runtime.readSettingsFromDiskMigrated()).toMatchObject({ projects: [], hubProjectLayout: layout });
+    expect((await runtime.readSettingsFromDiskStrict()).activeProjectId).toBeUndefined();
   });
 
   it('rejects invalid input and nonexistent/file paths without changing saved state', async () => {

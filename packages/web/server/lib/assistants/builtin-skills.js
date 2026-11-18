@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 const shippedCustomizationSkillPath = fileURLToPath(new URL('../gui-customization/skill/SKILL.md', import.meta.url));
 
-const CUSTOMIZATION_SCOPE = 'adding a directory as a project in Yuri, task/session archive or restore (归档/恢复; the task-view 「归档」 is settle-session), remote sessions, project/session resource ownership or yuri:// deep links, appearance, themes/CSS/layout, logos/Dock, GUI plugins, pages/tabs, widgets, file previews/exports, panels and settings, or SSH/config-sync/Relay pairing';
+const CUSTOMIZATION_SCOPE = 'project management, task and session lifecycle, remote hosts and sessions, resource identity and yuri:// deep links, SSH, configuration sync, Relay pairing and GUI customization';
 
 const customizationPointer = (tools, customizationSkill) => {
   const names = new Set(tools.map((tool) => tool.name));
@@ -11,10 +11,10 @@ const customizationPointer = (tools, customizationSkill) => {
   const skillPath = bound ? customizationSkill.file : shippedCustomizationSkillPath;
   const load = `Load with read({"path":${JSON.stringify(skillPath)}}), then read only the matching references relative to ${JSON.stringify(path.dirname(skillPath))}.`;
   const projects = bound && customizationSkill.projectsCommand
-    ? `Project, task/session archive and remote-session operations run through this bound API helper (bash); run its describe command first, then use the commands it returns: ${customizationSkill.projectsCommand}`
-    : 'Project registration uses granted yuri.projects tools, not a session-bound helper.';
+    ? `Bound project helper (bash): ${customizationSkill.projectsCommand}`
+    : 'This contact has no bound project helper; only granted project tools are available.';
   const remote = bound && customizationSkill.remoteCommand
-    ? `SSH setup, configuration sync and Relay pairing run only through this bound helper (bash) after reading references/remote-connections.md: ${customizationSkill.remoteCommand}`
+    ? `Bound local desktop helper (bash): ${customizationSkill.remoteCommand}`
     : 'This contact has no bound local desktop helper for SSH, configuration sync or Relay pairing; those operations are unavailable here.';
   return `- yuri-customization: For ${CUSTOMIZATION_SCOPE}. ${load} ${projects} ${remote} Reading the skill does not create that authorization.`;
 };

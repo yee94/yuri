@@ -10,6 +10,8 @@ interface ProjectEditDialogProps {
   onOpenChange: (open: boolean) => void;
   project: ProjectEntry | null;
   onSave: (data: ProjectIdentitySaveData) => void | Promise<void>;
+  storedIconPreview?: React.ReactNode;
+  readOnly?: boolean;
 }
 
 export const ProjectEditDialog: React.FC<ProjectEditDialogProps> = ({
@@ -17,6 +19,8 @@ export const ProjectEditDialog: React.FC<ProjectEditDialogProps> = ({
   onOpenChange,
   project,
   onSave,
+  storedIconPreview,
+  readOnly,
 }) => {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -27,7 +31,7 @@ export const ProjectEditDialog: React.FC<ProjectEditDialogProps> = ({
         <ScrollableOverlay outerClassName="max-h-[min(85dvh,44rem)]" disableHorizontal>
           <div className="w-full p-4 sm:p-6">
             {open && project ? (
-              <ProjectSettingsPanel project={project} onIdentitySave={onSave} compact />
+              <ProjectSettingsPanel project={project} onIdentitySave={onSave} compact storedIconPreview={storedIconPreview} readOnly={readOnly} />
             ) : null}
           </div>
         </ScrollableOverlay>

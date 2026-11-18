@@ -409,6 +409,11 @@ const projectLayoutProjection = (projects: ProjectEntry[], layout: HubProjectLay
   return result.length === projects.length && result.every((project, index) => project === projects[index]) ? projects : result;
 };
 
+const frontLayout = (layout: HubProjectLayout | null, hubId: string, ids: string[]): HubProjectLayout | null => {
+  if (layout?.hubId !== hubId) return null;
+  return ids.length ? { ...layout, order: [...ids, ...layout.order.filter((id) => !ids.includes(id))] } : layout;
+};
+
 let layoutMutation = 0;
 const persistHubLayout = (previous: ProjectEntry[], projects: ProjectEntry[], collapsed?: Record<string, boolean>): boolean => {
   const store = useProjectsStore.getState();
@@ -700,10 +705,17 @@ export const useProjectsStore = create<ProjectsStore>()(
       if (previous && JSON.stringify(previous) === JSON.stringify({ ...previous, ...remote })) return;
       const projects = previous
         ? current.projects.map((entry) => entry.id === remote.id ? { ...entry, ...remote } : entry)
-        : [...current.projects, remote];
-      const projected = current.hubProjectLayout?.hubId === hubId ? projectLayoutProjection(projects, current.hubProjectLayout) : projects;
-      set({ projects: projected });
+        : [remote, ...current.projects];
+      const layout = frontLayout(current.hubProjectLayout, hubId, previous ? [] : [remote.id]);
+      const projected = layout ? projectLayoutProjection(projects, layout) : projects;
+      if (previous) {
+        set({ projects: projected });
+        cacheProjects(projected, current.activeProjectId);
+        return;
+      }
+      set({ projects: projected, manualProjectOrder: projected.map((project) => project.id), ...(layout ? { hubProjectLayout: layout } : {}) });
       cacheProjects(projected, current.activeProjectId);
+      persistHubLayout(current.projects, projected);
     },
 
     setProjectCollapsed: (id, sidebarCollapsed) => {
@@ -724,12 +736,18 @@ export const useProjectsStore = create<ProjectsStore>()(
         const updated = { ...project, ...next, sidebarCollapsed: project.sidebarCollapsed };
         return [JSON.stringify(updated) === JSON.stringify(project) ? project : updated];
       });
-      projects.push(...incoming.values());
-      const projected = current.hubProjectLayout?.hubId === hubId ? projectLayoutProjection(projects, current.hubProjectLayout) : projects;
+      const fresh = [...incoming.values()];
+      // A Hub whose references are already loaded is receiving newly added projects: they lead, like local ones.
+      // A cold catalog is a restore of existing references and keeps the persisted order.
+      const added = current.projects.some((project) => project.hostId && project.hubId === hubId) ? fresh : [];
+      if (added.length) projects.unshift(...added); else projects.push(...fresh);
+      const layout = frontLayout(current.hubProjectLayout, hubId, added.map((project) => project.id));
+      const projected = layout ? projectLayoutProjection(projects, layout) : projects;
       if (JSON.stringify(projected) === JSON.stringify(current.projects)) return;
       const activeProjectId = projected.some((project) => project.id === current.activeProjectId) ? current.activeProjectId : projected[0]?.id ?? null;
-      set({ projects: projected, activeProjectId, manualProjectOrder: projected.map((project) => project.id) });
+      set({ projects: projected, activeProjectId, manualProjectOrder: projected.map((project) => project.id), ...(added.length && layout ? { hubProjectLayout: layout } : {}) });
       cacheProjects(projected, activeProjectId);
+      if (added.length) persistHubLayout(current.projects, projected);
       const remoteSession = useSessionNavigationStore.getState().remoteSession;
       if (remoteSession && !projects.some((project) => project.id === remoteSession.projectId)) useSessionNavigationStore.getState().clearRemoteSession();
     },

@@ -102,6 +102,45 @@ describe('physical session directory identity', () => {
       expect(rootReads).toBe(6);
     } finally { sync.stop(); service.close(); }
   });
+
+  it('indexes the registered directory when unrelated global sessions exhaust the alias scan window', async () => {
+    const { real, alias, other } = fixture();
+    const indexed = createSessionIndexService({ dbPath: ':memory:', resolveDirectory: (directory) => directory === alias ? real : directory });
+    indexed.upsert(session('cached-alias', alias, 1));
+    indexed.upsert(session('now-archived', real, 2));
+    let globalReads = 0;
+    let exactReads = 0;
+    const directories = createSessionDirectoryRuntime({ fetchFn: async (input) => {
+      const url = new URL(input);
+      if (url.searchParams.has('parentID')) return json({ data: [], cursor: {} });
+      if (!url.searchParams.has('directory')) {
+        return json({ data: [session(`unrelated-${globalReads}`, other, 10)], cursor: { next: `global-${++globalReads}` } });
+      }
+      expect(url.searchParams.get('directory')).toBe(real);
+      exactReads++;
+      if (!url.searchParams.has('cursor')) return json({ data: [session('latest', real, 20)], cursor: { next: 'exact-2' } });
+      expect(url.searchParams.get('cursor')).toBe('exact-2');
+      const archived = session('now-archived', real, 15);
+      archived.time.archived = 16;
+      return json({ data: [archived, session('previous', real, 10)], cursor: {} });
+    } });
+    const sync = createSessionIndexSyncRuntime({
+      sessionIndexService: indexed,
+      buildOpenCodeUrl: (route) => `http://localhost/api${route}`, getOpenCodeAuthHeaders: () => ({}),
+      fetchFn: directories.fetchSessionList, createFetchBatch: directories.createFetchBatch,
+      fetchExactDirectory: directories.fetchExactSessionList,
+      resolveDirectory: directories.resolveDirectory,
+    });
+    try {
+      sync.enqueue([real]);
+      await vi.waitFor(() => expect(sync.snapshot().sync.active).toBe(false));
+      const entry = indexed.snapshot().directories.find((row) => row.directory === real);
+      expect(entry?.sessions.map(({ id }) => id)).toEqual(['latest', 'previous', 'cached-alias']);
+      expect(entry).toMatchObject({ hasMore: true, lastFullSyncedAt: 0 });
+      expect(globalReads).toBe(5);
+      expect(exactReads).toBe(2);
+    } finally { sync.stop(); indexed.close(); }
+  });
   it('backfills only 30 days once per runtime, resumes failed pages, and never boots locations', async () => {
     const { real } = fixture();
     const dbPath = path.join(real, 'index.sqlite');

@@ -11,6 +11,7 @@ const AUTO_SAVE_DELAY_MS = 450;
 export const useProjectIdentityAutoSave = (
   form: ProjectIdentityFormState,
   onSave: (data: ProjectIdentitySaveData) => void | Promise<void>,
+  enabled = true,
 ) => {
   const { t } = useI18n();
   const {
@@ -30,7 +31,7 @@ export const useProjectIdentityAutoSave = (
   const isSavingRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (!hasChanges || !name.trim() || isUploadingIcon || isRemovingCustomIcon || isSavingRef.current) {
+    if (!enabled || !hasChanges || !name.trim() || isUploadingIcon || isRemovingCustomIcon || isSavingRef.current) {
       return;
     }
 
@@ -61,6 +62,7 @@ export const useProjectIdentityAutoSave = (
   }, [
     color,
     defaultModel,
+    enabled,
     hasChanges,
     icon,
     iconBackground,

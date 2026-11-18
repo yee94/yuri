@@ -121,7 +121,10 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
     if (pageLimit && online) await moreSessions.refetch({ throwOnError: true });
     if (query && online) await titleSearch.refetch({ throwOnError: true });
   });
-  return { host, online, query, snapshot, directories, rows, views, groups, grouping, pinnedIds, busy, refresh, setPageLimit,
+  // A root directory the Hub has never read is unknown, not empty: show loading instead of "no sessions".
+  const unsynced = online && Boolean(snapshot) && rows.length === 0 && !query
+    && !(snapshot?.directories ?? []).some((entry) => normalizeDirectoryKey(entry.directory) === normalizeDirectoryKey(project.path) && entry.lastSyncedAt > 0);
+  return { host, online, query, snapshot, directories, rows, views, groups, grouping, pinnedIds, busy, refresh, setPageLimit, unsynced,
     hidden: Boolean(query && matching.length === 0 && snapshot),
     loading: summaries.isPending, loadingMore: moreSessions.isFetching,
     error: summaries.error?.message || titleSearch.error?.message || moreSessions.error?.message };

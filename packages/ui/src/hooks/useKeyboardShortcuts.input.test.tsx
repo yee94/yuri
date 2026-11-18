@@ -9,6 +9,11 @@ import * as worktreeCreator from '@/lib/worktreeSessionCreator';
 import { locationKey } from '@/lib/remote-projects/location';
 import { useTerminalStore } from '@/stores/useTerminalStore';
 import { setActiveChatInputSurface } from '@/components/chat/activeChatInputSurface';
+import { subscribeBrowserAddressFocus } from '@/components/layout/browserAddressFocus';
+import { useAssistantUIStore } from '@/stores/useAssistantUIStore';
+import { assistantSnapshotQueryOptions } from '@/queries/assistantQueries';
+import { queryClient } from '@/lib/queryRuntime';
+import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import type { ChatInputSurface } from '@/components/chat/chatInputSurface';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 
@@ -207,4 +212,40 @@ test('new terminal shortcut indexes tabs by remote Location, not the physical pa
   await press({ key: 't', ctrlKey: true, altKey: true, shiftKey: true });
   expect(useTerminalStore.getState().getDirectoryState(locationKey(location))?.tabs).toHaveLength(1);
   expect(useTerminalStore.getState().getDirectoryState('/remote')).toBeUndefined();
+});
+
+test('browser shortcut opens the Browser tab for the remote Location and focuses its address bar', async () => {
+  const project = await selectRemote();
+  const location = { hubId: 'hub', hostId: 'b', directory: '/remote' };
+  useSessionNavigationStore.getState().openRemoteSession(project, location, null);
+  const address = document.createElement('input');
+  document.body.appendChild(address);
+  const unsubscribe = subscribeBrowserAddressFocus(() => address);
+
+  expect((await press({ key: 'l', ctrlKey: true })).defaultPrevented).toBe(true);
+
+  const panel = useUIStore.getState().contextPanelByDirectory[locationKey(location)];
+  expect(panel?.tabs.map((tab) => tab.mode)).toEqual(['browser']);
+  expect(panel?.activeTabId).toBe(panel?.tabs[0].id);
+  expect(document.activeElement).toBe(address);
+  unsubscribe();
+});
+
+test('assistant shortcuts open the numbered contact and leave empty slots alone', async () => {
+  const contact = (id: string, createdAt: number) => ({ id, latestMessagePreview: { createdAt } });
+  queryClient.setQueryData(assistantSnapshotQueryOptions().queryKey, {
+    revision: 1, enabled: true, assistants: [contact('older', 10), contact('newer', 20)],
+  });
+  const selected = () => useAssistantUIStore.getState().assistantByTransport[getRuntimeTransportIdentity()];
+
+  expect((await press({ key: '@', ctrlKey: true, shiftKey: true })).defaultPrevented).toBe(true);
+  expect(useUIStore.getState().activeMainTab).toBe('assistant');
+  expect(selected()).toBe('older');
+
+  expect((await press({ key: '!', ctrlKey: true, shiftKey: true })).defaultPrevented).toBe(true);
+  expect(selected()).toBe('newer');
+
+  expect((await press({ key: '#', ctrlKey: true, shiftKey: true })).defaultPrevented).toBe(false);
+  expect(selected()).toBe('newer');
+  queryClient.clear();
 });

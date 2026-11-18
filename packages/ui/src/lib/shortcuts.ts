@@ -233,6 +233,13 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     customizable: true,
   },
   {
+    id: 'open_browser_panel',
+    defaultCombo: 'mod+l',
+    label: 'Open browser panel',
+    description: 'Open the browser panel and focus its address bar',
+    customizable: true,
+  },
+  {
     id: 'cycle_right_sidebar_tab',
     defaultCombo: 'mod+alt+shift+r',
     label: 'Cycle right sidebar tab',
@@ -491,6 +498,34 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     defaultCombo: 'mod+9',
     label: 'Switch to visible session 9',
     description: 'Switch to the ninth visible sidebar session',
+  },
+  {
+    id: 'switch_assistant_1',
+    defaultCombo: 'mod+shift+1',
+    label: 'Switch to assistant 1',
+    description: 'Open the first assistant conversation',
+    customizable: true,
+  },
+  {
+    id: 'switch_assistant_2',
+    defaultCombo: 'mod+shift+2',
+    label: 'Switch to assistant 2',
+    description: 'Open the second assistant conversation',
+    customizable: true,
+  },
+  {
+    id: 'switch_assistant_3',
+    defaultCombo: 'mod+shift+3',
+    label: 'Switch to assistant 3',
+    description: 'Open the third assistant conversation',
+    customizable: true,
+  },
+  {
+    id: 'switch_assistant_4',
+    defaultCombo: 'mod+shift+4',
+    label: 'Switch to assistant 4',
+    description: 'Open the fourth assistant conversation',
+    customizable: true,
   },
 ] as const;
 

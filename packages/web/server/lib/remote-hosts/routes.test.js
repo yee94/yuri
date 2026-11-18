@@ -784,6 +784,25 @@ describe('Remote Host production HTTP contract', () => {
       await wait(() => expect(remote.statusStreams).toBe(0));
     } finally { release(); abort.abort(); await stream.body.cancel().catch(() => {}); remote.server.off('request', holdCatalog); }
   });
+  it('writes all remote project appearance settings to the target before updating its Hub reference', async () => {
+    const { hub, remote } = await aggregate();
+    const local = await (await hub.call('/api/projects', 'POST', { path: '/same/path', label: 'Local project' })).json();
+    const { project } = await (await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' })).json();
+    const appearance = { label: 'Remote project', icon: 'rocket', color: 'keyword', iconBackground: '#123456' };
+    const route = `/api/hosts/remote-1/projects/${project.id}`;
+    const saved = await hub.call(route, 'PATCH', appearance);
+    expect(saved.status).toBe(200);
+    expect((await saved.json()).project).toMatchObject({ id: project.id, ...appearance });
+    expect((await (await remote.call('/api/projects')).json()).projects).toContainEqual(expect.objectContaining({
+      id: project.remoteProjectId, ...appearance,
+    }));
+    expect(hub.projects.find((entry) => entry.id === local.project.id)).toEqual(local.project);
+
+    const cleared = { icon: null, color: null, iconBackground: null };
+    expect((await hub.call(route, 'PATCH', cleared)).status).toBe(200);
+    expect(remote.projects.find((entry) => entry.id === project.remoteProjectId)).toMatchObject({ ...appearance, ...cleared });
+  });
+
   it('does not restore a Hub reference deleted while a metadata PATCH is completing remotely', async () => {
     const { hub, remote } = await aggregate();
     const { project } = await (await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' })).json();

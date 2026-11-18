@@ -11,9 +11,9 @@ describe('assistant built-in skill pointers', () => {
     expect(prompt).toContain('load_tools({"domain":"opencode.catalog"})');
     expect(prompt).toContain('read_opencode_skill({"id":"opencode"})');
     expect(prompt).toContain('nextOffset');
-    expect(prompt).toContain('adding a directory as a project in Yuri');
-    expect(prompt).toContain('project/session resource ownership or yuri:// deep links');
-    expect(prompt).toContain('granted yuri.projects tools');
+    expect(prompt).toContain('project management, task and session lifecycle');
+    expect(prompt).toContain('resource identity and yuri:// deep links');
+    expect(prompt).toContain('only granted project tools are available');
     expect(prompt).toContain('no bound local desktop helper');
     expect(prompt).toContain('does not create that authorization');
     expect(prompt).not.toContain('.opencode/skills');
@@ -24,6 +24,7 @@ describe('assistant built-in skill pointers', () => {
     expect(prompt).toContain(JSON.stringify(path.dirname(expected)));
     const source = fs.readFileSync(file, 'utf8');
     expect(prompt).not.toContain('## Workflow');
+    expect(prompt).not.toContain('https://github.com/yee94/yuri');
     for (const [, reference] of source.matchAll(/\]\((references\/[^)]+)\)/g)) {
       expect(fs.existsSync(path.join(path.dirname(file), reference.split('#')[0]))).toBe(true);
     }
@@ -32,13 +33,15 @@ describe('assistant built-in skill pointers', () => {
   it('hands a contact the bound helpers only when it can run them', () => {
     const customizationSkill = { file: '/data/session-skills/yuri-customization-abc/SKILL.md', projectsCommand: 'run projects describe', remoteCommand: 'run remote describe' };
     const withBash = formatAssistantBuiltinSkillsPrompt([{ name: 'read' }, { name: 'bash' }], { customizationSkill });
-    expect(withBash).toContain('settle-session');
+    expect(withBash).not.toContain('settle-session');
+    expect(withBash).toContain('project management');
     expect(withBash).toContain('read({"path":"/data/session-skills/yuri-customization-abc/SKILL.md"})');
     expect(withBash).toContain('run projects describe');
     expect(withBash).toContain('run remote describe');
     expect(withBash).not.toContain('no bound local desktop helper');
     const withoutBash = formatAssistantBuiltinSkillsPrompt([{ name: 'read' }], { customizationSkill });
     expect(withoutBash).not.toContain('run projects describe');
+    expect(withoutBash).toContain('no bound project helper');
     expect(withoutBash).toContain('no bound local desktop helper');
     const noRemote = formatAssistantBuiltinSkillsPrompt([{ name: 'read' }, { name: 'bash' }], { customizationSkill: { ...customizationSkill, remoteCommand: null } });
     expect(noRemote).toContain('run projects describe');

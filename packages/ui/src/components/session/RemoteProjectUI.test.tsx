@@ -60,6 +60,39 @@ test.each(['a', 'b'])('remote picker preserves same-path identity for host %s an
   expect(registered).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalledWith(false);
 });
 
+test('typing a partial name filters the parent listing by substring instead of listing a missing directory', async () => {
+  const names = ['mmbiz', 'svrkit.js', 'wxaaiagentnodelogicsvr', 'wxmesh'];
+  const fetch = vi.fn(async (path: string, init?: { query?: { path: string } }) => {
+    if (path.endsWith('/api/fs/home')) return json({ home: '/data/workspace' });
+    if (path.endsWith('/api/fs/list')) {
+      return init?.query?.path === '/data/workspace'
+        ? json({ entries: names.map(name => ({ name, path: `/data/workspace/${name}`, isDirectory: true })) })
+        : json({ error: 'Not found' }, 404);
+    }
+    return json({ error: 'Unexpected request' }, 500);
+  });
+  const registry = new HostRuntimeRegistry('hub', { transportIdentity: 'transport', isCurrent: () => true, fetch, sdk: () => { throw new Error('Unused'); }, service: () => { throw new Error('Unused'); } });
+  registry.applyCatalog(catalog);
+  await act(async () => root.render(<QueryClientProvider client={client}><RemoteDirectoryExplorerDialog open onOpenChange={vi.fn()} registry={registry} hostId="a" machinePicker={null} onRegistered={vi.fn(async () => {})} /></QueryClientProvider>));
+  await flush(); await flush();
+  const input = container.querySelector('input')!;
+  const type = async (value: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+  };
+  const labels = () => [...container.querySelectorAll('.yuri-directory-name')].map(node => node.textContent);
+  await type('/data/workspace/node');
+  expect(labels()).toEqual(['..', 'wxaaiagentnodelogicsvr']);
+  await type('/data/workspace/wxa');
+  expect(labels().slice(0, 2)).toEqual(['..', 'wxaaiagentnodelogicsvr']);
+  await type('/data/workspace/');
+  expect(labels()).toEqual(['..', ...names]);
+  expect(fetch).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ query: { path: '/data/workspace/node' } }));
+});
+
 test('failed Hub registration preserves the raw path and dialog for idempotent retry', async () => {
   const fetch = vi.fn(async (path: string) => {
     if (path.endsWith('/api/fs/home')) return json({ home: '/workspace' });

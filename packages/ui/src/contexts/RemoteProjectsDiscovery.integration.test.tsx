@@ -75,6 +75,8 @@ it('an already mounted root shows a confirmed picker registration before restart
     if (path === '/api/hosts/host/projects' && options?.method === 'POST') {
       registered = true; return Response.json({ project: remote });
     }
+    if (path === '/api/config/settings' && options?.method === 'PUT') return Response.json({ projects: [], hasRemoteProjects: true,
+      hubProjectLayout: { hubId: 'registration-hub', order: [remote.id], collapsed: {} } });
     throw new Error(`Unexpected request ${path}`);
   });
   // The explicit picker has discovered Hosts before registration; root bootstrap is still local-only.
@@ -100,7 +102,7 @@ it('an already mounted root shows a confirmed picker registration before restart
     await vi.waitFor(() => expect(fixture.fetch.mock.calls.filter(([path]) => path === '/api/hosts')).toHaveLength(2));
     expect(useProjectsStore.getState().projects).toEqual([expect.objectContaining({ ...remote, hubId: registry.hubId })]);
     expect(node.querySelector('[data-reference="registered-reference"]')).not.toBeNull();
-    expect(fixture.fetch.mock.calls.map(([path]) => path)).toEqual(['/api/hosts', '/api/hosts/host/projects', '/api/hosts']);
+    expect(fixture.fetch.mock.calls.map(([path]) => path)).toEqual(['/api/hosts', '/api/hosts/host/projects', '/api/hosts', '/api/config/settings']);
   } finally {
     await act(async () => root.unmount()); node.remove(); queryClient.clear();
   }

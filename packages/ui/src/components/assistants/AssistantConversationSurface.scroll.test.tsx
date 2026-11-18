@@ -437,21 +437,21 @@ describe('AssistantConversationSurface scroll ownership', () => {
     expect(host.querySelector('[data-test-card-avatar]')?.getAttribute('data-test-card-avatar')).toBe('new-bot-face');
   });
 
-  test.each([false, true])('message and processing avatars share a compact desktop / full mobile gutter (mobile=%s)', async (isMobile) => {
+  test.each([false, true])('message and processing avatars share the same 32px size with a desktop / mobile gutter (mobile=%s)', async (isMobile) => {
     viewportUI.isMobile = isMobile;
     contactQueryState.extraMessages = 1;
     const { host } = await mountSurface();
     const message = host.querySelector('[data-message-id="assistant-a:refetch:0"]')!.closest('[data-assistant-contact-group]')!.querySelector('[data-assistant-working-avatar]')!;
-    expect(message.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar-size')).toBe(isMobile ? '32' : '24');
+    expect(message.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar-size')).toBe('32');
     expect(message.querySelector('[data-test-avatar]')?.getAttribute('data-test-follow-pointer')).toBe('false');
-    expect(message.parentElement?.classList.contains(isMobile ? 'w-9' : 'w-6')).toBe(true);
+    expect(message.parentElement?.classList.contains(isMobile ? 'w-9' : 'w-8')).toBe(true);
     await act(async () => contactEvents.handler?.({
       type: 'contact-turn-start', assistantID: 'assistant-a', turnID: 'larger-avatar', occurredAt: 4,
     }));
     const processing = host.querySelector('[data-assistant-contact-processing-avatar]')!;
-    expect(processing.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar-size')).toBe(isMobile ? '32' : '24');
+    expect(processing.querySelector('[data-test-avatar]')?.getAttribute('data-test-avatar-size')).toBe('32');
     expect(processing.querySelector('[data-test-avatar]')?.getAttribute('data-test-follow-pointer')).toBe('false');
-    expect(processing.classList.contains(isMobile ? 'w-9' : 'w-6')).toBe(true);
+    expect(processing.classList.contains(isMobile ? 'w-9' : 'w-8')).toBe(true);
     expect(processing.classList.contains('-left-[var(--contact-avatar-gutter)]')).toBe(true);
     expect(host.querySelector('[data-assistant-contact-status-slot]')?.classList.contains('left-[var(--contact-avatar-gutter)]')).toBe(true);
     expect(host.querySelector('[data-assistant-working-dot]')).toBeNull();
@@ -957,6 +957,9 @@ describe('AssistantConversationSurface scroll ownership', () => {
 
   test('inline attachment images open the shared viewer on activation for cached and legacy parts', async () => {
     attachmentIO.display.mockResolvedValue({ url: 'yuri-asset://shot', release: attachmentIO.release });
+    attachmentIO.blob.mockResolvedValue(new Blob(['original'], { type: 'image/png' }));
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview-shot');
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     contactQueryState.imageFilePart = 'cached';
     const { root, host } = await mountSurface();
     const cached = host.querySelector<HTMLImageElement>('img[data-assistant-contact-image]')!;
@@ -964,7 +967,12 @@ describe('AssistantConversationSurface scroll ownership', () => {
     expect(cached.classList.contains('rounded-[var(--contact-bubble-radius,1.125rem)]')).toBe(true);
     expect(cached.getAttribute('role')).toBe('button');
     await act(async () => { cached.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-    expect(host.querySelector('[data-test-preview-dialog]')?.getAttribute('data-image')).toBe('yuri-asset://shot');
+    expect(attachmentIO.blob).toHaveBeenCalledWith('assistant-a', expect.objectContaining({ attachmentID: 'attachment-image' }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(createUrl).toHaveBeenCalledOnce();
+    expect(host.querySelector('[data-test-preview-dialog]')?.getAttribute('data-image')).toBe('blob:preview-shot');
+    await act(async () => { host.querySelector('[data-test-preview-dialog]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(revokeUrl).toHaveBeenCalledWith('blob:preview-shot');
+    expect(cached.getAttribute('src')).toBe('yuri-asset://shot');
     await act(async () => root.render(null));
 
     contactQueryState.imageFilePart = 'legacy';
@@ -974,6 +982,23 @@ describe('AssistantConversationSurface scroll ownership', () => {
     expect(legacy.classList.contains('rounded-[var(--contact-bubble-radius,1.125rem)]')).toBe(true);
     await act(async () => { legacy.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
     expect(legacyHost.querySelector('[data-test-preview-dialog]')?.getAttribute('data-image')).toBe('data:image/png;base64,AA');
+  });
+
+  test('switching contacts aborts a pending full-size image read and ignores its late result', async () => {
+    attachmentIO.display.mockResolvedValue({ url: 'yuri-asset://shot', release: attachmentIO.release });
+    let finish!: (blob: Blob) => void;
+    attachmentIO.blob.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const createUrl = vi.spyOn(URL, 'createObjectURL');
+    contactQueryState.imageFilePart = 'cached';
+    const { root, host } = await mountSurface();
+    await act(async () => host.querySelector<HTMLImageElement>('img[data-assistant-contact-image]')!.click());
+    const signal = attachmentIO.blob.mock.lastCall?.[2].signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    await act(async () => root.render(<AssistantConversationSurface assistant={assistant('assistant-b')} active />));
+    expect(signal.aborted).toBe(true);
+    await act(async () => finish(new Blob(['late'])));
+    expect(createUrl).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-test-preview-dialog]')).toBeNull();
   });
 
   test('top button and upward gesture share one flight; failures retain rows and expose retry', async () => {

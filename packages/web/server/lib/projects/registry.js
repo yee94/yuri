@@ -32,5 +32,16 @@ export const createProjectRegistry = ({ persistSettings, validateDirectoryPath }
     return { project: saved, created, settings };
   };
 
-  return { register };
+  const remove = async ({ projectId }) => {
+    const id = string(projectId, 'projectId');
+    const settings = await persistSettings((current) => {
+      if (!Array.isArray(current.projects)) throw new Error('Invalid project settings');
+      const projects = current.projects.filter((entry) => entry.id !== id);
+      if (projects.length === current.projects.length) fail('not_found', 'Project is not registered on this Host.');
+      return { projects };
+    });
+    return { settings };
+  };
+
+  return { register, remove };
 };

@@ -1516,6 +1516,7 @@ async function main(options = {}) {
     waitForOpenCodeReady,
     fetchFn: indexSessionDirectories.fetchSessionList,
     createFetchBatch: indexSessionDirectories.createFetchBatch,
+    fetchExactDirectory: indexSessionDirectories.fetchExactSessionList,
     isDirectoryMissing: indexSessionDirectories.isDirectoryMissing,
     resolveDirectory: indexSessionDirectories.resolveDirectory,
     projectSessions: (sessions) => {

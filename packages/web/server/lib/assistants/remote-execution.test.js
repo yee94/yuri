@@ -23,8 +23,10 @@ const fixture = ({ nativeCompletion, sessionIDs = ['ses_same'], projectModels = 
   let unavailable = false;
   let retargeted = false;
   const gateway = {
+    supported: true,
     store: { hubId: 'hub' },
-    list: async () => ({ hubId: 'hub', hosts: [{ id: 'remote-a', name: 'Machine A' }, { id: 'remote-b', name: 'Machine B' }], projects: [] }),
+    list: async () => ({ supported: true, hubId: 'hub', hosts: [{ id: 'remote-a', name: 'Machine A' }, { id: 'remote-b', name: 'Machine B' }], projects: [] }),
+    registerProject: vi.fn(async (_hostId, input) => ({ project: { id: 'hub-reference', path: input.path }, created: true })),
     acquireTask: vi.fn(async (hostId, options = {}) => {
       if (unavailable || retargeted || (options.instanceId && options.instanceId !== target(hostId).instanceId)) throw new Error('remote unavailable');
       const lease = { target: target(hostId), options, released: false,
@@ -121,6 +123,63 @@ const fixture = ({ nativeCompletion, sessionIDs = ['ses_same'], projectModels = 
 };
 
 describe('Hub assistant remote execution', () => {
+  it('associates a project discovered on a remote Host with the Hub sidebar', async () => {
+    const f = fixture();
+    try {
+      await f.send(async (call) => {
+        const listed = await call('list_projects', {});
+        expect(listed.content[0].text).toContain(remoteDirectory);
+        expect(f.gateway.registerProject).not.toHaveBeenCalled();
+        const input = { target: target(), path: remoteDirectory };
+        for (const invalid of [{ ...input, target: undefined }, { ...input, path: 'relative' }, { ...input, target: { ...target(), hubId: 'other-hub' } }]) {
+          expect(await call('register_remote_project', invalid)).toMatchObject({ isError: true });
+        }
+        expect(f.gateway.registerProject).not.toHaveBeenCalled();
+        expect(await call('register_remote_project', input)).toMatchObject({
+          isError: false, terminate: false,
+          details: { project: { id: 'hub-reference', path: remoteDirectory }, created: true, target: target() },
+        });
+        expect(f.gateway.registerProject).toHaveBeenCalledExactlyOnceWith('remote-a', { path: remoteDirectory }, expect.objectContaining({ instanceId: target().instanceId }));
+        f.gateway.registerProject.mockResolvedValueOnce({ project: { id: 'hub-reference', path: remoteDirectory }, created: false });
+        expect(await call('register_remote_project', input)).toMatchObject({ isError: false, details: { created: false } });
+        f.gateway.registerProject.mockRejectedValueOnce(Object.assign(new Error('changed identity'), { code: 'remote_instance_mismatch' }));
+        expect(await call('register_remote_project', input)).toMatchObject({ isError: true, details: { error: 'remote_instance_mismatch' } });
+      });
+      expect(f.localClient).not.toHaveBeenCalled();
+    } finally { f.close(); }
+  });
+
+  it('loads remote project tools progressively without a bound helper and returns the saved Hub reference', async () => {
+    let round = 0;
+    const call = (name, args) => ({ completion: { choices: [{ message: { content: '', tool_calls: [
+      { id: `call_${round}`, type: 'function', function: { name, arguments: JSON.stringify(args) } },
+    ] } }] } });
+    const f = fixture({ nativeCompletion: async ({ body }) => {
+      const names = body.tools.map((tool) => tool.function.name);
+      switch (++round) {
+        case 1:
+          expect(names).not.toContain('register_remote_project');
+          return call('load_tools', { domain: 'yuri.projects' });
+        case 2:
+          expect(names).toContain('register_remote_project');
+          return call('list_remote_hosts', {});
+        case 3:
+          expect(JSON.stringify(body.messages)).toContain('instance-remote-a');
+          return call('register_remote_project', { target: target(), path: remoteDirectory });
+        default:
+          expect(JSON.stringify(body.messages)).toContain('hub-reference');
+          return { text: '已加入远程项目。' };
+      }
+    } });
+    try {
+      await f.send();
+      expect(round).toBe(4);
+      expect(f.gateway.registerProject).toHaveBeenCalledTimes(1);
+      expect(f.localClient).not.toHaveBeenCalled();
+      expect(f.leases.size).toBe(0);
+    } finally { f.close(); }
+  });
+
   it('lists models in the selected machine and project, rather than the remote server working directory', async () => {
     const f = fixture({ projectModels: true });
     try {

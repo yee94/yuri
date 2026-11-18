@@ -11,7 +11,7 @@
 .yuri-contact-conversation[data-contact-layout="desktop"] {
   --contact-column-width: 45.5rem;
   --contact-body-size: var(--text-ui-label);
-  --contact-avatar-gutter: 2.125rem;
+  --contact-avatar-gutter: 2.5rem;
   --contact-bubble-radius: 1rem;
   --contact-time-size: 0.625rem;
 }

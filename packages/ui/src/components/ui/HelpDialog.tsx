@@ -193,6 +193,12 @@ export const HelpDialog: React.FC = () => {
           keys: '',
         },
         {
+          id: 'open_browser_panel',
+          descriptionKey: 'helpDialog.item.openBrowserPanel',
+          icon: "global",
+          keys: '',
+        },
+        {
           id: 'cycle_right_sidebar_tab',
           descriptionKey: 'helpDialog.item.cycleRightSidebarTab',
           icon: "layout-right",
@@ -273,6 +279,11 @@ export const HelpDialog: React.FC = () => {
           keys: [`${mod} + 1...9`],
           descriptionKey: "helpDialog.item.switchSession",
           icon: "layout-left",
+        },
+        {
+          keys: [`${mod} + Shift + 1...4`],
+          descriptionKey: "helpDialog.item.switchAssistant",
+          icon: "ai-agent",
         },
         {
           id: 'toggle_services_menu',

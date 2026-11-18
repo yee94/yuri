@@ -159,6 +159,16 @@ export const AssistantSessionComposer = ({ active, onChange, onVoiceSend, ...pro
     inputRef.current?.setSelectionRange(caretRef.current, caretRef.current);
     caretRef.current = null;
   }, [document]);
+  const autoFocusEnabled = active && !props.isMobile && !props.disabled;
+  React.useEffect(() => {
+    if (!autoFocusEnabled) return;
+    const input = inputRef.current;
+    if (!input || !input.isConnected) return;
+    const focused = input.ownerDocument.activeElement;
+    // Never steal focus from another editable field the user is typing in.
+    if (focused instanceof HTMLElement && focused !== input && focused.matches('input, textarea, select, [contenteditable="true"]')) return;
+    input.focus({ preventScroll: true });
+  }, [autoFocusEnabled]);
   const close = useEvent(() => setDismissed(true));
   const commit = useEvent((nextDocument: ComposerDocument, caret: number, recordHistory = true) => {
     const serialized = serializeComposerDocument(nextDocument);

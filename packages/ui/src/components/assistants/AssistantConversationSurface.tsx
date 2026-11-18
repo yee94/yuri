@@ -6,6 +6,9 @@ import { useEvent } from '@reactuses/core'
 import { AssistantSessionComposer } from './AssistantSessionComposer'
 import { Button } from '@/components/ui/button'
 import { uploadAssistantAttachment, type AssistantAttachmentDescriptor } from '@/lib/assistant-attachment-upload'
+import { getAssistantAttachmentBlob } from '@/lib/assistant-attachment-cache'
+import { subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth'
+import { toast } from '@/components/ui'
 import { AssistantContactAttachment } from './AssistantContactAttachment'
 import { ContactUserMessagePart } from './ContactUserMessagePart'
 import { ContactMessageBubble } from './ContactMessageBubble'
@@ -170,19 +173,60 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   // Shared image/mermaid preview — same ToolOutputDialog contract as ChatMessage.
   const [popupContent, setPopupContent] = React.useState<ToolPopupContent>({ open: false, title: '', content: '' })
   const setImagePreviewOpen = useUIStore((state) => state.setImagePreviewOpen)
+  const attachmentPreview = React.useRef<{ controller: AbortController; url?: string } | null>(null)
+  const clearAttachmentPreview = useEvent(() => {
+    const preview = attachmentPreview.current
+    attachmentPreview.current = null
+    preview?.controller.abort()
+    if (preview?.url) URL.revokeObjectURL(preview.url)
+  })
   const handleShowPopup = useEvent((content: ToolPopupContent) => {
     // Only viewer-capable content opens here; the contact surface has no tool popups.
     if (content.image || content.mermaid || content.video) {
+      clearAttachmentPreview()
       setPopupContent(content)
       setImagePreviewOpen(true)
     }
   })
   const handlePopupChange = useEvent((open: boolean) => {
+    if (!open) clearAttachmentPreview()
     setPopupContent((prev) => ({ ...prev, open }))
     setImagePreviewOpen(open)
   })
-  // The dialog unmounts with this surface, so release the global overlay flag here.
-  React.useEffect(() => () => { setImagePreviewOpen(false) }, [setImagePreviewOpen])
+  const openAttachmentImage = useEvent(async (descriptor: AssistantAttachmentDescriptor, previewSource: HTMLImageElement) => {
+    if (!active || attachmentPreview.current) return
+    const controller = new AbortController()
+    attachmentPreview.current = { controller }
+    try {
+      const blob = await getAssistantAttachmentBlob(assistant.id, descriptor, { signal: controller.signal })
+      const preview = attachmentPreview.current
+      if (controller.signal.aborted || preview?.controller !== controller) return
+      // Native thumbnail URLs are single-consumer. The viewer needs a reusable URL
+      // for its image, transitions, and save action.
+      const url = URL.createObjectURL(blob)
+      preview.url = url
+      const filename = descriptor.filename || t('assistants.contact.attachment.image')
+      const { mime: mimeType, size } = descriptor
+      setPopupContent({ open: true, title: filename, content: '', previewSource,
+        metadata: { tool: 'image-preview', filename, mime: mimeType }, image: { url, filename, mimeType, size } })
+      setImagePreviewOpen(true)
+    } catch {
+      if (controller.signal.aborted) return
+      clearAttachmentPreview()
+      toast.error(t('assistants.contact.attachment.loadFailed'))
+    }
+  })
+  React.useLayoutEffect(() => {
+    // The open preview belongs to the previous contact's transcript.
+    handlePopupChange(false)
+    const unsubscribe = subscribeRuntimeAuthGeneration(() => handlePopupChange(false))
+    return () => {
+      // The dialog unmounts with this surface, so release the global overlay flag here.
+      unsubscribe()
+      clearAttachmentPreview()
+      setImagePreviewOpen(false)
+    }
+  }, [active, assistant.id, transportIdentity, clearAttachmentPreview, handlePopupChange, setImagePreviewOpen])
   React.useEffect(() => {
     uploadedRef.current.clear()
     retrySendsRef.current.clear()
@@ -352,10 +396,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
     admissionRevisionByTurnIDRef.current = new Map()
     setOptimisticTurns((current) => scopeContactOptimisticTurns(current, assistant.id))
     setTurnPreviews((current) => scopeContactTurnPreviews(current, assistant.id))
-    // The open preview belongs to the previous contact's transcript.
-    setPopupContent({ open: false, title: '', content: '' })
-    setImagePreviewOpen(false)
-  }, [assistant.id, setImagePreviewOpen])
+  }, [assistant.id])
 
   React.useEffect(() => {
     for (const message of messages) {
@@ -665,11 +706,11 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                 : assistant
               const groupSenderName = first.role === 'peer' ? peerName(first.fromAssistantID, first.fromAssistantName) : displayName
               return <div key={`${entryScope}:${group.key}`} className={cn('relative flex w-full', !timeSeparators.has(first.messageID) && (incoming ? 'mt-4 first:mt-0' : 'mt-6 first:mt-0'))} data-assistant-contact-group="">
-                {incoming ? <div className={cn('sticky bottom-2 flex shrink-0 self-end justify-center pb-0.5', isMobile ? 'mr-2.5 w-9' : 'mr-2 w-6')} data-assistant-contact-avatar-rail="">
+                {incoming ? <div className={cn('sticky bottom-2 flex shrink-0 self-end justify-center pb-0.5', isMobile ? 'mr-2.5 w-9' : 'mr-2 w-8')} data-assistant-contact-avatar-rail="">
                   <AssistantWorkingAvatar
                     name={groupSender?.id || first.fromAssistantID || assistant.id}
                     avatarSeed={groupSender?.avatarSeed ?? (first.fromAssistantID ? undefined : assistant.avatarSeed)}
-                    size={isMobile ? 32 : 24}
+                    size={32}
                     label={groupSenderName}
                     working={active ? Boolean(groupSender?.working || groupSender?.activeContactTurn) : undefined}
                     showWorkingDot={false}
@@ -764,7 +805,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                         return <AssistantScheduleCard key={`${renderKey}:card:${index}`} card={part} task={scheduledTasksByProject.get(part.projectID)?.get(part.taskID)} />
                       }
                       if (part.type === 'file') {
-                        return userPart(<AssistantContactAttachment key={`${renderKey}:file:${index}`} assistantID={assistant.id} part={part} onShowPopup={handleShowPopup} />, `${renderKey}:file:${index}`)
+                        return userPart(<AssistantContactAttachment key={`${renderKey}:file:${index}`} assistantID={assistant.id} part={part} onShowPopup={handleShowPopup} onOpenImage={openAttachmentImage} />, `${renderKey}:file:${index}`)
                       }
                       if (part.type === 'text' && isInternalSettleText(part.text)) {
                         // Legacy yuri.settle.* markers: card status already shows outcome.
@@ -830,11 +871,11 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                   className="relative inline-flex h-9 origin-bottom-left items-center gap-1 rounded-[1.35rem] bg-[var(--surface-muted)] px-4 text-muted-foreground/70"
                   data-assistant-contact-processing=""
                 >
-                  <div className={cn('absolute -left-[var(--contact-avatar-gutter)] top-0.5 flex justify-center', isMobile ? 'w-9' : 'w-6')} data-assistant-contact-processing-avatar="">
+                  <div className={cn('absolute -left-[var(--contact-avatar-gutter)] top-0.5 flex justify-center', isMobile ? 'w-9' : 'w-8')} data-assistant-contact-processing-avatar="">
                     <AssistantWorkingAvatar
                       name={assistant.id}
                       avatarSeed={assistant.avatarSeed}
-                      size={isMobile ? 32 : 24}
+                      size={32}
                       label={displayName}
                       working={active ? serverWorking : undefined}
                       showWorkingDot={false}

@@ -36,6 +36,10 @@ vi.mock('@/lib/persistence', () => ({ updateDesktopSettings: vi.fn(async () => {
 vi.mock('@/lib/yuriEvents', () => ({ subscribeYuriEvents: (listener: (event: unknown) => void) => { mocks.events.add(listener); return () => mocks.events.delete(listener); } }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => <span /> }));
+vi.mock('@/contexts/useThemeSystem', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/contexts/useThemeSystem')>(),
+  useThemeSystem: () => ({ currentTheme: { metadata: { variant: 'dark' }, colors: { surface: { foreground: '#dedede' } } } }),
+}));
 vi.mock('@/components/gui-plugins/GuiPluginTitlebarItems', () => ({ GuiPluginTitlebarItems: () => null }));
 vi.mock('@/components/ui/MobileResizableSheet', () => ({ MobileResizableSheet: ({ open, title, children }: { open: boolean; title: React.ReactNode; children: React.ReactNode }) => open ? <div role="dialog">{title}{children}</div> : null }));
 vi.mock('@/components/session/sidebar/sortableItems', () => ({ SortableProjectItem: ({ children, projectLabel, projectIconSlot, onNewSession, onClose, onRenameStart, onToggle, isCollapsed, worktreeActionAvailable, onNewWorktreeSession }: { children: React.ReactNode; projectLabel: string; projectIconSlot?: React.ReactNode; onNewSession(): void; onClose(): void; onRenameStart(): void; onToggle(): void; isCollapsed: boolean; worktreeActionAvailable?: boolean; onNewWorktreeSession?(): void }) => <section><h2>{projectLabel}{projectIconSlot}</h2><button onClick={onNewSession}>new</button>{worktreeActionAvailable ? <button onClick={onNewWorktreeSession}>new-worktree</button> : null}<button onClick={onClose}>remove</button><button onClick={onRenameStart}>edit-project</button><button onClick={onToggle}>collapse</button>{!isCollapsed ? children : null}</section> }));
@@ -74,6 +78,26 @@ function registry(fetch: (path: string, init?: { method?: string; body?: BodyIni
   entry.applyCatalog({ supported: true, hubId: 'hub', hosts: ['a', 'b'].map((id) => ({ id, name: id, source: 'direct', state: 'connected' })), projects: [project('a'), project('b')] });
   return entry;
 }
+
+test('desktop Edit uses the shared identity controls and saves on the selected Hub project reference', async () => {
+  const remote = project('a');
+  const fetch = vi.fn(async (_path: string, init?: { method?: string; body?: BodyInit | null }) =>
+    init?.method === 'PATCH' ? json({ project: { ...remote, ...JSON.parse(String(init.body)) } }) : json(snapshot('a')));
+  const entry = registry(fetch);
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={remote} registry={entry} /></QueryClientProvider>));
+  await click('edit-project');
+  expect(container.querySelector<HTMLInputElement>('[data-settings-item="projects.name"] input')?.value).toBe(remote.label);
+  expect(container.querySelector('[data-settings-item="projects.default-model"]')).toBeNull();
+  expect(container.querySelector('[data-settings-item="projects.worktree"]')).toBeNull();
+  expect(container.textContent).not.toContain('sessions.sidebar.session.rename.save');
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>('[data-settings-item="projects.icon"] button[aria-label="Rocket"]')!.click();
+  });
+  await vi.waitFor(() => expect(fetch.mock.calls.find(([, init]) => init?.method === 'PATCH')).toEqual([
+    expect.stringContaining(`/api/hosts/a/projects/${remote.id}`),
+    expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ label: remote.label, icon: 'rocket', color: null, iconBackground: null }) }),
+  ]));
+});
 
 const renderedIds = (scope: Element = container) => [...scope.querySelectorAll('[data-remote-session]')].map((row) => row.getAttribute('data-remote-session'));
 type RemoteDragItem = { kind: 'session' | 'folder'; directory: string; id: string };

@@ -65,9 +65,8 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
   const [pending, setPending] = React.useState(false);
   const [deleteTargets, setDeleteTargets] = React.useState<Array<{ id: string; title?: string; entry: HostRuntimeEntry }> | null>(null);
   const deleteSelectionRef = React.useRef(useSessionNavigationStore.getState().remoteSession);
-  const [editor, setEditor] = React.useState<{ kind: 'title' | 'folder' | 'project'; id?: string; directory?: string; folderId?: string; parentId?: string | null; value: string } | null>(null);
-  const [projectIcon, setProjectIcon] = React.useState(project.icon ?? '');
-  const [projectColor, setProjectColor] = React.useState(project.color ?? '');
+  const [editor, setEditor] = React.useState<{ kind: 'title' | 'folder'; id?: string; directory?: string; folderId?: string; parentId?: string | null; value: string } | null>(null);
+  const [projectEditOpen, setProjectEditOpen] = React.useState(false);
   const flightRef = React.useRef(false);
   const mutate = useEvent(async (action: () => Promise<void>) => {
     if (flightRef.current) return;
@@ -174,10 +173,6 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
   const saveEditor = () => {
     if (!editor?.value.trim()) return;
     if (editor.kind === 'title' && editor.id) { void updateRows([editor.id], { title: editor.value.trim() }, editor.directory); return; }
-    if (editor.kind === 'project') {
-      void mutate(async () => { await useProjectsStore.getState().updateProjectMeta(project.id, { label: editor.value.trim(), icon: projectIcon || null, color: projectColor || null }); setEditor(null); });
-      return;
-    }
     const directories = editor.id ? [editor.id] : selected.size ? [...new Set(selected.values())] : [project.path];
     void updateFolder(directories[0], (payload) => {
       for (const directory of directories) {
@@ -303,7 +298,7 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
       newWorktree: () => { useProjectsStore.getState().setActiveProjectIdOnly(project.id); setWorktreeOpen(true); },
       newFolder: () => setEditor({ kind: 'folder', id: project.path, value: '' }),
       sync: syncProject,
-      edit: () => { setProjectIcon(project.icon ?? ''); setProjectColor(project.color ?? ''); setEditor({ kind: 'project', value: project.label || project.path }); },
+      edit: () => setProjectEditOpen(true),
       close: () => { void mutate(async () => { await useProjectsStore.getState().removeProject(project.id); }); },
     },
   };
@@ -311,7 +306,7 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
     deleteTargets, confirmDelete, dismissDelete: () => { if (!flightRef.current) setDeleteTargets(null); },
     updateFolder, moveSessions, reportGroupTargets, selectedSession,
     openDraft: (directory: string, targetFolderId?: string) => openRemoteProjectSession(project, registry, null, directory, mobile, { targetFolderId }),
-    worktreeOpen, setWorktreeOpen, editor, setEditor, saveEditor, projectIcon, setProjectIcon, projectColor, setProjectColor,
+    worktreeOpen, setWorktreeOpen, editor, setEditor, saveEditor, projectEditOpen, setProjectEditOpen,
     newFolder: (directory?: string) => setEditor({ kind: 'folder', id: directory, value: '' }),
     bulk: {
       count: selected.size,

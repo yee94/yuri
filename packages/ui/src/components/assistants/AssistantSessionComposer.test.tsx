@@ -93,8 +93,21 @@ beforeEach(async () => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   await act(async () => render());
+  input().blur();
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
+
+test('desktop focuses the input when a contact becomes active, mobile does not', async () => {
+  await act(async () => { active = false; render(); });
+  expect(document.activeElement).not.toBe(input());
+  await act(async () => { active = true; render(); });
+  expect(document.activeElement).toBe(input());
+  input().blur();
+  mobile = true;
+  await act(async () => { active = false; render(); });
+  await act(async () => { active = true; render(); });
+  expect(document.activeElement).not.toBe(input());
+});
 
 test('session mentions stay on the contact machine and never request remote catalogs, even with connected Hosts', async () => {
   remote.enabled = true;

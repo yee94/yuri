@@ -9,7 +9,7 @@ async function main() {
     const [encoded, operation] = process.argv.slice(2);
     const binding = JSON.parse(Buffer.from(encoded, 'base64url').toString());
     const lifecycle = ['task-sessions', 'session-state', 'settle-session', 'unsettle-session', 'archive-session', 'unarchive-session'];
-    const operations = ['list', 'add', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session'];
+    const operations = ['list', 'add', 'remove', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session'];
     if (!['describe', ...operations].includes(operation)) throw new Error();
     const origin = new URL(binding.hostOrigin);
     if (origin.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(origin.hostname) || origin.username || origin.password) throw new Error();
@@ -42,6 +42,7 @@ async function main() {
       return;
     }
     if (['add', 'add-remote'].includes(operation) && (typeof result.project?.id !== 'string' || typeof result.project?.path !== 'string' || typeof result.created !== 'boolean')) throw new Error();
+    if (operation === 'remove' && (result.projectId !== input.projectId || result.removed !== true)) throw new Error();
     if (operation === 'remote-hosts' && (!Array.isArray(result.hosts) || !Array.isArray(result.failed) || typeof result.complete !== 'boolean')) throw new Error();
     if (operation === 'list' && !Array.isArray(result.projects)) throw new Error();
     if (operation === 'task-sessions' && (!Array.isArray(result.sessions) || result.indexedOnly !== true
@@ -56,12 +57,13 @@ async function main() {
         || !Number.isFinite(result.archivedAt) || (result.archivedAt > 0) !== result.archived)) throw new Error();
     if (operation === 'describe' && result.supported !== true) throw new Error();
     console.log(JSON.stringify(operation === 'describe' ? { ...result,
-      commands: Object.fromEntries(operations.filter((op) => (lifecycle.includes(op) ? result.lifecycleSupported : result.remoteSupported || ['list', 'add'].includes(op))).map((op) => [op, sessionSkillCommand(process.execPath, process.argv[1], encoded, op)])),
+      commands: Object.fromEntries(operations.filter((op) => (op === 'remove' ? typeof result.inputs?.remove === 'string'
+        : lifecycle.includes(op) ? result.lifecycleSupported : result.remoteSupported || ['list', 'add'].includes(op))).map((op) => [op, sessionSkillCommand(process.execPath, process.argv[1], encoded, op)])),
     } : result));
   } catch {
     console.error(JSON.stringify({ error: 'Bound project helper failed; the result is unconfirmed', terminal: !bound,
       recovery: !bound ? 'Stop this workflow; resume only with a new supported session and its bound project describe command.'
-        : 'Check the input or connection. Resume with the bound describe command; retry registration with the same target and path only after recovery.' }));
+        : 'Check the input or connection. Resume with the bound describe command and inspect the same target before retrying.' }));
     process.exitCode = 1;
   }
 }
