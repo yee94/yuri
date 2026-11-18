@@ -218,6 +218,9 @@ test.each([false, true])('remote task feed publishes unpinned and pinned rows as
   ] }] };
   const tasks = vi.fn();
   const entry = registry(async () => json(data));
+  entry.applyCatalog({ supported: true, hubId: 'hub', projects: [project('a')], hosts: [
+    { id: 'a', name: 'Development machine', source: 'ssh', state: 'connected' },
+  ] });
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} mobile={mobile} onTaskItems={tasks} /></QueryClientProvider>));
   await flush(); await flush();
   expect(container.querySelector('[data-remote-project]')).toBeNull();
@@ -232,7 +235,13 @@ test.each([false, true])('remote task feed publishes unpinned and pinned rows as
     if (mobile) {
       const cards = [...host.querySelectorAll('.yuri-mobile-task-card')];
       expect(cards).toHaveLength(2);
-      expect(cards.every((card) => card.querySelector('.yuri-mobile-task-avatar [data-remote-host="a"]'))).toBe(true);
+      for (const card of cards) {
+        expect(card.querySelector('.yuri-mobile-task-avatar [data-remote-host]')).toBeNull();
+        const projectLabel = card.querySelector('.yuri-mobile-task-project')!;
+        expect(projectLabel.textContent).toBe('Project a');
+        const tag = projectLabel.parentElement?.querySelector('[data-remote-host="a"]');
+        expect(tag?.textContent?.trim()).toBe('Development machine');
+      }
       expect(cards[1].querySelector('.yuri-mobile-session-actions')?.textContent).not.toContain('sessions.sidebar.bulkActions.archive');
       return;
     }

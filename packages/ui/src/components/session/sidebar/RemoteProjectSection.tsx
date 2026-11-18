@@ -83,9 +83,10 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
   React.useEffect(() => () => onActivityItems?.(project.id, []), [project.id, onActivityItems]);
   const publishTasks = useEvent(() => {
     if (!props.onTaskItems) return;
-    const hostIndicator = <span data-remote-host={project.hostId} aria-hidden="true" className="inline-flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
+    const hostIndicator = mobile ? null : <span data-remote-host={project.hostId} aria-hidden="true" className="inline-flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
       <Icon name="computer" className="size-3" />
     </span>;
+    const mobileHostTag = mobile ? <RemoteHostIndicator registry={registry} hostId={project.hostId} remoteState={project.remoteState} compactName nameOnlyTip /> : null;
     // The remote project's own icon, drawn at the task card's mark size.
     const badge = project.iconImage
       ? <span className="inline-flex size-3.5 shrink-0 items-center justify-center"><RemoteProjectIcon project={project} registry={registry} className="size-3.5" /></span>
@@ -104,7 +105,7 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
         return { node: { session: { ...session, id: identity }, children: [], worktree: null }, projectId: project.id, groupDirectory: directory,
           identity, remoteSessionId: session.id, pinned: data.pinnedIds.has(session.id), secondaryMeta,
           remoteStatus: { running: online && (status === 'busy' || status === 'retry'), unread: rowProps.unread },
-          content: mobile ? <MobileRemoteSummaryRow {...rowProps} taskHost={project.hostId} /> : <RemoteSummaryRow {...rowProps} depth={0} /> };
+          content: mobile ? <MobileRemoteSummaryRow {...rowProps} taskCard subtitleSuffix={mobileHostTag} /> : <RemoteSummaryRow {...rowProps} depth={0} /> };
       }));
   });
   React.useLayoutEffect(() => { publishTasks(); }, [publishTasks, data.rows, data.pinnedIds, snapshot, host?.name, online, pending, model.selectedSession, project, registry, props.onTaskItems, mobile]);

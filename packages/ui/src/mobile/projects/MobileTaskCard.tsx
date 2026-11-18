@@ -60,14 +60,14 @@ function MobileTaskCardImpl(props: TaskCardProps) {
 }
 
 export function MobileTaskCardSurface({ task, runStartedAt, onSelect, onOpenActions, onPin, onArchive, archived, onRestore,
-  running, unread, onToggleRead, hasPendingQuestion = false, hasPendingPermission = false, remoteHost, projectBadge,
+  running, unread, onToggleRead, hasPendingQuestion = false, hasPendingPermission = false, projectLabelSuffix, projectBadge,
 }: Omit<TaskCardProps, 'onPin' | 'onArchive'> & Partial<Pick<TaskCardProps, 'onPin' | 'onArchive'>> & {
   running: boolean;
   unread: boolean;
   onToggleRead?: () => void;
   hasPendingQuestion?: boolean;
   hasPendingPermission?: boolean;
-  remoteHost?: string;
+  projectLabelSuffix?: React.ReactNode;
   projectBadge?: React.ReactNode;
 }) {
   const { t } = useI18n();
@@ -210,14 +210,14 @@ export function MobileTaskCardSurface({ task, runStartedAt, onSelect, onOpenActi
           onContextMenu={handleContextMenu}
         >
           <span className="yuri-mobile-task-avatar" aria-hidden="true">
-            {remoteHost ? <span data-remote-host={remoteHost} className="inline-flex size-3! shrink-0 text-muted-foreground">
-              <Icon name="computer" className="size-3!" />
-            </span> : null}
             {projectBadge ?? <TaskProjectBadge project={task.project} />}
           </span>
           <span className="flex h-4 items-center gap-1.5 pr-9">
             {indicator === 'completed-unread' ? <TaskUnreadDot /> : null}
-            <span className="yuri-mobile-task-project min-w-0 flex-1 truncate text-muted-foreground">{task.projectLabel}</span>
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+              <span className="yuri-mobile-task-project min-w-0 truncate text-muted-foreground">{task.projectLabel}</span>
+              {projectLabelSuffix ? <span className="inline-flex min-w-0 max-w-[55%] shrink-0 items-center">{projectLabelSuffix}</span> : null}
+            </span>
             {statusSlot}
           </span>
           <span
