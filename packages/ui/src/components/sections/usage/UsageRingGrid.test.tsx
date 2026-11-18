@@ -84,9 +84,10 @@ describe('UsageRingGrid', () => {
     expect(html).toContain('>33%<');
   });
 
-  it('lets pooled windows run past three', () => {
+  it('keeps pooled windows to three rings too and says the rest in words', () => {
     const html = render(['a', 'b', 'c', 'd'].map((key) => item(key, win({ pool: 'Gemini' }))));
-    expect(html.match(/role="progressbar"/g)).toHaveLength(4);
+    expect(html.match(/role="progressbar"/g)).toHaveLength(3);
+    expect(html).toContain('>d<');
   });
 
   it('names a remote Magpie\'s pooled window by its span, not by its whole name', () => {

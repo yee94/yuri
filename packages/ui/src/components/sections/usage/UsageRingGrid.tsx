@@ -91,12 +91,8 @@ const totalsFirst = <T extends { item: UsageRingItem }>(rings: T[]): T[] => [
   ...rings.filter(({ item }) => !isTotalWindow(item)),
 ];
 
-// Magpie draws a card's first three windows as rings, and every pool's window when pools run past that.
+// A card's first three windows are rings; anything past that, pooled or not, is said in words below them.
 const RINGS_SHOWN = 3;
-const ringsShownFor = (rings: ReadonlyArray<{ item: UsageRingItem }>): number => {
-  const pooled = rings.filter(({ item }) => item.window.pool).length;
-  return pooled > 0 ? Math.max(RINGS_SHOWN + 1, pooled) : RINGS_SHOWN;
-};
 
 const UsageRing: React.FC<{
   item: UsageRingItem;
@@ -206,7 +202,7 @@ export const UsageRingGrid: React.FC<UsageRingGridProps> = ({
           else rings.push({ item, percent });
         }
         const ordered = totalsFirst(rings);
-        const shown = ordered.slice(0, ringsShownFor(ordered));
+        const shown = ordered.slice(0, RINGS_SHOWN);
         // what the rings leave out is said as a line of words under them, with the windows that have no share
         const rows: Array<{ item: UsageRingItem; percent: number | null }> = [
           ...ordered.slice(shown.length),
