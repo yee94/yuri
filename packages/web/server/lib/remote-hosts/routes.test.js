@@ -934,6 +934,40 @@ describe('Remote Host production HTTP contract', () => {
       abort.abort(); await stream.body.cancel().catch(() => {});
     }
   });
+  it('picks up a worktree added after the topology was cached when a session appears in it or the user syncs', async () => {
+    const { hub, remote } = await aggregate();
+    remote.setWorktrees(['/same/path']);
+    remote.setSummaries({ directories: ['/same/path'].map((directory) => ({
+      directory, sessions: [{ id: 'main-session', directory, title: directory, time: { created: 1, updated: 2 } }], hasMore: false,
+    })) });
+    expect((await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' })).status).toBe(200);
+    const abort = new AbortController();
+    const stream = await fetch(`${hub.url}/api/global/event`, { headers: hub.headers, signal: abort.signal });
+    const snapshot = async () => (await hub.call('/api/hosts/remote-1/summaries')).json();
+    const directories = async () => (await snapshot()).directories.map((row) => row.directory).sort();
+    try {
+      await wait(async () => expect(await directories()).toEqual(['/same/path']));
+      const worktreeSummaries = (extra) => ({ directories: ['/same/path', ...extra].map((directory) => ({
+        directory, sessions: [{ id: `session-${directory}`, directory, title: directory, time: { created: 1, updated: 2 } }], hasMore: false,
+      })) });
+
+      // The Host's topology event never arrived; a session event from the unowned directory is the only signal.
+      remote.setWorktrees(['/same/path', '/outside/branch']);
+      remote.setSummaries(worktreeSummaries(['/outside/branch']));
+      const requests = remote.worktreeRequests;
+      remote.emit({ type: 'session.created', data: { sessionID: 'new-session', directory: '/outside/branch' } }, '/outside/branch');
+      await wait(async () => expect(await directories()).toEqual(['/outside/branch', '/same/path']));
+      expect(remote.worktreeRequests).toBeGreaterThan(requests);
+
+      // Manual sync re-reads the topology on the already connected Host.
+      remote.setWorktrees(['/same/path', '/outside/branch', '/outside/second']);
+      remote.setSummaries(worktreeSummaries(['/outside/branch', '/outside/second']));
+      expect((await hub.call('/api/hosts/remote-1/connect', 'POST')).status).toBe(200);
+      await wait(async () => expect(await directories()).toEqual(['/outside/branch', '/outside/second', '/same/path']));
+    } finally {
+      abort.abort(); await stream.body.cancel().catch(() => {});
+    }
+  });
   it('maps only the effective nested source directory into each authoritative worktree', async () => {
     const { hub, remote } = await aggregate();
     remote.setWorktrees(['/repo', '/outside/branch']);

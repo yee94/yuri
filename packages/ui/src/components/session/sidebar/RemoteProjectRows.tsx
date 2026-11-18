@@ -11,7 +11,8 @@ import { PendingRemoteHostIndicator } from '../RemoteHostIndicator';
 import { useRemoteHostDisplayName } from '@/lib/remote-projects/host-names';
 import { SessionBusyIndicator } from '../SessionBusyIndicator';
 import { SortableProjectItem } from './sortableItems';
-import { renderHighlightedText } from './utils';
+import { formatSessionCompactDateLabel, renderHighlightedText } from './utils';
+import { TaskUnreadDot } from './TaskCardParts';
 import { DraggableSessionRow } from './sessionFolderDnd';
 import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
 import type { RemoteProjectShellProps, RemoteSummaryRowProps } from './remoteProjectPresentation';
@@ -48,9 +49,10 @@ export function PendingRemoteProjectRow({ project, loading, error, mobile, reord
     openSidebarMenuKey={menu} setOpenSidebarMenuKey={setMenu} />;
 }
 
-export function RemoteSummaryRow({ session, active, search, selected, pending, pinDisabled = pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, depth = 1, onSelect, onMultiSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
+export function RemoteSummaryRow({ session, active, search, selected, pending, pinDisabled = pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, leading, card, depth = 1, onSelect, onMultiSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const busy = status === 'busy' || status === 'retry';
   const title = session.title || t('sessions.sidebar.session.untitled');
   const renderItems = (Item: React.ElementType) => <>
     <Item onClick={onMultiSelect}>{t('remoteProjects.selectSession', { title })}</Item>
@@ -67,12 +69,42 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
     <SessionRowLayout data-remote-session={session.id} data-session-row={session.id} data-session-scope={dragItem.directory} active={active} selected={selected}>
     <SessionRowContent depth={depth}>
       <SessionRowTitle title={title} onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey) onMultiSelect(); else onSelect(); }} onDoubleClick={onRename}
-        className="group-hover:pr-18 group-focus-within:pr-18">
+        className={card ? 'gap-0.5' : 'group-hover:pr-18 group-focus-within:pr-18'}>
+        {card ? <>
+          <div className="flex h-5 w-full min-w-0 items-center gap-1 overflow-hidden group-hover:pr-18 group-focus-within:pr-18">
+            {leading}
+            {card.badge}
+            {unread > 0 && !busy ? <TaskUnreadDot /> : null}
+            <span className={cn('min-w-0 flex-1 truncate text-xs leading-4', active || selected ? 'text-foreground/80' : 'text-muted-foreground')}>{secondaryMeta?.projectLabel}</span>
+            <span className={cn('shrink-0 group-hover:invisible group-focus-within:invisible', menuOpen && 'invisible')}>
+              {busy
+                ? <span className="inline-flex items-center gap-1 text-[10px] font-medium leading-none tabular-nums text-status-info" title={t('sessions.sidebar.session.status.active')}><SessionBusyIndicator size={10} arcColor="var(--status-info)" /></span>
+                : <span className={cn('text-[10px] leading-none tabular-nums', active || selected ? 'text-foreground/70' : 'text-muted-foreground/70')}>{formatSessionCompactDateLabel(session.time.updated ?? session.time.created ?? Date.now())}</span>}
+            </span>
+          </div>
+          <div className="flex w-full min-w-0 flex-1 items-center gap-1 overflow-hidden">
+            <span className={cn('block min-w-0 flex-1 truncate text-[0.8125rem] text-foreground', unread > 0 && !busy ? 'font-medium' : 'font-normal')}>{renderHighlightedText(title, search)}</span>
+          </div>
+          <div className={cn('flex h-4 w-full min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-4', active || selected ? 'text-foreground/60' : 'text-muted-foreground/60')}>
+            {card.pathLabel ? <>
+              <span className="inline-flex size-3.5 shrink-0 items-center justify-center"><Icon name="folder-open" className="size-2.5" /></span>
+              <span className="min-w-0 flex-1 truncate">{card.pathLabel}</span>
+            </> : <span className="flex-1" />}
+            {pinned ? <Icon name="pushpin-2-fill" className="size-2.5 shrink-0" aria-label={t('remoteProjects.unpin')} /> : null}
+          </div>
+        </> : <>
         <span className="flex w-full min-w-0 items-center gap-1">
+          {leading}
           <span className="block min-w-0 flex-1 truncate typography-ui-label font-normal text-foreground">{renderHighlightedText(title, search)}</span>
-          <span className={cn('inline-flex shrink-0 items-center text-muted-foreground group-hover:hidden group-focus-within:hidden', menuOpen && 'hidden')}>
-            {status === 'busy' || status === 'retry' ? <SessionBusyIndicator /> : unread > 0 ? <span className="size-1.5 rounded-full bg-current" aria-label={t('remoteProjects.markUnread')} /> : null}
-          </span>
+          {busy || unread > 0 ? (
+            <span
+              className={cn('inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center group-hover:hidden group-focus-within:hidden', menuOpen && 'hidden')}
+              aria-label={t(busy ? 'sessions.sidebar.session.status.active' : 'sessions.sidebar.session.status.unread')}
+              title={t(busy ? 'sessions.sidebar.session.status.active' : 'sessions.sidebar.session.status.unread')}
+            >
+              {busy ? <SessionBusyIndicator /> : <span className="h-2 w-2 rounded-full bg-[var(--status-info)]" />}
+            </span>
+          ) : null}
         </span>
         {secondaryMeta?.projectLabel || secondaryMeta?.branchLabel || subtitleSuffix ? (
           <span className="flex w-full min-w-0 items-center gap-1.5 overflow-hidden typography-meta text-muted-foreground">
@@ -81,9 +113,10 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
             {subtitleSuffix}
           </span>
         ) : null}
+        </>}
       </SessionRowTitle>
     </SessionRowContent>
-    <SessionRowActions visible={menuOpen}>
+    <SessionRowActions visible={menuOpen} className={card ? 'top-1.5 translate-y-0' : undefined}>
     <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pinDisabled} onClick={onPin} aria-label={t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}><Icon name={pinned ? 'pushpin-2-fill' : 'pushpin-2'} className="size-3.5" /></Button>
     <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pending} onClick={onArchive} aria-label={t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive')}><Icon name="archive" className="size-3.5" /></Button>
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-5 w-5" aria-label={t('remoteProjects.actions')}><Icon name="more-2" className="size-3.5" /></Button></DropdownMenuTrigger><DropdownMenuContent>

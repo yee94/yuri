@@ -31,6 +31,11 @@ type TaskBucketInput = {
   runningSessionIds: ReadonlySet<string>;
   pendingRequestSessionIds: ReadonlySet<string>;
   unseenBySession: Readonly<Record<string, number>>;
+  /**
+   * Unpinned rows from remote Hosts. Each remote Host's own snapshot is the
+   * membership authority, so the local index and settle projection never filter them.
+   */
+  remoteSessions?: readonly Session[];
 };
 
 /** Rows the Settled shelf renders per page; a shelf can hold hundreds of sessions. */
@@ -69,6 +74,7 @@ export const deriveTaskBuckets = ({
   runningSessionIds,
   pendingRequestSessionIds,
   unseenBySession,
+  remoteSessions,
 }: TaskBucketInput): TaskBuckets => {
   const active: Session[] = [];
   const settled: Session[] = [];
@@ -89,6 +95,8 @@ export const deriveTaskBuckets = ({
       active.push(session);
     }
   }
+
+  if (remoteSessions) active.push(...remoteSessions);
 
   const attentionRank = (session: Session): number => (
     taskNeedsAttention(session.id, pendingRequestSessionIds, unseenBySession) ? 0 : 1

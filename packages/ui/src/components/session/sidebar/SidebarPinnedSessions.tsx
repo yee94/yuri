@@ -38,6 +38,8 @@ export type PinnedItem = {
   pinned?: boolean;
   identity?: string;
   remoteSessionId?: string;
+  /** Remote task-view rows: live state published by the remote host's summaries. */
+  remoteStatus?: { running: boolean; unread: number };
 };
 
 type Props = {

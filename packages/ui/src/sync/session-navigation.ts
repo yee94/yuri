@@ -92,6 +92,32 @@ const getSessionNavigationSnapshot = (): SessionNavigationSnapshot | null => (
   publishedNavigationSnapshot
 );
 
+/**
+ * Remote rows are not Hub-local sessions: they open through the remote
+ * selection store and never become `currentSessionId`. The sidebar registers
+ * how to open a remote target and which published row the open remote session
+ * occupies, so next/previous keeps walking one continuous order.
+ */
+type RemoteSessionNavigationBridge = Readonly<{
+  activate: (target: SessionNavigationTarget) => boolean;
+  current: () => SessionNavigationTarget | null;
+}>;
+
+let remoteNavigationBridge: RemoteSessionNavigationBridge | null = null;
+let remoteNavigationBridgeRevision = 0;
+
+export const publishRemoteSessionNavigationBridge = (
+  bridge: RemoteSessionNavigationBridge,
+): (() => void) => {
+  const revision = ++remoteNavigationBridgeRevision;
+  remoteNavigationBridge = bridge;
+  return () => {
+    if (remoteNavigationBridgeRevision === revision) {
+      remoteNavigationBridge = null;
+    }
+  };
+};
+
 export const clearSessionNavigationSnapshot = (): void => {
   publishedNavigationRevision += 1;
   publishedNavigationSnapshot = null;
@@ -305,12 +331,20 @@ export const resolveAdjacentNavigationTarget = (
     return null;
   }
 
-  return cycleNavigationTargets(
-    getCombinedNavigationTargets(snapshot),
-    direction,
-    rootSessionId,
-    currentFocus,
-  );
+  const targets = getCombinedNavigationTargets(snapshot);
+  const remoteCurrent = remoteNavigationBridge?.current() ?? null;
+  if (remoteCurrent) {
+    const remoteIndex = targets.findIndex((target) => (
+      target.scope === remoteCurrent.scope
+      && target.sessionId === remoteCurrent.sessionId
+      && target.projectId === remoteCurrent.projectId
+    ));
+    if (remoteIndex >= 0) {
+      return targets[(remoteIndex + direction + targets.length) % targets.length] ?? null;
+    }
+  }
+
+  return cycleNavigationTargets(targets, direction, rootSessionId, currentFocus);
 };
 
 /**
@@ -335,6 +369,8 @@ export const navigateAdjacentSession = (
     sessionId: target.sessionId,
     projectId: target.projectId,
   });
-  commit(target);
+  if (!remoteNavigationBridge?.activate(target)) {
+    commit(target);
+  }
   return target;
 };

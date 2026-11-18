@@ -32,6 +32,10 @@ export type RemoteProjectShellProps = {
 export type RemoteSummaryRowProps = {
   secondaryMeta?: TopSectionSecondaryMeta | null;
   subtitleSuffix?: React.ReactNode;
+  /** Desktop top section: icon-only marker before the title instead of a subtitle line. */
+  leading?: React.ReactNode;
+  /** Task-view card layout: `badge` is the project mark, `leading` then sits in front of it. */
+  card?: { badge: React.ReactNode; pathLabel?: string | null };
   pinDisabled?: boolean;
   session: SessionIndexSession; active: boolean; search: string; selected: boolean; pending: boolean; pinned: boolean; unread: number;
   status?: string; reorderable?: boolean; depth?: number; dragItem: { directory: string; id: string };

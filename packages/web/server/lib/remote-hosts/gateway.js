@@ -14,6 +14,8 @@ const publicError = (error) => {
 };
 const fingerprint = (host) => crypto.createHash('sha256').update(JSON.stringify(host)).digest('hex');
 const directoryKey = (value) => value.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
+const TOPOLOGY_PROBE_DIRECTORY_MS = 60_000;
+const TOPOLOGY_PROBE_CONNECTION_MS = 15_000;
 const statusEvent = (payload) => /^(session\.(created|updated|deleted|renamed|moved|status|idle|error|execution\.(started|succeeded|failed|interrupted)|retry|model\.selected|inbox\.(enqueued|delivered))|yuri:session-(index-changed|status|activity|metadata|folders-changed|order-changed|unread-changed)|yuri:project.*|yuri:worktree-topology-changed|yuri:notification)$/.test((payload?.type || '').replace(/\.\d+$/, ''));
 export const projectRemoteStatusEvent = (payload) => {
   if (!statusEvent(payload)) return null;
@@ -401,6 +403,19 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     }
   };
   const enqueueRefresh = (connection) => { refreshQueue.add(connection.host.id); pump(); };
+  // A session in a directory no registered project owns may live in a worktree created after the cached
+  // topology was read. The Host's worktree-topology event does not always reach this stream, so re-read
+  // the topology, rate-limited so unrelated directories on the Host cannot keep forcing full refreshes.
+  const probeUnownedDirectory = (connection, directory) => {
+    const now = Date.now();
+    const probes = connection.topologyProbes ||= new Map();
+    if (now - (probes.get(directory) ?? 0) < TOPOLOGY_PROBE_DIRECTORY_MS || now - (connection.topologyProbeAt ?? 0) < TOPOLOGY_PROBE_CONNECTION_MS) return;
+    if (probes.size >= 200) probes.clear();
+    probes.set(directory, now);
+    connection.topologyProbeAt = now;
+    connection.topologyDirty = true;
+    enqueueRefresh(connection);
+  };
   const startStatus = (connection) => {
     if (connection.reader || !hasStatusDemand(connection.host.id)) return;
     const id = connection.host.id;
@@ -434,6 +449,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
           : data.location?.directory || data.directory || data.info?.directory
             || (sessionId ? indexFor(id).findBySessionId(sessionId)?.directory : null);
         if (sessionId && (!directory || !directoryResolver(id)(directory))) {
+          if (directory) probeUnownedDirectory(connection, directory);
           const payload = projectRemoteStatusEvent(event.payload);
           if (payload) notifyTasks(id, { ...(directory ? { directory } : {}), payload });
           return;
@@ -655,7 +671,14 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       return { supported: Boolean(adapter), hubId: store.hubId, hosts: [...hosts.map(hostView), ...unavailable], projects: store.projects(),
         ...(!adapter ? { reason: 'pc_hub_required' } : {}) };
     },
-    async connect(id) { const connection = await ensure(id); startStatus(connection); return hostView(connection.host); },
+    async connect(id) {
+      const connection = await ensure(id);
+      const live = Boolean(connection.reader);
+      startStatus(connection);
+      // Manual sync on an established stream: worktree topology is otherwise only re-read on events.
+      if (live && hasStatusDemand(id)) { connection.topologyDirty = true; enqueueRefresh(connection); }
+      return hostView(connection.host);
+    },
     setSessionPinned(id, sessionId, pinned, instanceId) {
       if (stopped) throw remoteFailure('host_unavailable', 404);
       if (!store.projects(id).length) throw remoteFailure('project_not_found', 404);

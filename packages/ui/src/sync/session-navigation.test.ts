@@ -6,6 +6,7 @@ import {
   getNavigableRootSessions,
   isSubtaskSession,
   navigateAdjacentSession,
+  publishRemoteSessionNavigationBridge,
   publishSessionNavigationSnapshot,
   resolveAdjacentNavigationTarget,
   resolveAdjacentRootSession,
@@ -352,6 +353,42 @@ describe('session-navigation', () => {
       sessionId: 'pinned-b',
       projectId: 'p2',
     });
+  });
+
+  test('walks past an open remote row and hands remote targets to the sidebar', () => {
+    const pinned = [
+      makeNavigationTarget('pinned', 'local-pin', 'p1'),
+      makeNavigationTarget('pinned', 'remote-identity', 'remote'),
+      makeNavigationTarget('pinned', 'last-pin', 'p1'),
+    ];
+    publishSessionNavigationSnapshot({ pinned, project: [] });
+    const opened: string[] = [];
+    let current = pinned[1];
+    const cleanup = publishRemoteSessionNavigationBridge({
+      activate: (target) => {
+        if (target.projectId !== 'remote') return false;
+        opened.push(target.sessionId);
+        return true;
+      },
+      current: () => current,
+    });
+
+    try {
+      expect(resolveAdjacentNavigationTarget(1, 'stale-local')?.sessionId).toBe('last-pin');
+      expect(resolveAdjacentNavigationTarget(-1, 'stale-local')?.sessionId).toBe('local-pin');
+
+      const committed: string[] = [];
+      navigateAdjacentSession(-1, 'stale-local', (target) => committed.push(target.sessionId));
+      expect(committed).toEqual(['local-pin']);
+      expect(opened).toEqual([]);
+
+      current = pinned[0];
+      navigateAdjacentSession(1, 'stale-local', (target) => committed.push(target.sessionId));
+      expect(opened).toEqual(['remote-identity']);
+      expect(committed).toEqual(['local-pin']);
+    } finally {
+      cleanup();
+    }
   });
 
   test('uses visible project sessions when the published pinned sequence is empty', () => {

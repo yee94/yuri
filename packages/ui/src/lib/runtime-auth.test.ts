@@ -9,6 +9,7 @@ import {
   getRuntimeBearerTokenSync,
   invalidateRuntimeAuthSession,
   refreshRuntimeUrlAuthToken,
+  setRuntimeAuthApiBaseUrl,
   setRuntimeAuthCredentialProvider,
   setRuntimeBearerToken,
   setRuntimeExtraHeaders,
@@ -117,6 +118,38 @@ describe('runtime auth headers', () => {
       globalThis.fetch = previousFetch;
       clearRuntimeUrlAuthToken();
       setRuntimeExtraHeaders(null);
+      clearRuntimeAuthCredentialProvider();
+    }
+  });
+
+  test('mints against the active runtime, not a stale injected local base URL', async () => {
+    const previousFetch = globalThis.fetch;
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    let seenUrl = '';
+    try {
+      clearRuntimeUrlAuthToken();
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: { __YURI_API_BASE_URL__: 'http://127.0.0.1:64780' },
+      });
+      setRuntimeBearerToken('remote-token');
+      setRuntimeAuthApiBaseUrl('http://127.0.0.1:55093');
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        seenUrl = String(input);
+        return new Response(JSON.stringify({ token: 'url-token', expiresAt: Date.now() + 60_000 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }) as typeof fetch;
+
+      expect(await refreshRuntimeUrlAuthToken()).toBe('url-token');
+      expect(seenUrl).toBe('http://127.0.0.1:55093/auth/url-token');
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+      else delete (globalThis as { window?: unknown }).window;
+      setRuntimeAuthApiBaseUrl(null);
+      clearRuntimeUrlAuthToken();
       clearRuntimeAuthCredentialProvider();
     }
   });

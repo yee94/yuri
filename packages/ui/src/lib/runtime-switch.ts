@@ -2,6 +2,7 @@ import {
   beginRuntimeAuthEndpointSwitch,
   endRuntimeAuthEndpointSwitch,
   refreshRuntimeUrlAuthToken,
+  setRuntimeAuthApiBaseUrl,
   setRuntimeBearerToken,
   setRuntimeExtraHeaders,
 } from '@/lib/runtime-auth';
@@ -170,6 +171,7 @@ export const initializeRuntimeEndpoint = (options: { apiBaseUrl?: string | null;
   activeApiBaseUrl = apiBaseUrl;
   activeRuntimeKey = options.runtimeKey?.trim() || (sameOrigin(apiBaseUrl, readInjectedLocalOrigin()) ? 'local' : normalizeRuntimeUrlKey(apiBaseUrl));
   activeTransportFingerprint = transportIdentityFor(apiBaseUrl, null);
+  setRuntimeAuthApiBaseUrl(apiBaseUrl);
 };
 
 export const switchRuntimeEndpoint = (options: { apiBaseUrl: string; clientToken?: string | null; runtimeKey?: string | null; requestHeaders?: Record<string, string> | null; relay?: RelayRuntimeDescriptor | null }): void => {
@@ -191,6 +193,7 @@ export const switchRuntimeEndpoint = (options: { apiBaseUrl: string; clientToken
   if (transportIdentityChanged) activeRuntimeGeneration += 1;
   activeApiBaseUrl = apiBaseUrl;
   activeRuntimeKey = runtimeKey;
+  setRuntimeAuthApiBaseUrl(apiBaseUrl);
   if (typeof window !== 'undefined') {
     const runtimeWindow = window as typeof window & {
       __YURI_API_BASE_URL__?: string;

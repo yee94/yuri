@@ -16,6 +16,14 @@ let localRuntimeUrlAuthToken = '';
 let localRuntimeUrlAuthTokenExpiresAt = 0;
 let localRuntimeUrlAuthRefreshPromise: Promise<string> | null = null;
 let runtimeAuthGeneration = 0;
+// The injected base URL can be a read-only contextBridge value that still names
+// the local origin after a runtime switch; mints without an explicit base must
+// follow the runtime the credential belongs to, not the injected one.
+let activeRuntimeAuthBaseUrl = '';
+
+export const setRuntimeAuthApiBaseUrl = (apiBaseUrl: string | null | undefined): void => {
+  activeRuntimeAuthBaseUrl = typeof apiBaseUrl === 'string' ? apiBaseUrl.trim() : '';
+};
 
 const URL_AUTH_REFRESH_SKEW_MS = 10_000;
 
@@ -59,7 +67,7 @@ const readInjectedApiBaseUrl = (): string => {
 const buildAuthUrl = (apiBaseUrl: string | null | undefined, path: string): string => {
   const base = typeof apiBaseUrl === 'string' && apiBaseUrl.trim()
     ? apiBaseUrl.trim()
-    : readInjectedApiBaseUrl();
+    : activeRuntimeAuthBaseUrl || readInjectedApiBaseUrl();
   if (!base) return path;
   try {
     return new URL(path, `${base.replace(/\/+$/, '')}/`).toString();

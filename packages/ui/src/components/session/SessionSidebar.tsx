@@ -137,6 +137,7 @@ import {
   subscribeSessionSwitchIntent,
 } from "@/lib/sessionSwitchIntent";
 import {
+  publishRemoteSessionNavigationBridge,
   publishSessionNavigationSnapshot,
   type SessionNavigationTarget,
 } from "@/sync/session-navigation";
@@ -439,6 +440,15 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     });
   });
   const remoteNavigation = useRemoteProjectNavigation(isVisible);
+  const [remoteTaskItems, setRemoteTaskItems] = React.useState<Map<string, PinnedItem[]>>(() => new Map());
+  const handleRemoteTaskItems = useEvent((projectId: string, items: PinnedItem[]) => {
+    setRemoteTaskItems((previous) => {
+      if (!items.length && !previous.has(projectId)) return previous;
+      const next = new Map(previous);
+      if (items.length) next.set(projectId, items); else next.delete(projectId);
+      return next;
+    });
+  });
   const [remoteNavigationTargets, setRemoteNavigationTargets] = React.useState<Map<string, SessionNavigationTarget[]>>(new Map());
   const handleRemoteNavigationTargets = useEvent((projectId: string, targets: SessionNavigationTarget[]) => {
     setRemoteNavigationTargets((previous) => JSON.stringify(previous.get(projectId)) === JSON.stringify(targets) ? previous : new Map(previous).set(projectId, targets));
@@ -1790,16 +1800,41 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const remoteTopItems = React.useMemo(
     () => remoteProjects.flatMap((project) => remoteActivityItems.get(project.id) ?? []),
     [remoteProjects, remoteActivityItems]);
+  // Task-view rows published by the remote projects' feeds (pinned ones included).
+  const remoteTaskList = React.useMemo(
+    () => remoteProjects.flatMap((project) => remoteTaskItems.get(project.id) ?? []),
+    [remoteProjects, remoteTaskItems]);
+  const remoteTaskState = React.useMemo(() => {
+    const running = new Set<string>();
+    const unseen: Record<string, number> = {};
+    const sessions: Session[] = [];
+    const itemById = new Map<string, PinnedItem>();
+    for (const item of remoteTaskList) {
+      const id = item.node.session.id;
+      itemById.set(id, item);
+      if (item.pinned) continue;
+      sessions.push(item.node.session);
+      if (item.remoteStatus?.running) running.add(id);
+      if (item.remoteStatus?.unread) unseen[id] = item.remoteStatus.unread;
+    }
+    return { running, unseen, sessions, itemById };
+  }, [remoteTaskList]);
   const pinnedItems = React.useMemo(
-    () => rankByManualOrder([...localPinnedItems, ...remoteTopItems.filter((item) => item.pinned)],
-      (item) => item.node.session.id, sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]),
-    [localPinnedItems, remoteTopItems, sessionOrderByScope]);
+    () => {
+      const remotePinned = new Map<string, PinnedItem>();
+      for (const item of [...remoteTopItems, ...remoteTaskList]) {
+        if (item.pinned && !remotePinned.has(item.node.session.id)) remotePinned.set(item.node.session.id, item);
+      }
+      return rankByManualOrder([...localPinnedItems, ...remotePinned.values()],
+        (item) => item.node.session.id, sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]);
+    },
+    [localPinnedItems, remoteTaskList, remoteTopItems, sessionOrderByScope]);
   const displayInProgressItems = React.useMemo(() => [...inProgressItems,
     ...remoteTopItems.filter((item) => !item.pinned),
   ].sort((a, b) => getSessionActivityUpdatedAt(b.node.session) - getSessionActivityUpdatedAt(a.node.session)),
   [inProgressItems, remoteTopItems]);
 
-  // Task view is a desktop/web local-project surface for now. Search keeps the
+  // Task view is a desktop/web surface (local and remote projects). Search keeps the
   // project tree, which is what the search filter operates on.
   const taskViewAvailable = !mobileVariant && !isVSCode && !hideDirectoryControls && !showOnlyMainWorkspace;
   const taskViewActive = taskViewAvailable && sidebarView === "tasks" && !hasSessionSearchQuery;
@@ -1808,6 +1843,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
 
   // Dragging rows in the active list only reorders them in memory. The order
   // holds until a moved row's state changes, then the normal ranking returns.
+  const taskRunningSessionIds = React.useMemo(
+    () => remoteTaskState.running.size ? new Set([...runningSessionIds, ...remoteTaskState.running]) : runningSessionIds,
+    [remoteTaskState.running, runningSessionIds]);
+  const taskUnseenBySession = React.useMemo(
+    () => Object.keys(remoteTaskState.unseen).length ? { ...unseenBySession, ...remoteTaskState.unseen } : unseenBySession,
+    [remoteTaskState.unseen, unseenBySession]);
   const [taskTransientOrder, setTaskTransientOrder] = React.useState<TransientOrder>(EMPTY_TRANSIENT_ORDER);
   const rankedTaskBuckets = React.useMemo(
     () => taskViewActive
@@ -1817,12 +1858,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
           settledSessionIds,
           indexedSessionIds: taskIndexMembership?.indexedIds ?? null,
           settledAtBySessionId: taskIndexMembership?.settledAtById,
-          runningSessionIds,
+          runningSessionIds: taskRunningSessionIds,
           pendingRequestSessionIds,
-          unseenBySession,
+          unseenBySession: taskUnseenBySession,
+          remoteSessions: remoteTaskState.sessions,
         })
       : null,
-    [pendingRequestSessionIds, pinnedSessionIds, runningSessionIds, sessions, settledSessionIds, taskIndexMembership, taskViewActive, unseenBySession],
+    [pendingRequestSessionIds, pinnedSessionIds, remoteTaskState.sessions, sessions, settledSessionIds, taskIndexMembership, taskRunningSessionIds, taskUnseenBySession, taskViewActive],
   );
   // Archived-shelf rows offer "move back"; project-view archives count as shelf rows too.
   const rowSettledSessionIds = React.useMemo(() => {
@@ -1831,8 +1873,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   }, [rankedTaskBuckets, settledSessionIds]);
   const readTaskRowState = useEvent((session: Session): TransientRowState => ({
     activityAt: getSessionActivityUpdatedAt(session),
-    running: runningSessionIds.has(session.id),
-    attention: taskNeedsAttention(session.id, pendingRequestSessionIds, unseenBySession),
+    running: taskRunningSessionIds.has(session.id),
+    attention: taskNeedsAttention(session.id, pendingRequestSessionIds, taskUnseenBySession),
   }));
   const taskBuckets = React.useMemo(() => {
     if (!rankedTaskBuckets) return null;
@@ -1930,6 +1972,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     const previous = taskItemCacheRef.current;
     const next = new Map<string, TaskItemCacheEntry>();
     const toTaskItem = (card: boolean) => (session: Session): PinnedItem => {
+      const remoteItem = remoteTaskState.itemById.get(session.id);
+      if (remoteItem) return remoteItem;
       const owner = sessionOwnership.bySessionId.get(session.id);
       const existing = sessionSidebarMetaById.get(session.id);
       const projectId = owner?.projectId ?? existing?.projectId ?? null;
@@ -2001,7 +2045,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     };
     taskItemCacheRef.current = next;
     return result;
-  }, [gitRepoStatus, homeDirectory, pinnedSessions, projectRootBranches, runStartTimes, sessionOwnership, sessionSidebarMetaById, sortedProjects, t, taskBuckets, taskShelves.settledLimit, taskShelves.settledOpen, worktreeMetadata]);
+  }, [gitRepoStatus, homeDirectory, pinnedSessions, projectRootBranches, remoteTaskState.itemById, runStartTimes, sessionOwnership, sessionSidebarMetaById, sortedProjects, t, taskBuckets, taskShelves.settledLimit, taskShelves.settledOpen, worktreeMetadata]);
 
   // Task cards span many projects, but useProjectRepoStatus only fetches git
   // for the active one. Request status on demand for rows still showing the
@@ -2180,10 +2224,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       ? lastVisibleSidebarNavigationRef.current
       : {
           pinned: visiblePinnedNavigationTargets,
-          // Mod+1…9 and next/previous session follow the layout on screen.
-          project: taskViewActive ? taskNavigationTargets : visibleProjectNavigationTargets,
+          // Mod+1…9 and next/previous session follow the layout on screen,
+          // remote projects included in their project order.
+          project: taskViewActive
+            ? taskNavigationTargets
+            : allProjects.flatMap((project) => project.hostId ? remoteNavigationTargets.get(project.id) ?? [] : visibleProjectNavigationTargets.filter((target) => target.projectId === project.id)),
         }
-  ), [isVisible, taskNavigationTargets, taskViewActive, visiblePinnedNavigationTargets, visibleProjectNavigationTargets]);
+  ), [allProjects, isVisible, remoteNavigationTargets, taskNavigationTargets, taskViewActive, visiblePinnedNavigationTargets, visibleProjectNavigationTargets]);
 
   React.useLayoutEffect(() => {
     if (isVisible) lastVisibleSidebarNavigationRef.current = sidebarNavigationTargets;
@@ -2195,27 +2242,47 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         ? []
         : buildSidebarNumberedSessionTargets({
             pinnedTargets: sidebarNavigationTargets.pinned,
-            projectTargets: taskViewActive
-              ? sidebarNavigationTargets.project
-              : allProjects.flatMap((project) => project.hostId ? remoteNavigationTargets.get(project.id) ?? [] : sidebarNavigationTargets.project.filter((target) => target.projectId === project.id)),
+            projectTargets: sidebarNavigationTargets.project,
           }),
-    [
-      mobileVariant,
-      taskViewActive,
-      sidebarNavigationTargets,
-      allProjects,
-      remoteNavigationTargets,
-    ],
+    [mobileVariant, sidebarNavigationTargets],
+  );
+
+  const activateRemoteNavigationTarget = useEvent((target: SessionNavigationTarget): boolean => {
+    const remote = remoteProjects.find((project) => project.id === target.projectId);
+    if (!remote || !remoteNavigation.registry) return false;
+    const activityItem = [...(remoteActivityItems.get(remote.id) ?? []), ...(remoteTaskItems.get(remote.id) ?? [])].find((item) => item.identity === target.sessionId);
+    openRemoteProjectSession(remote, remoteNavigation.registry, activityItem?.remoteSessionId ?? target.sessionId, target.directory ?? remote.path, mobileVariant);
+    return true;
+  });
+
+  // The open remote session's row: pinned rows carry a Hub-side identity key,
+  // tree rows the raw id. Prefer the surface the user last focused.
+  const resolveRemoteNavigationCurrent = useEvent((): SessionNavigationTarget | null => {
+    const selected = useSessionNavigationStore.getState().remoteSession;
+    if (!selected?.sessionId) return null;
+    const matches = [...sidebarNavigationTargets.pinned, ...sidebarNavigationTargets.project].filter((target) => {
+      if (target.projectId !== selected.projectId) return false;
+      const items = [...(remoteActivityItems.get(selected.projectId) ?? []), ...(remoteTaskItems.get(selected.projectId) ?? [])];
+      // Task-view rows, like pinned rows, are keyed by the Hub-side identity.
+      const byIdentity = () => items.some((item) => item.identity === target.sessionId && item.remoteSessionId === selected.sessionId);
+      if (target.scope !== 'pinned') return target.sessionId === selected.sessionId || (taskViewActive && byIdentity());
+      return byIdentity();
+    });
+    const focus = useSessionFocusStore.getState().focus;
+    return matches.find((target) => focus?.scope === target.scope && focus.sessionId === target.sessionId) ?? matches[0] ?? null;
+  });
+
+  React.useLayoutEffect(
+    () => publishRemoteSessionNavigationBridge({
+      activate: activateRemoteNavigationTarget,
+      current: resolveRemoteNavigationCurrent,
+    }),
+    [activateRemoteNavigationTarget, resolveRemoteNavigationCurrent],
   );
 
   const handleNumberedSidebarSessionActivate = React.useCallback(
     (target: SessionNavigationTarget) => {
-      const remote = remoteProjects.find((project) => project.id === target.projectId);
-      if (remote && remoteNavigation.registry) {
-        const activityItem = remoteActivityItems.get(remote.id)?.find((item) => item.identity === target.sessionId);
-        openRemoteProjectSession(remote, remoteNavigation.registry, activityItem?.remoteSessionId ?? target.sessionId, target.directory ?? remote.path, mobileVariant);
-        return;
-      }
+      if (activateRemoteNavigationTarget(target)) return;
       setActiveMainTab("chat");
       setSessionSwitcherOpen(false);
       if (target.scope === "project" && target.projectId) {
@@ -2229,14 +2296,11 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       );
     },
     [
+      activateRemoteNavigationTarget,
       handleSessionSelect,
       setActiveMainTab,
       setActiveProjectIdOnly,
       setSessionSwitcherOpen,
-      remoteProjects,
-      remoteNavigation.registry,
-      remoteActivityItems,
-      mobileVariant,
     ],
   );
 
@@ -2710,15 +2774,17 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     />
   ) : undefined;
   const renderTaskRow = (item: PinnedItem): React.ReactNode =>
-    renderSessionNode(
-      item.node,
-      0,
-      item.groupDirectory,
-      item.projectId,
-      false,
-      item.secondaryMeta,
-      "project",
-    );
+    item.content
+      ? <React.Fragment key={item.identity ?? item.node.session.id}>{item.content}</React.Fragment>
+      : renderSessionNode(
+          item.node,
+          0,
+          item.groupDirectory,
+          item.projectId,
+          false,
+          item.secondaryMeta,
+          "project",
+        );
   const taskContent = taskViewActive && taskItems ? (
     <SidebarTaskList
       items={taskItems}
@@ -2924,6 +2990,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         remoteCatalogError={remoteNavigation.catalog.error?.message}
         projectOrderIds={sortProjectEntries(allProjects, projectSortOrder).map((project) => project.id)}
         onRemoteActivityItems={handleRemoteActivityItems}
+        onRemoteTaskItems={handleRemoteTaskItems}
         remoteSearch={sessionSearchQuery}
         onRemoteNavigationTargets={handleRemoteNavigationTargets}
         topContent={topContent}

@@ -50,6 +50,24 @@ describe('task view partition', () => {
     expect(buckets.settled.map((item) => item.id)).toEqual(['quiet']);
   });
 
+  test('remote rows join the active list beside local rows without the local index filtering them', () => {
+    const buckets = deriveTaskBuckets({
+      sessions: [session('local', { time: { created: 1, updated: 10 } })],
+      pinnedSessionIds: none,
+      settledSessionIds: none,
+      indexedSessionIds: new Set(['local']),
+      runningSessionIds: none,
+      pendingRequestSessionIds: none,
+      unseenBySession: { 'remote-unread': 1 },
+      remoteSessions: [
+        session('remote-new', { time: { created: 1, updated: 20 } }),
+        session('remote-unread', { time: { created: 1, updated: 5 } }),
+      ],
+    });
+    expect(buckets.active.map((item) => item.id)).toEqual(['remote-unread', 'remote-new', 'local']);
+    expect(buckets.settled).toEqual([]);
+  });
+
   test('sessions the Host index does not hold stay out unless they are live', () => {
     const buckets = deriveTaskBuckets({
       sessions: [session('indexed'), session('old'), session('live-old')],

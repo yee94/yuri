@@ -184,6 +184,37 @@ test('remote running and unread sessions join the shared leading list and disapp
   expect(activity.mock.lastCall?.[1]).toEqual([]);
 });
 
+test('remote task feed publishes unpinned and pinned rows as task cards and draws no project tree', async () => {
+  const value = snapshot('a');
+  const base = value.directories[0].sessions[0];
+  const data = { ...value, pinnedSessionIds: ['pin-a'], unread: { revision: 1, sessions: { plain: { directory: project('a').path, unreadCount: 2, hasError: false, manual: false, revision: 1 } } }, directories: [{ ...value.directories[0], sessions: [
+    { ...base, id: 'pin-a', title: 'pin-a', time: { created: 1, updated: 1 }, metadata: { yuri: { sessionStatus: { type: 'idle' } } } },
+    { ...base, id: 'plain', title: 'plain', time: { created: 3, updated: 3 }, metadata: { yuri: { sessionStatus: { type: 'busy' } } } },
+    { ...base, id: 'old', title: 'old', time: { created: 2, updated: 2, archived: 5 }, metadata: { yuri: { sessionStatus: { type: 'idle' } } } },
+  ] }] };
+  const tasks = vi.fn();
+  const entry = registry(async () => json(data));
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} onTaskItems={tasks} /></QueryClientProvider>));
+  await flush(); await flush();
+  expect(container.querySelector('[data-remote-project]')).toBeNull();
+  const items = tasks.mock.lastCall?.[1] as Array<{ remoteSessionId: string; pinned: boolean; remoteStatus: { running: boolean; unread: number }; content: React.ReactNode }>;
+  expect(items.map((item) => [item.remoteSessionId, item.pinned])).toEqual([['pin-a', true], ['plain', false]]);
+  expect(items[1].remoteStatus).toEqual({ running: true, unread: 2 });
+  const host = document.createElement('div');
+  document.body.append(host);
+  const hostRoot = createRoot(host);
+  try {
+    await act(async () => hostRoot.render(<>{items.map((item) => <React.Fragment key={item.remoteSessionId}>{item.content}</React.Fragment>)}</>));
+    expect(host.querySelectorAll('[data-session-title]')).toHaveLength(2);
+    expect([...host.querySelectorAll('[data-session-title] > div:first-child')].every((header) => header.querySelector('[data-remote-host="a"]') && header.textContent?.includes('Project a'))).toBe(true);
+  } finally {
+    await act(async () => hostRoot.unmount());
+    host.remove();
+  }
+  await act(async () => root.render(null));
+  expect(tasks.mock.lastCall).toEqual(['ref-a', []]);
+});
+
 test.each([false, true])('remote pinned rows retain project subtitles in the leading list (mobile=%s)', async (mobile) => {
   const value = snapshot('a');
   const base = value.directories[0].sessions[0];
@@ -209,13 +240,17 @@ test.each([false, true])('remote pinned rows retain project subtitles in the lea
     await act(async () => leadingRoot.render(<>{items.map((item) => <React.Fragment key={item.remoteSessionId}>{item.content}</React.Fragment>)}</>));
     const titles = leading.querySelectorAll(mobile ? '.yuri-mobile-session-title' : '[data-session-title]');
     expect(titles).toHaveLength(2);
-    expect([...leading.querySelectorAll('span')].filter((span) => span.textContent === 'Project a').length).toBeGreaterThanOrEqual(2);
+    expect([...leading.querySelectorAll('span')].filter((span) => span.textContent === 'Project a').length).toBeGreaterThanOrEqual(mobile ? 2 : 0);
     const identities = [...leading.querySelectorAll('[data-remote-host]')];
     expect(identities).toHaveLength(2);
     expect(identities.every((element) => element.getAttribute('data-remote-host') === 'a'
-      && element.textContent === 'development.example.com'
+      && element.textContent === (mobile ? 'development.example.com' : '')
       && element.getAttribute('aria-label')?.includes('user@development.example.com'))).toBe(true);
     expect(leading.textContent).not.toContain('Other machine');
+    if (!mobile) {
+      expect(leading.textContent).not.toContain('Project a');
+      expect(leading.textContent).not.toContain('development.example.com');
+    }
     if (mobile) expect([...leading.querySelectorAll('.yuri-mobile-session-subtitle')].map((element) => element.textContent)).toEqual(['Project adevelopment.example.com', 'Project adevelopment.example.com']);
   } finally {
     await act(async () => leadingRoot.unmount());
