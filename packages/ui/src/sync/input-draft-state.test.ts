@@ -3,6 +3,7 @@ import { createInputDraftMetadataRepository, createInputDraftMetadataStorageSink
 import { draftKeyString, type DraftKey } from "./input-draft-types"
 import { createInputDraftBlobStore, MemoryInputDraftBlobDriver, type InputDraftBlobDriver, type InputDraftBlobTransaction } from "./input-draft-blob-store"
 import { createInputStore } from "./input-store"
+import { createRemoteInputStore, remoteSessionDraftKey } from "./remote-input-store"
 
 class MemoryStorage {
   values = new Map<string, string>()
@@ -24,6 +25,25 @@ const deferred = <T,>() => {
 }
 
 describe("keyed input draft state", () => {
+  test("restores remote text drafts when the client attachment database is unavailable", async () => {
+    const sink = createInputDraftMetadataStorageSink(new MemoryStorage() as unknown as Storage)
+    const location = { hubId: "hub", hostId: "ssh", directory: "/remote/repo" }
+    const draft = remoteSessionDraftKey(location, "session")
+    const working = createRemoteInputStore(location.hubId, { sink, blobStore: blobStore() })
+    expect(await working.getState().hydrateDraftMetadata(draft.transportIdentity)).toBe(true)
+    working.getState().setDraftText(draft, "unsent text")
+    await working.getState().flushDraftPersistence()
+    const unavailable = { ...blobStore(), reconcileReferences: async () => ({ ok: false as const, error: { code: "database-unavailable" as const } }) }
+    const reopened = createRemoteInputStore(location.hubId, { sink, blobStore: unavailable })
+    expect(await reopened.getState().hydrateDraftMetadata(draft.transportIdentity)).toBe(true)
+    expect(reopened.getState().getDraft(draft)?.text).toBe("unsent text")
+    reopened.getState().setDraftText(draft, "continued text")
+    await reopened.getState().flushDraftPersistence()
+    const restored = createRemoteInputStore(location.hubId, { sink, blobStore: blobStore() })
+    expect(await restored.getState().hydrateDraftMetadata(draft.transportIdentity)).toBe(true)
+    expect(restored.getState().getDraft(draft)?.text).toBe("continued text")
+  })
+
   test("isolates runtimes and applies monotonic CAS, mentions, and synthetic consumption", () => {
     const store = createInputStore({ persistenceEnabled: false })
     const first = key("one")

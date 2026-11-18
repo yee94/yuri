@@ -121,6 +121,7 @@ export type InputDraftServices = {
   /** Supplies independent IDs for attachment identity and blob locators. */
   createID?: () => string
   persistenceEnabled?: boolean
+  allowUnavailableAttachmentStorage?: boolean
   /** Returns the active transport lifetime identity for stale-work rejection. */
   runtimeCapture?: () => InputDraftRuntimeCapture
 }
@@ -240,7 +241,10 @@ export const createInputStore = (services: InputDraftServices = {}) => {
   const repository = services.repository ?? createInputDraftMetadataRepository(sink)
   const coordinator = services.coordinator ?? createInputDraftMetadataPersistenceCoordinator(sink)
   const blobStore = services.blobStore ?? createInputDraftBlobStore()
-  const durability = services.durability ?? createInputDraftDurabilityCoordinator(blobStore, coordinator, { enabled: services.persistenceEnabled ?? true })
+  const durability = services.durability ?? createInputDraftDurabilityCoordinator(blobStore, coordinator, {
+    enabled: services.persistenceEnabled ?? true,
+    allowUnavailableAttachmentStorage: services.allowUnavailableAttachmentStorage,
+  })
   const keyEpoch = new Map<string, number>()
   const hydrateEpoch = new Map<string, number>()
   const attachmentHydrateEpoch = new Map<string, number>()

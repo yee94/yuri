@@ -78,6 +78,9 @@ composer's separate, per-Hub draft store. Its namespaced metadata sink and defau
 IndexedDB attachment driver use a stable Hub durable transport; Host/directory
 and raw session remain in the draft owner. LAN/Relay endpoint identity still
 fences HTTP/SDK work but does not move or delete these client draft partitions.
+If the remote draft attachment database cannot open, readable metadata can
+still hydrate and save text. Existing attachment references are preserved, and
+attachment reads and new blob writes still require the real database.
 Native/menu/worktree initial text uses `seedRemoteDraft`; programmatic input and
 preset submission use the explicit Location pending-composer bridge, never the
 retained Hub's singleton draft or pending fields. Real Chromium document reload

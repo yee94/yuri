@@ -4,11 +4,10 @@ import { captureProjectScope } from './api/project-scope';
 
 /** Explicit transport, no global runtime bridge or directory-only discovery cache. */
 export const createProjectGitAPI = (entry: HostRuntimeEntry): GitAPI => {
-  const scope = captureProjectScope(entry);
   const get = <T>(route: string, directory: string, query: Record<string, string | number | undefined> = {}, signal?: AbortSignal) =>
-    scope.json<T>(`/api/git/${route}`, { query: { directory, ...query }, headers: { 'x-opencode-directory': directory }, signal });
+    captureProjectScope(entry).json<T>(`/api/git/${route}`, { query: { directory, ...query }, headers: { 'x-opencode-directory': directory }, signal });
   const write = <T>(route: string, directory: string, body: unknown, method = 'POST') =>
-    scope.json<T>(`/api/git/${route}`, { method, query: { directory },
+    captureProjectScope(entry).json<T>(`/api/git/${route}`, { method, query: { directory },
       headers: { 'Content-Type': 'application/json', 'x-opencode-directory': directory }, body: JSON.stringify(body) });
   const stage = async (directory: string, paths: string[], unstage = false) => {
     await write(unstage ? 'unstage' : 'stage', directory, { paths });
@@ -49,12 +48,12 @@ export const createProjectGitAPI = (entry: HostRuntimeEntry): GitAPI => {
     removeRemote: (directory, payload) => write('remotes', directory, payload, 'DELETE'),
     generateCommitMessage: (directory, files, options) => {
       const { signal, ...selection } = options ?? {};
-      return scope.json('/api/git/commit-message', { method: 'POST', query: { directory }, signal,
+      return captureProjectScope(entry).json('/api/git/commit-message', { method: 'POST', query: { directory }, signal,
         headers: { 'Content-Type': 'application/json', 'x-opencode-directory': directory }, body: JSON.stringify({ files, ...selection }) });
     },
     generatePullRequestDescription: (directory, payload) => {
       const { signal, ...body } = payload;
-      return scope.json('/api/git/pr-description', { method: 'POST', query: { directory }, signal,
+      return captureProjectScope(entry).json('/api/git/pr-description', { method: 'POST', query: { directory }, signal,
         headers: { 'Content-Type': 'application/json', 'x-opencode-directory': directory }, body: JSON.stringify(body) });
     },
     validateGitWorktree: (directory, payload) => write('worktrees/validate', directory, payload),

@@ -71,7 +71,7 @@ const blobError = (error: BlobError, reference?: DraftAttachmentReference): Inpu
 const emptyResult = (status: InputDraftDurabilityResult["status"], keys: string[] = []): InputDraftDurabilityResult => ({ status, keys, errors: [], cleanupErrors: [] })
 const itemBlobID = (item: { attachment: DraftAttachmentMetadata } | undefined): string => item?.attachment.locator.kind === "blob" ? item.attachment.locator.blobID : ""
 
-export const createInputDraftDurabilityCoordinator = (blobStore: InputDraftBlobStore, metadata: InputDraftMetadataPersistenceCoordinator, options: { enabled?: boolean } = {}): InputDraftDurabilityCoordinator => {
+export const createInputDraftDurabilityCoordinator = (blobStore: InputDraftBlobStore, metadata: InputDraftMetadataPersistenceCoordinator, options: { enabled?: boolean; allowUnavailableAttachmentStorage?: boolean } = {}): InputDraftDurabilityCoordinator => {
   let durable = emptyState()
   let enabled = options.enabled ?? true
   let enabledGeneration = 0
@@ -144,10 +144,14 @@ export const createInputDraftDurabilityCoordinator = (blobStore: InputDraftBlobS
       }
       const baselineRefs = refMap(baseline.drafts)
       const reconciled = await blobStore.reconcileReferences(new Map([...baselineRefs].map(([id, item]) => [id, itemBlobID(item)])), { ownerKinds: durableOwnerKinds })
-      if (!reconciled.ok) return { ...emptyResult("failed"), errors: [blobError(reconciled.error)] }
+      if (!reconciled.ok && (!options.allowUnavailableAttachmentStorage || reconciled.error.code !== "database-unavailable")) {
+        return { ...emptyResult("failed"), errors: [blobError(reconciled.error)] }
+      }
       durable = baseline
       seeded = true
-      return { ...emptyResult("committed"), errors: reconciled.value.missing.map((id) => blobError({ code: "missing-blob" }, baselineRefs.get(id)?.reference)) }
+      return { ...emptyResult("committed"), errors: reconciled.ok
+        ? reconciled.value.missing.map((id) => blobError({ code: "missing-blob" }, baselineRefs.get(id)?.reference))
+        : [blobError(reconciled.error)] }
     }),
     commit: (candidate) => {
       const keys = [...entries(candidate.drafts).map(([key]) => key), ...(candidate.delete ?? []).map(keyString)]

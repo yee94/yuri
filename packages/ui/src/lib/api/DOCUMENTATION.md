@@ -18,6 +18,8 @@ keep their runtime behavior.
 reads, hunk/index, history, stash, merge/rebase and worktree mutations without the
 directory-only HTTP caches or global runtime bridge. Machine identity writes are
 explicitly rejected; users open instance management instead.
+Git adapters retain the Host entry but capture Hub authentication per operation,
+so a new read after auth renewal can retry without accepting stale in-flight data.
 Branch/remotes Query hooks inherit the project provider and do not load/write
 Hub-only startup snapshots for scoped entries.
 

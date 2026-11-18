@@ -28,7 +28,8 @@ export function createRemoteInputStore(hubId: string, services: InputDraftServic
   // Each durability coordinator reconciles its complete reference set. It must
   // never sweep the Hub/local coordinator's or another Hub's blob database.
   const blobStore = services.blobStore ?? createInputDraftBlobStore(createIndexedDBInputDraftBlobDriver(`yuri-remote-input-drafts:${encodeURIComponent(hubId)}`));
-  return createInputStore({ ...services, sink, blobStore, runtimeCapture: services.runtimeCapture ?? (() => ({ transportIdentity: remoteDraftTransportIdentity(hubId), generation: getRuntimeGeneration() })) });
+  return createInputStore({ allowUnavailableAttachmentStorage: true, ...services, sink, blobStore,
+    runtimeCapture: services.runtimeCapture ?? (() => ({ transportIdentity: remoteDraftTransportIdentity(hubId), generation: getRuntimeGeneration() })) });
 }
 
 export function getRemoteInputStore(location: HostLocation) {

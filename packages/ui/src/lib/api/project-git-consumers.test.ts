@@ -8,9 +8,32 @@ import { queryClient } from '@/lib/queryRuntime';
 import type { RuntimeFetchOptions } from '@/lib/runtime-fetch';
 import { opencodeClient } from '@/lib/opencode/client';
 import { createProjectFilesAPI } from './project-files';
+import { invalidateRuntimeAuthSession } from '@/lib/runtime-auth';
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 beforeEach(() => { useGitStore.setState({ directories: new Map(), activeDirectory: null }); queryClient.clear(); });
+
+test('Git changes can retry using the same project adapter after Hub auth changes', async () => {
+  const fetch = vi.fn(async (route: string) => route.endsWith('/check')
+    ? json({ isGitRepository: true }) : json({ files: [{ path: 'changed.ts' }], current: 'main' }));
+  const registry = new HostRuntimeRegistry('auth-refresh', { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
+    sdk: () => opencodeClient.getSdkClient() });
+  const entry = registry.resolve({ hubId: registry.hubId, hostId: 'a', directory: '/remote/worktree' });
+  const git = createProjectGitAPI(entry);
+  const project = createProjectGitStoreProjection(entry);
+  try {
+    invalidateRuntimeAuthSession();
+    await project(useGitStore.getState()).fetchStatus(entry.location.directory, git);
+    expect(project(useGitStore.getState()).directories.get(entry.location.directory)?.status?.files).toEqual([{ path: 'changed.ts' }]);
+    const staleResponse = json({ files: [{ path: 'stale.ts' }] });
+    fetch.mockImplementationOnce(async () => {
+      invalidateRuntimeAuthSession();
+      return staleResponse;
+    });
+    await expect(git.getGitStatus(entry.location.directory)).rejects.toThrow('Project scope superseded');
+    await expect(git.getGitStatus(entry.location.directory)).resolves.toMatchObject({ files: [{ path: 'changed.ts' }] });
+  } finally { registry.dispose(); }
+});
 
 test('the production Git store adapter isolates equal directories and sends raw paths for status/branches/diffs', async () => {
   const directory = 'C:\\work\\same project';
