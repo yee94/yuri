@@ -29,6 +29,7 @@ interface QuotaSettingsState {
   displayMode: 'usage' | 'remaining';
   showPredValues: boolean;
   dropdownProviderIds: QuotaProviderId[];
+  providerOrder: string[];
   selectedModels: Record<string, string[]>;  // Map of providerId -> selected model names
   expandedFamilies: Record<string, string[]>;  // Map of providerId -> EXPANDED family IDs (header dropdown - inverted)
 }
@@ -53,6 +54,7 @@ interface QuotaStore extends QuotaSettingsState {
   setDisplayMode: (mode: 'usage' | 'remaining') => void;
   setShowPredValues: (enabled: boolean) => void;
   setDropdownProviderIds: (providerIds: QuotaProviderId[]) => void;
+  reorderProviders: (visibleIds: string[]) => void;
   setSelectedModels: (providerId: string, modelNames: string[]) => void;
   toggleModelSelected: (providerId: string, modelName: string) => void;
   setExpandedFamilies: (providerId: string, familyIds: string[]) => void;
@@ -83,6 +85,9 @@ const parseSettings = (data: Record<string, unknown> | null): QuotaSettingsState
       )
     : allProviderIds;
 
+  const providerOrder = Array.isArray(data?.usageProviderOrder)
+    ? Array.from(new Set(data.usageProviderOrder.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)))
+    : [];
   // Parse selected models (providerId -> array of model names)
   const selectedModels: Record<string, string[]> = {};
   const rawSelectedModels = data?.usageSelectedModels;
@@ -113,6 +118,7 @@ const parseSettings = (data: Record<string, unknown> | null): QuotaSettingsState
     displayMode,
     showPredValues,
     dropdownProviderIds,
+    providerOrder,
     selectedModels,
     expandedFamilies,
   };
@@ -149,6 +155,7 @@ const loadSettingsFromRuntime = async (): Promise<QuotaSettingsState> => {
     displayMode: 'usage',
     showPredValues: false,
     dropdownProviderIds: QUOTA_PROVIDERS.map((provider) => provider.id),
+    providerOrder: [],
     selectedModels: {},
     expandedFamilies: {},
   };
@@ -233,6 +240,7 @@ export const resetQuotaStoreForRuntimeSwitch = (): void => {
   useQuotaStore.setState({
     magpieUsageUrl: '',
     magpieHiddenProviders: [],
+    providerOrder: [],
     magpieSources: [],
     magpieError: null,
     results: [],
@@ -261,6 +269,7 @@ export const useQuotaStore = create<QuotaStore>()(
       displayMode: 'usage',
       showPredValues: false,
       dropdownProviderIds: QUOTA_PROVIDERS.map((provider) => provider.id),
+      providerOrder: [],
       selectedModels: {},
       expandedFamilies: {},
 
@@ -356,6 +365,13 @@ export const useQuotaStore = create<QuotaStore>()(
         const hidden = [...get().magpieHiddenProviders.filter((id) => !visibleIds.has(id as QuotaProviderId)),
           ...dynamic.filter((r) => !providerIds.includes(r.providerId)).map((r) => r.providerId)];
         set({ dropdownProviderIds: providerIds, magpieHiddenProviders: hidden });
+      },
+
+      reorderProviders: (visibleIds) => {
+        // what the user arranged leads; providers that were out of view keep their place after it
+        const providerOrder = [...visibleIds, ...get().providerOrder.filter((id) => !visibleIds.includes(id))];
+        set({ providerOrder });
+        void updateDesktopSettings({ usageProviderOrder: providerOrder });
       },
 
       setSelectedModels: (providerId, modelNames) => {

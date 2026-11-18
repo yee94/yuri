@@ -30,11 +30,10 @@ import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/components/ui';
 import { showArchivedSessionsUndoToast } from '@/lib/sessionMutationUndo';
-import { ProviderLogo } from '@/components/ui/ProviderLogo';
-import { UsageProgressBar } from '@/components/sections/usage/UsageProgressBar';
-import { PaceIndicator } from '@/components/sections/usage/PaceIndicator';
+import { UsageRingGrid } from '@/components/sections/usage/UsageRingGrid';
+import { SortableUsageItem, SortableUsageList, UsageProviderLogo } from '@/components/sections/usage/SortableUsageCards';
 import { Icon } from "@/components/icon/Icon";
-import { formatQuotaValueLabel, formatQuotaResetLabel, formatWindowLabel, quotaProviders, calculatePace, calculateExpectedUsagePercent } from '@/lib/quota';
+import { formatWindowLabel, isUnlimitedOnly, quotaProviders } from '@/lib/quota';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { formatTimeForPreference } from '@/lib/timeFormat';
@@ -677,6 +676,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
   const showPredValues = useQuotaStore((state) => state.showPredValues);
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const dropdownProviderIds = useQuotaStore((state) => state.dropdownProviderIds);
+  const providerOrder = useQuotaStore((state) => state.providerOrder);
   const loadQuotaSettings = useQuotaStore((state) => state.loadSettings);
   const setQuotaDisplayMode = useQuotaStore((state) => state.setDisplayMode);
 
@@ -760,7 +760,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
       error?: string;
     }> = [];
 
-    for (const provider of quotaProviders(quotaResults)) {
+    for (const provider of quotaProviders(quotaResults, providerOrder)) {
       if (!dropdownProviderIds.includes(provider.id)) {
         continue;
       }
@@ -768,13 +768,16 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
       const windows = (result?.usage?.windows ?? {}) as Record<string, UsageWindow>;
       const entries = Object.entries(windows);
       const error = (result && !result.ok && result.configured) ? result.error : undefined;
+      if (!error && isUnlimitedOnly(entries.map(([, window]) => window))) {
+        continue;
+      }
       if (entries.length > 0 || error) {
         groups.push({ providerId: provider.id, providerName: provider.name, entries, error });
       }
     }
 
     return groups;
-  }, [dropdownProviderIds, quotaResults]);
+  }, [dropdownProviderIds, providerOrder, quotaResults]);
   const hasRateLimits = rateLimitGroups.length > 0;
 
   const handleDisplayModeChange = React.useCallback(async (mode: 'usage' | 'remaining') => {
@@ -912,10 +915,11 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
                 <span className="typography-ui-label text-muted-foreground">{t('vscodeLayout.quota.noRateLimitsAvailable')}</span>
               </DropdownMenuItem>
             )}
+            <SortableUsageList ids={rateLimitGroups.map((group) => group.providerId)}>
             {rateLimitGroups.map((group, index) => (
-              <React.Fragment key={group.providerId}>
+              <SortableUsageItem key={group.providerId} id={group.providerId}>
                 <DropdownMenuLabel className="flex items-center gap-2 bg-[var(--surface-elevated)] typography-ui-label text-foreground">
-                  <ProviderLogo providerId={group.providerId} className="h-4 w-4" />
+                  <UsageProviderLogo providerId={group.providerId} name={group.providerName} className="h-4 w-4" />
                   {group.providerName}
                 </DropdownMenuLabel>
                 {group.entries.length === 0 ? (
@@ -929,52 +933,29 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
                     </span>
                   </DropdownMenuItem>
                 ) : (
-                  group.entries.map(([label, window]) => {
-                    const displayPercent = quotaDisplayMode === 'remaining'
-                      ? window.remainingPercent
-                      : window.usedPercent;
-                    const paceInfo = window.disablePace ? null : calculatePace(window.usedPercent, window.resetAt, window.windowSeconds, label);
-                    const expectedMarker = paceInfo?.dailyAllocationPercent != null
-                      ? (quotaDisplayMode === 'remaining'
-                          ? 100 - calculateExpectedUsagePercent(paceInfo.elapsedRatio)
-                          : calculateExpectedUsagePercent(paceInfo.elapsedRatio))
-                      : null;
-                    const metricLabel = formatQuotaValueLabel(window.valueLabel, displayPercent);
-                    return (
-                    <DropdownMenuItem
-                      key={`${group.providerId}-${label}`}
-                      className="cursor-default items-start"
-                      closeOnClick={false}
-                    >
-                      <span className="flex min-w-0 flex-1 flex-col gap-2">
-                              <span className="flex min-w-0 items-center justify-between gap-3">
-                                <span className="min-w-0 break-words typography-micro text-muted-foreground">{formatWindowLabel(window.label ?? label)}</span>
-                                <span className="min-w-0 max-w-[55%] shrink-0 break-words text-right typography-ui-label text-foreground tabular-nums">
-                                  {metricLabel === '-' ? '' : metricLabel}
-                                </span>
-                              </span>
-                              <UsageProgressBar
-                                percent={displayPercent}
-                                tonePercent={window.usedPercent}
-                                className="h-1"
-                                expectedMarkerPercent={expectedMarker}
-                              />
-                              {paceInfo && showPredValues && (
-                                <div className="mt-0.5">
-                                  <PaceIndicator paceInfo={paceInfo} compact />
-                                </div>
-                              )}
-                              <span className="flex items-center justify-between typography-micro text-muted-foreground text-[10px]">
-                                <span>{formatQuotaResetLabel(window.resetAt, window.resetAfterFormatted ?? window.resetAtFormatted, timeFormatPreference)}</span>
-                              </span>
-                      </span>
-                    </DropdownMenuItem>
-                    );
-                  })
+                  <DropdownMenuItem
+                    key={`${group.providerId}-windows`}
+                    className="cursor-default items-start"
+                    closeOnClick={false}
+                  >
+                    <UsageRingGrid
+                      className="min-w-0 flex-1"
+                      items={group.entries.map(([label, window]) => ({
+                        key: `${group.providerId}-${label}`,
+                        label: formatWindowLabel(window.label ?? label),
+                        window,
+                        paceKey: label,
+                      }))}
+                      displayMode={quotaDisplayMode}
+                      timeFormatPreference={timeFormatPreference}
+                      showPace={showPredValues}
+                    />
+                  </DropdownMenuItem>
                 )}
                 {index < rateLimitGroups.length - 1 && <DropdownMenuSeparator />}
-              </React.Fragment>
+              </SortableUsageItem>
             ))}
+            </SortableUsageList>
           </DropdownMenuContent>
         </DropdownMenu>
       )}

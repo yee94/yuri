@@ -1680,6 +1680,8 @@ export const dict: Record<I18nKey, string> = {
   'header.services.remoteUpdate.actions.open': '업데이트',
   'header.services.used': '사용됨',
   'header.services.remaining': '남은 양',
+  'header.services.resetsAt': '{when}에 초기화',
+  'header.services.arrangeProvider': '{name} 순서 변경 · 드래그하거나 Alt+↑/↓',
   'header.services.modelFamily.other': '기타',
   "header.actions.toggleChangesPanel": "변경 패널",
   "header.actions.toggleChangesPanelAria": "변경 패널 전환",

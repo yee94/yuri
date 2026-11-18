@@ -25,6 +25,31 @@ export const formatQuotaValueLabel = (
   return valueLabel ?? formatPercent(percent);
 };
 
+/** A card whose only content is "Limit ∞" tells the reader nothing, so the usage menus leave it out. */
+export const isUnlimitedOnly = (windows: ReadonlyArray<{ usedPercent?: number | null; remainingPercent?: number | null; valueLabel?: string | null }>): boolean =>
+  windows.length > 0 && windows.every((window) => window.valueLabel === '∞' && window.usedPercent == null && window.remainingPercent == null);
+
+/**
+ * Short reset time in Magpie's style: the time alone today, the weekday and time for the rest of
+ * this week, else the date and time.
+ */
+export const formatQuotaResetClock = (
+  resetAt: number,
+  timeFormatPreference: TimeFormatPreference = 'auto',
+): string => {
+  const at = new Date(resetAt);
+  if (!Number.isFinite(at.getTime())) return '';
+  const now = new Date();
+  const dayStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((dayStart(at) - dayStart(now)) / 86_400_000);
+  if (days <= 0) return formatTimeForPreference(at, timeFormatPreference, { fallback: '' });
+  const time = { hour: 'numeric', minute: '2-digit' } as const;
+  if (days <= 6 - ((now.getDay() + 6) % 7)) {
+    return formatDateTimeForPreference(at, timeFormatPreference, { weekday: 'short', ...time });
+  }
+  return formatDateTimeForPreference(at, timeFormatPreference, { month: 'short', day: 'numeric', ...time });
+};
+
 export const formatQuotaResetLabel = (
   resetAt: number | null,
   fallback?: string | null,

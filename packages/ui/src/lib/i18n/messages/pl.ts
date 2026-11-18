@@ -2746,6 +2746,8 @@ export const dict: Record<I18nKey, string> = {
   'header.services.rateLimits': 'Limity użycia',
   'header.services.refreshRateLimitsAria': 'Odśwież limity użycia',
   'header.services.remaining': 'Pozostało',
+  'header.services.resetsAt': 'Reset: {when}',
+  'header.services.arrangeProvider': 'Zmień kolejność: {name} · przeciągnij lub Alt+↑/↓',
   'header.services.shutdownDev': 'Zatrzymaj Yuri',
   'header.services.title': 'Przełącz instancję',
   'header.services.tooltip.currentInstanceWithShortcuts': 'Przełącz instancję: {current} ({toggle}; następna karta {nextTab})',

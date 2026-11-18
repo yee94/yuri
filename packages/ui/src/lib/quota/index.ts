@@ -3,6 +3,8 @@ export {
   clampPercent,
   formatQuotaValueLabel,
   formatQuotaResetLabel,
+  formatQuotaResetClock,
+  isUnlimitedOnly,
   resolveUsageTone,
   formatWindowLabel,
   calculatePace,

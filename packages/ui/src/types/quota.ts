@@ -30,6 +30,8 @@ export interface UsageWindow {
   valueLabel?: string | null;
   label?: string;
   accountName?: string;
+  /** Shared allowance a window draws on (Magpie's pool, e.g. "Gemini"). */
+  pool?: string;
   disablePace?: boolean;
 }
 

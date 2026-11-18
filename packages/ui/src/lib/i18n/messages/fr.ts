@@ -1434,6 +1434,8 @@ export const dict = {
   'header.services.noRateLimitsReported': 'Aucune limite de taux signalée.',
   'header.services.used': 'Utilisé',
   'header.services.remaining': 'Restant',
+  'header.services.resetsAt': 'Réinitialisation {when}',
+  'header.services.arrangeProvider': 'Réorganiser {name} · glisser, ou Alt+↑/↓',
   'header.services.modelFamily.other': 'Autre',
   'header.services.shutdownDev': 'Arrêter Yuri',
   "header.actions.toggleChangesPanel": "Panneau des changements",
