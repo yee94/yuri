@@ -21,7 +21,7 @@ import { getRuntimeAuthGeneration, getRuntimeExtraHeadersSync } from '@/lib/runt
 import { getActiveRelayDescriptor, getRuntimeApiBaseUrl, getRuntimeGeneration, getRuntimeKey, isRuntimeEndpointIdentityChange, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 import { desktopHostsGet, desktopHostsSet, desktopOpenLocalHostSettings, getDesktopHostApiUrl, isPairedDesktopHost, normalizeHostUrl } from '@/lib/desktopHosts';
 import { listenDesktopSshStatus } from '@/lib/desktopSsh';
-import { resolveActiveDesktopHostId, resyncDesktopSshHostRuntime, type DesktopSshHostResync } from '@/lib/desktopSshHostRuntime';
+import { findBoundDesktopSshHost, resolveActiveDesktopHostId, resyncDesktopSshHostRuntime, type DesktopSshHostResync } from '@/lib/desktopSshHostRuntime';
 import { resolveStatusCheckFailureState, type GateState } from './sessionAuthGateState';
 import {
   authenticateWithPasskey,
@@ -425,7 +425,8 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   const transientRetryTimerRef = React.useRef<number | null>(null);
   const checkStatusRef = React.useRef<(() => Promise<void>) | null>(null);
   const sshResyncAttemptRef = React.useRef(0);
-
+  const [sshHostLabel, setSshHostLabel] = React.useState('');
+  const [sshReconnect, setSshReconnect] = React.useState<'idle' | 'reconnecting' | 'failed'>('idle');
   const clearTransientRetry = React.useCallback(() => {
     if (transientRetryTimerRef.current !== null) {
       window.clearTimeout(transientRetryTimerRef.current);
@@ -471,7 +472,8 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
       setState('relay-auth-error');
       return;
     }
-    setState((prev) => (prev === 'authenticated' ? prev : 'pending'));
+    // Keep the SSH reconnect page on screen while a manual reconnect runs.
+    setState((prev) => (prev === 'authenticated' || prev === 'ssh-expired' ? prev : 'pending'));
     try {
       const [response, latestPasskeyStatus] = await Promise.all([
         confirmedResponse ?? fetchSessionStatus(),
@@ -499,7 +501,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
             if (refresh) sshResyncAttemptRef.current += 1;
             const resync = await resyncDesktopSshHostRuntime({ refresh }).catch((): DesktopSshHostResync => 'not-ssh');
             if (resync === 'switched') {
-              void checkStatusRef.current?.();
+              await checkStatusRef.current?.();
               return;
             }
             if (resync !== 'not-ssh') {
@@ -635,6 +637,20 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
       void unlisten?.();
     };
   }, [skipAuth]);
+
+  React.useEffect(() => {
+    if (state !== 'ssh-expired') {
+      setSshReconnect('idle');
+      return;
+    }
+    let disposed = false;
+    void findBoundDesktopSshHost().then((host) => {
+      if (!disposed) setSshHostLabel(host?.label ?? '');
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, [state]);
 
   // The startup splash lives outside the React root so App can retain it while
   // session startup is in progress. When authentication blocks App from
@@ -997,22 +1013,40 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   }
 
   if (state === 'ssh-expired') {
+    const reconnecting = sshReconnect === 'reconnecting';
     return (
       <AuthShell>
         <div className="flex w-full max-w-xs flex-col items-center gap-6 text-center">
           <Icon name="computer" className="size-8 text-muted-foreground" />
           <div className="space-y-2">
-            <h1 className="text-xl font-semibold">{t('sessionAuth.sshExpired.title')}</h1>
+            <h1 className="text-xl font-semibold">
+              {sshHostLabel
+                ? t('sessionAuth.sshExpired.titleWithHost', { name: sshHostLabel })
+                : t('sessionAuth.sshExpired.title')}
+            </h1>
             <p className="typography-meta text-muted-foreground">{t('sessionAuth.sshExpired.description')}</p>
           </div>
-          <Button type="button" className="w-full" onClick={() => {
-            sshResyncAttemptRef.current = 0;
-            resetTransientRetry();
-            setState('pending');
-            void checkStatus();
-          }}>
-            {t('sessionAuth.sshExpired.reconnect')}
-          </Button>
+          <div className="flex w-full flex-col gap-2">
+            <Button type="button" className="w-full" disabled={reconnecting} onClick={() => {
+              sshResyncAttemptRef.current = 0;
+              resetTransientRetry();
+              setSshReconnect('reconnecting');
+              void checkStatus().finally(() => {
+                setSshReconnect((prev) => (prev === 'reconnecting' ? 'failed' : prev));
+              });
+            }}>
+              {reconnecting && <Icon name="loader-4" className="h-4 w-4 animate-spin" />}
+              {reconnecting ? t('sessionAuth.sshExpired.reconnecting') : t('sessionAuth.sshExpired.reconnect')}
+            </Button>
+            {sshReconnect === 'failed' && (
+              <p role="alert" className="typography-meta text-destructive">{t('sessionAuth.sshExpired.failed')}</p>
+            )}
+            <Button type="button" variant="outline" className="w-full" disabled={reconnecting} onClick={() => {
+              void desktopOpenLocalHostSettings().catch(() => toast.error(t('sessionAuth.error.networkTitle')));
+            }}>
+              {t('settings.remoteInstances.openLocalManager')}
+            </Button>
+          </div>
           <DesktopHostSwitcherInline />
         </div>
       </AuthShell>

@@ -3421,6 +3421,9 @@ export const dict: Record<I18nKey, string> = {
   "opencodeUpgrade.screen.guide": "Посібник зі встановлення",
   "opencodeUpgrade.screen.manualGuidance": "Автоматичне встановлення недоступне для цього runtime. Оновіть OpenCode самостійно й перевірте знову.",
   "sessionAuth.sshExpired.title": "SSH-з’єднання потрібно перепідключити",
-  "sessionAuth.sshExpired.description": "SSH-з’єднання було оновлено, тому вхід у цьому вікні більше не дійсний. Перепідключіться, щоб продовжити; пароль не потрібен.",
+  "sessionAuth.sshExpired.titleWithHost": "Перепідключитися до «{name}»",
+  "sessionAuth.sshExpired.description": "Це вікно працює через SSH-з’єднання. Вхід оновлюється автоматично під час перепідключення SSH, тож пароль не потрібен. Зазвичай так стається після сну комп’ютера або зміни мережі. Перепідключення відновить SSH-тунель і поверне вас туди, де ви були.",
   "sessionAuth.sshExpired.reconnect": "Перепідключитися",
+  "sessionAuth.sshExpired.reconnecting": "Перепідключення…",
+  "sessionAuth.sshExpired.failed": "Не вдалося перепідключитися. Перевірте, чи мережа або VPN має доступ до віддаленої машини, і спробуйте ще раз або перепідключіть її з SSH-екземплярів у локальному вікні.",
 };

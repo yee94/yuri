@@ -14,6 +14,7 @@ describe('provider brand logos', () => {
         ['zcode', 'zai-coding-plan'], ['workbuddy', 'workbuddy'], ['opencode-go', 'opencode'],
         ['qoder', 'qoder'], ['qoder-cn', 'qoder'], ['trae', 'trae'],
         ['Grok (SuperGrok)', 'xai'], ['custom-cursor', 'cursor'],
+        ['antigravity', 'google'], ['agy', 'google'],
     ])('resolves Magpie %s to the %s brand asset', (provider, asset) => {
         const html = renderToStaticMarkup(<Logo id={`magpie:gateway:${encodeURIComponent(provider)}`} />);
         expect(html).toBe(renderToStaticMarkup(<Logo id={asset} />));
@@ -43,6 +44,20 @@ describe('provider brand logos', () => {
 
     it('keeps the generic fallback for unrelated unknown providers', () => {
         expect(renderToStaticMarkup(<Logo id="unknown-provider" />)).toContain('fallback');
+    });
+
+    it.each([
+        'antigravity', 'agy', 'ANTIGRAVITY', 'AGY',
+        'custom-antigravity', 'custom-agy', 'agy /w',
+        'magpie-remote-magpie%2Fagy', 'magpie-remote-magpie%2Fantigravity',
+    ])('resolves %s to the Google brand asset', (provider) => {
+        const google = renderToStaticMarkup(<Logo id="google" />);
+        expect(google).not.toContain('fallback');
+        expect(renderToStaticMarkup(<Logo id={provider} />)).toBe(google);
+    });
+
+    it.each(['antigravitycli', 'agy3', 'stagy'])('does not match partial keywords in %s', (provider) => {
+        expect(renderToStaticMarkup(<Logo id={provider} />)).toContain('fallback');
     });
 
     it('keeps existing provider aliases', () => {

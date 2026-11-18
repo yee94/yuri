@@ -1,6 +1,6 @@
 import { invokeDesktop, isElectronShell } from '@/lib/desktop';
 import { getInjectedBootOutcome } from '@/lib/desktopBoot';
-import { desktopHostsGet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
+import { desktopHostsGet, getDesktopHostApiUrl, normalizeHostUrl, type DesktopHostsConfig } from '@/lib/desktopHosts';
 import { runtimeKeyForDesktopHost } from '@/lib/desktopHostSwitch';
 import { getActiveRelayTunnel } from '@/lib/relay/runtime-tunnel';
 import { getRuntimeAuthGeneration, getRuntimeBearerTokenSync } from '@/lib/runtime-auth';
@@ -25,6 +25,29 @@ export const resolveActiveDesktopHostId = (): string | null => {
   return boot?.target === 'remote' && boot.status === 'ok' && sameOrigin(boot.url, getRuntimeApiBaseUrl()) ? boot.hostId : null;
 };
 
+// A reloaded window can lose its `host:` runtime key while still talking to the
+// SSH tunnel; match the endpoint so it is never mistaken for a password host.
+const findBoundSshHostId = (config: DesktopHostsConfig): string | null => {
+  const sshHostIds = config.sshHostIds ?? [];
+  const bound = resolveActiveDesktopHostId();
+  if (bound) return sshHostIds.includes(bound) ? bound : null;
+  const apiBaseUrl = getRuntimeApiBaseUrl();
+  const host = config.hosts.find((entry) => sshHostIds.includes(entry.id) && !entry.relay
+    && sameOrigin(getDesktopHostApiUrl(entry), apiBaseUrl));
+  return host?.id ?? null;
+};
+
+/** SSH host this window is bound to, for user-facing reconnect guidance. */
+export const findBoundDesktopSshHost = async (): Promise<{ id: string; label: string } | null> => {
+  if (!isElectronShell() || getActiveRelayTunnel()) return null;
+  const config = await desktopHostsGet().catch(() => null);
+  if (!config) return null;
+  const hostId = findBoundSshHostId(config);
+  if (!hostId) return null;
+  const host = config.hosts.find((entry) => entry.id === hostId);
+  return { id: hostId, label: host?.label?.trim() || '' };
+};
+
 export type DesktopSshHostResync = 'not-ssh' | 'unchanged' | 'switched' | 'failed';
 
 /**
@@ -36,8 +59,6 @@ export type DesktopSshHostResync = 'not-ssh' | 'unchanged' | 'switched' | 'faile
  */
 export const resyncDesktopSshHostRuntime = async (options: { hostId?: string; refresh?: boolean } = {}): Promise<DesktopSshHostResync> => {
   if (!isElectronShell() || getActiveRelayTunnel()) return 'not-ssh';
-  const hostId = resolveActiveDesktopHostId();
-  if (!hostId || (options.hostId && options.hostId !== hostId)) return 'not-ssh';
   const runtimeKey = getRuntimeKey();
   const runtimeGeneration = getRuntimeGeneration();
   const authGeneration = getRuntimeAuthGeneration();
@@ -46,7 +67,8 @@ export const resyncDesktopSshHostRuntime = async (options: { hostId?: string; re
 
   let config = await desktopHostsGet().catch(() => null);
   if (!config || !isCurrent()) return 'unchanged';
-  if (!config.sshHostIds?.includes(hostId)) return 'not-ssh';
+  const hostId = findBoundSshHostId(config);
+  if (!hostId || (options.hostId && options.hostId !== hostId)) return 'not-ssh';
   if (options.refresh) {
     try {
       await invokeDesktop('desktop_ssh_host_token_refresh', { hostId });

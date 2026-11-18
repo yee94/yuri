@@ -142,7 +142,10 @@ Host adopt the stored token without reloading. A window whose token is still
 rejected calls `desktop_ssh_host_token_refresh`, which re-mints with the in-memory
 session password only when the stored token fails its probe; SSH windows never
 show the UI password prompt for the ephemeral remote password and fall back to a
-reconnect screen instead.
+reconnect screen instead. A window is treated as SSH-bound by its `host:` runtime
+key or, after a reload drops that key, by its endpoint matching a saved SSH Host
+tunnel. The reconnect screen names the Host, explains that no password is needed,
+and offers a retry plus the local SSH instance manager.
 Startup/quit snapshots cannot overwrite the session with partially opened/closed
 windows, and shutdown waits for the final settings write. Legacy settings without
 `desktopWindowStates` retain single-window geometry/default-Host behavior. An

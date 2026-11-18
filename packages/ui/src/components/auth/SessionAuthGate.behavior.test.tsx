@@ -294,6 +294,7 @@ mock.module('@/lib/desktopSsh', () => ({
 }));
 
 mock.module('@/lib/desktopSshHostRuntime', () => ({
+  findBoundDesktopSshHost: mock(() => Promise.resolve({ id: 'ssh', label: 'Build box' })),
   resolveActiveDesktopHostId: () => (runtimeKey.startsWith('host:') ? runtimeKey.slice(5) : null),
   resyncDesktopSshHostRuntime: mock(() => Promise.resolve(sshResync)),
 }));
@@ -381,9 +382,14 @@ describe('SessionAuthGate status-check failure behavior', () => {
     for (const result of ['unchanged', 'failed'] as const) {
       resetHarness(); desktopShell = true; runtimeFetchRejects = false; runtimeStatus = 401;
       runtimeKey = 'host:ssh'; sshResync = result;
+      await renderGate();
+      await flushEffects();
       const text = collectText(await renderGate());
-      expect(text).toContain('sessionAuth.sshExpired.title');
+      expect(text).toContain('sessionAuth.sshExpired.titleWithHost');
+      expect(text).toContain('sessionAuth.sshExpired.reconnect');
+      expect(text).toContain('settings.remoteInstances.openLocalManager');
       expect(text).not.toContain('sessionAuth.locked.unlockTitle');
+      expect(text).not.toContain('sessionAuth.password.placeholder');
     }
     sshResync = 'not-ssh'; runtimeKey = 'auth-gate-test-runtime';
   });

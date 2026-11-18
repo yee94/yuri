@@ -29,7 +29,7 @@ vi.mock('@/lib/runtime-switch', () => ({
   switchRuntimeEndpoint: hoisted.switchRuntimeEndpoint,
 }));
 
-const { resyncDesktopSshHostRuntime } = await import('./desktopSshHostRuntime');
+const { findBoundDesktopSshHost, resyncDesktopSshHostRuntime } = await import('./desktopSshHostRuntime');
 
 const sshConfig = (host: Record<string, unknown>) => ({ hosts: [{ id: 'ssh', ...host }], sshHostIds: ['ssh'] });
 
@@ -67,6 +67,14 @@ describe('resyncDesktopSshHostRuntime', () => {
     await expect(resyncDesktopSshHostRuntime({ refresh: true })).resolves.toBe('not-ssh');
     expect(hoisted.invoke).not.toHaveBeenCalled();
     expect(hoisted.switchRuntimeEndpoint).not.toHaveBeenCalled();
+  });
+
+  test('recognizes a reloaded window by its SSH tunnel endpoint when the host key is gone', async () => {
+    hoisted.runtimeKey = 'local';
+    hoisted.config = sshConfig({ url: 'http://127.0.0.1:4000', clientToken: 'new-token', label: 'Build box' });
+    await expect(resyncDesktopSshHostRuntime()).resolves.toBe('switched');
+    expect(hoisted.switchRuntimeEndpoint).toHaveBeenCalledWith(expect.objectContaining({ clientToken: 'new-token', runtimeKey: 'host:ssh' }));
+    await expect(findBoundDesktopSshHost()).resolves.toEqual({ id: 'ssh', label: 'Build box' });
   });
 
   test('refresh asks the shell to renew a rejected token, and reports shell failure', async () => {

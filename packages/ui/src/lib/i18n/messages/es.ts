@@ -3421,6 +3421,9 @@ export const dict: Record<I18nKey, string> = {
   "opencodeUpgrade.screen.guide": "Guía de instalación",
   "opencodeUpgrade.screen.manualGuidance": "La instalación automática no está disponible en este runtime. Actualiza OpenCode tú mismo y vuelve a comprobar.",
   "sessionAuth.sshExpired.title": "La conexión SSH necesita reconectarse",
-  "sessionAuth.sshExpired.description": "La conexión SSH se renovó, así que el inicio de sesión de esta ventana ya no es válido. Vuelve a conectar para continuar; no hace falta contraseña.",
+  "sessionAuth.sshExpired.titleWithHost": "Reconectar a «{name}»",
+  "sessionAuth.sshExpired.description": "Esta ventana usa una conexión SSH. Su inicio de sesión se renueva automáticamente cuando SSH se reconecta, así que no hace falta contraseña. Suele ocurrir tras suspender el equipo o cambiar de red. Al reconectar se restaura el túnel SSH y vuelves a donde estabas.",
   "sessionAuth.sshExpired.reconnect": "Reconectar",
+  "sessionAuth.sshExpired.reconnecting": "Reconectando…",
+  "sessionAuth.sshExpired.failed": "No se pudo reconectar. Comprueba que tu red o VPN llega a la máquina remota y vuelve a intentarlo, o reconéctala desde las instancias SSH de una ventana local.",
 };
