@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProviderResult, UsageWindow } from '@/types';
 
-const state = vi.hoisted(() => ({ results: [] as ProviderResult[], selectedProviderId: 'magpie:gateway:claude',
+const state = vi.hoisted(() => ({ results: [] as ProviderResult[], selectedProviderId: 'magpie:gateway:claude', isLoading: false,
   selectedModels: {}, dropdownProviderIds: ['magpie:gateway:claude'], expandedFamilies: {}, displayMode: 'usage', showPredValues: true,
-  setSelectedProvider: () => {}, loadSettings: async () => {}, fetchAllQuotas: async () => {}, applyDefaultSelections: () => {},
+  setSelectedProvider: vi.fn(), setDropdownProviderIds: vi.fn(), loadSettings: async () => {}, fetchAllQuotas: async () => {}, applyDefaultSelections: () => {},
 }));
 vi.mock('@/stores/useQuotaStore', () => ({ useQuotaStore: (select: (s: typeof state) => unknown) => select(state), useQuotaAutoRefresh: () => {} }));
 vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (s: { timeFormatPreference: string }) => unknown) => select({ timeFormatPreference: '24h' }) }));
@@ -52,5 +53,34 @@ describe('Magpie account quota rendering', () => {
     expect(html).not.toContain('Expected usage');
     expect(html).toContain(':34');
     expect(html).toContain('minutes');
+  });
+  it('retains the selected Magpie provider and its reading during a partial in-flight refresh', async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const window: UsageWindow = { usedPercent: 20, remainingPercent: 80, resetAt: null,
+      resetAfterSeconds: null, resetAtFormatted: null, resetAfterFormatted: null, windowSeconds: null, disablePace: true, valueLabel: '20 / 100', label: 'daily' };
+    const cursor: ProviderResult = { providerId: 'magpie:gateway:cursor', providerName: 'Cursor · Magpie', source: 'magpie', sourceId: 'gateway', ok: true, configured: true, fetchedAt: 1, usage: { windows: { daily: window } } };
+    const codex: ProviderResult = { providerId: 'magpie:remote:codex', providerName: 'Codex · Remote Magpie · Magpie', source: 'magpie', sourceId: 'remote', ok: true, configured: true, fetchedAt: 1, usage: { windows: { daily: window } } };
+    state.selectedProviderId = codex.providerId;
+    state.results = [cursor, codex];
+    state.isLoading = false;
+    state.setSelectedProvider.mockClear();
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    try {
+      await act(async () => { root.render(<UsagePage />); });
+      expect(host.textContent).toContain('Codex · Remote Magpie · Magpie');
+      state.results = [cursor];
+      state.isLoading = true;
+      await act(async () => { root.render(<UsagePage />); });
+      expect(state.setSelectedProvider).not.toHaveBeenCalled();
+      expect(host.textContent).toContain('Codex · Remote Magpie · Magpie');
+      state.isLoading = false;
+      await act(async () => { root.render(<UsagePage />); });
+      expect(state.setSelectedProvider).toHaveBeenCalledWith(cursor.providerId);
+    } finally {
+      await act(async () => { root.unmount(); });
+      host.remove();
+    }
   });
 });

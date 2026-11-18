@@ -11,7 +11,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import type { UsageWindows, QuotaProviderId } from '@/types';
+import type { UsageWindows, QuotaProviderId, ProviderResult } from '@/types';
 import { getAllModelFamilies, getDisplayModelName, sortModelFamilies, groupModelsByFamilyWithGetter } from '@/lib/quota/model-families';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
@@ -65,11 +65,22 @@ export const UsagePage: React.FC = () => {
     if (results.length === 0) {
       return;
     }
+    // A Magpie refresh can briefly return a partial provider list; don't drop the user's selection until it settles.
+    if (selectedProviderId && isLoading) {
+      return;
+    }
     const firstConfigured = results.find((entry) => entry?.configured)?.providerId;
     setSelectedProvider(firstConfigured ?? QUOTA_PROVIDERS[0]?.id ?? null);
-  }, [results, selectedProviderId, setSelectedProvider]);
+  }, [isLoading, results, selectedProviderId, setSelectedProvider]);
 
-  const selectedResult = results.find((entry) => entry?.providerId === selectedProviderId) ?? null;
+  const liveResult = results.find((entry) => entry?.providerId === selectedProviderId) ?? null;
+  // Keep showing the last reading while a refresh briefly omits the selected provider.
+  const [retainedResult, setRetainedResult] = React.useState<ProviderResult | null>(null);
+  if (liveResult && liveResult !== retainedResult) {
+    setRetainedResult(liveResult);
+  }
+  const selectedResult = liveResult
+    ?? (isLoading && retainedResult?.providerId === selectedProviderId ? retainedResult : null);
 
   const providerMeta = QUOTA_PROVIDERS.find((provider) => provider.id === selectedProviderId);
   const providerName = selectedResult?.providerName ?? providerMeta?.name ?? selectedProviderId ?? t('settings.usage.sidebar.title');
