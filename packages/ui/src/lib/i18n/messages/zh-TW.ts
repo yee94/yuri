@@ -1647,6 +1647,8 @@ export const dict: Record<I18nKey, string> = {
   'header.services.noRateLimitsReported': '未報告速率限制。',
   'header.services.used': '已用',
   'header.services.remaining': '剩餘',
+  'header.services.resetsAt': '重置於 {when}',
+  'header.services.arrangeProvider': '調整 {name} 的位置 · 拖動，或按 Alt+↑/↓',
   'header.services.shutdownDev': '停止 Yuri',
   'header.services.modelFamily.other': '其他',
   "header.actions.toggleChangesPanel": "變更面板",

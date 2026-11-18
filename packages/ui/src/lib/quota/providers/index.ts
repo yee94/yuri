@@ -25,7 +25,19 @@ export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
   { id: 'xai', name: 'Grok' },
 ];
 
-export const quotaProviders = (results: ProviderResult[]): QuotaProviderMeta[] => [
-  ...QUOTA_PROVIDERS,
-  ...results.filter((result) => result.source === 'magpie').map((result) => ({ id: result.providerId, name: result.providerName })),
-];
+/**
+ * Every provider the usage views can show. `order` is the user's arrangement: providers it lists come
+ * first in that order, the rest follow in their built-in order.
+ */
+export const quotaProviders = (results: ProviderResult[], order: readonly string[] = []): QuotaProviderMeta[] => {
+  const all = [
+    ...QUOTA_PROVIDERS,
+    ...results.filter((result) => result.source === 'magpie').map((result) => ({ id: result.providerId, name: result.providerName })),
+  ];
+  if (order.length === 0) return all;
+  const rank = new Map(order.map((id, index) => [id, index]));
+  return all
+    .map((meta, index) => ({ meta, index, rank: rank.get(meta.id) ?? order.length }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(({ meta }) => meta);
+};

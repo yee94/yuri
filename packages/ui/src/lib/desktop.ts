@@ -118,6 +118,7 @@ export type DesktopSettings = {
   usageDisplayMode?: 'usage' | 'remaining';
   usageShowPredValues?: boolean;
   usageDropdownProviders?: string[];
+  usageProviderOrder?: string[];
   magpieUsageUrl?: string;
   magpieHiddenProviders?: string[];
   usageSelectedModels?: Record<string, string[]>;  // Map of providerId -> selected model names

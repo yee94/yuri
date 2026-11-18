@@ -42,11 +42,15 @@ export function projectMagpieQuotas(payload, source, now = Date.now()) {
     for (const [i, w] of q.windows.entries()) {
       if (!record(w) || typeof w.name !== 'string') throw new Error('Invalid Magpie quota window');
       const resetAt = time(w.resetsAt);
+      // Magpie's own rule (quotaNoShare): a text row or a wallet balance has no share to fill
+      const noShare = Boolean(w.text) || (typeof w.balance === 'number' && Number.isFinite(w.balance));
+      const hasShare = !w.unlimited && !noShare;
       const window = { ...emptyWindow(),
-        usedPercent: w.unlimited ? null : percent(w.used), remainingPercent: w.unlimited ? null : percent(w.remaining),
+        usedPercent: hasShare ? percent(w.used) : null, remainingPercent: hasShare ? percent(w.remaining) : null,
         resetAt, resetAfterSeconds: resetAt === null ? null : Math.max(0, Math.ceil((resetAt - now) / 1000)),
-        valueLabel: w.unlimited ? '∞' : text(w.display) || (Number.isFinite(w.amount) && Number.isFinite(w.limit) && w.limit > 0 ? `${w.amount} / ${w.limit}${text(w.unit) ? ` ${w.unit}` : ''}` : null),
+        valueLabel: w.unlimited ? '∞' : text(w.display) || (Number.isFinite(w.amount) && Number.isFinite(w.limit) && w.limit > 0 ? `${w.amount} / ${w.limit}${text(w.unit) ? ` ${w.unit}` : ''}` : noShare && Number.isFinite(w.balance) ? `${w.balance}${text(w.unit) ? ` ${w.unit}` : ''}` : null),
         label: w.name, disablePace: true,
+        ...(text(w.pool) ? { pool: w.pool } : {}),
       };
       account.windows[`${i}:${w.name}`] = window;
       // Magpie serializes this informational window as used: 0 without its

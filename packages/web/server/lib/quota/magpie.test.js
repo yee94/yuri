@@ -68,6 +68,20 @@ describe('Magpie discovery and quota adapter', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('keeps pools, and leaves text rows and wallet balances without a share like Magpie', () => {
+    const [result] = projectMagpieQuotas({ object: 'list', data: [{
+      provider: 'agy', name: 'Antigravity', kind: 'subscription', windows: [
+        { name: '5 hours', used: 40, remaining: 60, pool: 'Gemini' },
+        { name: 'Credits', used: 0, text: true, display: 'Used up' },
+        { name: 'Wallet', used: 0, balance: 12.5, unit: 'USD' },
+      ],
+    }] }, source);
+    const [pooled, text, wallet] = Object.values(result.usage.windows);
+    expect(pooled).toMatchObject({ usedPercent: 40, pool: 'Gemini' });
+    expect(text).toMatchObject({ usedPercent: null, remainingPercent: null, valueLabel: 'Used up' });
+    expect(wallet).toMatchObject({ usedPercent: null, valueLabel: '12.5 USD' });
+  });
+
   it('isolates account errors and distinguishes unlimited, stale and malformed data', () => {
     const data = structuredClone(report);
     data.data[1].error = 'sensitive upstream response';

@@ -1679,6 +1679,8 @@ export const dict: Record<I18nKey, string> = {
   "header.services.remoteUpdate.actions.open": "Atualizar",
   "header.services.used": "Usado",
   "header.services.remaining": "Restante",
+  "header.services.resetsAt": "Redefine {when}",
+  "header.services.arrangeProvider": "Reordenar {name} · arraste ou use Alt+↑/↓",
   "header.services.modelFamily.other": "Outro",
   "header.services.shutdownDev": "Parar Yuri",
   "header.actions.toggleChangesPanel": "Painel de alterações",

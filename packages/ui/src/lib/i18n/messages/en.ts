@@ -1678,6 +1678,8 @@ export const dict = {
   'header.services.remoteUpdate.actions.open': 'Update',
   'header.services.used': 'Used',
   'header.services.remaining': 'Remaining',
+  'header.services.resetsAt': 'Resets {when}',
+  'header.services.arrangeProvider': 'Arrange {name} · drag, or Alt+↑/↓',
   'header.services.modelFamily.other': 'Other',
   'header.services.shutdownDev': 'Stop Yuri',
   'header.actions.toggleChangesPanel': 'Changes panel',

@@ -432,6 +432,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (Array.isArray(candidate.usageDropdownProviders)) {
       result.usageDropdownProviders = normalizeStringArray(candidate.usageDropdownProviders);
     }
+    if (Array.isArray(candidate.usageProviderOrder)) {
+      result.usageProviderOrder = normalizeStringArray(candidate.usageProviderOrder);
+    }
     if (typeof candidate.autoDeleteEnabled === 'boolean') {
       result.autoDeleteEnabled = candidate.autoDeleteEnabled;
     }

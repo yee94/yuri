@@ -13,18 +13,14 @@ import { scanContextTokenBaseline, buildSessionContextUsage } from '@/sync/conte
 
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
-import { ProviderLogo } from '@/components/ui/ProviderLogo';
+import { UsageRingGrid } from '@/components/sections/usage/UsageRingGrid';
+import { SortableUsageItem, SortableUsageList, UsageProviderLogo } from '@/components/sections/usage/SortableUsageCards';
 import { preloadProviderLogos } from '@/hooks/useProviderLogo';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
-import {
-  formatQuotaResetLabel,
-  formatQuotaValueLabel,
-  formatWindowLabel,
-  quotaProviders,
-} from '@/lib/quota';
+import { formatWindowLabel, isUnlimitedOnly, quotaProviders } from '@/lib/quota';
 import { getDisplayModelName } from '@/lib/quota/model-families';
-import { accountHeadingForWindows, tagWindowsWithAccount } from '@/lib/quota/accountGroups';
+import { tagWindowsWithAccount } from '@/lib/quota/accountGroups';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { cn } from '@/lib/utils';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -63,11 +59,11 @@ type MobileUsageProviderGroup = {
   status: string | null;
 };
 
-function useMobileUsageGroups(quotaResults: ProviderResult[], dropdownProviderIds: QuotaProviderId[], selectedQuotaModels: Record<string, string[]>) {
+function useMobileUsageGroups(quotaResults: ProviderResult[], dropdownProviderIds: QuotaProviderId[], selectedQuotaModels: Record<string, string[]>, providerOrder: readonly string[]) {
   const { t } = useI18n();
   return React.useMemo<MobileUsageProviderGroup[]>(() => {
     const resultsByProvider = new Map(quotaResults.map((result) => [result?.providerId, result]));
-    return quotaProviders(quotaResults)
+    return quotaProviders(quotaResults, providerOrder)
       .filter((providerMeta) => dropdownProviderIds.includes(providerMeta.id))
       .filter((providerMeta) => resultsByProvider.get(providerMeta.id)?.configured === true)
       .map((providerMeta) => {
@@ -86,17 +82,10 @@ function useMobileUsageGroups(quotaResults: ProviderResult[], dropdownProviderId
         }
         return { providerId: providerMeta.id, providerName: providerMeta.name, rows,
           status: !result.ok && result.error ? result.error : rows.length === 0 ? t('header.services.noRateLimitsReported') : null };
-      });
-  }, [dropdownProviderIds, quotaResults, selectedQuotaModels, t]);
+      })
+      .filter((group) => !(group.status === null && isUnlimitedOnly(group.rows.map((row) => row.window))));
+  }, [dropdownProviderIds, providerOrder, quotaResults, selectedQuotaModels, t]);
 }
-
-const getWindowValueClass = (window: UsageWindow): string => {
-  const usedPercent = window.usedPercent;
-  if (typeof usedPercent !== 'number' || !Number.isFinite(usedPercent)) return 'text-foreground';
-  if (usedPercent >= 80) return 'text-[var(--status-error)]';
-  if (usedPercent >= 50) return 'text-[var(--status-warning)]';
-  return 'text-foreground';
-};
 
 const MetadataRow: React.FC<{
   iconNode?: React.ReactNode;
@@ -120,7 +109,9 @@ const MobileUsageLimits: React.FC<{
   displayMode: 'usage' | 'remaining';
   isLoading: boolean;
   timeFormatPreference: TimeFormatPreference;
-}> = ({ groups, displayMode, isLoading, timeFormatPreference }) => {
+  /** Only the local runtime saves the usage order; a remote host's popover shows its order as it is. */
+  reorderable: boolean;
+}> = ({ groups, displayMode, isLoading, timeFormatPreference, reorderable }) => {
   const { t } = useI18n();
   const modeLabel = displayMode === 'remaining' ? t('header.services.remaining') : t('header.services.used');
 
@@ -142,10 +133,11 @@ const MobileUsageLimits: React.FC<{
       </div>
 
       <div className="space-y-1.5">
+        <SortableUsageList ids={groups.map((group) => group.providerId)} disabled={!reorderable}>
         {groups.map((group) => (
-          <div key={group.providerId} className="min-w-0 rounded-xl bg-[var(--surface-muted)] p-2.5">
+          <SortableUsageItem key={group.providerId} id={group.providerId} className="min-w-0 rounded-xl bg-[var(--surface-muted)] p-2.5">
             <div className="flex min-w-0 items-center gap-2">
-              <ProviderLogo providerId={group.providerId} className="size-4 shrink-0" />
+              <UsageProviderLogo providerId={group.providerId} name={group.providerName} className="size-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate typography-ui-label font-medium text-foreground">
                 {group.providerName}
               </span>
@@ -156,44 +148,24 @@ const MobileUsageLimits: React.FC<{
               ) : null}
             </div>
             {group.rows.length > 0 ? (
-              <div className="mt-1.5 space-y-1">
-                {group.rows.map((row, index) => {
-                  const accountHeading = accountHeadingForWindows(group.rows.map((entry) => entry.window), index);
-                  const displayPercent = displayMode === 'remaining' ? row.window.remainingPercent : row.window.usedPercent;
-                  const metricLabel = formatQuotaValueLabel(row.window.valueLabel, displayPercent);
-                  const resetLabel = formatQuotaResetLabel(
-                    row.window.resetAt,
-                    row.window.resetAfterFormatted ?? row.window.resetAtFormatted,
-                    timeFormatPreference,
-                  );
-                  return (
-                    <React.Fragment key={row.key}>
-                    {accountHeading ? (
-                      <div className={cn('typography-micro font-medium uppercase tracking-wide text-muted-foreground', index > 0 && 'mt-3 border-t border-[var(--surface-subtle)] pt-2')}>{accountHeading}</div>
-                    ) : null}
-                    <div className="flex min-w-0 items-baseline justify-between gap-3">
-                      <span className="inline-flex min-w-0 flex-1 items-baseline gap-1.5">
-                        <span className="truncate typography-ui-label text-muted-foreground">
-                          {row.subtitle ? `${row.subtitle} · ${row.label}` : row.label}
-                        </span>
-                        {resetLabel ? (
-                          <span className="min-w-0 truncate typography-micro text-muted-foreground/70">{resetLabel}</span>
-                        ) : null}
-                      </span>
-                      <span className={cn('min-w-0 max-w-[60%] shrink-0 truncate typography-ui-label font-semibold tabular-nums', getWindowValueClass(row.window))}>
-                        {metricLabel === '-' ? '' : metricLabel}
-                      </span>
-                    </div>
-                    </React.Fragment>
-                  );
-                })}
-              </div>
+              <UsageRingGrid
+                className="mt-2"
+                items={group.rows.map((row) => ({
+                  key: row.key,
+                  label: row.subtitle ?? row.label,
+                  fullLabel: row.subtitle ? `${row.subtitle} · ${row.label}` : row.label,
+                  window: row.window,
+                }))}
+                displayMode={displayMode}
+                timeFormatPreference={timeFormatPreference}
+              />
             ) : null}
             {group.status && group.rows.length > 0 ? (
               <div className="mt-1.5 truncate typography-micro text-muted-foreground" title={group.status}>{group.status}</div>
             ) : null}
-          </div>
+          </SortableUsageItem>
         ))}
+        </SortableUsageList>
       </div>
     </div>
   );
@@ -208,6 +180,7 @@ const SessionMetadataOverlay: React.FC<{
   usageDisplayMode: 'usage' | 'remaining';
   isUsageLoading: boolean;
   timeFormatPreference: TimeFormatPreference;
+  reorderable: boolean;
   error?: string;
   onRetry?: () => void;
 }> = ({
@@ -219,6 +192,7 @@ const SessionMetadataOverlay: React.FC<{
   usageDisplayMode,
   isUsageLoading,
   timeFormatPreference,
+  reorderable,
   error,
   onRetry,
 }) => {
@@ -305,6 +279,7 @@ const SessionMetadataOverlay: React.FC<{
             displayMode={usageDisplayMode}
             isLoading={isUsageLoading}
             timeFormatPreference={timeFormatPreference}
+            reorderable={reorderable}
           />
           {error ? <div role="alert" className="px-2.5 py-2 typography-ui-label text-[var(--status-error)]">
             {error}
@@ -398,6 +373,7 @@ function LocalMobileContextProgressButton({
   const isQuotaLoading = useQuotaStore((state) => state.isLoading);
   const quotaDisplayMode = useQuotaStore((state) => state.displayMode);
   const dropdownProviderIds = useQuotaStore((state) => state.dropdownProviderIds);
+  const providerOrder = useQuotaStore((state) => state.providerOrder);
   const selectedQuotaModels = useQuotaStore((state) => state.selectedModels);
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
 
@@ -460,7 +436,7 @@ function LocalMobileContextProgressButton({
     ? (gitStatus?.current?.trim() || t('gitView.branch.detachedHead'))
     : t('common.unavailable');
 
-  const usageGroups = useMobileUsageGroups(quotaResults, dropdownProviderIds, selectedQuotaModels);
+  const usageGroups = useMobileUsageGroups(quotaResults, dropdownProviderIds, selectedQuotaModels, providerOrder);
 
   React.useEffect(() => {
     if (!open || usageGroups.length === 0) return;
@@ -498,6 +474,7 @@ function LocalMobileContextProgressButton({
         usageDisplayMode={quotaDisplayMode}
         isUsageLoading={isQuotaLoading}
         timeFormatPreference={timeFormatPreference}
+        reorderable
       />
     </>
   );
@@ -536,7 +513,7 @@ const RemoteMobileContextProgressButton = React.memo(function RemoteMobileContex
   const magpie = useQuery({ ...remoteMobileMagpieOptions(entry), enabled: open && !!settings.data?.providerIds.some((id) => id.startsWith('magpie:')), refetchInterval: refreshInterval }, queryClient);
   const quotas = React.useMemo(() => open ? [...quotaQueries.flatMap((query) => query.data ? [query.data] : EMPTY_QUOTAS), ...(magpie.data ?? EMPTY_QUOTAS)] : EMPTY_QUOTAS, [open, quotaQueries, magpie.data]);
   const visibleProviderIds = open ? settings.data?.providerIds ?? EMPTY_PROVIDER_IDS : EMPTY_PROVIDER_IDS;
-  const groups = useMobileUsageGroups(quotas, visibleProviderIds, settings.data?.selectedModels ?? EMPTY_MODELS);
+  const groups = useMobileUsageGroups(quotas, visibleProviderIds, settings.data?.selectedModels ?? EMPTY_MODELS, EMPTY_PROVIDER_IDS);
   const baseline = React.useMemo(() => {
     if (!transcript) return null;
     for (let index = transcript.messageOrder.length - 1; index >= 0; index--) {
@@ -567,6 +544,7 @@ const RemoteMobileContextProgressButton = React.memo(function RemoteMobileContex
       branchLabel={git.data?.isGitRepository ? git.data.current?.trim() || t('gitView.branch.detachedHead') : t('common.unavailable')}
       usageGroups={groups} usageDisplayMode={settings.data?.displayMode ?? 'usage'}
       isUsageLoading={settings.isFetching || magpie.isFetching || quotaQueries.some((query) => query.isFetching)} timeFormatPreference={timeFormatPreference}
+      reorderable={false}
       error={error?.message} onRetry={retry} />
   </>;
 });

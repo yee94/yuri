@@ -951,6 +951,11 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
       (entry): entry is string => typeof entry === 'string' && entry.length > 0
     );
   }
+  if (Array.isArray(candidate.usageProviderOrder)) {
+    result.usageProviderOrder = candidate.usageProviderOrder.filter(
+      (entry): entry is string => typeof entry === 'string' && entry.length > 0
+    );
+  }
 
   if (typeof candidate.magpieUsageUrl === 'string') result.magpieUsageUrl = candidate.magpieUsageUrl;
   if (Array.isArray(candidate.magpieHiddenProviders)) result.magpieHiddenProviders = candidate.magpieHiddenProviders.filter((id): id is string => typeof id === 'string' && id.startsWith('magpie:'));

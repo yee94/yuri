@@ -1643,6 +1643,8 @@ export const dict: Record<I18nKey, string> = {
   'header.services.remoteUpdate.actions.open': '更新',
   'header.services.used': '已用',
   'header.services.remaining': '剩余',
+  'header.services.resetsAt': '重置于 {when}',
+  'header.services.arrangeProvider': '调整 {name} 的位置 · 拖动，或按 Alt+↑/↓',
   'header.services.shutdownDev': '停止 Yuri',
   'header.services.modelFamily.other': '其他',
   "header.actions.toggleChangesPanel": "更改面板",

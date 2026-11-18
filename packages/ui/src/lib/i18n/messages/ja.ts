@@ -1673,6 +1673,8 @@ export const dict: Record<I18nKey, string> = {
   'header.services.remoteUpdate.actions.open': '更新',
   'header.services.used': '使用済み',
   'header.services.remaining': '残り',
+  'header.services.resetsAt': '{when} にリセット',
+  'header.services.arrangeProvider': '{name} を並べ替え · ドラッグ、または Alt+↑/↓',
   'header.services.modelFamily.other': 'その他',
   'header.services.shutdownDev': 'Yuriを停止',
   'header.actions.toggleChangesPanel': '変更パネル',

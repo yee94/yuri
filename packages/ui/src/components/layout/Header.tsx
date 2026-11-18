@@ -46,11 +46,12 @@ import { useDeviceInfo, useTabletStandalonePwaRuntime } from '@/lib/device';
 import { cn, hasModifier } from '@/lib/utils';
 import { McpDropdownContent } from '@/components/mcp/McpDropdown';
 import { McpIcon } from '@/components/icons/McpIcon';
-import { ProviderLogo } from '@/components/ui/ProviderLogo';
-import { formatQuotaValueLabel, formatQuotaResetLabel, formatWindowLabel, quotaProviders, calculatePace, calculateExpectedUsagePercent } from '@/lib/quota';
+import { formatQuotaValueLabel, formatWindowLabel, quotaProviders, calculatePace, calculateExpectedUsagePercent, isUnlimitedOnly } from '@/lib/quota';
 import { UsageProgressBar } from '@/components/sections/usage/UsageProgressBar';
+import { UsageRingGrid } from '@/components/sections/usage/UsageRingGrid';
+import { SortableUsageItem, SortableUsageList, UsageProviderLogo } from '@/components/sections/usage/SortableUsageCards';
 import { PaceIndicator } from '@/components/sections/usage/PaceIndicator';
-import { accountHeadingAt, tagWindowsWithAccount } from '@/lib/quota/accountGroups';
+import { tagWindowsWithAccount } from '@/lib/quota/accountGroups';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { formatTimeForPreference } from '@/lib/timeFormat';
 import { eventMatchesShortcut, formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
@@ -451,12 +452,13 @@ const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
             {/* One elevated card per provider (same card language as the mobile
                 usage popover) instead of a flat run of divider-separated rows. */}
             <div className="space-y-2 px-3 py-2.5">
+              <SortableUsageList ids={rateLimitGroups.map((group) => group.providerId)}>
               {rateLimitGroups.map((group) => {
                 const providerExpandedFamilies = expandedFamilies[group.providerId] ?? [];
                 return (
-                  <div key={group.providerId} className="min-w-0 rounded-xl bg-[var(--surface-muted)] p-3">
+                  <SortableUsageItem key={group.providerId} id={group.providerId} className="min-w-0 rounded-xl bg-[var(--surface-muted)] p-3">
                     <div className="flex items-center gap-2 pb-2">
-                      <ProviderLogo providerId={group.providerId} className="h-4 w-4" />
+                      <UsageProviderLogo providerId={group.providerId} name={group.providerName} className="h-4 w-4" />
                       <span className="typography-ui-label font-medium text-foreground">{group.providerName}</span>
                     </div>
                     {group.entries.length === 0 && (!group.modelFamilies || group.modelFamilies.length === 0) ? (
@@ -465,47 +467,17 @@ const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {group.entries.map(([label, window], index) => {
-                          const accountHeading = accountHeadingAt(group.entries, index);
-                          const displayPercent = quotaDisplayMode === 'remaining' ? window.remainingPercent : window.usedPercent;
-                          const paceInfo = window.disablePace ? null : calculatePace(window.usedPercent, window.resetAt, window.windowSeconds, label);
-                          const expectedMarker = paceInfo?.dailyAllocationPercent != null
-                            ? (quotaDisplayMode === 'remaining'
-                                ? 100 - calculateExpectedUsagePercent(paceInfo.elapsedRatio)
-                                : calculateExpectedUsagePercent(paceInfo.elapsedRatio))
-                            : null;
-                          const metricLabel = formatQuotaValueLabel(window.valueLabel, displayPercent);
-                          const resetLabel = formatQuotaResetLabel(window.resetAt, window.resetAfterFormatted ?? window.resetAtFormatted, timeFormatPreference);
-                          return (
-                            <React.Fragment key={`${group.providerId}-${label}`}>
-                            {accountHeading ? (
-                              <div className={cn('typography-micro font-medium uppercase tracking-wide text-muted-foreground', index > 0 && 'mt-5 border-t border-[var(--surface-subtle)] pt-3')}>{accountHeading}</div>
-                            ) : null}
-                            <div className="flex flex-col gap-1.5">
-                              <div className="flex min-w-0 items-center justify-between gap-3">
-                                <div className="min-w-0 flex flex-1 flex-col gap-0.5">
-                                  <span className="typography-ui-label text-foreground break-words">{formatWindowLabel(window.label ?? label)}</span>
-                                  {resetLabel ? (
-                                    <span className="typography-micro text-muted-foreground">
-                                      {resetLabel}
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <span className="min-w-0 max-w-[55%] shrink-0 break-words text-right typography-ui-label tabular-nums text-foreground">
-                                  {metricLabel === '-' ? '' : metricLabel}
-                                </span>
-                              </div>
-                              <UsageProgressBar
-                                percent={displayPercent}
-                                tonePercent={window.usedPercent}
-                                className="h-1.5"
-                                expectedMarkerPercent={expectedMarker}
-                              />
-                              {paceInfo && showPredValues ? <PaceIndicator paceInfo={paceInfo} compact /> : null}
-                            </div>
-                            </React.Fragment>
-                          );
-                        })}
+                        <UsageRingGrid
+                          items={group.entries.map(([label, window]) => ({
+                            key: `${group.providerId}-${label}`,
+                            label: formatWindowLabel(window.label ?? label),
+                            window,
+                            paceKey: label,
+                          }))}
+                          displayMode={quotaDisplayMode}
+                          timeFormatPreference={timeFormatPreference}
+                          showPace={showPredValues}
+                        />
                         {group.modelFamilies && group.modelFamilies.length > 0 ? (
                           <div className="space-y-0.5">
                             {group.modelFamilies.map((family) => {
@@ -559,9 +531,10 @@ const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
                         ) : null}
                       </div>
                     )}
-                  </div>
+                  </SortableUsageItem>
                 );
               })}
+              </SortableUsageList>
             </div>
           </div>
         ) : null}
@@ -780,6 +753,7 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
   const quotaDisplayMode = useQuotaStore((state) => state.displayMode);
   const showPredValues = useQuotaStore((state) => state.showPredValues);
   const dropdownProviderIds = useQuotaStore((state) => state.dropdownProviderIds);
+  const providerOrder = useQuotaStore((state) => state.providerOrder);
   const loadQuotaSettings = useQuotaStore((state) => state.loadSettings);
   const setQuotaDisplayMode = useQuotaStore((state) => state.setDisplayMode);
 
@@ -945,7 +919,7 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
   const rateLimitGroups = React.useMemo(() => {
     const groups: RateLimitGroup[] = [];
 
-    for (const provider of quotaProviders(quotaResults)) {
+    for (const provider of quotaProviders(quotaResults, providerOrder)) {
       if (!dropdownProviderIds.includes(provider.id)) {
         continue;
       }
@@ -1030,13 +1004,17 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
         }
       }
 
-      if (entries.length > 0 || (group.modelFamilies && group.modelFamilies.length > 0) || group.error) {
+      const hasFamilies = Boolean(group.modelFamilies && group.modelFamilies.length > 0);
+      if (!group.error && !hasFamilies && isUnlimitedOnly(entries.map(([, window]) => window))) {
+        continue;
+      }
+      if (entries.length > 0 || hasFamilies || group.error) {
         groups.push(group);
       }
     }
 
     return groups;
-  }, [dropdownProviderIds, quotaResults, selectedModels, t]);
+  }, [dropdownProviderIds, providerOrder, quotaResults, selectedModels, t]);
   const hasRateLimits = rateLimitGroups.length > 0;
   React.useEffect(() => {
     void loadQuotaSettings();
@@ -2128,15 +2106,16 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
 
                       {/* Mobile provider groups */}
                       <div className="py-1">
+                        <SortableUsageList ids={rateLimitGroups.map((group) => group.providerId)}>
                         {rateLimitGroups.map((group, index) => (
-                          <React.Fragment key={group.providerId}>
+                          <SortableUsageItem key={group.providerId} id={group.providerId}>
                             {index > 0 ? (
                               <div className="mx-4 my-1 border-t border-[var(--interactive-border)]" />
                             ) : null}
 
                             {/* Provider header */}
                             <div className="flex items-center gap-2 px-4 py-2">
-                              <ProviderLogo providerId={group.providerId} className="h-4 w-4" />
+                              <UsageProviderLogo providerId={group.providerId} name={group.providerName} className="h-4 w-4" />
                               <span className="typography-ui-label font-medium text-foreground">{group.providerName}</span>
                             </div>
 
@@ -2149,51 +2128,17 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
                             ) : (
                               <div className="space-y-3 px-4 pb-2">
                                 {/* Window-level entries */}
-                                {group.entries.map(([label, window], index) => {
-                                  const accountHeading = accountHeadingAt(group.entries, index);
-                                  const displayPercent = quotaDisplayMode === 'remaining'
-                                    ? window.remainingPercent
-                                    : window.usedPercent;
-                                  const paceInfo = window.disablePace ? null : calculatePace(window.usedPercent, window.resetAt, window.windowSeconds, label);
-                                  const expectedMarker = paceInfo?.dailyAllocationPercent != null
-                                    ? (quotaDisplayMode === 'remaining'
-                                        ? 100 - calculateExpectedUsagePercent(paceInfo.elapsedRatio)
-                                        : calculateExpectedUsagePercent(paceInfo.elapsedRatio))
-                                    : null;
-                                  const metricLabel = formatQuotaValueLabel(window.valueLabel, displayPercent);
-                                  const resetLabel = formatQuotaResetLabel(window.resetAt, window.resetAfterFormatted ?? window.resetAtFormatted, timeFormatPreference);
-                                  return (
-                                    <React.Fragment key={`${group.providerId}-${label}`}>
-                                    {accountHeading ? (
-                                      <div className={cn('typography-micro font-medium uppercase tracking-wide text-muted-foreground', index > 0 && 'mt-5 border-t border-[var(--surface-subtle)] pt-3')}>{accountHeading}</div>
-                                    ) : null}
-                                    <div className="flex flex-col gap-1.5">
-                                      <div className="flex min-w-0 items-center justify-between gap-3">
-                                        <div className="min-w-0 flex flex-1 flex-col gap-0.5">
-                                          <span className="typography-ui-label text-foreground break-words">{formatWindowLabel(window.label ?? label)}</span>
-                                          {resetLabel ? (
-                                            <span className="typography-micro text-muted-foreground">
-                                              {resetLabel}
-                                            </span>
-                                          ) : null}
-                                        </div>
-                                        <span className="min-w-0 max-w-[55%] shrink-0 break-words text-right typography-ui-label text-foreground tabular-nums">
-                                          {metricLabel === '-' ? '' : metricLabel}
-                                        </span>
-                                      </div>
-                                      <UsageProgressBar
-                                        percent={displayPercent}
-                                        tonePercent={window.usedPercent}
-                                        className="h-1.5"
-                                        expectedMarkerPercent={expectedMarker}
-                                      />
-                                      {paceInfo && showPredValues ? (
-                                        <PaceIndicator paceInfo={paceInfo} compact />
-                                      ) : null}
-                                    </div>
-                                    </React.Fragment>
-                                  );
-                                })}
+                                <UsageRingGrid
+                                  items={group.entries.map(([label, window]) => ({
+                                    key: `${group.providerId}-${label}`,
+                                    label: formatWindowLabel(window.label ?? label),
+                                    window,
+                                    paceKey: label,
+                                  }))}
+                                  displayMode={quotaDisplayMode}
+                                  timeFormatPreference={timeFormatPreference}
+                                  showPace={showPredValues}
+                                />
 
                                 {/* Model family collapsibles */}
                                 {group.modelFamilies && group.modelFamilies.length > 0 && (
@@ -2260,8 +2205,9 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
                                 )}
                               </div>
                             )}
-                          </React.Fragment>
+                          </SortableUsageItem>
                         ))}
+                        </SortableUsageList>
                       </div>
                     </div>
                   )}
