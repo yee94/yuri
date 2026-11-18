@@ -247,6 +247,35 @@ async function assertBrowserTcp(hub, route, remote) {
 }
 
 describe('Remote Host production HTTP contract', () => {
+  it('reads and writes only favoriteModels of the target machine settings', async () => {
+    const { hub, remote } = await aggregate();
+    let remoteSettings = { favoriteModels: [{ providerID: 'p', modelID: 'a', variant: 'high' }], defaultModel: 'keep/me' };
+    const writes = [];
+    remote.app.get('/api/config/settings', (_req, res) => res.json(remoteSettings));
+    remote.app.put('/api/config/settings', express.json(), (req, res) => {
+      writes.push(req.body);
+      remoteSettings = { ...remoteSettings, ...req.body };
+      res.json(remoteSettings);
+    });
+    const route = '/api/hosts/remote-1/model-favorites';
+    expect((await hub.call(route)).status).toBe(404);
+    await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' });
+    expect(await (await hub.call(route)).json()).toEqual({ favoriteModels: [{ providerID: 'p', modelID: 'a', variant: 'high' }] });
+
+    const saved = await hub.call(route, 'PUT', { favoriteModels: [
+      { providerID: 'q', modelID: 'b' }, { providerID: 'q', modelID: 'b', variant: 'low' }, { providerID: ' p ', modelID: 'a', variant: 'max', extra: 1 },
+    ], defaultModel: 'evil/model' });
+    expect(await saved.json()).toEqual({ favoriteModels: [{ providerID: 'q', modelID: 'b' }, { providerID: 'p', modelID: 'a', variant: 'max' }] });
+    expect(writes).toEqual([{ favoriteModels: [{ providerID: 'q', modelID: 'b' }, { providerID: 'p', modelID: 'a', variant: 'max' }] }]);
+    expect(remoteSettings.defaultModel).toBe('keep/me');
+
+    expect((await hub.call(route, 'PUT', { favoriteModels: 'nope' })).status).toBe(400);
+    expect((await hub.call(route, 'PUT', { favoriteModels: [{ providerID: 'q' }] })).status).toBe(400);
+    expect((await hub.call(route, 'PUT', { favoriteModels: Array.from({ length: 65 }, (_, i) => ({ providerID: 'p', modelID: `m${i}` })) })).status).toBe(400);
+    expect(writes).toHaveLength(1);
+    expect((await hub.call('/api/hosts/unknown/model-favorites', 'PUT', { favoriteModels: [] })).status).toBe(404);
+  });
+
   it('pins and unpins remote sessions in the Hub DB without remote mutations or refresh resurrection', async () => {
     const { hub, remote } = await aggregate();
     const remotePin = vi.fn((_req, res) => res.status(204).end());

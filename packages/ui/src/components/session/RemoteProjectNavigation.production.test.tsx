@@ -207,6 +207,23 @@ test('remote task feed publishes unpinned and pinned rows as task cards and draw
     await act(async () => hostRoot.render(<>{items.map((item) => <React.Fragment key={item.remoteSessionId}>{item.content}</React.Fragment>)}</>));
     expect(host.querySelectorAll('[data-session-title]')).toHaveLength(2);
     expect([...host.querySelectorAll('[data-session-title] > div:first-child')].every((header) => header.querySelector('[data-remote-host="a"]') && header.textContent?.includes('Project a'))).toBe(true);
+    const card = host.querySelector('[data-remote-session="plain"]')!;
+    expect(card.querySelectorAll('button')).toHaveLength(3); // Title, pin and archive only.
+    expect(card.textContent).not.toContain(project('a').path);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      card.querySelector<HTMLButtonElement>('[data-session-title]')!.focus();
+    });
+    const details = document.querySelector('[data-session-hover-details="plain"]');
+    expect(details?.textContent).toContain('Project a');
+    expect(details?.textContent).not.toContain('desktopHostSwitcher.instance.local');
+    await act(async () => { card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); });
+    await flush();
+    const menu = document.querySelector('.yuri-session-context-menu');
+    expect(menu).not.toBeNull();
+    expect(menu?.textContent).toContain('sessions.sidebar.folders.moveToFolder');
+    expect(menu?.textContent).not.toContain('remoteProjects.selectSession');
+    expect(document.querySelector('[data-session-hover-details="plain"]')).toBeNull();
   } finally {
     await act(async () => hostRoot.unmount());
     host.remove();

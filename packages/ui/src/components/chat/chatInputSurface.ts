@@ -9,9 +9,17 @@ import type { Agent } from '@/lib/opencode/v2-types';
 
 export type ChatInputDeliveryTarget = { kind: 'primary' } | { kind: 'assistant'; assistantID: string };
 
+export type ChatInputModelFavorites = {
+  models: ReadonlyArray<{ providerID: string; modelID: string; variant?: string }>;
+  toggle: (providerID: string, modelID: string, variant?: string) => void;
+  reorder: (activeProviderID: string, activeModelID: string, overProviderID: string, overModelID: string) => void;
+};
+
 export type ChatInputSelection = {
   requestCatalog?: (open: boolean) => void;
   value: { providerID?: string; modelID?: string; agent?: string; variant?: string };
+  /** Surface-owned favorites; absent surfaces use the local favorites in the UI store. */
+  favorites?: ChatInputModelFavorites;
   catalog?: {
     providers: Array<{ id: string; name?: string; models: Array<Record<string, unknown> & { id: string; name?: string }> }>;
     agents: Agent[];

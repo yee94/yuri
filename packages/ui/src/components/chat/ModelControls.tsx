@@ -43,7 +43,7 @@ import { useSelectionStore } from '@/sync/selection-store';
 import { useSessionMaterializationStatus, useSessionMessages } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
 import { useUIStore } from '@/stores/useUIStore';
-import { useModelLists } from '@/hooks/useModelLists';
+import { useModelLists, type ModelListProvider } from '@/hooks/useModelLists';
 import { formatEffortLabel, getCycledPrimaryAgentName, isPrimaryMode, resolveAgentModelSelection, type ControlledModelSelection, type MobileControlsPanel } from './mobileControlsUtils';
 import { shouldCancelSearchableSelectorHoverDismiss } from './searchableSelectorDismiss';
 import { useI18n } from '@/lib/i18n';
@@ -57,7 +57,7 @@ import { eventMatchesShortcut, getEffectiveShortcutCombo, normalizeCombo } from 
 import { markStartupTrace } from '@/lib/startupTrace';
 import { getSessionSwitchIntent, subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { focusComposerTextarea, resolveComposerTextarea } from './composerFocus';
-import { resolveChatInputCatalogReadiness, resolveChatInputSelectionVariantOptions, resolveModelVariantKeys } from './chatInputSurface';
+import { resolveChatInputCatalogReadiness, resolveChatInputSelectionVariantOptions, resolveModelVariantKeys, type ChatInputModelFavorites } from './chatInputSurface';
 
 type IconComponent = IconName;
 
@@ -277,6 +277,7 @@ export type ModelControlsSelection = ControlledModelSelection & { variant?: stri
 
 export type ModelControlsSelectionAdapter = {
     requestCatalog?: (open: boolean) => void;
+    favorites?: ChatInputModelFavorites;
     selection: ModelControlsSelection;
     onChange: (selection: ModelControlsSelection) => Promise<void>;
     disabled?: boolean;
@@ -394,11 +395,11 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         : currentAgentName;
     const uiAgentName = selectionAdapter ? selectionAdapter.selection.agent ?? undefined : standardUIAgentName;
 
-    const toggleFavoriteModel = useUIStore((state) => state.toggleFavoriteModel);
-    const reorderFavoriteModel = useUIStore((state) => state.reorderFavoriteModel);
+    const storedToggleFavoriteModel = useUIStore((state) => state.toggleFavoriteModel);
+    const storedReorderFavoriteModel = useUIStore((state) => state.reorderFavoriteModel);
     const providerOrder = useUIStore((state) => state.providerOrder);
     const setProviderOrder = useUIStore((state) => state.setProviderOrder);
-    const isFavoriteModel = useUIStore((state) => state.isFavoriteModel);
+    const storedIsFavoriteModel = useUIStore((state) => state.isFavoriteModel);
     const addRecentModel = useUIStore((state) => state.addRecentModel);
     const addRecentAgent = useUIStore((state) => state.addRecentAgent);
     const addRecentEffort = useUIStore((state) => state.addRecentEffort);
@@ -419,9 +420,16 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
 
     // Agent selector open state lives in useUIStore so Ctrl+X → A (and other
     // global shortcuts) can open it the same way Ctrl+Shift+M opens models.
+    const surfaceFavorites = selectionAdapter?.favorites;
+    const toggleFavoriteModel = surfaceFavorites?.toggle ?? storedToggleFavoriteModel;
+    const reorderFavoriteModel = surfaceFavorites?.reorder ?? storedReorderFavoriteModel;
+    const isFavoriteModel = (providerID: string, modelID: string): boolean => surfaceFavorites
+        ? surfaceFavorites.models.some((entry) => entry.providerID === providerID && entry.modelID === modelID)
+        : storedIsFavoriteModel(providerID, modelID);
     const { favoriteModelsList, recentModelsList } = useModelLists({
         currentProviderID: currentProviderId,
         currentModelID: currentModelId,
+        ...(surfaceFavorites ? { providers: providers as ModelListProvider[], favoriteModels: surfaceFavorites.models } : {}),
     });
 
     const { isMobile: deviceIsMobile } = useDeviceInfo();

@@ -15,6 +15,7 @@ import type { DraftStarterRef } from '@/lib/draftStarters';
 import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
 import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 import { getRuntimeKey } from '@/lib/runtime-switch';
+import { reorderModelFavorite, toggleModelFavorite } from '@/lib/model-favorites';
 import { subscribeSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import { setIncludeReasoningProjection } from '@/lib/reasoning-projection-client';
 import { isCapacitorApp } from '@/lib/platform';
@@ -2394,50 +2395,19 @@ export const useUIStore = create<UIStore>()(
         },
 
         toggleFavoriteModel: (providerID, modelID, variant) => {
-          set((state) => {
-            const exists = state.favoriteModels.some(
-              (fav) => fav.providerID === providerID && fav.modelID === modelID
-            );
-            
-            if (exists) {
-              // Remove from favorites
-              return {
-                favoriteModels: state.favoriteModels.filter(
-                  (fav) => !(fav.providerID === providerID && fav.modelID === modelID)
-                ),
-              };
-            } else {
-              // Add to favorites (newest first); omit unset variant for a clean persist shape
-              const entry = variant === undefined
-                ? { providerID, modelID }
-                : { providerID, modelID, variant };
-              return {
-                favoriteModels: [entry, ...state.favoriteModels],
-              };
-            }
-          });
+          set((state) => ({ favoriteModels: toggleModelFavorite(state.favoriteModels, providerID, modelID, variant) }));
         },
 
         reorderFavoriteModel: (activeProviderID, activeModelID, overProviderID, overModelID) => {
           set((state) => {
-            const oldIndex = state.favoriteModels.findIndex(
-              (fav) => fav.providerID === activeProviderID && fav.modelID === activeModelID
+            const favoriteModels = reorderModelFavorite(
+              state.favoriteModels,
+              activeProviderID,
+              activeModelID,
+              overProviderID,
+              overModelID,
             );
-            const newIndex = state.favoriteModels.findIndex(
-              (fav) => fav.providerID === overProviderID && fav.modelID === overModelID
-            );
-
-            if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
-              return state;
-            }
-
-            const nextFavorites = state.favoriteModels.slice();
-            const [moved] = nextFavorites.splice(oldIndex, 1);
-            if (!moved) {
-              return state;
-            }
-            nextFavorites.splice(newIndex, 0, moved);
-            return { favoriteModels: nextFavorites };
+            return favoriteModels === state.favoriteModels ? state : { favoriteModels: favoriteModels as typeof state.favoriteModels };
           });
         },
 

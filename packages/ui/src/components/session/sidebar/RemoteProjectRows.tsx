@@ -2,7 +2,10 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { ContextMenu as BaseContextMenu } from '@base-ui/react/context-menu';
+import { dropdownMenuPopupClass, dropdownMenuSubTriggerClass } from '@/components/ui/dropdown-menu.styles';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
 import { cn, formatDirectoryName } from '@/lib/utils';
 import type { RemoteProject } from '@/lib/remote-projects/types';
@@ -13,6 +16,7 @@ import { SessionBusyIndicator } from '../SessionBusyIndicator';
 import { SortableProjectItem } from './sortableItems';
 import { formatSessionCompactDateLabel, renderHighlightedText } from './utils';
 import { TaskUnreadDot } from './TaskCardParts';
+import { SessionHoverDetails } from './SessionHoverDetails';
 import { DraggableSessionRow } from './sessionFolderDnd';
 import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
 import type { RemoteProjectShellProps, RemoteSummaryRowProps } from './remoteProjectPresentation';
@@ -52,8 +56,11 @@ export function PendingRemoteProjectRow({ project, loading, error, mobile, reord
 export function RemoteSummaryRow({ session, active, search, selected, pending, pinDisabled = pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, leading, card, depth = 1, onSelect, onMultiSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [hoverOpen, setHoverOpen] = React.useState(false);
+  const renameAfterMenu = React.useRef(false);
   const busy = status === 'busy' || status === 'retry';
   const title = session.title || t('sessions.sidebar.session.untitled');
+  const time = card ? formatSessionCompactDateLabel(session.time.updated ?? session.time.created ?? Date.now()) : '';
   const renderItems = (Item: React.ElementType) => <>
     <Item onClick={onMultiSelect}>{t('remoteProjects.selectSession', { title })}</Item>
     <Item disabled={pinDisabled} onClick={onPin}>{t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}</Item>
@@ -64,14 +71,11 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
     {folders.map((folder) => <Item key={folder.id} disabled={pending} onClick={() => onFolder(folder.id)}>{folder.name}</Item>)}
     <Item disabled={pending} onClick={onDelete} className="text-destructive focus:text-destructive">{t('sessions.sidebar.dialogs.deleteSession.titleAction')}</Item>
   </>;
-  return <DraggableSessionRow sessionId={dragItem.id} sessionDirectory={dragItem.directory} sessionTitle={title}>
-    <ContextMenu><ContextMenuTrigger>
-    <SessionRowLayout data-remote-session={session.id} data-session-row={session.id} data-session-scope={dragItem.directory} active={active} selected={selected}>
-    <SessionRowContent depth={depth}>
-      <SessionRowTitle title={title} onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey) onMultiSelect(); else onSelect(); }} onDoubleClick={onRename}
+  const titleButton = (
+      <SessionRowTitle title={card ? undefined : title} onClick={(event) => { if (!card && (event.metaKey || event.ctrlKey || event.shiftKey)) onMultiSelect(); else onSelect(); }} onDoubleClick={card ? undefined : onRename}
         className={card ? 'gap-0.5' : 'group-hover:pr-18 group-focus-within:pr-18'}>
         {card ? <>
-          <div className="flex h-5 w-full min-w-0 items-center gap-1 overflow-hidden group-hover:pr-18 group-focus-within:pr-18">
+          <div className="flex h-5 w-full min-w-0 items-center gap-1 overflow-hidden group-hover:pr-12 group-focus-within:pr-12">
             {leading}
             {card.badge}
             {unread > 0 && !busy ? <TaskUnreadDot /> : null}
@@ -79,16 +83,16 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
             <span className={cn('shrink-0 group-hover:invisible group-focus-within:invisible', menuOpen && 'invisible')}>
               {busy
                 ? <span className="inline-flex items-center gap-1 text-[10px] font-medium leading-none tabular-nums text-status-info" title={t('sessions.sidebar.session.status.active')}><SessionBusyIndicator size={10} arcColor="var(--status-info)" /></span>
-                : <span className={cn('text-[10px] leading-none tabular-nums', active || selected ? 'text-foreground/70' : 'text-muted-foreground/70')}>{formatSessionCompactDateLabel(session.time.updated ?? session.time.created ?? Date.now())}</span>}
+                : <span className={cn('text-[10px] leading-none tabular-nums', active || selected ? 'text-foreground/70' : 'text-muted-foreground/70')}>{time}</span>}
             </span>
           </div>
           <div className="flex w-full min-w-0 flex-1 items-center gap-1 overflow-hidden">
             <span className={cn('block min-w-0 flex-1 truncate text-[0.8125rem] text-foreground', unread > 0 && !busy ? 'font-medium' : 'font-normal')}>{renderHighlightedText(title, search)}</span>
           </div>
           <div className={cn('flex h-4 w-full min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-4', active || selected ? 'text-foreground/60' : 'text-muted-foreground/60')}>
-            {card.pathLabel ? <>
-              <span className="inline-flex size-3.5 shrink-0 items-center justify-center"><Icon name="folder-open" className="size-2.5" /></span>
-              <span className="min-w-0 flex-1 truncate">{card.pathLabel}</span>
+            {secondaryMeta?.branchLabel ? <>
+              <span className="inline-flex size-3.5 shrink-0 items-center justify-center"><Icon name="git-branch" className="size-2.5" /></span>
+              <span className="min-w-0 flex-1 truncate">{secondaryMeta.branchLabel}</span>
             </> : <span className="flex-1" />}
             {pinned ? <Icon name="pushpin-2-fill" className="size-2.5 shrink-0" aria-label={t('remoteProjects.unpin')} /> : null}
           </div>
@@ -115,13 +119,52 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
         ) : null}
         </>}
       </SessionRowTitle>
+  );
+  const row = <SessionRowLayout data-remote-session={session.id} data-session-row={session.id} data-session-scope={dragItem.directory} active={active} selected={selected}>
+    <SessionRowContent depth={depth}>
+      {card ? <Tooltip open={hoverOpen && !menuOpen} onOpenChange={(open) => setHoverOpen(open && !menuOpen)}>
+        <TooltipTrigger asChild>{titleButton}</TooltipTrigger>
+        <TooltipContent side="right" align="start" sideOffset={8} className="w-64 max-w-[min(16rem,calc(100vw-2rem))] px-3 py-2.5 text-left shadow-md">
+          {hoverOpen && !menuOpen ? <SessionHoverDetails session={session} title={title} time={time} projectLabel={secondaryMeta?.projectLabel}
+            branch={secondaryMeta?.branchLabel} remote={{ hostLabel: card.hostLabel, projectBadge: card.badge }} /> : null}
+        </TooltipContent>
+      </Tooltip> : titleButton}
     </SessionRowContent>
     <SessionRowActions visible={menuOpen} className={card ? 'top-1.5 translate-y-0' : undefined}>
     <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pinDisabled} onClick={onPin} aria-label={t(pinned ? 'remoteProjects.unpin' : 'remoteProjects.pin')}><Icon name={pinned ? 'pushpin-2-fill' : 'pushpin-2'} className="size-3.5" /></Button>
     <Button variant="ghost" size="icon" className="h-5 w-5" disabled={pending} onClick={onArchive} aria-label={t(session.time.archived ? 'remoteProjects.unarchive' : 'sessions.sidebar.bulkActions.archive')}><Icon name="archive" className="size-3.5" /></Button>
-    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-5 w-5" aria-label={t('remoteProjects.actions')}><Icon name="more-2" className="size-3.5" /></Button></DropdownMenuTrigger><DropdownMenuContent>
+    {!card ? <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-5 w-5" aria-label={t('remoteProjects.actions')}><Icon name="more-2" className="size-3.5" /></Button></DropdownMenuTrigger><DropdownMenuContent>
       {renderItems(DropdownMenuItem)}
-    </DropdownMenuContent></DropdownMenu>
+    </DropdownMenuContent></DropdownMenu> : null}
     </SessionRowActions>
-  </SessionRowLayout></ContextMenuTrigger><ContextMenuContent className="min-w-[180px]">{renderItems(ContextMenuItem)}</ContextMenuContent></ContextMenu></DraggableSessionRow>;
+  </SessionRowLayout>;
+  return <DraggableSessionRow sessionId={dragItem.id} sessionDirectory={dragItem.directory} sessionTitle={title}>
+    {card ? <ContextMenu open={menuOpen} onOpenChange={(open) => { setMenuOpen(open); if (open) setHoverOpen(false); }}
+      onOpenChangeComplete={(open) => { if (!open && renameAfterMenu.current) { renameAfterMenu.current = false; onRename(); } }}>
+      <ContextMenuTrigger render={row} />
+      <ContextMenuContent className="yuri-session-context-menu min-w-[180px]" finalFocus={() => !renameAfterMenu.current}>
+        <ContextMenuItem disabled={pinDisabled} onClick={onPin}><Icon name={pinned ? 'unpin' : 'pushpin'} className="mr-1 size-4" />{t(pinned ? 'sessions.sidebar.session.menu.unpin' : 'sessions.sidebar.session.menu.pin')}</ContextMenuItem>
+        <ContextMenuItem disabled={pending} onClick={onUnread}><Icon name={unread ? 'mail-open' : 'mail'} className="mr-1 size-4" />{t(unread ? 'sessions.sidebar.session.menu.markRead' : 'sessions.sidebar.session.menu.markUnread')}</ContextMenuItem>
+        <ContextMenuItem disabled={pending} onClick={() => { renameAfterMenu.current = true; }}><Icon name="pencil-ai" className="mr-1 size-4" />{t('sessions.sidebar.session.menu.rename')}</ContextMenuItem>
+        <ContextMenuSeparator />
+        <BaseContextMenu.SubmenuRoot>
+          <BaseContextMenu.SubmenuTrigger disabled={pending} className={dropdownMenuSubTriggerClass}><Icon name="folder" className="mr-1 size-4" />{t('sessions.sidebar.folders.moveToFolder')}<Icon name="arrow-right-s" className="ml-auto size-3.5" /></BaseContextMenu.SubmenuTrigger>
+          <BaseContextMenu.Portal><BaseContextMenu.Positioner className="app-region-no-drag z-50">
+            <BaseContextMenu.Popup data-slot="dropdown-menu-sub-content" className={cn(dropdownMenuPopupClass, 'yuri-session-context-menu min-w-[180px]')}>
+              {folders.length ? folders.map((folder) => (
+                <ContextMenuItem key={folder.id} onClick={() => onFolder(folder.id === card.folderId ? null : folder.id)}>
+                  <span className="flex-1 truncate">{folder.name}</span>
+                  {folder.id === card.folderId ? <Icon name="check" className="ml-2 size-3.5 shrink-0 text-primary" /> : null}
+                </ContextMenuItem>
+              )) : <ContextMenuItem disabled>{t('sessions.sidebar.folders.none')}</ContextMenuItem>}
+              {card.folderId ? <><ContextMenuSeparator /><ContextMenuItem onClick={() => onFolder(null)} className="text-destructive focus:text-destructive"><Icon name="close" className="mr-1 size-4" />{t('sessions.sidebar.folders.removeFromFolder')}</ContextMenuItem></> : null}
+            </BaseContextMenu.Popup>
+          </BaseContextMenu.Positioner></BaseContextMenu.Portal>
+        </BaseContextMenu.SubmenuRoot>
+        <ContextMenuSeparator />
+        <ContextMenuItem disabled={pending} onClick={onArchive}><Icon name="inbox-archive" className="mr-1 size-4" />{t('sessions.sidebar.bulkActions.archive')}</ContextMenuItem>
+        <ContextMenuItem disabled={pending} onClick={onDelete} className="text-destructive/80 focus:text-destructive/80"><Icon name="delete-bin" className="mr-1 size-4 text-inherit" />{t('sessions.sidebar.bulkActions.delete')}</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu> : <ContextMenu><ContextMenuTrigger>{row}</ContextMenuTrigger><ContextMenuContent className="min-w-[180px]">{renderItems(ContextMenuItem)}</ContextMenuContent></ContextMenu>}
+  </DraggableSessionRow>;
 }

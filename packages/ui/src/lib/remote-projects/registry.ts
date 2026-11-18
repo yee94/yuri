@@ -58,7 +58,7 @@ export class HostRuntimeRegistry {
 
   async requestHost(hostId: string, resource: string, init?: RuntimeFetchOptions): Promise<Response> {
     this.assertCurrent();
-    if (!hostId || !/^(?:projects|subscriptions|connect|summaries)(?:\/[^?#]*)?$/.test(resource)) {
+    if (!hostId || !/^(?:projects|subscriptions|connect|summaries|model-favorites)(?:\/[^?#]*)?$/.test(resource)) {
       throw new Error('Invalid Remote Host control resource');
     }
     const response = await this.dependencies.fetch(`/api/hosts/${encodeURIComponent(hostId)}/${resource}`, init);

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useModelLists, type ModelListItem } from './useModelLists';
+import { useModelLists, type ModelListItem, type UseModelListsOptions } from './useModelLists';
 
 const providers = [
   {
@@ -43,10 +43,7 @@ type ModelListsResult = {
   recentModelsList: ModelListItem[];
 };
 
-async function renderLists(options?: {
-  currentProviderID?: string | null;
-  currentModelID?: string | null;
-}): Promise<ModelListsResult> {
+async function renderLists(options?: UseModelListsOptions): Promise<ModelListsResult> {
   const box: { current: ModelListsResult | null } = { current: null };
   const Probe = () => {
     box.current = useModelLists(options);
@@ -160,5 +157,23 @@ describe('useModelLists current selection pin', () => {
         variant: 'low',
       }),
     ]);
+  });
+
+  test('resolves surface-owned favorites against the surface catalog, not the local favorites', async () => {
+    useUIStore.setState({ favoriteModels: [{ providerID: 'openai', modelID: 'gpt-4.1' }] });
+
+    const { favoriteModelsList, recentModelsList } = await renderLists({
+      providers: [{ id: 'remote', name: 'Remote', models: [{ id: 'm1', name: 'M1' }, { id: 'm2', name: 'M2' }] }] as never,
+      favoriteModels: [
+        { providerID: 'remote', modelID: 'm2', variant: 'high' },
+        { providerID: 'openai', modelID: 'gpt-4.1' },
+      ],
+      currentProviderID: 'remote',
+      currentModelID: 'm2',
+    });
+
+    expect(favoriteModelsList.map((item) => `${item.providerID}/${item.modelID}`)).toEqual(['remote/m2']);
+    expect(favoriteModelsList[0]?.variant).toBe('high');
+    expect(recentModelsList).toEqual([]);
   });
 });

@@ -5,6 +5,8 @@ import type { ConfigCatalogModel, ConfigCatalogProvider } from '@/types/configCa
 
 type ProviderModel = ConfigCatalogModel;
 type ProviderWithModelList = Omit<ConfigCatalogProvider, 'models'> & { models: ProviderModel[] };
+export type ModelListProvider = ProviderWithModelList;
+export type ModelListRef = { providerID: string; modelID: string; variant?: string };
 
 export interface ModelListItem {
   provider: ProviderWithModelList;
@@ -19,6 +21,10 @@ export interface UseModelListsOptions {
   /** Session/current selection — pinned to the top of recent when not already a favorite. */
   currentProviderID?: string | null;
   currentModelID?: string | null;
+  /** Catalog the lists resolve against; defaults to the local config store. */
+  providers?: ReadonlyArray<ProviderWithModelList>;
+  /** Favorites owned by the surface (e.g. a remote machine); defaults to the local favorites. */
+  favoriteModels?: ReadonlyArray<ModelListRef>;
 }
 
 function resolveListItem(
@@ -42,8 +48,10 @@ function resolveListItem(
 }
 
 export const useModelLists = (options?: UseModelListsOptions) => {
-  const providers = useConfigStore((state) => state.providers);
-  const favoriteModels = useUIStore((state) => state.favoriteModels);
+  const storedProviders = useConfigStore((state) => state.providers);
+  const storedFavoriteModels = useUIStore((state) => state.favoriteModels);
+  const providers = (options?.providers ?? storedProviders) as ProviderWithModelList[];
+  const favoriteModels = options?.favoriteModels ?? storedFavoriteModels;
   const recentModels = useUIStore((state) => state.recentModels);
   const hiddenModels = useUIStore((state) => state.hiddenModels);
   const currentProviderID = options?.currentProviderID ?? null;

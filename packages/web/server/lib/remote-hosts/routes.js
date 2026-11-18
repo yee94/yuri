@@ -10,6 +10,8 @@ import { projectRemoteConfiguration } from './configuration.js';
 import { RUNTIME_CONTRACT_MIN_VERIFIED } from '../opencode/runtime-contract.js';
 import { parseFilePreviewPath, replaceFilePreviewUrlAuthToken } from '../preview/file-preview-path.js';
 
+const MODEL_FAVORITE_LIMIT = 64;
+const MODEL_REF_FIELD_MAX = 256;
 const websocketPath = (path) => path === '/api/terminal/ws' || path === '/api/gui-network/ws' || path.startsWith('/api/preview/proxy/');
 const safeRoute = (route, method) => {
   if (!route.startsWith('/api/') || /[\\\r\n]/.test(route)) return false;
@@ -223,6 +225,48 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
   app.get('/api/hosts/projects', (_req, res) => res.json({ projects: store.projects() }));
   app.get('/api/hosts/:hostId/summaries', (req, res) => {
     try { res.json(gateway.summaries(req.params.hostId)); } catch (error) { report(res, error); }
+  });
+  // Favorite models belong to the target machine's own settings. Raw settings stay outside the
+  // client proxy, so only this one field is read and written through, with the body rebuilt here.
+  const readFavoriteModels = (value, strict) => {
+    if (!Array.isArray(value)) { if (strict) throw remoteFailure('validation_error', 400); return []; }
+    if (strict && value.length > MODEL_FAVORITE_LIMIT) throw remoteFailure('validation_error', 400);
+    const seen = new Set();
+    const refs = [];
+    for (const item of value) {
+      const field = (name) => (typeof item?.[name] === 'string' ? item[name].trim() : '');
+      const providerID = field('providerID');
+      const modelID = field('modelID');
+      const variant = field('variant');
+      const valid = providerID && modelID && providerID.length <= MODEL_REF_FIELD_MAX && modelID.length <= MODEL_REF_FIELD_MAX
+        && variant.length <= MODEL_REF_FIELD_MAX;
+      if (!valid) { if (strict) throw remoteFailure('validation_error', 400); continue; }
+      const key = `${providerID}\0${modelID}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      refs.push(variant ? { providerID, modelID, variant } : { providerID, modelID });
+      if (refs.length >= MODEL_FAVORITE_LIMIT) break;
+    }
+    return refs;
+  };
+  const favoriteModelsHost = (hostId) => {
+    if (!store.projects(hostId).length) throw remoteFailure('project_not_found', 404);
+    return hostId;
+  };
+  app.get('/api/hosts/:hostId/model-favorites', async (req, res) => {
+    try {
+      const settings = await gateway.json(favoriteModelsHost(req.params.hostId), '/api/config/settings', { signal: req.remoteHostSignal });
+      res.json({ favoriteModels: readFavoriteModels(settings?.favoriteModels, false) });
+    } catch (error) { report(res, error); }
+  });
+  app.put('/api/hosts/:hostId/model-favorites', parseMutation, async (req, res) => {
+    try {
+      const hostId = favoriteModelsHost(req.params.hostId);
+      const favoriteModels = readFavoriteModels(req.body?.favoriteModels, true);
+      const settings = await gateway.json(hostId, '/api/config/settings', { method: 'PUT', signal: req.remoteHostSignal,
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ favoriteModels }) });
+      res.json({ favoriteModels: readFavoriteModels(settings?.favoriteModels, false) });
+    } catch (error) { report(res, error); }
   });
   for (const method of ['post', 'delete']) {
     app[method]('/api/hosts/:hostId/api/yuri/session-index/session/:id/pin', (req, res) => {

@@ -1105,7 +1105,7 @@ export const useKeyboardShortcuts = () => {
           isSessionSwitcherOpen,
           isAboutDialogOpen,
           activeMainTab,
-          favoriteModels,
+          favoriteModels: storedFavoriteModels,
           addRecentModel,
         } = useUIStore.getState();
 
@@ -1115,6 +1115,8 @@ export const useKeyboardShortcuts = () => {
 
         const hasOverlay = isCommandPaletteOpen || isHelpDialogOpen || isSessionSwitcherOpen || isAboutDialogOpen;
         const isComposerActive = isChatComposerMainTab(activeMainTab);
+        const surface = getActiveChatInputSurface();
+        const favoriteModels = surface?.selection.favorites?.models ?? storedFavoriteModels;
 
         if (hasOverlay || !isComposerActive || favoriteModels.length === 0) {
           return;
@@ -1124,7 +1126,6 @@ export const useKeyboardShortcuts = () => {
 
         const len = favoriteModels.length;
         const delta = eventMatchesShortcut(e, combo('cycle_favorite_model_forward')) ? 1 : -1;
-        const surface = getActiveChatInputSurface();
         if (surface?.selection.change) {
           const currentProviderId = surface.selection.value.providerID;
           const currentModelId = surface.selection.value.modelID;
@@ -1132,7 +1133,9 @@ export const useKeyboardShortcuts = () => {
             (f) => f.providerID === currentProviderId && f.modelID === currentModelId,
           );
           const next = favoriteModels[(currentIdx + delta + len) % len];
-          const providers = useConfigStore.getState().providers;
+          const providers = surface.selection.favorites && surface.selection.catalog
+            ? surface.selection.catalog.providers
+            : useConfigStore.getState().providers;
           const provider = providers.find((entry) => entry.id === next.providerID);
           const model = provider?.models?.find((entry) => entry.id === next.modelID) as { variants?: Record<string, unknown> } | undefined;
           const availableVariants = model?.variants ? Object.keys(model.variants) : [];

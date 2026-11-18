@@ -134,7 +134,11 @@ short reads in `finally` and retain background watch demand until settlement.
 - `PATCH /api/hosts/:hostId/projects/:projectId`: remote metadata write-through;
   cache updates only on successful authority response.
 - `DELETE` on that path removes only the reference.
-- `GET /api/hosts/:hostId/summaries`: immediate SQLite snapshot, stale marker,
+- `GET`/`PUT /api/hosts/:hostId/model-favorites`: the target machine's own
+  `favoriteModels`, read and written through `/api/config/settings` with only that
+  field rebuilt on the Hub (64 entries, variants kept, invalid writes rejected with
+  400). Hosts without a registered project return 404. This is the single settings
+  field exposed through the Hub; raw settings stay outside the proxy.- `GET /api/hosts/:hostId/summaries`: immediate SQLite snapshot, stale marker,
    connection receipts and unread/folder/order snapshots. Offline live status is
   `metadata.yuri.sessionStatus = {type:'unknown',lastKnown}`.
   Opening a replacement status stream does not make persisted activity live:

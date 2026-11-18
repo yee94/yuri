@@ -2,6 +2,7 @@ import React from 'react';
 import { useEvent } from '@reactuses/core';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Icon } from '@/components/icon/Icon';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useI18n } from '@/lib/i18n';
 import { HostRuntimeProvider } from '@/contexts/HostRuntimeProvider';
@@ -30,7 +31,7 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
   const { t } = useI18n();
   const model = useRemoteProjectSectionModel(props);
   const { data, pending, editor } = model;
-  const { online, snapshot } = data;
+  const { host, online, snapshot } = data;
   React.useEffect(() => {
     if (data.error) toast.error(data.error, { id: `remote-project:${project.id}:load` });
   }, [data.error, project.id]);
@@ -73,7 +74,9 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
   React.useEffect(() => () => onActivityItems?.(project.id, []), [project.id, onActivityItems]);
   const publishTasks = useEvent(() => {
     if (!props.onTaskItems) return;
-    const hostIndicator = <RemoteHostIndicator registry={registry} hostId={project.hostId} remoteState={project.remoteState} isolateLongPress />;
+    const hostIndicator = <span data-remote-host={project.hostId} aria-hidden="true" className="inline-flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
+      <Icon name="computer" className="size-3" />
+    </span>;
     // The remote project's own icon, drawn at the task card's mark size.
     const badge = project.iconImage
       ? <span className="inline-flex size-3.5 shrink-0 items-center justify-center"><RemoteProjectIcon project={project} registry={registry} className="size-3.5" /></span>
@@ -84,7 +87,10 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
         const directory = session.directory || project.path;
         const identity = locationSessionKey({ hubId: registry.hubId, hostId: project.hostId, directory }, session.id);
         const secondaryMeta = { projectLabel: model.projectProps.label };
-        const rowProps = { ...model.sessionProps(session, directory), dragItem: { directory, id: identity }, secondaryMeta, leading: hostIndicator, card: { badge, pathLabel: directory } };
+        const sessionProps = model.sessionProps(session, directory);
+        const folderId = snapshot?.folders?.foldersMap[directory]?.find((folder) => folder.sessionIds.includes(session.id))?.id;
+        const rowProps = { ...sessionProps, dragItem: { directory, id: identity }, secondaryMeta, leading: hostIndicator,
+          card: { badge, hostLabel: host?.name ?? project.hostId, folderId } };
         const status = (session.metadata as { yuri?: { sessionStatus?: { type?: string } } } | undefined)?.yuri?.sessionStatus?.type;
         return { node: { session: { ...session, id: identity }, children: [], worktree: null }, projectId: project.id, groupDirectory: directory,
           identity, remoteSessionId: session.id, pinned: data.pinnedIds.has(session.id), secondaryMeta,
@@ -92,7 +98,7 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
           content: <RemoteSummaryRow {...rowProps} depth={0} /> };
       }));
   });
-  React.useLayoutEffect(() => { publishTasks(); }, [publishTasks, data.rows, data.pinnedIds, snapshot, online, pending, model.selectedSession, project, registry, props.onTaskItems]);
+  React.useLayoutEffect(() => { publishTasks(); }, [publishTasks, data.rows, data.pinnedIds, snapshot, host?.name, online, pending, model.selectedSession, project, registry, props.onTaskItems]);
   const { onTaskItems } = props;
   React.useEffect(() => () => onTaskItems?.(project.id, []), [project.id, onTaskItems]);
   const editorDialog = editor ? <Dialog open onOpenChange={(open) => { if (!open && !pending) model.setEditor(null); }}><DialogContent><DialogHeader><DialogTitle>{t(editor.kind === 'title' ? 'sessions.sidebar.session.menu.rename' : editor.kind === 'project' ? 'sessions.sidebar.project.actions.edit' : 'remoteProjects.newFolder')}</DialogTitle></DialogHeader>

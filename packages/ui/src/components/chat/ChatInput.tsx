@@ -1794,9 +1794,10 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         },
         onChange: handleModelControlsSelectionChange,
         requestCatalog: surface.selection?.requestCatalog,
+        favorites: surface.selection?.favorites,
         disabled: !surface.active,
         catalog: selectionCatalog,
-    }), [selectionCatalog, handleModelControlsSelectionChange, selectionValue.agent, selectionValue.modelID, selectionValue.providerID, selectionValue.variant, surface.active, surface.selection?.requestCatalog]);
+    }), [selectionCatalog, handleModelControlsSelectionChange, selectionValue.agent, selectionValue.modelID, selectionValue.providerID, selectionValue.variant, surface.active, surface.selection?.requestCatalog, surface.selection?.favorites]);
 
     // Session switch drops a previous conversation's user-pick hold and restore key.
     React.useEffect(() => {

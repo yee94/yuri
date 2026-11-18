@@ -6,6 +6,7 @@ import { locationKey, REMOTE_NEW_SESSION_DRAFT_ID } from '@/lib/remote-projects/
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import { HostRuntimeProvider, useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { useRemoteHostCatalog, getHostRuntimeRegistry, type RemoteHostSummaries } from '@/queries/remoteProjectQueries';
+import { useRemoteModelFavorites } from '@/queries/remoteModelFavoriteQueries';
 import { providerCatalogQueryOptions, rawAgentsQueryOptions } from '@/queries/configCatalogQueries';
 import { createRemoteSessionState } from '@/sync/remote-session-state';
 import { RemoteChatContext, getRemoteChatOwner } from '@/sync/remote-chat-context';
@@ -216,7 +217,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     return () => { cancelled = true; };
   }, [useInputStore, draftKey, hydrateDraft, draftOptions?.initialPrompt, draftOptions?.syntheticParts, location, sessionId]);
   const registry = useHostRuntime()!.registry;
-  useRemoteOperationError(registry, location.hostId!, active ? draftError : null, async () => {
+  const favorites = useRemoteModelFavorites(registry, location.hostId!, active, report);  useRemoteOperationError(registry, location.hostId!, active ? draftError : null, async () => {
     try { await hydrateDraft(() => !isMounted()); if (isMounted()) setDraftError(null); }
     catch (error) { if (isMounted()) setDraftError(error instanceof Error ? error.message : String(error)); }
   });
@@ -433,7 +434,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     sessionID: sessionId ?? 'remote-new-session', directory: location.directory, draftKey, transportIdentity, runtimeGeneration,
     deliveryTarget: { kind: 'primary' }, queue: { scope: null },
     commands: { sessionID: sessionId, hasMessages: messages.length > 0, hasNewDraft: !sessionId },
-    selection: { value: selection, change, requestCatalog, flush: async () => { assertWritable(); }, catalog: { providers, agents: agentsQuery.data ?? [], ready: !catalogDemand && !modelPickerOpen || providersQuery.isSuccess && agentsQuery.isSuccess, error: providersQuery.isError || agentsQuery.isError } },
+    selection: { value: selection, change, requestCatalog, favorites, flush: async () => { assertWritable(); }, catalog: { providers, agents: agentsQuery.data ?? [], ready: !catalogDemand && !modelPickerOpen || providersQuery.isSuccess && agentsQuery.isSuccess, error: providersQuery.isError || agentsQuery.isError } },
     resources, activity: { phase: snapshot.status?.type ?? 'unknown', canAbort: busy },
     permissionPolicy: sessionId && policy.data ? { enabled: policy.data[sessionId] === true, saving: policyMutation.isPending, change: (enabled) => policyMutation.mutateAsync(enabled) } : undefined,
     backend: { send, sendQueued: send, create: send,

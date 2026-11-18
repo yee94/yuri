@@ -224,6 +224,14 @@ recent, −8 per step, from `recencyOrder`, the raw usage history including
 favorites) and +8 for favorites. Remembered thinking variants survive ranking.
 Other consumers keep the collapsible, section-filtered list.
 
+Favorites follow the surface that owns the composer. Local surfaces use
+`useUIStore.favoriteModels`; a Remote Project surface supplies
+`ChatInputSelection.favorites` from the target machine's own settings
+(`queries/remoteModelFavoriteQueries`, one cache entry per Hub/Host, optimistic
+edits written in order, reload plus error on a failed write). `useModelLists`
+then resolves those favorites and recents against the surface catalog, and the
+favorite-cycle shortcut reads the same list, so the local favorites never leak
+into a remote picker. Recents stay local and are filtered by the surface catalog.
 The mobile `MobileModelPickerPanel` has the same capabilities through its own
 layout (it is not virtualized): a 40px icon rail ("All" plus selectable providers,
 selected provider first) beside one continuous list with sticky plain group labels

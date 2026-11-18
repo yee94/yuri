@@ -10,7 +10,7 @@ import { useGitStore } from '@/stores/useGitStore';
 import { TaskProjectBadge, type TaskProjectMark } from './TaskCardParts';
 
 /** Mounted only for the open hover card. Reads metadata, never fetches a transcript or probes git/hosts. */
-export function SessionHoverDetails({ session, title, projectLabel, project, branch, directory, time }: {
+export function SessionHoverDetails({ session, title, projectLabel, project, branch, directory, time, remote }: {
   session: Session;
   title: string;
   projectLabel?: string | null;
@@ -18,12 +18,14 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
   branch?: string | null;
   directory?: string | null;
   time: string;
+  remote?: { hostLabel: string; projectBadge: ReactNode };
 }) {
   const { t } = useI18n();
-  const currentBranch = useGitStore((state) => directory ? state.directories.get(directory)?.status?.current : undefined);
+  const currentBranch = useGitStore((state) => !remote && directory ? state.directories.get(directory)?.status?.current : undefined);
   const modelLabel = useConfigStore((state) => {
     const model = session.model;
     if (!model) return null;
+    if (remote) return model.id;
     return state.directoryScoped[getConfigDirectoryKey(directory)]?.providers.find((provider) => provider.id === model.providerID)
       ?.models.find((candidate) => candidate.id === model.id)?.name ?? model.id;
   });
@@ -34,8 +36,8 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
   const host = inventory?.hosts.find((candidate) => hostId
     ? candidate.id === hostId
     : Boolean(apiUrl && locationMatchesHost(apiUrl, getDesktopHostApiUrl(candidate))));
-  const hostLabel = host ? redactSensitiveUrl(host.label)
-    : isDesktopLocalOriginActive() ? t('desktopHostSwitcher.instance.local') : null;
+  const hostLabel = remote?.hostLabel ?? (host ? redactSensitiveUrl(host.label)
+    : isDesktopLocalOriginActive() ? t('desktopHostSwitcher.instance.local') : null);
   const mismatchedBranch = Boolean(branch && currentBranch && currentBranch !== 'HEAD' && currentBranch !== branch);
 
   return (
@@ -46,7 +48,7 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
       </div>
       {projectLabel ? (
         <div className="flex min-w-0 items-center gap-2 typography-meta text-muted-foreground">
-          <TaskProjectBadge project={project} />
+          {remote?.projectBadge ?? <TaskProjectBadge project={project} />}
           <span className="min-w-0 break-words">{projectLabel}</span>
         </div>
       ) : null}
@@ -77,3 +79,4 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
     </div>
   );
 }
+import type { ReactNode } from 'react';
