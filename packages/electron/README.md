@@ -146,6 +146,12 @@ reconnect screen instead. A window is treated as SSH-bound by its `host:` runtim
 key or, after a reload drops that key, by its endpoint matching a saved SSH Host
 tunnel. The reconnect screen names the Host, explains that no password is needed,
 and offers a retry plus the local SSH instance manager.
+
+On OS resume the shell probes every ready SSH tunnel end to end (`/health` with a
+timeout, a few attempts) because a forward whose SSH link died during sleep still
+accepts local TCP connections and passes the monitor. Only unresponsive tunnels
+are rebuilt, with `preserveRemote` so the remote Yuri server, its running
+sessions and its in-memory UI password survive and the reconnect reuses it.
 Startup/quit snapshots cannot overwrite the session with partially opened/closed
 windows, and shutdown waits for the final settings write. Legacy settings without
 `desktopWindowStates` retain single-window geometry/default-Host behavior. An

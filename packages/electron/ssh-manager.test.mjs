@@ -446,6 +446,50 @@ describe('ElectronSshManager', () => {
     expect(manager.ensureConnected).toHaveBeenCalledTimes(2);
   });
 
+  test('recoverAfterResume rebuilds only tunnels that stop answering, preserving the remote server', async () => {
+    const server = http.createServer((_req, res) => res.writeHead(200).end('ok'));
+    const healthyPort = Number(new URL(await listen(server)).port);
+    const deadServer = http.createServer();
+    const deadPort = Number(new URL(await listen(deadServer)).port);
+    await new Promise((resolve) => deadServer.close(resolve));
+    const manager = new ElectronSshManager({ settingsFilePath: '/unused/settings.json', appVersion: '0.0.0-test', emit: () => undefined });
+    for (const [id, localPort] of [['healthy', healthyPort], ['dead', deadPort]]) {
+      manager.sessions.set(id, { localPort });
+      manager.statuses.set(id, { id, phase: 'ready' });
+    }
+    manager.disconnectInternal = vi.fn(async (id) => { manager.sessions.delete(id); });
+    manager.connect = vi.fn(async () => undefined);
+
+    await manager.recoverAfterResume({ settleMs: 0, attempts: 2 });
+
+    expect(manager.disconnectInternal).toHaveBeenCalledExactlyOnceWith('dead', false, { preserveRemote: true });
+    expect(manager.connect).toHaveBeenCalledExactlyOnceWith('dead');
+  });
+
+  test('a preserving disconnect keeps the remote server and its UI password even without keepRunning', async () => {
+    const manager = new ElectronSshManager({ settingsFilePath: '/unused/settings.json', appVersion: '0.0.0-test', emit: () => undefined });
+    const kill = vi.fn();
+    manager.stopRemoteServerBestEffort = vi.fn(async () => undefined);
+    manager.ephemeralUiPasswords.set('ssh-1', 'ephemeral-secret');
+    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-ssh-manager-test-'));
+    tempDirs.push(sessionDir);
+    manager.sessions.set('ssh-1', {
+      startedByUs: true,
+      instance: { remoteYuri: { mode: 'managed', keepRunning: false } },
+      parsed: { destination: 'invalid.invalid', args: [] },
+      controlPath: path.join(sessionDir, 'missing-control'),
+      sessionDir,
+      master: { kill },
+      mainForward: { kill },
+    });
+
+    await manager.disconnectInternal('ssh-1', false, { preserveRemote: true });
+
+    expect(manager.stopRemoteServerBestEffort).not.toHaveBeenCalled();
+    expect(manager.ephemeralUiPasswords.get('ssh-1')).toBe('ephemeral-secret');
+    expect(kill).toHaveBeenCalledTimes(2);
+  });
+
   test('getRoutingTable includes only ready sessions with a finite localPort', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuri-ssh-manager-test-'));
     tempDirs.push(tempDir);

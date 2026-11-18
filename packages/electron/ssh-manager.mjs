@@ -99,6 +99,9 @@ const MAX_LOG_LINES_PER_INSTANCE = 1200;
 
 const MONITOR_INITIAL_POLL_MS = 2000;
 const MONITOR_STEADY_POLL_MS = 10000;
+const RESUME_PROBE_SETTLE_MS = 3000;
+const RESUME_PROBE_ATTEMPTS = 3;
+const RESUME_PROBE_TIMEOUT_MS = 4000;
 const MONITOR_STABILIZE_TICKS = 5;
 const SSH_STATUS_EVENT = 'yuri:ssh-instance-status';
 const WINDOWS_HIDDEN_SPAWN_OPTIONS = process.platform === 'win32' ? { windowsHide: true } : {};
@@ -1088,6 +1091,18 @@ const isLocalTunnelReachable = async (localPort) => {
     socket.once('error', () => finish(false));
     socket.setTimeout(500, () => finish(false));
   });
+};
+
+// A half-open SSH link still accepts local TCP connections; only a response
+// carried end to end proves the remote side is alive.
+const isTunnelResponsive = async (localPort) => {
+  try {
+    const response = await fetch(`http://127.0.0.1:${localPort}/health`, { signal: AbortSignal.timeout(RESUME_PROBE_TIMEOUT_MS) });
+    await response.body?.cancel();
+    return response.ok || response.status === 401;
+  } catch {
+    return false;
+  }
 };
 
 const waitLocalForwardReady = async (localPort) => {
@@ -2780,7 +2795,7 @@ find_opencode
     }
   }
 
-  async disconnectInternal(id, reportIdle) {
+  async disconnectInternal(id, reportIdle, { preserveRemote = false } = {}) {
     const timer = this.monitorTimers.get(id);
     if (timer) {
       clearTimeout(timer);
@@ -2789,7 +2804,7 @@ find_opencode
 
     const session = this.sessions.get(id);
     this.sessions.delete(id);
-    const keepRemoteRunning = Boolean(
+    const keepRemoteRunning = preserveRemote || Boolean(
       session?.startedByUs
       && session?.instance?.remoteYuri?.mode === 'managed'
       && session.instance.remoteYuri.keepRunning,
@@ -2799,7 +2814,7 @@ find_opencode
     }
 
     if (session) {
-      if (session.startedByUs && session.instance.remoteYuri.mode === 'managed' && !session.instance.remoteYuri.keepRunning) {
+      if (!keepRemoteRunning && session.startedByUs && session.instance.remoteYuri.mode === 'managed') {
         await this.stopRemoteServerBestEffort(session.parsed, session.controlPath, session.remotePort);
       }
       await stopControlMasterBestEffort(session.parsed, session.controlPath);
@@ -3013,6 +3028,34 @@ find_opencode
       }
     };
     this.monitorTimers.set(id, setTimeout(tick, MONITOR_INITIAL_POLL_MS));
+  }
+
+  /**
+   * After the OS wakes, the local forward still accepts connections even when
+   * the SSH link behind it died during sleep, so the monitor's TCP probe keeps
+   * reporting ready. Probe each ready tunnel end to end and rebuild only the
+   * local SSH side of unresponsive ones; the remote server, its running
+   * sessions and its UI password are preserved so the reconnect reuses it.
+   */
+  async recoverAfterResume({ settleMs = RESUME_PROBE_SETTLE_MS, attempts = RESUME_PROBE_ATTEMPTS } = {}) {
+    const ids = [...this.sessions.keys()].filter((id) => this.statuses.get(id)?.phase === 'ready' && !this.connecting.has(id));
+    await Promise.all(ids.map(async (id) => {
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, settleMs));
+        const session = this.sessions.get(id);
+        if (!session || this.connecting.has(id) || this.statuses.get(id)?.phase !== 'ready') return;
+        if (await isTunnelResponsive(session.localPort)) return;
+      }
+      if (!this.sessions.has(id) || this.connecting.has(id)) return;
+      this.appendLogWithLevel(id, 'WARN', 'SSH tunnel unresponsive after system resume. Reconnecting');
+      this.setStatus(id, 'degraded', 'SSH tunnel unresponsive after system resume. Reconnecting', null, null, null, false, 0, false);
+      await this.disconnectInternal(id, false, { preserveRemote: true });
+      try {
+        await this.connect(id);
+      } catch {
+        // connect() already logged the failure and published the error status.
+      }
+    }));
   }
 
   async ensureConnected(id) {

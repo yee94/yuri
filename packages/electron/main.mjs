@@ -6580,6 +6580,7 @@ app.whenReady().then(async () => {
   // reconnect immediately instead of waiting for the heartbeat watchdog.
   powerMonitor.on('resume', () => {
     emitToAllWindows('yuri:system-resume', { timestamp: Date.now() });
+    void sshManager.recoverAfterResume().catch((error) => log.warn('[electron] SSH resume recovery failed:', error));
   });
 }).catch((error) => {
   log.error('[electron] startup failed:', error);
