@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { fetchOpenCodeGoUsage } from './opencodeGoQuota';
+import { fetchOpenCodeGoKeyUsage, fetchOpenCodeGoUsage } from './opencodeGoQuota';
 import { readCredential } from './quotaCredentials';
 
 const execFileAsync = promisify(execFile);
@@ -364,7 +364,8 @@ const durationToSeconds = (duration?: number, unit?: string) => {
 export const listConfiguredQuotaProviders = async () => {
   const auth = await readOpenCodeCredentials();
   const configured = new Set<string>();
-  if (readCredential('opencode-go')) configured.add('opencode-go');
+  const opencodeGoAuth = normalizeAuthEntry(getAuthEntry(auth, ['opencode-go']));
+  if (readCredential('opencode-go') || (opencodeGoAuth && ((opencodeGoAuth as Record<string, unknown>).key || (opencodeGoAuth as Record<string, unknown>).token))) configured.add('opencode-go');
   if (readCredential('ollama-cloud')) configured.add('ollama-cloud');
   if (readCredential('cursor')) configured.add('cursor');
 
@@ -2449,12 +2450,26 @@ export const fetchQuotaForProvider = async (providerId: string): Promise<Provide
       return fetchXaiQuota();
     case 'opencode-go': {
       const credential = readCredential('opencode-go') as { workspaceId: string; authCookie: string } | null;
-      if (!credential) return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: false, error: 'Not configured' });
-      try {
-        return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(credential) } });
-      } catch (error) {
-        return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: true, error: error instanceof Error ? error.message : 'Request failed' });
+      const auth = await readOpenCodeCredentials().catch((error) => { if (!credential) throw error; return null; });
+      const entry = auth ? normalizeAuthEntry(getAuthEntry(auth, ['opencode-go'])) as Record<string, unknown> | null : null;
+      const apiKey = (entry?.key as string | undefined) ?? (entry?.token as string | undefined);
+      if (!credential && !apiKey) return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: false, error: 'Not configured' });
+      let failure: unknown = null;
+      if (apiKey) {
+        try {
+          return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoKeyUsage(apiKey) } });
+        } catch (error) {
+          failure = error;
+        }
       }
+      if (credential) {
+        try {
+          return buildResult({ providerId, providerName: 'OpenCode Go', ok: true, configured: true, usage: { windows: await fetchOpenCodeGoUsage(credential) } });
+        } catch (error) {
+          failure = error;
+        }
+      }
+      return buildResult({ providerId, providerName: 'OpenCode Go', ok: false, configured: true, error: failure instanceof Error ? failure.message : 'Request failed' });
     }
     case 'cursor':
       return fetchCursorQuota();

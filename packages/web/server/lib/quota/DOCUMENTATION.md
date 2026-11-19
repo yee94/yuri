@@ -31,7 +31,7 @@ These provider IDs are currently dispatchable via `fetchQuotaForProvider(provide
 | `minimax-cn-coding-plan` | MiniMax Coding Plan (minimaxi.com) | `providers/minimax-cn-coding-plan.js` / `providers/minimax-shared.js` | `minimax-cn-coding-plan` |
 | `ollama-cloud` | Ollama Cloud | `providers/ollama-cloud.js` | Manual cookie stored under `~/.config/yuri/quota/` |
 | `wafer` | Wafer.ai | `providers/wafer.js` | `wafer`, `wafer-ai`, `wafer_ai`, `wafer.ai` |
-| `opencode-go` | OpenCode Go | `providers/opencode-go.js` | Manual workspace ID and auth cookie stored under `~/.config/yuri/quota/` |
+| `opencode-go` | OpenCode Go | `providers/opencode-go.js` | OpenCode API key (`opencode-go`) queried at `https://opencode.ai/zen/go/v1/usage` with Bearer auth and a generated `x-opencode-session`; falls back to a manual workspace ID and auth cookie stored under `~/.config/yuri/quota/` (dashboard scrape) when the key is absent or refused |
 | `xai` | Grok | `providers/xai.js` | Grok Build CLI login state (`~/.grok/auth.json`; override via `GROK_HOME`, `GROK_AUTH_PATH`, or `YURI_GROK_AUTH_PATH`) |
 
 ## Magpie aggregate source
