@@ -161,6 +161,16 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
   };
   const current = (connection) => !stopped && !connection.controller.signal.aborted
     && connections.get(connection.host.id) === connection;
+  // `ready` caches the transport together with the address and credentials captured by `prepareHost`.
+  // Only an authorization failure used to clear it, so a transport that died with the remote machine
+  // (new forwarded port, rotated token) was retried forever. `expected` guards against clearing a
+  // replacement that a concurrent `ensure` already built.
+  const dropTransport = (connection, expected = connection.ready) => {
+    if (!connection.ready || connection.ready !== expected || connection.preparing) return;
+    connection.ready = null;
+    connection.transport?.close();
+    connection.transport = null;
+  };
   const resolveHost = async (id) => {
     if (stopped) throw remoteFailure('host_unavailable', 404);
     const host = (await descriptors()).find((entry) => entry.id === id);
@@ -442,12 +452,22 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     connection.reader = createUpstreamSseReader({
       buildUrl: () => 'http://remote.invalid/api/hosts/status-stream',
       fetchImpl: async (_url, init) => {
+        let connected;
+        let ready;
         try {
-          const connected = await ensure(id);
-          return connected.transport.fetch('/api/hosts/status-stream', { ...init,
-            signal: AbortSignal.any([init.signal, connection.controller.signal]) });
+          connected = await ensure(id);
+          ready = connection.ready;
         } catch (error) {
           connection.failures++; throw error;
+        }
+        try {
+          return await connected.transport.fetch('/api/hosts/status-stream', { ...init,
+            signal: AbortSignal.any([init.signal, connection.controller.signal]) });
+        } catch (error) {
+          // The status stream is the liveness probe: a network-level failure means the cached transport
+          // is no longer trustworthy, so the next retry must rebuild it instead of reusing it. The reader's
+          // own onError already counts this failure for backoff.
+          dropTransport(connection, ready); throw error;
         }
       },
       signal: connection.controller.signal,
@@ -693,6 +713,9 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
         ...(!adapter ? { reason: 'pc_hub_required' } : {}) };
     },
     async connect(id) {
+      // A manual wake of an offline host must prove the transport instead of echoing the cached one.
+      const known = connections.get(id);
+      if (known?.state === 'offline') dropTransport(known);
       const connection = await ensure(id);
       const live = Boolean(connection.reader);
       startStatus(connection);

@@ -2505,6 +2505,15 @@ Global bootstrap no longer enumerates location-scoped project/config catalogs
 or boots the server default/home directory. The sidebar's host-owned project
 and session catalogs retain their own ownership.
 
+A failed critical-path read (for example a non-transient `LocationNotFoundError`
+while a restarted host or tunnel settles) leaves the directory store at
+`partial`, which `ensureChild` never re-bootstraps. The sync provider therefore
+runs `bootstrapDirectoryWithRecovery`: bounded backoff (2s, 5s, 15s, 30s) that
+stops as soon as the store completes, is replaced or disposed, the runtime
+generation/transport changes, or the bootstrap gate closes. After the last
+attempt the store stays `partial` and the failure remains logged; the next
+`server.connected` still re-arms it.
+
 Automatic navigation eviction is not supported: public V2 has no cross-client
 consumer lease or atomic idle eviction. Private process ownership alone does
 not prove absence of other consumers. Explicit worktree deletion uses its

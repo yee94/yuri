@@ -44,7 +44,7 @@ import {
   findLiveSession,
   findLiveSessionStatus,
 } from "./live-aggregate"
-import { bootstrapGlobal, bootstrapDirectory } from "./bootstrap"
+import { bootstrapGlobal, bootstrapDirectoryWithRecovery } from "./bootstrap"
 import { projectSession } from "./v2-runtime"
 import { retry } from "./retry"
 import { acceptSessionMove, movedSessionDirectory, sessionBelongsToDirectory, setSessionLocationVerifier } from './session-location-authority'
@@ -3138,7 +3138,9 @@ export function SyncProvider(props: {
           await waitForSessionStartupBarrier()
           if (!canBootstrapDirectory(directory)) return
           const globalState = useGlobalSyncStore.getState()
-          await bootstrapDirectory({
+          const generation = getRuntimeGeneration()
+          const transport = getRuntimeTransportIdentity()
+          await bootstrapDirectoryWithRecovery({
             directory,
             sdk: props.sdk,
             getState: () => store.getState(),
@@ -3152,6 +3154,11 @@ export function SyncProvider(props: {
               config: globalState.config,
               projects: globalState.projects,
             },
+          }, {
+            shouldContinue: () => childStores.getChild(directory) === store
+              && generation === getRuntimeGeneration()
+              && transport === getRuntimeTransportIdentity()
+              && canBootstrapDirectory(directory),
           })
         }
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest"
 import type { OpenCodeClient } from "@/lib/opencode/v2-types"
-import { bootstrapDirectory, bootstrapGlobal } from "./bootstrap"
+import { bootstrapDirectory, bootstrapDirectoryWithRecovery, bootstrapGlobal } from "./bootstrap"
 import { INITIAL_STATE, type State } from "./types"
 
 vi.mock("./sync-refs", () => ({ emitSyncConfigChanged: vi.fn() }))
@@ -77,5 +77,59 @@ describe("directory bootstrap deferred services", () => {
       expect(state.vcs).toEqual({ branch: "main" })
       expect(error).not.toHaveBeenCalled()
     }
+  })
+})
+
+describe("directory bootstrap recovery", () => {
+  const notFound = () => Object.assign(new Error("Location not found: /repo"), { _tag: "LocationNotFoundError", status: 404 })
+  const setup = (failures: number) => {
+    let state: State = { ...INITIAL_STATE }
+    let calls = 0
+    const sdk = {
+      location: { get: vi.fn(async () => {
+        if (calls < failures) throw notFound()
+        return { directory: "/repo", project: { id: "project_1", directory: "/repo" } }
+      }) },
+      config: { get: vi.fn(async () => []) },
+      session: { active: async () => ({}) },
+      vcs: { get: async () => ({ data: { branch: "main" } }) },
+      form: { list: async () => ({ data: [] }) },
+      permission: { request: { list: async () => ({ data: [] }) } },
+    }
+    const input = {
+      directory: "/repo",
+      sdk: sdk as unknown as OpenCodeClient,
+      getState: () => state,
+      set: (patch: Partial<State>) => { state = { ...state, ...patch } },
+      global: { config: {}, projects: [] },
+    }
+    const sleep = vi.fn(async () => { calls += 1 })
+    return { input, sleep, sdk, state: () => state }
+  }
+
+  test("retries a non-transient host failure until the directory completes", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const { input, sleep, state } = setup(2)
+    await bootstrapDirectoryWithRecovery(input, { shouldContinue: () => true, sleep, delays: [1, 2, 3] })
+    expect(sleep).toHaveBeenCalledTimes(2)
+    expect(state().status).toBe("complete")
+    expect(state().project).toBe("project_1")
+  })
+
+  test("stops after the bounded delays and leaves the failure visible", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const { input, sleep, state } = setup(Number.POSITIVE_INFINITY)
+    await bootstrapDirectoryWithRecovery(input, { shouldContinue: () => true, sleep, delays: [1, 2] })
+    expect(sleep).toHaveBeenCalledTimes(2)
+    expect(state().status).toBe("partial")
+  })
+
+  test("does not retry once the directory is no longer current", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const { input, sleep, sdk } = setup(Number.POSITIVE_INFINITY)
+    await bootstrapDirectoryWithRecovery(input, { shouldContinue: () => false, sleep, delays: [1, 2, 3] })
+    expect(sleep).toHaveBeenCalledTimes(1)
+    const afterFirst = sdk.config.get.mock.calls.length
+    expect(afterFirst).toBe(1)
   })
 })

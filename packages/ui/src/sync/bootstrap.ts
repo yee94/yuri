@@ -313,3 +313,29 @@ export async function bootstrapDirectory(input: {
   // coordinator owns one bounded SQLite-backed list per project, avoiding a
   // second active-directory `experimental.session.list` request.
 }
+
+// A host that just restarted (or a tunnel still re-routing) can fail the first
+// critical-path reads with a non-transient 404 such as LocationNotFoundError.
+// `bootstrapDirectory` only logs that and leaves the store at "partial", which
+// no later `ensureChild` retries. Bounded backoff gives the host time to settle.
+const BOOTSTRAP_RECOVERY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000] as const
+
+export async function bootstrapDirectoryWithRecovery(
+  input: Parameters<typeof bootstrapDirectory>[0],
+  options: {
+    shouldContinue: () => boolean
+    delays?: readonly number[]
+    sleep?: (ms: number) => Promise<void>
+  },
+) {
+  const delays = options.delays ?? BOOTSTRAP_RECOVERY_DELAYS_MS
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  for (let attempt = 0; ; attempt += 1) {
+    await bootstrapDirectory(input)
+    if (input.getState().status === "complete") return
+    const wait = delays[attempt]
+    if (wait === undefined) return
+    await sleep(wait)
+    if (!options.shouldContinue()) return
+  }
+}

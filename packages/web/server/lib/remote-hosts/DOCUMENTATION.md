@@ -240,6 +240,13 @@ After the final project reference is removed, the last temporary HTTP/WS holder
 also closes that Host connection when it releases. A global Hub stream alone
 does not keep an unreferenced Host alive; late release callbacks after shutdown
 do not query the already-closed SQLite store.
+The connection caches its prepared transport (address and credentials captured by
+`prepareHost`). Besides an authorization failure, a network-level failure of the
+status stream (the liveness probe) drops that cache so the next bounded retry runs
+`prepareHost` and builds a fresh transport; a replacement built concurrently is never
+cleared. A manual `connect` of an `offline` Host does the same instead of echoing the
+cached transport. Without this a Host that died with its SSH forward or rotated
+credentials stayed `offline` until the client stream was torn down.
 The first status connection, reconnection and `yuri:worktree-topology-changed`
 invalidate the remote worktree catalog. Ordinary summary/status changes reuse
 it. Refresh requests retain the existing per-Host serial/two-Host global budget.
