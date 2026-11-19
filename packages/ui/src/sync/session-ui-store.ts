@@ -79,6 +79,7 @@ import {
   commitMessageEdit,
   unrevertSession as unrevertSessionAction,
   forkSession as forkSessionAction,
+  unarchiveSessionOnSend,
   fetchMessagesForSession,
   fetchRecentSendConfirmationRecords,
   materializeConfirmedSendRecords,
@@ -2379,6 +2380,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     if (targetSessionId && !options?.ticket && options?.delivery !== 'queue') {
       markPendingUserSendAnimation(targetSessionId)
     }
+    if (targetSessionId) unarchiveSessionOnSend(targetSessionId)
 
     const files = attachments?.map((a) => ({
       type: "file" as const,

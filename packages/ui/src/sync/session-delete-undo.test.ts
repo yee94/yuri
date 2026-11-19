@@ -157,6 +157,7 @@ const {
   scheduleSessionDeletes,
   setActionRefs,
   unarchiveSession,
+  unarchiveSessionOnSend,
 } = await import("./session-actions")
 
 type TestDirectoryStore = DirectoryStore & {
@@ -312,6 +313,21 @@ describe("session delete undo window", () => {
     expect(mocks.globalState.archivedSessions).toEqual([])
     expect(mocks.globalState.activeSessions[0]?.id).toBe("ses_arch")
     expect(mocks.globalState.activeSessions[0]?.time?.archived).toEqual(undefined)
+  })
+
+  test("unarchiveSessionOnSend revives only archived sessions", async () => {
+    mocks.globalState.activeSessions = [makeSession("ses_live")]
+    mocks.globalState.archivedSessions = [makeSession("ses_arch", { archived: 1234 })]
+
+    unarchiveSessionOnSend("ses_live")
+    expect(mocks.replyCalls.find((call) => call.method === "session.update")).toBeUndefined()
+
+    unarchiveSessionOnSend("ses_arch")
+    await vi.waitFor(() => expect(mocks.globalState.archivedSessions).toEqual([]))
+    const updateCall = mocks.replyCalls.find((call) => call.method === "session.update")
+    expect(updateCall?.params.sessionID).toBe("ses_arch")
+    expect(updateCall?.params.time).toEqual({ archived: 0 })
+    expect(mocks.globalState.activeSessions.map((session) => session.id)).toContain("ses_arch")
   })
 
   test("archiveSession commits Host updateSession archive and classifies list buckets", async () => {

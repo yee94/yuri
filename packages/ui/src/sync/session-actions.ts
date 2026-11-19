@@ -1357,6 +1357,13 @@ export async function unarchiveSession(sessionId: string): Promise<boolean> {
   }
 }
 
+/** A real user send revives an archived session; the send itself never waits on this. */
+export function unarchiveSessionOnSend(sessionId: string): void {
+  const archived = getGlobalSessionSnapshot(sessionId)?.time?.archived
+  if (typeof archived !== "number" || archived <= 0) return
+  void unarchiveSession(sessionId)
+}
+
 export async function updateSessionTitle(sessionId: string, title: string): Promise<void> {
   const sessionDirectory = getSessionDirectory(sessionId)
   const current = getGlobalSessionSnapshot(sessionId)
