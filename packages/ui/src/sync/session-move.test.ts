@@ -7,7 +7,7 @@ vi.mock('@/stores/useGlobalSessionsStore', () => ({ useGlobalSessionsStore: { ge
 vi.mock('./sync-refs', () => ({ registerSessionDirectory: fixture.register }))
 vi.mock('./transcript-repository-runtime', () => ({ getTranscriptRepository: () => ({ apply: fixture.reset }), transcriptScope: (directory: string, sessionID: string) => ({ directory, sessionID }) }))
 import { ChildStoreManager } from './child-store'
-import { acceptSessionMove, movedSessionDirectory, reconcileMovedSessionDirectory } from './session-location-authority'
+import { acceptSessionMove, movedSessionDirectory, reconcileMovedSessionDirectory, setSessionLocationVerifier } from './session-location-authority'
 import { adoptSessionMove } from './session-move'
 beforeEach(() => { fixture.generation++; fixture.current = 'ses_a'; fixture.directory = '/old'; vi.clearAllMocks() })
 const session = (directory: string, id = 'ses_a') => ({ id, directory, title: 'title', time: { created: 1, updated: 1 } }) as Session
@@ -30,7 +30,27 @@ it('moves active identity and live request/status domains, fences late old catal
   expect(acceptSessionMove('ses_a', '/new', 10)).toBe(false)
   expect(acceptSessionMove('ses_a', '/old', 9)).toBe(false)
   expect(reconcileMovedSessionDirectory('ses_a', '/old', 9)).toBe('/new')
-  expect(reconcileMovedSessionDirectory('ses_a', '/reconnected', 11)).toBe('/reconnected')
+})
+it('a newer catalog snapshot cannot relocate a sequenced move; it requests one authoritative read', () => {
+  const verify = vi.fn()
+  setSessionLocationVerifier(verify)
+  try {
+    expect(acceptSessionMove('ses_a', '/source', 10, 1)).toBe(true)
+    expect(acceptSessionMove('ses_a', '/destination', 20, 2)).toBe(true)
+    // `time.updated` keeps advancing after the move while a catalog row can still name the source.
+    expect(reconcileMovedSessionDirectory('ses_a', '/source', 30)).toBe('/destination')
+    expect(reconcileMovedSessionDirectory('ses_a', '/source', 40)).toBe('/destination')
+    expect(verify).toHaveBeenCalledTimes(1)
+    expect(reconcileMovedSessionDirectory('ses_a', '/destination', 50)).toBe('/destination')
+    expect(reconcileMovedSessionDirectory('ses_a', '/source', 15)).toBe('/destination')
+    expect(verify).toHaveBeenCalledTimes(1)
+    // A confirmed relocation is a new authority entry and may be verified again.
+    expect(acceptSessionMove('ses_a', '/reconnected', 60)).toBe(true)
+    expect(reconcileMovedSessionDirectory('ses_a', '/source', 70)).toBe('/reconnected')
+    expect(verify).toHaveBeenCalledTimes(2)
+  } finally {
+    setSessionLocationVerifier(null)
+  }
 })
 it('adopts a background session with no surviving source directory without switching selection, and isolates runtime', () => {
   const stores = new ChildStoreManager()

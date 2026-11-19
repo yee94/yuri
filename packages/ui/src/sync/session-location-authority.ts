@@ -25,20 +25,34 @@ export function filterMovedSessionState(directory: string, previous: State, next
 
 // Only move authority is retained; ordinary catalog reads never establish a fence.
 let runtime = ''
-const locations = new Map<string, { directory: string; clock: number; sequence?: number }>()
+const locations = new Map<string, { directory: string; clock: number; sequence?: number; verified?: Set<string> }>()
+let locationVerifier: ((sessionID: string) => void) | null = null
 function current() {
   const key = `${getRuntimeTransportIdentity()}:${getRuntimeGeneration()}`
   if (runtime !== key) { runtime = key; locations.clear() }
   return locations
 }
+/** Authoritative location read used when a catalog snapshot disagrees with move authority. */
+export function setSessionLocationVerifier(verifier: ((sessionID: string) => void) | null): void {
+  locationVerifier = verifier
+}
 export function movedSessionDirectory(sessionID: string): string | undefined {
   return current().get(sessionID)?.directory
 }
+/**
+ * `time.updated` advances on any session activity, so it cannot order a
+ * snapshot's directory against a sequenced move: a snapshot that still names
+ * the source directory routinely carries a newer clock. A disagreeing snapshot
+ * only requests one authoritative location read per authority entry.
+ */
 export function reconcileMovedSessionDirectory(sessionID: string, directory: string | undefined, updatedAt: number | undefined): string | undefined {
   const previous = current().get(sessionID)
-  if (previous && directory && typeof updatedAt === 'number' && updatedAt > previous.clock
-    && normalizeDirectoryKey(directory) !== previous.directory) {
-    acceptSessionMove(sessionID, directory, updatedAt)
+  if (previous && directory && typeof updatedAt === 'number' && updatedAt > previous.clock) {
+    const candidate = normalizeDirectoryKey(directory)
+    if (candidate !== previous.directory && !previous.verified?.has(candidate)) {
+      previous.verified = new Set(previous.verified).add(candidate)
+      locationVerifier?.(sessionID)
+    }
   }
   return movedSessionDirectory(sessionID)
 }

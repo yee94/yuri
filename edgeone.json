@@ -1,0 +1,9 @@
+{
+  "rewrites": [
+    { "source": "/docs/", "destination": "/docs/index.html" },
+    { "source": "/en/", "destination": "/en/index.html" },
+    { "source": "/en/docs/", "destination": "/en/docs/index.html" },
+    { "source": "/docs/*/", "destination": "/docs/:splat/index.html" },
+    { "source": "/en/docs/*/", "destination": "/en/docs/:splat/index.html" }
+  ]
+}

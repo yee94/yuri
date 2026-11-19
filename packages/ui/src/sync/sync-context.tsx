@@ -47,7 +47,7 @@ import {
 import { bootstrapGlobal, bootstrapDirectory } from "./bootstrap"
 import { projectSession } from "./v2-runtime"
 import { retry } from "./retry"
-import { acceptSessionMove, movedSessionDirectory, sessionBelongsToDirectory } from './session-location-authority'
+import { acceptSessionMove, movedSessionDirectory, sessionBelongsToDirectory, setSessionLocationVerifier } from './session-location-authority'
 import { adoptSessionMove } from './session-move'
 import { updateStreamingState } from "./streaming"
 import { setActionRefs } from "./session-actions"
@@ -2274,6 +2274,31 @@ const configLiveRefresh = createConfigLiveRefresh({
   onError: () => console.warn('[sync] Configuration refresh failed; retaining previous catalogs'),
 });
 
+const verifyingSessionLocations = new Set<string>()
+
+/**
+ * A catalog snapshot disagreed with the sequenced move authority. Only the
+ * server's current session identity may relocate it; a read that races a newer
+ * move is discarded.
+ */
+function verifySessionLocation(sessionID: string, childStores: ChildStoreManager, routingIndex: EventRoutingIndex): void {
+  const authority = movedSessionDirectory(sessionID)
+  if (!authority || verifyingSessionLocations.has(sessionID)) return
+  verifyingSessionLocations.add(sessionID)
+  const generation = getRuntimeGeneration()
+  const transport = getRuntimeTransportIdentity()
+  void opencodeClient.getSession(sessionID, authority).then((session) => {
+    if (generation !== getRuntimeGeneration() || transport !== getRuntimeTransportIdentity()) return
+    if (movedSessionDirectory(sessionID) !== authority) return
+    const directory = session.directory
+    if (!directory || sessionBelongsToDirectory(sessionID, directory)) return
+    if (!acceptSessionMove(sessionID, directory, Date.now())) return
+    setIndexedSessionDirectory(routingIndex, sessionID, directory)
+    adoptSessionMove(session, childStores)
+  }).catch(() => { /* The next disagreeing snapshot or reconnect identity read retries. */ })
+    .finally(() => verifyingSessionLocations.delete(sessionID))
+}
+
 /** Directory event dispatch. Exported as a minimal test seam for idle materialization. */
 export function handleEvent(
   rawDirectory: string,
@@ -3510,8 +3535,10 @@ export function SyncProvider(props: {
       }
       applyGlobalSessionStatusSnapshot(directory, raw, applyIds)
     })
+    setSessionLocationVerifier((sessionID) => verifySessionLocation(sessionID, childStores, routingIndex))
     return () => {
       setAuthoritativeGlobalSessionStatusConverge(undefined)
+      setSessionLocationVerifier(null)
     }
   }, [props.sdk, props.directory, childStores, routingIndex])
 
