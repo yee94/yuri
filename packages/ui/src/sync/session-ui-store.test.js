@@ -1252,15 +1252,17 @@ describe('materializeOpenDraftSession atomic lifecycle', () => {
 
   test('a missing nested worktree directory preserves the draft and never creates at the checkout root', async () => {
     const directory = '/feature/src';
-    const statFile = vi.fn().mockRejectedValue(new Error('Directory not found'));
-    const registry = vi.spyOn(runtimeAPIRegistry, 'getRegisteredRuntimeAPIs').mockReturnValue({ files: { statFile } });
+    const validateWorktreeDirectory = vi.fn().mockResolvedValue({ valid: false, insideWorktreeRoot: false, resolvedWorktreeRoot: '/feature', resolvedCwd: null });
+    const statFile = vi.fn();
+    const registry = vi.spyOn(runtimeAPIRegistry, 'getRegisteredRuntimeAPIs').mockReturnValue({ files: { statFile }, git: { validateWorktreeDirectory } });
     useSessionUIStore.setState({ availableWorktreesByProject: new Map([
       [projectA.path, [{ path: directory, worktreeRoot: '/feature', projectDirectory: projectA.path, relativePath: 'src', branch: 'feature', label: 'feature' }]],
     ]) });
     try {
       useSessionUIStore.getState().openNewSessionDraft({ selectedProjectId: projectA.id, directoryOverride: directory });
       expect(await materializeOpenDraftSession({ providerID: 'p', modelID: 'm' })).toBeNull();
-      expect(statFile).toHaveBeenCalledWith(directory, { directory: '/feature' });
+      expect(validateWorktreeDirectory).toHaveBeenCalledWith(directory, '/feature');
+      expect(statFile).not.toHaveBeenCalled();
       expect(createSessionCalls).toEqual([]);
       expect(useSessionUIStore.getState().newSessionDraft).toMatchObject({ open: true, directoryOverride: directory, draftSubmitting: false });
     } finally {

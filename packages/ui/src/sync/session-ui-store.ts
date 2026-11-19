@@ -43,7 +43,7 @@ import { getWorktreeSetupWaitEnabled } from "@/lib/yuriConfig"
 import { resolveProjectForSessionDirectory } from "@/lib/projectResolution"
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
 import { scopeProjectWorktrees } from "@/lib/worktrees/projectWorktreeScope"
-import { fileStatQueryOptions } from "@/queries/fileQueries"
+import { validateWorktreeDirectory } from "@/lib/gitApi"
 import { useWorktreeOrderStore } from "@/stores/useWorktreeOrderStore"
 import { createUuid } from "@/lib/uuid"
 import { ascendingId } from "./message-id"
@@ -894,12 +894,9 @@ const waitForWorktreeBootstrapIfConfigured = async (directory: string | null, pr
     await waitForWorktreeBootstrap(worktree?.worktreeRoot ?? directory)
   }
   if (worktree?.relativePath) {
-    const files = getRegisteredRuntimeAPIs()?.files
-    if (files?.statFile) {
-      await queryClient.fetchQuery({
-        ...fileStatQueryOptions(files, { scopeDirectory: directory, path: directory, options: { directory: worktree.worktreeRoot ?? directory } }),
-        staleTime: 0,
-      })
+    const validation = await validateWorktreeDirectory(directory, worktree.worktreeRoot ?? directory)
+    if (!validation.valid || !validation.insideWorktreeRoot) {
+      throw new Error(`Worktree subdirectory is unavailable: ${directory}`)
     }
   }
 }
