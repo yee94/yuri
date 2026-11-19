@@ -20,6 +20,23 @@ describe('global search mixed relevance', () => {
     expect(rankCommandPaletteResults(results, '')).toEqual(results);
   });
 
+  test('orders rows of the same title tier by recency regardless of snippet fuzziness', () => {
+    const results = [
+      { id: 'old-strong', title: 'Run', detail: 'apple', time: 1 },
+      { id: 'new-weak', title: 'Run', detail: 'a long unrelated lead-in before the word apple appears somewhere', time: 3 },
+      { id: 'mid', title: 'Run', detail: 'some apple text', time: 2 },
+    ];
+    expect(rankCommandPaletteResults(results, 'apple').map(({ id }) => id)).toEqual(['new-weak', 'mid', 'old-strong']);
+  });
+
+  test('recency never lifts a row above a better title tier', () => {
+    const results = [
+      { id: 'stale-title', title: 'apple', time: 1 },
+      { id: 'fresh-body', title: 'Other', detail: 'apple', time: 9 },
+    ];
+    expect(rankCommandPaletteResults(results, 'apple').map(({ id }) => id)).toEqual(['stale-title', 'fresh-body']);
+  });
+
   test('fuzzy titles outrank detail-only matches', () => {
     expect(rankCommandPaletteResults([
       { title: 'Other', detail: 'CommandPalette' }, { title: 'CommandPalette.tsx' },

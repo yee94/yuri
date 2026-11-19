@@ -548,6 +548,7 @@ export const CommandPalette = React.memo(function CommandPalette({ presentation 
       group: 'sessions' as const, item,
       id: item.hit ? `message:${item.session.id}:${item.hit.messageID}` : `session:${item.session.id}`,
       title: item.hit?.title || item.session.title || t('commandPalette.session.untitled'), detail: item.hit?.snippet,
+      time: item.hit?.createdAt ?? item.session.time?.updated ?? item.session.time?.created,
     })),
     ...scoredCommands.map(({ item }) => ({ group: 'commands' as const, item, id: item.id, title: item.title, detail: item.searchText })),
     ...pluginCommands.map((item) => ({ group: 'plugins' as const, item, id: `gui-plugin:${item.key}`, title: item.title, detail: item.description })),

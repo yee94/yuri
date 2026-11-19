@@ -21,9 +21,16 @@ filter during initial backfill; descending opaque cursors stop at the thirty-day
 boundary or exhaustion. The default coverage is
 messages created in the last thirty days in recently updated root sessions.
 Sessions with a non-empty `parentID` (subagents) are excluded before message
-fetching and progress counting. Only root IDs enter the authoritative pruning
+fetching and progress counting. Sessions hidden from the sidebar by the session
+index's `isVisibleSession` contract (`[Scheduled]`/`[Assistant]`/`[yuri-llm]` titles,
+or scheduled-task, assistant, worker, small-model and LLM metadata) are excluded
+the same way. Only indexable root IDs enter the authoritative pruning
 set, so a fully exhausted catalog scan also removes previously indexed subagent
-messages, FTS entries and checkpoints. Failed catalog reads preserve the old index.
+messages, FTS entries and checkpoints. Any excluded session seen in a successfully
+read catalog is removed even when the thirty-day scan is not exhausted; dirty events
+for such sessions remove them instead of refreshing. Failed catalog reads preserve the old index.
+Databases with `user_version` below 1 reset the repair marker once, so the next
+bounded catalog reconciliation purges background sessions indexed by older builds.
 
 Two workers page native `message.list` directly, normalize via the shared server
 projection, and retain only user text and settled assistant text. Synthetic,
@@ -126,6 +133,9 @@ role, created time and a plain snippet. Each session contributes only its newest
 matching message (created time descending, message ID descending for ties).
 Deduplication happens before `limit`, which counts sessions rather than messages;
 results are ordered by that matching message's recency, then session ID for ties.
+The Global search UI re-ranks rows by title tier first; within a tier, rows with a
+timestamp (matching message time, else session updated time) are blended with
+relevance so newer conversations come first.
 The optional `directory` narrows searches;
 omitting it searches every project. The endpoint uses the existing Host auth and
 rejects preview-proxy credentials. Errors are not converted to empty successes.

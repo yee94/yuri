@@ -63,6 +63,34 @@ test.each([false, true])('upgrades old checkpoints (existing boundary: %s) witho
   }
 });
 
+test('databases created before background-session exclusion request one catalog reconciliation', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'content-index-'));
+  const dbPath = path.join(directory, 'index.sqlite');
+  let service;
+  try {
+    service = createContentSearchService({ dbPath });
+    service.beginInitialization('host', 1);
+    service.completeInitialization('host', 0, 2);
+    expect(service.needsEventIdentityRepair('host')).toBe(false);
+    service.close();
+    service = createContentSearchService({ dbPath });
+    expect(service.needsEventIdentityRepair('host')).toBe(false);
+    service.close();
+    const legacy = new Database(dbPath);
+    legacy.pragma('user_version = 0');
+    legacy.close();
+    service = createContentSearchService({ dbPath });
+    expect(service.needsEventIdentityRepair('host')).toBe(true);
+    service.completeInitialization('host', 0, 3);
+    service.close();
+    service = createContentSearchService({ dbPath });
+    expect(service.needsEventIdentityRepair('host')).toBe(false);
+  } finally {
+    service?.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('indexes only admitted text and replaces FTS entries atomically', () => {
   const service = createContentSearchService({ dbPath: ':memory:' });
   services.push(service);

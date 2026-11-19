@@ -63,7 +63,7 @@ vi.mock('@/queries/sessionContentSearchQueries', () => ({
     return [{
     sessionID: 'session-1', messageID: 'old-message', directory: '/project', role: 'user', createdAt: 0, snippet: 'old matching body',
   }, {
-    sessionID: 'session-1', messageID: 'message-1', directory: '/project', role: 'user', createdAt: 1, snippet: 'matching\n\nbody   result',
+    sessionID: 'session-1', messageID: 'message-1', directory: '/project', role: 'user', createdAt: 5000, snippet: 'matching\n\nbody   result',
   }, {
     sessionID: 'session-1', messageID: 'older-message', directory: '/project', role: 'user', createdAt: 0, snippet: 'another old matching body',
   }]; }, enabled: false }),
@@ -411,8 +411,8 @@ test('combines title and body matches in five unified rows, freezes navigation a
     const bodyRow = host.querySelector('[cmdk-item][data-value^="message:"]')!;
     expect(bodyRow.textContent).toContain('matching conversation 1');
     expect(bodyRow.textContent).toContain('matching body result');
-    expect(bodyRow.querySelector('time')?.dateTime).toBe(new Date(1).toISOString());
-    expect(host.querySelector('[data-value="session:session-0"] time')?.getAttribute('datetime')).toBe(new Date(1000).toISOString());
+    expect(bodyRow.querySelector('time')?.dateTime).toBe(new Date(5000).toISOString());
+    expect(host.querySelector('[data-value="session:session-29"] time')?.getAttribute('datetime')).toBe(new Date(1029).toISOString());
     expect(host.textContent).not.toContain('old matching body');
     expect(bodyRow.querySelectorAll('mark')).toHaveLength(2);
     expect(bodyRow.querySelector('.yuri-global-search-session-excerpt')).not.toBeNull();

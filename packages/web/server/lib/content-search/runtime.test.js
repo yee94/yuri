@@ -135,6 +135,55 @@ test('indexes only roots and prunes legacy subagents after a complete catalog, i
   }
 });
 
+test('excludes sidebar-hidden background sessions and purges them during catalog reconciliation', async () => {
+  const service = createContentSearchService({ dbPath: ':memory:' });
+  service.beginInitialization('host', 1);
+  service.completeInitialization('host', 0, 2);
+  const day = 86400000;
+  const now = 40 * day;
+  const root = { id: 'root', title: 'Normal', time: { updated: now } };
+  const byTitle = { id: 'by-title', title: '[Scheduled] Daily 2026-11-05 10:30', time: { updated: now } };
+  const byMetadata = { id: 'by-metadata', title: 'Run', metadata: { yuri: { scheduledTask: { taskID: 't1' } } }, time: { updated: now } };
+  const record = { info: { id: 'old', role: 'user', time: { created: now } }, parts: [{ type: 'text', text: 'apple needle' }] };
+  service.replaceSession('host', byTitle, [record], 0);
+  service.replaceSession('host', byMetadata, [record], 0);
+  const reads = [];
+  const runtime = createContentSearchRuntime({ service, getRuntimeKey: () => 'host', now: () => now,
+    listSessions: async ({ cursor }) => cursor
+      ? { data: [{ id: 'expired', time: { updated: 1 } }], cursor: { next: 'older-history' } }
+      : { data: [root, byTitle, byMetadata], cursor: { next: 'older' } },
+    listMessages: async ({ sessionID }) => {
+      reads.push(sessionID);
+      return { data: [{ type: 'user', id: 'new', sessionID, time: { created: now }, text: 'apple needle' }] };
+    },
+  });
+  try {
+    expect(service.search('host', 'needle')).toHaveLength(2);
+    await runtime.sync();
+    expect(reads).toEqual(['root']);
+    expect(service.search('host', 'needle').map((hit) => hit.sessionID)).toEqual(['root']);
+    expect(service.updated('host', 'by-title')).toBeUndefined();
+    expect(service.updated('host', 'by-metadata')).toBeUndefined();
+  } finally { await runtime.stop(); service.close(); }
+});
+
+test('dirty events for a background session remove it instead of indexing it', async () => {
+  const service = createContentSearchService({ dbPath: ':memory:' });
+  service.beginInitialization('host', 1);
+  service.completeInitialization('host', 0, 2);
+  service.markDirty('host', 'scheduled');
+  const listMessages = vi.fn();
+  const runtime = createContentSearchRuntime({ service, getRuntimeKey: () => 'host', now: () => 100,
+    listSessions: vi.fn(), listMessages,
+    getSession: async () => ({ id: 'scheduled', title: '[Scheduled] Task', time: { updated: 100 } }),
+  });
+  try {
+    await runtime.sync({ incremental: true });
+    expect(listMessages).not.toHaveBeenCalled();
+    expect(service.pending('host')).toEqual([]);
+  } finally { await runtime.stop(); service.close(); }
+});
+
 test('persists initialization times only after all thirty-day history is covered and resumes partial work', async () => {
   const service = createContentSearchService({ dbPath: ':memory:' });
   const day = 86400000;

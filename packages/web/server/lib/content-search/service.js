@@ -39,6 +39,11 @@ export function createContentSearchService({ dbPath }) {
   if (!db.prepare('PRAGMA table_info(search_coverage)').all().some((column) => column.name === 'event_identity_repaired')) {
     db.exec('ALTER TABLE search_coverage ADD COLUMN event_identity_repaired INTEGER NOT NULL DEFAULT 0');
   }
+  if (db.pragma('user_version', { simple: true }) < 1) {
+    // Background/system sessions used to be indexed; one catalog reconciliation purges them.
+    db.exec('UPDATE search_coverage SET event_identity_repaired=0');
+    db.pragma('user_version = 1');
+  }
   const remove = db.prepare('DELETE FROM search_message WHERE runtime=? AND session=?');
   const write = db.prepare('INSERT INTO search_message(runtime,session,message,role,created,body) VALUES(?,?,?,?,?,?)');
   const removeSession = db.transaction((runtime, id) => {

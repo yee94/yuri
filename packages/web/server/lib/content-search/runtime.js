@@ -1,8 +1,11 @@
 import { projectSessionMessageRecords } from '../session-turn-pages/session-message-projection.js';
 import { projectSearchRecord } from './service.js';
 import { normalizeSessionEventType } from '../session-metadata/session-projection.js';
+import { isVisibleSession } from '../session-index/service.js';
 
 const RETENTION = 30 * 24 * 60 * 60 * 1000;
+// Same visibility contract as the sidebar: subagents, scheduled runs, assistant and LLM helper sessions stay out.
+const isIndexable = (session) => !session.parentID && isVisibleSession(session);
 const nextCursor = (page) => typeof page?.cursor?.next === 'string' ? page.cursor.next : null;
 
 export function createContentSearchRuntime({ service, getRuntimeKey, getEventRuntimeKey = getRuntimeKey, listSessions, getSession, listMessages, now = Date.now }) {
@@ -44,6 +47,7 @@ export function createContentSearchRuntime({ service, getRuntimeKey, getEventRun
       const scanCatalog = !incremental || !initialized || service.needsEventIdentityRepair(runtime);
       const sessions = [];
       const ids = new Set();
+      const excluded = new Set();
       let cursor;
       let completeCatalog = scanCatalog;
       const cursors = new Set();
@@ -53,7 +57,7 @@ export function createContentSearchRuntime({ service, getRuntimeKey, getEventRun
             const session = await getSession({ sessionID, signal });
             if (!current()) return;
             if (!session?.id || !Number.isFinite(session.time?.updated)) throw new Error('Invalid dirty session');
-            if (!session.parentID && session.time.updated >= state.since && !deleted.has(sessionID)) sessions.push(session);
+            if (isIndexable(session) && session.time.updated >= state.since && !deleted.has(sessionID)) sessions.push(session);
             else {
               service.removeSession(runtime, sessionID);
               dirty.delete(sessionID);
@@ -72,7 +76,7 @@ export function createContentSearchRuntime({ service, getRuntimeKey, getEventRun
         if (!Array.isArray(page?.data)) throw new Error('Invalid global session page');
         for (const session of page.data) {
           if (typeof session?.id !== 'string' || !session.id || !Number.isFinite(session.time?.updated)) throw new Error('Invalid global session checkpoint');
-          if (typeof session.parentID === 'string' && session.parentID) continue;
+          if (!isIndexable(session)) { excluded.add(session.id); continue; }
           if (ids.has(session.id)) continue;
           ids.add(session.id);
           if (Number(session.time?.updated) >= state.since && !deleted.has(session.id)) sessions.push(session);
@@ -85,6 +89,11 @@ export function createContentSearchRuntime({ service, getRuntimeKey, getEventRun
           break;
         }
       } while (cursor && current());
+      // Sessions seen in this catalog but not indexable (even in a time-bounded one) must not keep old hits.
+      for (const id of excluded) {
+        service.removeSession(runtime, id);
+        dirty.delete(id);
+      }
       state.total = sessions.length;
       state.completed = 0;
       const recentIDs = new Set(sessions.map((session) => session.id));
@@ -96,7 +105,7 @@ export function createContentSearchRuntime({ service, getRuntimeKey, getEventRun
           const session = await getSession({ sessionID, signal });
           if (!current()) return;
           if (!session?.id || !Number.isFinite(session.time?.updated)) throw new Error('Invalid dirty session');
-          if (!session.parentID && session.time.updated >= state.since && !deleted.has(sessionID)) {
+          if (isIndexable(session) && session.time.updated >= state.since && !deleted.has(sessionID)) {
             sessions.push(session);
             recentIDs.add(sessionID);
           } else {
