@@ -30,8 +30,8 @@
   content: "";
   pointer-events: none;
   background: linear-gradient(155deg,
-    color-mix(in srgb, var(--surface-muted-foreground) 28%, transparent),
-    color-mix(in srgb, var(--primary-base) 26%, transparent));
+    color-mix(in srgb, var(--surface-muted-foreground) 16%, transparent),
+    color-mix(in srgb, var(--primary-base) 15%, transparent));
   -webkit-mask: var(--assistant-wallpaper-pattern) center top / 504px 1036px repeat;
   mask: var(--assistant-wallpaper-pattern) center top / 504px 1036px repeat;
 }
