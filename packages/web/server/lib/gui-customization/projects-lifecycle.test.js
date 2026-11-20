@@ -36,7 +36,7 @@ describe('bound session lifecycle helper end to end', () => {
     const result = await run(command);
     expect(result.code).toBe(0);
     expect(result.value.lifecycleSupported).toBe(true);
-    expect(Object.keys(result.value.commands)).toEqual(['list', 'add', ...lifecycleOperations]);
+    expect(Object.keys(result.value.commands)).toEqual(['list', 'add', 'task-view', ...lifecycleOperations]);
     return result.value.commands;
   };
 
@@ -210,5 +210,9 @@ describe('bound session lifecycle helper end to end', () => {
     expect(await ids({ settled: true })).toEqual(['ses_old']);
     expect((await run(cmd['task-sessions'], { settled: false })).value.sessions[0]).toMatchObject({ settled: false, status: 'idle' });
     for (const input of [{ settled: 'false' }, { settled: null }]) expect((await request('task-sessions', input)).status).toBe(400);
+    const view = (await run(cmd['task-view'], { settled: false })).value;
+    expect(view.sessions.map((row) => row.sessionID)).toEqual(['ses_new', 'ses_target']);
+    expect(view).toMatchObject({ nextCursor: null, remoteComplete: true, remoteFailed: [] });
+    expect((await request('task-view', { directory: root })).status).toBe(400);
   });
 });

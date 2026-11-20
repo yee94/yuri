@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { authorizeScheduledTaskSkillRequest } from '../scheduled-tasks/session-skill-contract.js';
-import { remoteProjectOperations, validRemoteProjectInput, runRemoteProjectOperation } from './projects-remote.js';
-import { lifecycleOperations, validLifecycleInput } from './projects-lifecycle.js';
+import { remoteProjectOperations, validRemoteProjectInput, runRemoteProjectOperation, listRemoteTaskRows } from './projects-remote.js';
+import { lifecycleOperations, validLifecycleInput, pageTaskRows } from './projects-lifecycle.js';
 import { isBoundSkillCaller, parseSkillCaller } from './skill-caller.js';
 
 export const PROJECTS_SKILL_PATH = '/api/yuri/session-skills/projects';
@@ -10,6 +10,7 @@ const projectResult = ({ id, path, label }) => ({ id, path, ...(label ? { label 
 const validInput = (operation, input) => {
   if (remoteProjectOperations.includes(operation)) return validRemoteProjectInput(operation, input);
   if (lifecycleOperations.includes(operation)) return validLifecycleInput(operation, input);
+  if (operation === 'task-view') return validLifecycleInput('task-sessions', input) && input.directory === undefined;
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
   const allowed = operation === 'add' ? ['path', 'label'] : operation === 'remove' ? ['projectId'] : [];
   if (Object.keys(input).some((key) => !allowed.includes(key))) return false;
@@ -28,11 +29,12 @@ export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService
     const { operation, input = {} } = req.body ?? {};
     const caller = parseSkillCaller(req.body);
     if (!caller
-      || !['describe', 'list', 'add', 'remove', ...lifecycleOperations, ...remoteProjectOperations].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid project input' });
+      || !['describe', 'list', 'add', 'remove', 'task-view', ...lifecycleOperations, ...remoteProjectOperations].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid project input' });
     try {
       if (!await isBoundSkillCaller(req, caller, { createClient, hasAssistant })) return res.status(403).json({ error: 'Caller is not bound to this Host' });
       if (operation === 'describe') return res.json({ supported: true, remoteSupported: Boolean(remoteHostGateway?.supported && remoteHostGateway?.acquireTask), lifecycleSupported: Boolean(sessionLifecycle), inputs: { add: '{path: existing absolute Host directory, label?: display name}', list: '{}',
         ...(removeProject ? { remove: '{projectId: exact ID from list} removes only the bound Host registration; preserves files, sessions and remote projects' } : {}),
+        'task-view': '{settled?: boolean (false = what the task view still lists as active), cursor?} THE task-view list: local sessions plus every Remote Project session (all project and worktree directories), newest activity first. Remote rows carry remote:{host,target} and settled=true means archived on that Host; archive them with archive-remote-session using the row directory and target',
         'task-sessions': '{directory?: absolute bound-Host directory, settled?: boolean filter (false = still active in the task view), cursor?: returned nextCursor} bounded Host index metadata ordered by activity, newest first; rows carry status, not full upstream history',
         'session-state': '{sessionID} read Host archive authority and nullable task projection; not upstream existence or live UI state',
         'settle-session': '{sessionID} task-view 「归档」: moves the session to the archived shelf; reversible, returns to active on new activity', 'unsettle-session': '{sessionID} restores a task-view-archived session to active',
@@ -42,6 +44,13 @@ export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService
         'create-session': '{target, directory, sessionID: new caller-generated ID, title?}', 'prompt-session': '{target, directory, sessionID, messageID: stable caller-generated ID, text}',
         'archive-remote-session': '{target, directory, sessionID} 「归档」 of a Remote Project session: writes the real archive on that remote Host, as the task/project view does; not a local settle', 'unarchive-remote-session': '{target, directory, sessionID} restores it' },
         completion: 'add and add-remote return the persisted project and created=true/false. add-remote registers on the target Host, then saves the Hub reference. Registration does not clone/create files, open a session or change an existing active selection. Retry the same target and path safely after an interrupted response.' });
+      if (operation === 'task-view') {
+        const local = sessionLifecycle ? await sessionLifecycle('task-rows', {}) : { rows: [], historyComplete: false };
+        const remote = await listRemoteTaskRows(remoteHostGateway);
+        const page = pageTaskRows([...local.rows, ...remote.rows], input);
+        return res.json({ sessions: page.rows, nextCursor: page.nextCursor, indexedOnly: true, historyComplete: local.historyComplete,
+          remoteComplete: remote.complete, remoteFailed: remote.failed });
+      }
       if (lifecycleOperations.includes(operation)) {
         if (!sessionLifecycle) return res.status(501).json({ code: 'unsupported', error: 'Session lifecycle is unavailable on this Host' });
         const result = await sessionLifecycle(operation, input);

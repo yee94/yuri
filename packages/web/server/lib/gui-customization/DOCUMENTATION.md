@@ -81,7 +81,7 @@ releases the task lease; uncertain writes are inspected by their stable IDs befo
 any retry.
 
 `projects-lifecycle.js` owns bound-Host task/session archive operations.
-`task-sessions` pages the current index metadata (50 rows, newest activity first across directories, optional boolean `settled` filter applied before paging, rows carry the live `status`), using the same committed
+`task-view` merges the local rows (`task-rows`, internal) with the Hub-synced remote Host index (`listRemoteTaskRows`: all project and worktree directories; remote `settled` means archived) behind one pager. `task-sessions` is the local-only variant and pages the current index metadata (50 rows, newest activity first across directories, optional boolean `settled` filter applied before paging, rows carry the live `status`), using the same committed
 Host archive filter as the UI; it explicitly distinguishes an exhausted index from
 complete upstream history. It exposes no messages or raw metadata.
 Verification uses `session-state`, which exposes Host archive authority even after

@@ -9,7 +9,7 @@ async function main() {
     const [encoded, operation] = process.argv.slice(2);
     const binding = JSON.parse(Buffer.from(encoded, 'base64url').toString());
     const lifecycle = ['task-sessions', 'session-state', 'settle-session', 'unsettle-session', 'archive-session', 'unarchive-session'];
-    const operations = ['list', 'add', 'remove', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session', 'archive-remote-session', 'unarchive-remote-session'];
+    const operations = ['list', 'add', 'remove', 'task-view', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session', 'archive-remote-session', 'unarchive-remote-session'];
     if (!['describe', ...operations].includes(operation)) throw new Error();
     const origin = new URL(binding.hostOrigin);
     if (origin.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(origin.hostname) || origin.username || origin.password) throw new Error();
@@ -45,6 +45,8 @@ async function main() {
     if (operation === 'remove' && (result.projectId !== input.projectId || result.removed !== true)) throw new Error();
     if (operation === 'remote-hosts' && (!Array.isArray(result.hosts) || !Array.isArray(result.failed) || typeof result.complete !== 'boolean')) throw new Error();
     if (operation === 'list' && !Array.isArray(result.projects)) throw new Error();
+    if (operation === 'task-view' && (!Array.isArray(result.sessions) || typeof result.remoteComplete !== 'boolean'
+      || (result.nextCursor !== null && typeof result.nextCursor !== 'string'))) throw new Error();
     if (operation === 'task-sessions' && (!Array.isArray(result.sessions) || result.indexedOnly !== true
       || typeof result.historyComplete !== 'boolean' || (result.nextCursor !== null && typeof result.nextCursor !== 'string'))) throw new Error();
     if (operation === 'session-state' && (result.sessionID !== input.sessionID || typeof result.indexed !== 'boolean'
@@ -61,7 +63,7 @@ async function main() {
     if (operation === 'describe' && result.supported !== true) throw new Error();
     console.log(JSON.stringify(operation === 'describe' ? { ...result,
       commands: Object.fromEntries(operations.filter((op) => (op === 'remove' ? typeof result.inputs?.remove === 'string'
-        : lifecycle.includes(op) ? result.lifecycleSupported : result.remoteSupported || ['list', 'add'].includes(op))).map((op) => [op, sessionSkillCommand(process.execPath, process.argv[1], encoded, op)])),
+        : op === 'task-view' ? result.lifecycleSupported || result.remoteSupported : lifecycle.includes(op) ? result.lifecycleSupported : result.remoteSupported || ['list', 'add'].includes(op))).map((op) => [op, sessionSkillCommand(process.execPath, process.argv[1], encoded, op)])),
     } : result));
   } catch {
     console.error(JSON.stringify({ error: 'Bound project helper failed; the result is unconfirmed', terminal: !bound,

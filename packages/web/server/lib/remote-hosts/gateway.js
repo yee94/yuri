@@ -123,6 +123,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     if (!owner) throw remoteFailure('project_not_found', 404);
     return owner.directory;
   };
+  const projectDirectories = (id, projectPath) => [...new Set([projectPath, ...(store.organization(id).worktrees?.projectDirectories?.[projectPath] || [])])];
   const hostView = (host) => ({ id: host.id, name: host.name || host.label || host.id,
     source: host.source, available: true, state: stateFor(host.id), ...store.receipt(host.id),
     ...(store.instanceFor(host.id) ? { instanceId: store.instanceFor(host.id) } : {}),
@@ -696,7 +697,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     } finally { lease.release(); }
   };
   return {
-    store, request, json, reconcile, observe, ensure, releaseOwner, assertProjectDirectory, acquireTask, registerProject,
+    store, request, json, reconcile, observe, ensure, releaseOwner, assertProjectDirectory, projectDirectories, acquireTask, registerProject,
     projectReferencesChanged, supported: Boolean(adapter),
     retainHost,
     async list() {

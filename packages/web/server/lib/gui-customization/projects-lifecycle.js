@@ -14,6 +14,15 @@ export function validLifecycleInput(operation, input) {
   return typeof input.sessionID === 'string' && /^ses[A-Za-z0-9_]+$/.test(input.sessionID) && input.sessionID.length <= 256;
 }
 
+/** Filter by `settled`, order by activity (newest first) and cut one 50-row page. */
+export function pageTaskRows(rows, input) {
+  const sorted = rows
+    .filter((row) => input.settled === undefined || row.settled === input.settled)
+    .sort((a, b) => (b.activityUpdatedAt ?? 0) - (a.activityUpdatedAt ?? 0) || (a.sessionID < b.sessionID ? 1 : -1));
+  const offset = Number(input.cursor ?? 0);
+  return { rows: sorted.slice(offset, offset + 50), nextCursor: offset + 50 < sorted.length ? String(offset + 50) : null };
+}
+
 const unavailable = () => Object.assign(new Error('Session lifecycle unavailable'), { code: 'unsupported', status: 501 });
 const notFound = () => Object.assign(new Error('Session not found'), { code: 'session_not_found', status: 404 });
 
@@ -26,7 +35,7 @@ export function createProjectSessionLifecycle({ sessionIndexService, sessionArch
     return applyHostArchiveToIndexSnapshot(sessionIndexService.snapshot(), stored);
   };
   return async (operation, input) => {
-    if (operation === 'task-sessions') {
+    if (operation === 'task-sessions' || operation === 'task-rows') {
       const { directories, pinnedSessionIds = [] } = await snapshot();
       const scoped = directories.filter((item) => !input.directory || item.directory === input.directory);
       const pins = new Set(pinnedSessionIds);
@@ -37,16 +46,11 @@ export function createProjectSessionLifecycle({ sessionIndexService, sessionArch
           settled: Number(session.time?.settled ?? 0) > 0,
           pinned: pins.has(session.id), status: session.metadata?.yuri?.sessionStatus?.type ?? 'idle',
           activityUpdatedAt: session.metadata?.yuri?.titleRefresh?.activityUpdatedAt,
-        }))
-        .filter((row) => input.settled === undefined || row.settled === input.settled)
-        .sort((a, b) => (b.activityUpdatedAt ?? 0) - (a.activityUpdatedAt ?? 0) || (a.sessionID < b.sessionID ? 1 : -1));
-      const offset = Number(input.cursor ?? 0);
-      return {
-        sessions: rows.slice(offset, offset + 50),
-        nextCursor: offset + 50 < rows.length ? String(offset + 50) : null,
-        indexedOnly: true,
-        historyComplete: scoped.length > 0 && scoped.every((item) => item.lastFullSyncedAt > 0 && !item.hasMore),
-      };
+        }));
+      const historyComplete = scoped.length > 0 && scoped.every((item) => item.lastFullSyncedAt > 0 && !item.hasMore);
+      if (operation === 'task-rows') return { rows, historyComplete };
+      const page = pageTaskRows(rows, input);
+      return { sessions: page.rows, nextCursor: page.nextCursor, indexedOnly: true, historyComplete };
     }
     const sessionID = input.sessionID;
     if (operation === 'session-state') {

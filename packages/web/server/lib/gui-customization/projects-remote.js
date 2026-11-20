@@ -31,6 +31,37 @@ export function validRemoteProjectInput(operation, input) {
   return operation !== 'prompt-session' || (text(input.messageID, 512) && typeof input.text === 'string' && input.text.trim().length > 0 && input.text.length <= 12_000);
 }
 
+/** Remote rows of the task view, read from the Hub's synced per-Host index (all project and worktree directories), as the UI does. */
+export async function listRemoteTaskRows(gateway) {
+  const empty = { rows: [], failed: [], complete: true };
+  if (!gateway?.supported || typeof gateway.summaries !== 'function') return empty;
+  const catalog = await gateway.list();
+  if (!catalog.supported) return empty;
+  const hostNames = new Map(catalog.hosts.map((host) => [host.id, host.name]));
+  const rows = [], failed = [];
+  for (const hostId of new Set(catalog.projects.map((project) => project.hostId))) {
+    try {
+      const summary = gateway.summaries(hostId);
+      const instanceId = gateway.store?.instanceFor?.(hostId);
+      if (!instanceId) throw new Error('remote instance unknown');
+      const target = { hubId: catalog.hubId, hostId, instanceId };
+      const pins = new Set(summary.pinnedSessionIds ?? []);
+      for (const directory of summary.directories ?? []) for (const session of directory.sessions ?? []) {
+        if (session.parentID) continue;
+        const archived = Number(session.time?.archived ?? 0) > 0;
+        rows.push({
+          sessionID: session.id, directory: directory.directory, title: session.title ?? '', settled: archived,
+          pinned: pins.has(session.id), status: summary.stale ? 'unknown' : session.metadata?.yuri?.sessionStatus?.type ?? 'idle',
+          activityUpdatedAt: session.metadata?.yuri?.titleRefresh?.activityUpdatedAt,
+          remote: { host: hostNames.get(hostId) ?? hostId, target },
+        });
+      }
+      if (summary.stale) failed.push({ hostId, code: 'remote_stale' });
+    } catch { failed.push({ hostId, code: 'remote_unavailable' }); }
+  }
+  return { rows, failed, complete: failed.length === 0 };
+}
+
 /** Only the admitted Hub's existing connections; no desktop configuration capability. */
 export async function runRemoteProjectOperation(gateway, operation, input, signal) {
   signal?.throwIfAborted();
@@ -58,7 +89,8 @@ export async function runRemoteProjectOperation(gateway, operation, input, signa
       try {
         lease = await gateway.acquireTask(hostId, { signal });
         for (const project of catalog.projects.filter((project) => project.hostId === hostId)) {
-          projects.push({ id: project.id, path: project.path, ...(project.label ? { label: project.label } : {}), target: lease.target });
+          projects.push({ id: project.id, path: project.path, directories: gateway.projectDirectories?.(hostId, project.path) ?? [project.path],
+            ...(project.label ? { label: project.label } : {}), target: lease.target });
         }
       } catch { signal?.throwIfAborted(); failed.push({ hostId, code: 'remote_unavailable' }); }
       finally { lease?.release(); }

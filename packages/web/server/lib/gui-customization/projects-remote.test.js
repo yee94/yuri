@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { configureServerOpenCodeFetchGate } from '../opencode/server-opencode-fetch.js';
-import { runRemoteProjectOperation, validRemoteProjectInput } from './projects-remote.js';
+import { runRemoteProjectOperation, validRemoteProjectInput, listRemoteTaskRows } from './projects-remote.js';
 
 const target = { hubId: 'hub', hostId: 'host', instanceId: 'instance' };
 const input = { target, directory: '/repo', sessionID: 'ses_one' };
@@ -76,7 +76,12 @@ describe('bound remote project sessions', () => {
 
   it('discovers authenticated targets, releases leases and preserves partial failures', async () => {
     const f = fixture();
-    expect(await runRemoteProjectOperation(f.gateway, 'remote-projects', {})).toEqual({ projects: [{ id: 'p', path: '/repo', target }], failed: [], complete: true });
+    expect(await runRemoteProjectOperation(f.gateway, 'remote-projects', {})).toEqual({ projects: [{ id: 'p', path: '/repo', directories: ['/repo'], target }], failed: [], complete: true });
+    f.gateway.projectDirectories = vi.fn(() => ['/repo', '/wt/feature']);
+    expect((await runRemoteProjectOperation(f.gateway, 'remote-projects', {})).projects[0].directories).toEqual(['/repo', '/wt/feature']);
+    expect(f.gateway.projectDirectories).toHaveBeenCalledWith('host', '/repo');
+    f.release.mockClear(); f.release();
+    f.gateway.projectDirectories = undefined;
     expect(f.release).toHaveBeenCalledTimes(1);
     f.gateway.acquireTask.mockRejectedValueOnce(new Error('private transport details'));
     expect(await runRemoteProjectOperation(f.gateway, 'remote-projects', {})).toEqual({ projects: [], failed: [{ hostId: 'host', code: 'remote_unavailable' }], complete: false });
@@ -121,6 +126,30 @@ describe('bound remote project sessions', () => {
       await expect(runRemoteProjectOperation(f.gateway, 'prompt-session', { ...input, messageID: 'msg_one', text: 'continue' })).rejects.toThrow();
       expect(f.release).toHaveBeenCalledTimes(3);
     } finally { configureServerOpenCodeFetchGate(null); }
+  });
+
+  it('lists remote task rows from the Hub index across worktree directories, with targets and partial failures', async () => {
+    const f = fixture();
+    const row = (id, extra = {}) => ({ id, title: id, time: {}, metadata: { yuri: { titleRefresh: { activityUpdatedAt: 5 }, sessionStatus: { type: 'busy' } } }, ...extra });
+    f.gateway.list.mockResolvedValue({ supported: true, hubId: 'hub', hosts: [{ id: 'host', name: 'Build machine' }, { id: 'gone', name: 'Gone' }],
+      projects: [{ id: 'p', hostId: 'host', path: '/repo' }, { id: 'q', hostId: 'gone', path: '/x' }] });
+    f.gateway.store = { instanceFor: () => 'instance' };
+    f.gateway.summaries = vi.fn((id) => {
+      if (id === 'gone') throw new Error('private');
+      return { stale: false, pinnedSessionIds: ['ses_pin'], directories: [
+        { directory: '/repo', sessions: [row('ses_root'), row('ses_child', { parentID: 'ses_root' })] },
+        { directory: '/wt/feature', sessions: [row('ses_pin'), row('ses_done', { time: { archived: 9 } })] }] };
+    });
+    const result = await listRemoteTaskRows(f.gateway);
+    expect(result.rows.map((r) => [r.sessionID, r.directory, r.settled, r.pinned])).toEqual([
+      ['ses_root', '/repo', false, false], ['ses_pin', '/wt/feature', false, true], ['ses_done', '/wt/feature', true, false]]);
+    expect(result.rows[0]).toMatchObject({ status: 'busy', remote: { host: 'Build machine', target } });
+    expect(result).toMatchObject({ complete: false, failed: [{ hostId: 'gone', code: 'remote_unavailable' }] });
+    expect(JSON.stringify(result)).not.toMatch(/private/);
+    f.gateway.summaries.mockReturnValue({ stale: true, directories: [{ directory: '/repo', sessions: [row('ses_root')] }] });
+    const stale = await listRemoteTaskRows(f.gateway);
+    expect(stale.rows[0].status).toBe('unknown');
+    expect(stale.failed).toContainEqual({ hostId: 'host', code: 'remote_stale' });
   });
 
   it('archives and restores a remote session on the exact target only after verifying its directory', async () => {
