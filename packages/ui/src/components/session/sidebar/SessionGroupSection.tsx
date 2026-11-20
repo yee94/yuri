@@ -1,6 +1,7 @@
 import React from 'react';
 import { useEvent, useEventListener, useResizeObserver } from '@reactuses/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useIsWorktreeRemoving } from '@/lib/worktrees/worktreeRemovalState';
 import type { Session } from '@/lib/opencode/v2-types';
 
 // Archived buckets routinely grow into the hundreds/thousands; virtualize
@@ -986,6 +987,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
   const contentDepth = hideGroupLabel ? 1 : groupHeaderDepth;
   const renderFolderItems = () => rootFolders.map(({ folder, nodes }) => renderOneFolderItem(folder, nodes, contentDepth));
   const hasWorktreeDeleteAction = Boolean(!group.isMain && group.worktree);
+  const isWorktreeRemoving = useIsWorktreeRemoving(group.worktree?.worktreeRoot ?? group.worktree?.path);
   const groupHeaderRightPadding = alwaysShowActions
     ? (hasWorktreeDeleteAction ? 'pr-14' : 'pr-7')
     : isMinimalMode
@@ -1249,23 +1251,28 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
           </div>
         ) : null}
         {!props.source && group.directory && !group.isMain && group.worktree ? (
-          <div className={cn('absolute right-7 top-1/2 -translate-y-1/2 z-10 transition-opacity', alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover/gh:opacity-100 group-focus-within/gh:opacity-100')}>
+          <div className={cn('absolute right-7 top-1/2 -translate-y-1/2 z-10 transition-opacity', alwaysShowActions || isWorktreeRemoving ? 'opacity-100' : 'opacity-0 group-hover/gh:opacity-100 group-focus-within/gh:opacity-100')}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
+                  disabled={isWorktreeRemoving}
+                  aria-busy={isWorktreeRemoving || undefined}
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (isWorktreeRemoving) return;
                     sessionEvents.requestDelete({
                       sessions: allGroupSessions,
                       mode: 'worktree',
                       worktree: group.worktree,
                     });
                   }}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:pointer-events-none disabled:hover:text-muted-foreground disabled:hover:bg-transparent"
                   aria-label={t('sessions.sidebar.group.actions.deleteGroupAria', { label: group.label })}
                 >
-                  <Icon name="delete-bin" className="h-4 w-4" />
+                  {isWorktreeRemoving
+                    ? <Icon name="loader-4" className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    : <Icon name="delete-bin" className="h-4 w-4" />}
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.group.actions.deleteWorktree')}</p></TooltipContent>
@@ -1273,21 +1280,22 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
           </div>
         ) : null}
         {group.directory ? (
-          <div className={cn('absolute right-0.5 top-1/2 -translate-y-1/2 z-10 transition-opacity', alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover/gh:opacity-100 group-focus-within/gh:opacity-100')}>
+          <div className={cn('absolute right-0.5 top-1/2 -translate-y-1/2 z-10 transition-opacity', alwaysShowActions || isWorktreeRemoving ? 'opacity-100' : 'opacity-0 group-hover/gh:opacity-100 group-focus-within/gh:opacity-100')}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (isWorktreeRemoving) return;
                     if (projectId && projectId !== activeProjectId) setActiveProjectIdOnly(projectId);
                     setActiveMainTab('chat');
                     if (mobileVariant) setSessionSwitcherOpen(false);
                     openNewSessionDraft({ directoryOverride: group.directory });
                   }}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:pointer-events-none disabled:opacity-40"
                   aria-label={t('sessions.sidebar.group.actions.newDraftInGroupAria', { label: group.label })}
-                  disabled={props.source?.actionsDisabled}
+                  disabled={props.source?.actionsDisabled || isWorktreeRemoving}
                  >
                    <Icon name="add" className="h-4 w-4" />
                  </button>
