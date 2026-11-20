@@ -128,6 +128,7 @@ export async function runRemoteProjectOperation(gateway, operation, input, signa
       const result = await lease.json(`/api/yuri/sessions/${encodeURIComponent(input.sessionID)}/archive`, { method: 'PUT', signal,
         headers: { 'content-type': 'application/json' }, body: JSON.stringify({ directory: input.directory, archivedAt }) });
       if (result?.session?.id !== input.sessionID) fail('remote_response_invalid');
+      gateway.notifySessionIndexChanged?.(input.target.hostId);
       return { session: sessionSummary(session, lease.target), archived, archivedAt, index: result.index?.ok === false ? { ok: false, retryable: true } : { ok: true } };
     }
     if (operation === 'read-session') {

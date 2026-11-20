@@ -724,6 +724,13 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       if (live && hasStatusDemand(id)) { connection.topologyDirty = true; enqueueRefresh(connection); }
       return hostView(connection.host);
     },
+    /** A session write made outside the UI (Agent helper): re-read the Host index so connected clients refetch and see it. */
+    notifySessionIndexChanged(id) {
+      const connection = connections.get(id);
+      if (stopped || !connection) return;
+      enqueueRefresh(connection);
+      emit(id, { type: 'yuri:session-index-changed', properties: { cause: 'change' } });
+    },
     setSessionPinned(id, sessionId, pinned, instanceId) {
       if (stopped) throw remoteFailure('host_unavailable', 404);
       if (!store.projects(id).length) throw remoteFailure('project_not_found', 404);

@@ -154,6 +154,7 @@ describe('bound remote project sessions', () => {
 
   it('archives and restores a remote session on the exact target only after verifying its directory', async () => {
     const f = fixture(); const signal = new AbortController().signal;
+    f.gateway.notifySessionIndexChanged = vi.fn();
     f.json.mockImplementation(async (route, init) => ({ session: { id: 'ses_one' }, index: { ok: true }, route, init }));
     expect(validRemoteProjectInput('archive-remote-session', input)).toBe(true);
     expect(validRemoteProjectInput('archive-remote-session', { ...input, sessionID: undefined })).toBe(false);
@@ -161,6 +162,7 @@ describe('bound remote project sessions', () => {
     const archived = await runRemoteProjectOperation(f.gateway, 'archive-remote-session', input, signal);
     expect(archived).toMatchObject({ session: { sessionID: 'ses_one', directory: '/repo', target }, archived: true, index: { ok: true } });
     expect(archived.archivedAt).toBeGreaterThan(0);
+    expect(f.gateway.notifySessionIndexChanged).toHaveBeenCalledExactlyOnceWith('host');
     const [route, init] = f.json.mock.calls[0];
     expect(route).toBe('/api/yuri/sessions/ses_one/archive');
     expect(init).toMatchObject({ method: 'PUT', signal });
