@@ -2796,6 +2796,7 @@ export const dict: Record<I18nKey, string> = {
   'helpDialog.item.toggleServicesMenu': 'Przełącz menu usług',
   'helpDialog.item.openUsage': 'Wyświetl użycie',
   'helpDialog.item.toggleSessionSidebar': 'Przełącz panel sesji',
+  'helpDialog.item.toggleSidebarView': 'Przełącz widok paska bocznego',
   'helpDialog.item.toggleTerminal': 'Przełącz terminal',
   'helpDialog.item.newTerminalTab': 'Nowa karta terminala (gdy terminal ma fokus)',
   'helpDialog.item.openNewTerminal': 'Otwórz nowy terminal',

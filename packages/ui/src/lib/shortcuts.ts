@@ -427,7 +427,7 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
   },
   {
     id: 'toggle_sidebar_view',
-    defaultCombo: 'mod+shift+e',
+    defaultCombo: 'mod+e',
     label: 'Toggle sidebar view',
     description: 'Switch the session sidebar between the Tasks and Projects views',
     customizable: true,

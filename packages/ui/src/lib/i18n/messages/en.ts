@@ -1828,6 +1828,7 @@ export const dict = {
   'helpDialog.item.openCommandPalette': 'Open Command Palette',
   'helpDialog.item.showKeyboardShortcuts': 'Show Keyboard Shortcuts (this dialog)',
   'helpDialog.item.toggleSessionSidebar': 'Toggle Session Sidebar',
+  'helpDialog.item.toggleSidebarView': 'Toggle Sidebar View',
   'helpDialog.item.cycleAgent': 'Cycle Agent (chat input)',
   'helpDialog.item.openModelSelector': 'Open Model Selector',
   'helpDialog.item.navigateModels': 'Navigate Models (in picker)',

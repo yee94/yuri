@@ -70,6 +70,12 @@ export const HelpDialog: React.FC = () => {
           keys: '',
         },
         {
+          id: 'toggle_sidebar_view',
+          descriptionKey: "helpDialog.item.toggleSidebarView",
+          icon: "folder-tree",
+          keys: '',
+        },
+        {
           id: 'cycle_agent',
           keys: '',
           descriptionKey: "helpDialog.item.cycleAgent",
