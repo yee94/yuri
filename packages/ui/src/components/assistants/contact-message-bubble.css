@@ -20,6 +20,10 @@
   max-width: var(--contact-column-width);
 }
 
+.yuri-contact-conversation [data-assistant-contact-avatar-rail] + div > [data-assistant-contact-time] {
+  margin-inline-start: calc(-1 * var(--contact-avatar-gutter));
+}
+
 .yuri-contact-conversation [data-contact-composer-column] {
   width: 100%;
   max-width: var(--contact-column-width);

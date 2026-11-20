@@ -3,7 +3,52 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 
-import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession } from '../ui/chromeCdpHarness'
+import { compileProductionCssAsync, evidenceRoot, keepEvidence, openChromeSession, openPageSession, resolveChrome } from '../ui/chromeCdpHarness'
+
+test.skipIf(!resolveChrome())('contact date tags center across the transcript, with or without an avatar rail', async () => {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const surface = readFileSync(join(here, 'AssistantConversationSurface.tsx'), 'utf8')
+  const content = surface.match(/className="([^"]+)" data-assistant-contact-content/)![1]
+  const group = surface.match(/className=\{cn\('([^']+)', !timeSeparators\.has\(first\.messageID\)/)![1]
+  const rail = surface.match(/className=\{cn\('([^']+)', isMobile \? '([^']+)' : '([^']+)'\)\} data-assistant-contact-avatar-rail/)!
+  const column = surface.match(/className="([^"]+)">\s*\{group\.rows\.map/)![1]
+  const separator = surface.match(/className="([^"]+)" data-assistant-contact-time/)![1]
+  const css = await compileProductionCssAsync(join(here, '../..'))
+  const bubbleCss = readFileSync(join(here, 'contact-message-bubble.css'), 'utf8')
+  const root = evidenceRoot()
+  const chrome = await openChromeSession({ width: 960, height: 844 })
+  try {
+    const html = join(root, 'assistant-date-centering.html')
+    writeFileSync(html, `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style><style>${bubbleCss}</style></head><body>
+      ${['mobile', 'desktop'].map((layout) => `
+        <main class="yuri-assistant-workspace yuri-contact-conversation px-4" data-contact-layout="${layout}" style="width:${layout === 'mobile' ? 390 : 960}px">
+          <div class="${content}" data-assistant-contact-content>
+            ${[true, false].map((incoming) => `
+              <div class="${group}" data-assistant-contact-group>
+                ${incoming ? `<div class="${rail[1]} ${rail[layout === 'mobile' ? 2 : 3]}" data-assistant-contact-avatar-rail>●</div>` : ''}
+                <div class="${column}">
+                  <div class="${separator}" data-assistant-contact-time><time>${incoming ? '昨天' : '今天'}</time></div>
+                  <div style="height:40px">消息</div>
+                </div>
+              </div>`).join('')}
+          </div>
+        </main>`).join('')}
+    </body></html>`)
+    const page = await openPageSession(chrome, { width: 960, height: 844, standalone: false })
+    await page.navigateFile(html)
+    const offsets = await page.evaluate<Record<string, number>>(`(() => {
+      const center = (node) => { const rect = node.getBoundingClientRect(); return rect.left + rect.width / 2; };
+      return Object.fromEntries([...document.querySelectorAll('[data-assistant-contact-time] time')].map(tag => [
+        tag.closest('main').dataset.contactLayout + (tag.closest('[data-assistant-contact-group]').querySelector('[data-assistant-contact-avatar-rail]') ? '-incoming' : '-outgoing'),
+        center(tag) - center(tag.closest('[data-assistant-contact-content]')),
+      ]));
+    })()`)
+    expect(offsets).toEqual({ 'mobile-incoming': 0, 'mobile-outgoing': 0, 'desktop-incoming': 0, 'desktop-outgoing': 0 })
+  } finally {
+    await chrome.close()
+    if (!keepEvidence()) rmSync(root, { recursive: true, force: true })
+  }
+}, 120_000)
 
 test.skip('keyboard curtain never creates an outer assistant scrollport or changes message width', async () => {
   const here = dirname(fileURLToPath(import.meta.url))

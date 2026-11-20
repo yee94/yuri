@@ -422,6 +422,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
     alwaysVisibleSessionIds,
   } = props;
 
+  const isWorktreeRemoving = useIsWorktreeRemoving(group.worktree?.worktreeRoot ?? group.worktree?.path);
   const folderScopeKey = group.folderScopeKey ?? normalizePath(group.directory ?? null);
   const compareSessionNodes = React.useMemo(() => createSessionNodeComparator(
     group.sessions,
@@ -987,7 +988,6 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
   const contentDepth = hideGroupLabel ? 1 : groupHeaderDepth;
   const renderFolderItems = () => rootFolders.map(({ folder, nodes }) => renderOneFolderItem(folder, nodes, contentDepth));
   const hasWorktreeDeleteAction = Boolean(!group.isMain && group.worktree);
-  const isWorktreeRemoving = useIsWorktreeRemoving(group.worktree?.worktreeRoot ?? group.worktree?.path);
   const groupHeaderRightPadding = alwaysShowActions
     ? (hasWorktreeDeleteAction ? 'pr-14' : 'pr-7')
     : isMinimalMode

@@ -748,6 +748,9 @@ remain static images with no observers. Standalone history/pickers do not opt in
 
 Date tags have equal 1rem block padding above and below, including the first tag
 in a message group; group-first styling must not shrink only the upper gap.
+In incoming groups the date row spans the avatar gutter, so it centers on the
+transcript column rather than the narrower message column. This is a horizontal
+layout adjustment only; the tag stays in flow and the message anchor stays mounted.
 
 The contact transcript inserts a centered, muted date before the first visible message and across local calendar days, never for time gaps within a day. Separators use message `createdAt` and the viewer's local timezone: localized Today/Yesterday labels, localized month/day for earlier dates, and the year for other years, without a time. Message bubbles retain their 24-hour timestamps, and the header's last-contact timestamp is unchanged. Labels refresh on the next render after a local day change; no timer or extra request is introduced. One linear pass compares visible rows; internal settle-only records and empty processing previews do not consume boundaries. Cards, attachments, and errors participate. Prepending history recomputes boundaries from loaded rows, preserving message DOM anchors and the existing auto-follow owner. A separator also restarts the assistant avatar grouping.
 
