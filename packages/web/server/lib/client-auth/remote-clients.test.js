@@ -101,6 +101,24 @@ describe('remote client auth runtime', () => {
     }
   });
 
+  it('keeps a renamed label when a deduped client is re-minted', async () => {
+    const { dir, runtime } = await createRuntime();
+    try {
+      const mint = (label) => runtime.createClient({ label, clientKind: 'desktop-local', dedupeKey: 'ssh-desktop' });
+      const first = await mint('Yuri Desktop SSH');
+      await runtime.renameClient(first.client.id, 'Work laptop');
+      const second = await mint('Yuri Desktop SSH');
+      expect(second.client.id).not.toBe(first.client.id);
+      expect((await runtime.listClients()).map((client) => client.label)).toEqual(['Work laptop']);
+      const third = await mint('Yuri Desktop SSH');
+      expect(third.client.label).toBe('Work laptop');
+      const other = await runtime.createClient({ label: 'Yuri Mobile', clientKind: 'mobile', dedupeKey: 'phone' });
+      expect(other.client.label).toBe('Yuri Mobile');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects invalid labels and failed writes without committing a new name', async () => {
     const { dir, runtime } = await createRuntime();
     try {

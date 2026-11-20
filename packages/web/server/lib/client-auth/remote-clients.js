@@ -86,6 +86,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
           expiresAt: normalizeTimestamp(client.expiresAt),
           clientKind: normalizeOptionalString(client.clientKind),
           dedupeKey: normalizeOptionalString(client.dedupeKey),
+          ...(client.labelRenamed === true ? { labelRenamed: true } : {}),
           usesRelay: client.usesRelay === true,
           relayUrl: client.usesRelay === true ? normalizeOptionalString(client.relayUrl) : null,
           lastTransport: client.lastTransport === 'relay' || client.lastTransport === 'direct' ? client.lastTransport : null,
@@ -193,6 +194,10 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
       };
       if (normalizedDedupeKey) {
         const sameConnection = (entry) => entry.usesRelay === client.usesRelay && entry.relayUrl === client.relayUrl;
+        // A user-chosen name belongs to the device, not to the token: re-minting
+        // (reconnect, update) replaces the record but must keep that name.
+        const renamed = store.clients.filter((entry) => sameConnection(entry)
+          && entry.dedupeKey === normalizedDedupeKey && entry.labelRenamed === true).at(-1);
         store.clients = store.clients.filter((entry) => !(sameConnection(entry) && entry.dedupeKey === normalizedDedupeKey));
         // Migrate pre-clientKind desktop tokens: a deduped, kind-tagged mint
         // supersedes legacy records with the same label that carry neither a
@@ -201,6 +206,10 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
         if (client.clientKind) {
           store.clients = store.clients.filter((entry) =>
             !(sameConnection(entry) && entry.label === client.label && !entry.clientKind && !entry.dedupeKey));
+        }
+        if (renamed) {
+          client.label = renamed.label;
+          client.labelRenamed = true;
         }
       }
       store.clients.push(client);
@@ -223,6 +232,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
       const client = store.clients.find((entry) => entry.id === id);
       if (!client) return null;
       client.label = label.trim();
+      client.labelRenamed = true;
       await writeStore(store);
       return publicClient(client);
     });
