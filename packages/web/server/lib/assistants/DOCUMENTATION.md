@@ -589,7 +589,7 @@ read-only background reviews and do not change ordinary Session instructions.
 The customization pointer follows the OpenCode Session capability set: when the turn
 has `bash` and `resolveCustomizationSkill(assistantID)` returns a binding, it names the
 staged skill and the bound project and (with the Electron adapter) SSH/Relay helper
-commands, so local project removal, archive (`settle-session`), remote sessions, SSH and pairing work through
+commands, so local project removal, archive (`settle-session`, or `archive-remote-session` for Remote Project sessions), remote sessions, SSH and pairing work through
 the same Host APIs. Otherwise SSH, config sync and Relay pairing stay unavailable,
 without a filesystem, credential or internal-HTTP fallback. `service.hasAssistant`
 backs the bridge's caller check. GUI authoring instructions do not authorize

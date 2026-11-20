@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 const shippedCustomizationSkillPath = fileURLToPath(new URL('../gui-customization/skill/SKILL.md', import.meta.url));
 
-const CUSTOMIZATION_SCOPE = 'project management, task and session lifecycle, remote hosts and sessions, resource identity and yuri:// deep links, SSH, configuration sync, Relay pairing and GUI customization';
+const CUSTOMIZATION_SCOPE = 'project management, task and session lifecycle (archive, settled; local and remote sessions), remote hosts and sessions, resource identity and yuri:// deep links, SSH, configuration sync, Relay pairing and GUI customization';
 
 const customizationPointer = (tools, customizationSkill) => {
   const names = new Set(tools.map((tool) => tool.name));

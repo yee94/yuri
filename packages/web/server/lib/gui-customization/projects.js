@@ -39,7 +39,8 @@ export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService
         'archive-session': '{sessionID, directory?} session-level archive (archivedAt metadata); not the task-view 「归档」', 'unarchive-session': '{sessionID, directory?}',
         'remote-hosts': '{}', 'add-remote': '{target: {hubId,hostId,instanceId} from remote-hosts, path: existing absolute remote directory, label?}',
         'remote-projects': '{}', sessions: '{target, directory, cursor?}', 'read-session': '{target, directory, sessionID, cursor?}',
-        'create-session': '{target, directory, sessionID: new caller-generated ID, title?}', 'prompt-session': '{target, directory, sessionID, messageID: stable caller-generated ID, text}' },
+        'create-session': '{target, directory, sessionID: new caller-generated ID, title?}', 'prompt-session': '{target, directory, sessionID, messageID: stable caller-generated ID, text}',
+        'archive-remote-session': '{target, directory, sessionID} 「归档」 of a Remote Project session: writes the real archive on that remote Host, as the task/project view does; not a local settle', 'unarchive-remote-session': '{target, directory, sessionID} restores it' },
         completion: 'add and add-remote return the persisted project and created=true/false. add-remote registers on the target Host, then saves the Hub reference. Registration does not clone/create files, open a session or change an existing active selection. Retry the same target and path safely after an interrupted response.' });
       if (lifecycleOperations.includes(operation)) {
         if (!sessionLifecycle) return res.status(501).json({ code: 'unsupported', error: 'Session lifecycle is unavailable on this Host' });

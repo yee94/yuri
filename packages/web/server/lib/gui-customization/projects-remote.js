@@ -14,7 +14,7 @@ const sessionSummary = (value, target) => {
   return { sessionID: session.id, directory: directoryOf(session), title: session.title ?? '', time: session.time, target };
 };
 
-export const remoteProjectOperations = ['remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session'];
+export const remoteProjectOperations = ['remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session', 'archive-remote-session', 'unarchive-remote-session'];
 
 export function validRemoteProjectInput(operation, input) {
   if (!object(input)) return false;
@@ -22,7 +22,7 @@ export function validRemoteProjectInput(operation, input) {
   if (operation === 'add-remote') return Object.keys(input).every((key) => ['target', 'path', 'label'].includes(key))
     && targetValid(input.target) && text(input.path) && (path.posix.isAbsolute(input.path) || path.win32.isAbsolute(input.path))
     && (input.label === undefined || text(input.label, 80));
-  const extras = { sessions: ['cursor'], 'read-session': ['sessionID', 'cursor'], 'create-session': ['sessionID', 'title'], 'prompt-session': ['sessionID', 'messageID', 'text'] }[operation];
+  const extras = { sessions: ['cursor'], 'read-session': ['sessionID', 'cursor'], 'create-session': ['sessionID', 'title'], 'prompt-session': ['sessionID', 'messageID', 'text'], 'archive-remote-session': ['sessionID'], 'unarchive-remote-session': ['sessionID'] }[operation];
   if (!extras || Object.keys(input).some((key) => !['target', 'directory', ...extras].includes(key))) return false;
   if (!targetValid(input.target) || !text(input.directory)) return false;
   if (operation !== 'sessions' && !text(input.sessionID, 512)) return false;
@@ -90,6 +90,14 @@ export async function runRemoteProjectOperation(gateway, operation, input, signa
     }
     const session = sessionRecord(await client.session.get({ sessionID: input.sessionID }, { signal }));
     if (session?.id !== input.sessionID || directoryOf(session) !== input.directory) fail('remote_target_mismatch');
+    if (operation === 'archive-remote-session' || operation === 'unarchive-remote-session') {
+      const archived = operation === 'archive-remote-session';
+      const archivedAt = archived ? Date.now() : 0;
+      const result = await lease.json(`/api/yuri/sessions/${encodeURIComponent(input.sessionID)}/archive`, { method: 'PUT', signal,
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ directory: input.directory, archivedAt }) });
+      if (result?.session?.id !== input.sessionID) fail('remote_response_invalid');
+      return { session: sessionSummary(session, lease.target), archived, archivedAt, index: result.index?.ok === false ? { ok: false, retryable: true } : { ok: true } };
+    }
     if (operation === 'read-session') {
       const query = new URLSearchParams({ directory: input.directory, turns: '3', ...(input.cursor ? { cursor: input.cursor } : {}) });
       const messages = await lease.json(`/api/yuri/sessions/${encodeURIComponent(input.sessionID)}/messages?${query}`, { signal });

@@ -34,6 +34,7 @@ describe('assistant built-in skill pointers', () => {
     const customizationSkill = { file: '/data/session-skills/yuri-customization-abc/SKILL.md', projectsCommand: 'run projects describe', remoteCommand: 'run remote describe' };
     const withBash = formatAssistantBuiltinSkillsPrompt([{ name: 'read' }, { name: 'bash' }], { customizationSkill });
     expect(withBash).not.toContain('settle-session');
+    expect(withBash).toContain('settled');
     expect(withBash).toContain('project management');
     expect(withBash).toContain('read({"path":"/data/session-skills/yuri-customization-abc/SKILL.md"})');
     expect(withBash).toContain('run projects describe');

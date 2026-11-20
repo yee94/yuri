@@ -77,6 +77,8 @@ describe('built-in customization instructions', () => {
     expect(projectEntry).toContain('Bound project helper:');
     expect(projectEntry).toContain('remote hosts and sessions');
     expect(projectEntry).not.toContain('settle-session');
+    expect(projectEntry).toContain('settled');
+    expect(projects).toContain('archive-remote-session');
     expect(projects).toContain('commands.remove');
     expect(projects).toContain('任务归档');
     expect(projects).toContain('会话归档');

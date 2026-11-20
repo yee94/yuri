@@ -9,7 +9,7 @@ async function main() {
     const [encoded, operation] = process.argv.slice(2);
     const binding = JSON.parse(Buffer.from(encoded, 'base64url').toString());
     const lifecycle = ['task-sessions', 'session-state', 'settle-session', 'unsettle-session', 'archive-session', 'unarchive-session'];
-    const operations = ['list', 'add', 'remove', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session'];
+    const operations = ['list', 'add', 'remove', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session', 'archive-remote-session', 'unarchive-remote-session'];
     if (!['describe', ...operations].includes(operation)) throw new Error();
     const origin = new URL(binding.hostOrigin);
     if (origin.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(origin.hostname) || origin.username || origin.password) throw new Error();
@@ -54,6 +54,9 @@ async function main() {
       && (result.sessionID !== input.sessionID || result.settled !== (operation === 'settle-session'))) throw new Error();
     if (['archive-session', 'unarchive-session'].includes(operation)
       && (result.sessionID !== input.sessionID || result.archived !== (operation === 'archive-session')
+        || !Number.isFinite(result.archivedAt) || (result.archivedAt > 0) !== result.archived)) throw new Error();
+    if (['archive-remote-session', 'unarchive-remote-session'].includes(operation)
+      && (result.session?.sessionID !== input.sessionID || result.archived !== (operation === 'archive-remote-session')
         || !Number.isFinite(result.archivedAt) || (result.archivedAt > 0) !== result.archived)) throw new Error();
     if (operation === 'describe' && result.supported !== true) throw new Error();
     console.log(JSON.stringify(operation === 'describe' ? { ...result,

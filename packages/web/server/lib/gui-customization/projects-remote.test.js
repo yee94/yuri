@@ -122,4 +122,30 @@ describe('bound remote project sessions', () => {
       expect(f.release).toHaveBeenCalledTimes(3);
     } finally { configureServerOpenCodeFetchGate(null); }
   });
+
+  it('archives and restores a remote session on the exact target only after verifying its directory', async () => {
+    const f = fixture(); const signal = new AbortController().signal;
+    f.json.mockImplementation(async (route, init) => ({ session: { id: 'ses_one' }, index: { ok: true }, route, init }));
+    expect(validRemoteProjectInput('archive-remote-session', input)).toBe(true);
+    expect(validRemoteProjectInput('archive-remote-session', { ...input, sessionID: undefined })).toBe(false);
+    expect(validRemoteProjectInput('unarchive-remote-session', { ...input, archivedAt: 1 })).toBe(false);
+    const archived = await runRemoteProjectOperation(f.gateway, 'archive-remote-session', input, signal);
+    expect(archived).toMatchObject({ session: { sessionID: 'ses_one', directory: '/repo', target }, archived: true, index: { ok: true } });
+    expect(archived.archivedAt).toBeGreaterThan(0);
+    const [route, init] = f.json.mock.calls[0];
+    expect(route).toBe('/api/yuri/sessions/ses_one/archive');
+    expect(init).toMatchObject({ method: 'PUT', signal });
+    expect(JSON.parse(init.body)).toEqual({ directory: '/repo', archivedAt: archived.archivedAt });
+    const restored = await runRemoteProjectOperation(f.gateway, 'unarchive-remote-session', input, signal);
+    expect(restored).toMatchObject({ archived: false, archivedAt: 0 });
+    expect(JSON.parse(f.json.mock.calls[1][1].body)).toEqual({ directory: '/repo', archivedAt: 0 });
+    expect(f.release).toHaveBeenCalledTimes(2);
+
+    f.json.mockClear();
+    await expect(runRemoteProjectOperation(f.gateway, 'archive-remote-session', { ...input, directory: '/other' })).rejects.toMatchObject({ code: 'remote_target_mismatch' });
+    f.json.mockResolvedValueOnce({ session: { id: 'ses_other' } });
+    await expect(runRemoteProjectOperation(f.gateway, 'archive-remote-session', input)).rejects.toMatchObject({ code: 'remote_response_invalid' });
+    f.json.mockResolvedValueOnce({ session: { id: 'ses_one' }, index: { ok: false } });
+    expect(await runRemoteProjectOperation(f.gateway, 'archive-remote-session', input)).toMatchObject({ index: { ok: false, retryable: true } });
+  });
 });

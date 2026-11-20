@@ -1,6 +1,6 @@
 ---
 name: yuri-customization
-description: Yuri project registration and removal, task and session lifecycle, remote hosts and sessions, resource identity and deep links, connection and configuration management, and GUI customization.
+description: Yuri project registration and removal, task and session lifecycle (archive / settled), remote hosts and sessions, resource identity and deep links, connection and configuration management, and GUI customization.
 ---
 
 # Yuri customization
@@ -8,7 +8,7 @@ description: Yuri project registration and removal, task and session lifecycle, 
 Load only the matching reference. Bound helpers expose the operations available
 to the current caller through `describe`; the references do not grant access.
 
-- [Projects](references/projects.md): project registration and removal, task and session lifecycle, remote hosts and sessions.
+- [Projects](references/projects.md): project registration and removal, task and session lifecycle (task-view 「归档」 / "settled", local and Remote Project sessions), remote hosts and sessions.
 - [Resource identity and scope](references/projects.md#resource-identity-and-scope) and [deep links](references/deep-links.md).
 - [Remote connections](references/remote-connections.md): SSH, configuration sync and Relay pairing.
 - GUI customization: plugin capabilities and workflow below.
