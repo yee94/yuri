@@ -10,7 +10,7 @@ import { validAssistantDeliveryParts } from '../assistant-delivery-parts.js';
 import { createContactMemoryReader } from './memory.js';
 import { getContactGreeting } from './contact-greeting.js';
 import { loadChannelImage } from './channel-image.js';
-import { getWorktrees as defaultListWorktrees } from '../git/service.js';
+import { getWorktrees as defaultListWorktrees, resolvePrimaryWorktreeRoot as defaultResolvePrimaryWorktreeRoot } from '../git/service.js';
 import { contactCardIdentity, createAssistantCardPart, createScheduleCardPart, createSessionCardPart, parseContactCard, parseContactPart } from './cards.js';
 import { ensureContactSummary } from './summary.js';
 import {
@@ -258,7 +258,7 @@ const awaitWithDeadline = async (work, ms = CONTACT_CATALOG_DEADLINE_MS, code = 
   }
 };
 
-export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders, getServerId = async () => null, getAllowedRoots = () => [], listProjects = async () => [], registerProject = null, /** (assistantID) => Promise<{file, projectsCommand, remoteCommand}|null> */ resolveCustomizationSkill = null, readModelPreferences = async () => null, listScheduledTasks = null, sessionIndexService = null, upsertScheduledTask = null, patchScheduledTask = null, syncScheduledTaskProject = null, globalEventHub = null, onRevisionTip = null, onContactTurnEvent = null, onContactTurnComplete = null, /** Host archive op: ({ sessionID, directory, archivedAt }) => Promise */ archiveSessionHost = null, /** Idempotent Host metadata drop after successful SDK delete */ forgetSessionHost = null, /** Host store write: (sessionId, patch) => Promise */ persistSessionMetadata = null, /** After Host isolation metadata is committed. */ onSystemSessionPersisted = null, clock = () => Date.now(), setIntervalFn = setInterval, clearIntervalFn = clearInterval, setImmediateFn = setImmediate, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, reconcileIntervalMs = 60_000, clientFactory, fetchImpl, remoteHostGateway = null, createChatCompletion = null, runContactTurn = defaultRunContactTurn, listWorktrees = defaultListWorktrees } = {}) => {
+export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders, getServerId = async () => null, getAllowedRoots = () => [], listProjects = async () => [], registerProject = null, /** (assistantID) => Promise<{file, projectsCommand, remoteCommand}|null> */ resolveCustomizationSkill = null, readModelPreferences = async () => null, listScheduledTasks = null, sessionIndexService = null, upsertScheduledTask = null, patchScheduledTask = null, syncScheduledTaskProject = null, globalEventHub = null, onRevisionTip = null, onContactTurnEvent = null, onContactTurnComplete = null, /** Host archive op: ({ sessionID, directory, archivedAt }) => Promise */ archiveSessionHost = null, /** Idempotent Host metadata drop after successful SDK delete */ forgetSessionHost = null, /** Host store write: (sessionId, patch) => Promise */ persistSessionMetadata = null, /** After Host isolation metadata is committed. */ onSystemSessionPersisted = null, clock = () => Date.now(), setIntervalFn = setInterval, clearIntervalFn = clearInterval, setImmediateFn = setImmediate, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, reconcileIntervalMs = 60_000, clientFactory, fetchImpl, remoteHostGateway = null, createChatCompletion = null, runContactTurn = defaultRunContactTurn, listWorktrees = defaultListWorktrees, resolvePrimaryWorktreeRoot = defaultResolvePrimaryWorktreeRoot } = {}) => {
   const execution = createAssistantExecutionAccessor(remoteHostGateway);
   const targetFields = () => execution.current() ? { target: execution.current().target } : {};
   const scopedWork = (params, work) => execution.run(params, work);
@@ -2245,6 +2245,21 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     return null;
   };
   /**
+   * A linked git worktree (e.g. OpenCode's managed worktree dir) belongs to its
+   * primary repository's registered project even when it lives outside every root.
+   */
+  const withLinkedWorktreeRoot = async (directory, roots) => {
+    if (roots.some((root) => directoryContained(directory, root))) return roots;
+    let primary = null;
+    try {
+      primary = (await resolvePrimaryWorktreeRoot(directory))?.root ?? null;
+    } catch {
+      return roots;
+    }
+    if (!primary || directoryContained(directory, primary)) return roots;
+    return roots.some((root) => directoryContained(primary, root)) ? [...roots, directory] : roots;
+  };
+  /**
    * Resolve an existing OpenCode session for watch / stop / assign-reuse.
    * Authority order: session index directory → session.get metadata → registered project.
    * User-supplied directory/projectPath is a lookup hint only — never trusted as scope.
@@ -2332,13 +2347,15 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
     }
     // Registered project scope = allowed roots (same gate as assign create).
     // Reject managed assistant-workspaces and paths outside Settings projects.
+    let allowedRoots = getAllowedRoots();
+    if (!execution.current()) allowedRoots = await withLinkedWorktreeRoot(directoryRaw, allowedRoots);
     let directory;
     try {
       directory = await (execution.current()?.resolveDirectory || resolveAssignDirectory)({
         projectPath: directoryRaw,
         directory: directoryRaw,
         branch: null,
-        allowedRoots: getAllowedRoots(),
+        allowedRoots,
         managedWorkspaceRoot: path.resolve(dataDir, 'assistant-workspaces'),
         worktrees: [],
       });

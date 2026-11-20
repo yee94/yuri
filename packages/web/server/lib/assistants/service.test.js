@@ -6490,6 +6490,37 @@ describe('read_session referenced conversation', () => {
     service.close();
   });
 
+  it.each([
+    ['registered', true],
+    ['unregistered', false],
+  ])('reads a linked worktree outside project roots only when its primary repo is %s', async (_label, registered) => {
+    const directory = root();
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'assistants-wt-'));
+    const primary = registered ? directory : fs.mkdtempSync(path.join(os.tmpdir(), 'assistants-primary-'));
+    const read = vi.fn(async () => ({ data: [{ id: 'msg_wt', sessionID: 'ses_wt', type: 'user', time: { created: 1 }, text: 'done' }], cursor: { previous: null, next: null } }));
+    const resolvePrimaryWorktreeRoot = vi.fn(async () => ({ root: primary }));
+    let outcome;
+    const service = setup(directory, { get: async () => ({ data: { id: 'ses_wt', directory: worktree, title: 'Worktree session' } }), messages: read }, {
+      resolvePrimaryWorktreeRoot,
+      runContactTurn: async ({ tools, signal }) => {
+        outcome = await tools.find((t) => t.name === 'read_session').execute('read_wt', { sessionID: 'ses_wt' }, signal);
+        return { text: 'Read', bubbles: ['Read'] };
+      },
+    });
+    const assistant = service.createAssistant(assistantInput);
+    await settleSend(service, assistant.id, { messageID: `read_wt_${_label}`, parts: [{ type: 'text', text: 'read worktree session' }] });
+    expect(resolvePrimaryWorktreeRoot).toHaveBeenCalledWith(worktree);
+    if (registered) {
+      expect(outcome.details).toMatchObject({ sessionID: 'ses_wt', messages: [{ messageID: 'msg_wt' }] });
+    } else {
+      expect(outcome.details.error).toBe('workspace_forbidden');
+      expect(read).not.toHaveBeenCalled();
+    }
+    service.close();
+    fs.rmSync(worktree, { recursive: true, force: true });
+    if (!registered) fs.rmSync(primary, { recursive: true, force: true });
+  });
+
   it.each(['transport', 'wrong-session', 'invalid-limit'])('fails closed on %s instead of empty success', async (scenario) => {
     const directory = root();
     const read = vi.fn(async () => scenario === 'transport' ? { error: { message: 'offline' } } : { data: [{ info: { id: 'bad', sessionID: 'ses_other', role: 'user' }, parts: [] }] });
