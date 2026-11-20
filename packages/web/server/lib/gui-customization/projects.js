@@ -33,7 +33,7 @@ export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService
       if (!await isBoundSkillCaller(req, caller, { createClient, hasAssistant })) return res.status(403).json({ error: 'Caller is not bound to this Host' });
       if (operation === 'describe') return res.json({ supported: true, remoteSupported: Boolean(remoteHostGateway?.supported && remoteHostGateway?.acquireTask), lifecycleSupported: Boolean(sessionLifecycle), inputs: { add: '{path: existing absolute Host directory, label?: display name}', list: '{}',
         ...(removeProject ? { remove: '{projectId: exact ID from list} removes only the bound Host registration; preserves files, sessions and remote projects' } : {}),
-        'task-sessions': '{directory?: absolute bound-Host directory, cursor?: returned nextCursor} bounded Host index metadata, not full upstream history',
+        'task-sessions': '{directory?: absolute bound-Host directory, settled?: boolean filter (false = still active in the task view), cursor?: returned nextCursor} bounded Host index metadata ordered by activity, newest first; rows carry status, not full upstream history',
         'session-state': '{sessionID} read Host archive authority and nullable task projection; not upstream existence or live UI state',
         'settle-session': '{sessionID} task-view 「归档」: moves the session to the archived shelf; reversible, returns to active on new activity', 'unsettle-session': '{sessionID} restores a task-view-archived session to active',
         'archive-session': '{sessionID, directory?} session-level archive (archivedAt metadata); not the task-view 「归档」', 'unarchive-session': '{sessionID, directory?}',

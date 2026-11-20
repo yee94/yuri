@@ -196,4 +196,19 @@ describe('bound session lifecycle helper end to end', () => {
     expect(new Set(all.map((row) => row.sessionID)).size).toBe(56);
     expect((await run(cmd['task-sessions'], { directory: root })).value.sessions).toHaveLength(1);
   });
+
+  it('filters by settled state and orders rows across directories by activity, newest first, with live status', async () => {
+    const now = Date.now();
+    index.upsert({ id: 'ses_old', title: 'Old', directory: path.join(root, 'a'), time: { created: now - 9000, updated: now - 9000 } });
+    index.upsert({ id: 'ses_new', title: 'New', directory: path.join(root, 'b'), time: { created: now + 9000, updated: now + 9000 } });
+    for (const id of ['ses_old', 'ses_new']) index.clearSettled(id);
+    index.setSettled('ses_old');
+    const cmd = await commands();
+    const ids = async (input) => (await run(cmd['task-sessions'], input)).value.sessions.map((row) => row.sessionID);
+    expect(await ids({})).toEqual(['ses_new', 'ses_target', 'ses_old']);
+    expect(await ids({ settled: false })).toEqual(['ses_new', 'ses_target']);
+    expect(await ids({ settled: true })).toEqual(['ses_old']);
+    expect((await run(cmd['task-sessions'], { settled: false })).value.sessions[0]).toMatchObject({ settled: false, status: 'idle' });
+    for (const input of [{ settled: 'false' }, { settled: null }]) expect((await request('task-sessions', input)).status).toBe(400);
+  });
 });
