@@ -788,6 +788,22 @@ test('older sessions are demand-paged from the Host SDK, preserving explicit cur
   expect(container.textContent).toContain('Older one'); expect(container.textContent).toContain('Older two');
 });
 
+test('a summary refresh re-reads loaded older pages so a session archived elsewhere leaves the list', async () => {
+  let archived = false;
+  const list = vi.fn(async () => ({ data: [{ id: 'older-1', title: 'Older one', time: { created: 1, updated: archived ? 5 : 1, ...(archived ? { archived: 5 } : {}) }, location: { directory: project('a').path } }], cursor: {} }));
+  const entry = registry(async () => { const value = snapshot('a'); return json({ ...value, directories: [{ ...value.directories[0], hasMore: true }] }); }, () => ({ session: { list } }) as unknown as OpenCodeClient);
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
+  await flush(); await flush();
+  await click('sessions.sidebar.group.showMore');
+  expect(container.textContent).toContain('Older one');
+  expect(list).toHaveBeenCalledTimes(1);
+  archived = true;
+  await act(async () => { await queryClient.invalidateQueries({ predicate: (query) => query.queryKey[1] === 'remote-projects' && query.queryKey[2] === 'summaries' }); });
+  await flush(); await flush();
+  expect(list).toHaveBeenCalledTimes(2);
+  expect(container.textContent).not.toContain('Older one');
+});
+
 test('custom project icons use the remote project ID and Host fetch, and release browser object URLs on unmount', async () => {
   const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:remote-icon');
   const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});

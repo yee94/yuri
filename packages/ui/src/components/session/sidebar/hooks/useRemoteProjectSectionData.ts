@@ -29,8 +29,9 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
   }, [registeredProjects, registry.hubId, project.id, project.hostId, snapshot?.worktrees]);
   const [pageLimit, setPageLimit] = React.useState(0);
   const directoryPaths = (snapshot?.directories ?? []).map((directory) => directory.directory).filter(ownsDirectory);
+  const pagesKey = [...registry.resolve({ hubId: registry.hubId, hostId: project.hostId, directory: project.path }).queryScope, 'navigation-pages'] as const;
   const moreSessions = useQuery({
-    queryKey: [...registry.resolve({ hubId: registry.hubId, hostId: project.hostId, directory: project.path }).queryScope, 'navigation-pages', pageLimit, directoryPaths],
+    queryKey: [...pagesKey, pageLimit, directoryPaths],
     enabled: online && pageLimit > 0,
     queryFn: async ({ signal }) => {
       const pages: Array<{ directory: string; sessions: Session[]; hasMore: boolean }> = [];
@@ -57,6 +58,17 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
     placeholderData: (previous, previousQuery) => previousQuery?.queryKey[1] === registry.hubId && previousQuery.queryKey[2] === project.hostId ? previous : undefined,
     staleTime: 30_000,
   });
+  // The Hub index drops a session once it is archived, so loaded older pages are the only copy left of
+  // that row. Re-read them whenever the summary changes, or an archived session lingers until reload.
+  const summaryUpdatedAt = summaries.dataUpdatedAt;
+  const pagesLoaded = online && pageLimit > 0;
+  const pagesScope = JSON.stringify(pagesKey);
+  const seenSummaryAt = React.useRef(summaryUpdatedAt);
+  React.useEffect(() => {
+    if (seenSummaryAt.current === summaryUpdatedAt) return;
+    seenSummaryAt.current = summaryUpdatedAt;
+    if (pagesLoaded) void queryClient.invalidateQueries({ queryKey: JSON.parse(pagesScope) as unknown[] });
+  }, [summaryUpdatedAt, pagesLoaded, pagesScope]);
   const titleSearch = useQuery({
     queryKey: [...remoteSummaryOptions(registry, project.hostId).queryKey, 'title-search', query],
     enabled: online && Boolean(query),
