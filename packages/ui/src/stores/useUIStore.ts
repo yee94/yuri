@@ -1083,7 +1083,6 @@ interface UIStore {
   setOtaChannelOverride: (value: OtaChannelOverride) => void;
   viewPagerPage: 'left' | 'center' | 'right';
   setViewPagerPage: (page: 'left' | 'center' | 'right') => void;
-  toggleExpandedInput: () => void;
   setExpandedInput: (value: boolean) => void;
   setWorkStatusPanelEnabled: (enabled: boolean) => void;
   setWorkStatusPanelVisible: (visible: boolean) => void;
@@ -2800,10 +2799,6 @@ export const useUIStore = create<UIStore>()(
 
         setFileEditorKeymap: (value) => {
           set({ fileEditorKeymap: normalizeFileEditorKeymap(value) });
-        },
-
-        toggleExpandedInput: () => {
-          set((state) => ({ isExpandedInput: !state.isExpandedInput }));
         },
 
         setExpandedInput: (value) => {

@@ -1194,7 +1194,7 @@
   'settings.yuri.keyboardShortcuts.action.cycle_favorite_model_forward.label': '向前輪換收藏模型',
   'settings.yuri.keyboardShortcuts.action.cycle_favorite_model_backward.label': '向後輪換收藏模型',
   'settings.yuri.keyboardShortcuts.action.open_model_selector.label': '開啟模型選擇器',
-  'settings.yuri.keyboardShortcuts.action.expand_input.label': '展開輸入方塊',
+  'settings.yuri.keyboardShortcuts.action.toggle_sidebar_view.label': '切換側邊欄檢視',
 'settings.yuri.keyboardShortcuts.action.clear_all_messages.label': '清空所有訊息',
   'settings.yuri.keyboardShortcuts.action.open_timeline_dialog.label': '開啟對話時間軸',
   'settings.yuri.keyboardShortcuts.action.toggle_prompt_navigator.label': '顯示或隱藏提示詞導覽',

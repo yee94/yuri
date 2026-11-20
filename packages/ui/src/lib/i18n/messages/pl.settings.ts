@@ -1146,7 +1146,7 @@ export const settingsDict = {
   'settings.yuri.keyboardShortcuts.action.zoom_out.label': 'Pomniejsz',
   'settings.yuri.keyboardShortcuts.action.zoom_reset.label': 'Resetuj powiększenie',
   'settings.yuri.keyboardShortcuts.action.cycle_agent.label': 'Przełącz agenta',
-  'settings.yuri.keyboardShortcuts.action.expand_input.label': 'Rozwiń pole wprowadzania',
+  'settings.yuri.keyboardShortcuts.action.toggle_sidebar_view.label': 'Przełącz widok paska bocznego',
   'settings.yuri.keyboardShortcuts.action.toggle_prompt_navigator.label': 'Przełącz nawigator promptów',
   'settings.yuri.keyboardShortcuts.action.focus_input.label': 'Skup pole wprowadzania',
   'settings.yuri.keyboardShortcuts.action.new_chat.label': 'Nowa sesja',

@@ -426,10 +426,10 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     customizable: true,
   },
   {
-    id: 'expand_input',
+    id: 'toggle_sidebar_view',
     defaultCombo: 'mod+shift+e',
-    label: 'Expand input',
-    description: 'Toggle focus mode for the chat input',
+    label: 'Toggle sidebar view',
+    description: 'Switch the session sidebar between the Tasks and Projects views',
     customizable: true,
   },
   {

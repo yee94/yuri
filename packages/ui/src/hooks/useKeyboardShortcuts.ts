@@ -14,6 +14,7 @@ import { createWorktreeSession } from '@/lib/worktreeSessionCreator';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { canUseElectronDesktopIPC, invokeDesktop, isVSCodeRuntime } from '@/lib/desktop';
 import { showOpenCodeStatus } from '@/lib/openCodeStatus';
+import { updateDesktopSettings } from '@/lib/persistence';
 import { eventMatchesShortcut, eventMatchesZoomShortcut, getEffectiveShortcutCombo, getEffectiveShortcutCombos, normalizeCombo } from '@/lib/shortcuts';
 import { readEmbeddedThemeSearchParams } from '@/contexts/theme-embedded-bootstrap';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
@@ -189,7 +190,6 @@ export const useKeyboardShortcuts = () => {
   const setTimelineDialogOpen = useUIStore((s) => s.setTimelineDialogOpen);
   const togglePromptNavigatorPanel = useUIStore((s) => s.togglePromptNavigatorPanel);
   const setPromptNavigatorPanelOpen = useUIStore((s) => s.setPromptNavigatorPanelOpen);
-  const toggleExpandedInput = useUIStore((s) => s.toggleExpandedInput);
   const shortcutOverrides = useUIStore((s) => s.shortcutOverrides);
   const currentDirectory = useDirectoryStore((s) => s.currentDirectory);
   const activeProject = useProjectsStore((s) => s.getActiveProject());
@@ -1204,12 +1204,16 @@ export const useKeyboardShortcuts = () => {
         return;
       }
 
-      if (eventMatchesShortcut(e, combo('expand_input'))) {
-        if (isMobile) {
+      if (eventMatchesShortcut(e, combo('toggle_sidebar_view'))) {
+        const { isMobile: isMobileRuntime, sidebarView, setSidebarView, setSidebarOpen } = useUIStore.getState();
+        if (isMobileRuntime || isVSCodeRuntime()) {
           return;
         }
         e.preventDefault();
-        toggleExpandedInput();
+        const nextView = sidebarView === 'tasks' ? 'projects' : 'tasks';
+        setSidebarOpen(true);
+        setSidebarView(nextView);
+        void updateDesktopSettings({ sidebarView: nextView });
         return;
       }
 
@@ -1387,7 +1391,6 @@ export const useKeyboardShortcuts = () => {
     setTimelineDialogOpen,
     togglePromptNavigatorPanel,
     setPromptNavigatorPanelOpen,
-    toggleExpandedInput,
     setThemeMode,
     working,
     armAbortPrompt,

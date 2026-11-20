@@ -1319,7 +1319,7 @@ export const settingsDict = {
   'settings.yuri.keyboardShortcuts.action.cycle_favorite_model_forward.label': '즐겨찾기 모델 앞으로 순환',
   'settings.yuri.keyboardShortcuts.action.cycle_favorite_model_backward.label': '즐겨찾기 모델 뒤로 순환',
   'settings.yuri.keyboardShortcuts.action.open_model_selector.label': '모델 선택기 열기',
-  'settings.yuri.keyboardShortcuts.action.expand_input.label': '입력 확장',
+  'settings.yuri.keyboardShortcuts.action.toggle_sidebar_view.label': '사이드바 보기 전환',
 'settings.yuri.keyboardShortcuts.action.clear_all_messages.label': '모든 메시지 지우기',
   'settings.yuri.keyboardShortcuts.action.open_timeline_dialog.label': '대화 타임라인 열기',
   'settings.yuri.keyboardShortcuts.action.toggle_prompt_navigator.label': '프롬프트 탐색기 표시/숨기기',

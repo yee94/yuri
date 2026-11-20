@@ -1319,7 +1319,7 @@ export const settingsDict = {
   "settings.yuri.keyboardShortcuts.action.cycle_favorite_model_forward.label": "Перемкнути улюблену модель вперед",
   "settings.yuri.keyboardShortcuts.action.cycle_favorite_model_backward.label": "Перемкнути улюблену модель назад",
   "settings.yuri.keyboardShortcuts.action.open_model_selector.label": "Відкрити вибір моделі",
-  "settings.yuri.keyboardShortcuts.action.expand_input.label": "Розгорнути введення",
+  "settings.yuri.keyboardShortcuts.action.toggle_sidebar_view.label": "Перемкнути вигляд бічної панелі",
 "settings.yuri.keyboardShortcuts.action.clear_all_messages.label": "Очистити всі повідомлення",
   "settings.yuri.keyboardShortcuts.action.open_timeline_dialog.label": "Відкрити хронологію розмови",
   "settings.yuri.keyboardShortcuts.action.toggle_prompt_navigator.label": "Показати або приховати навігатор промптів",

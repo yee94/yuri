@@ -5,10 +5,10 @@ export const lifecycleOperations = ['task-sessions', 'session-state', 'settle-se
 
 export function validLifecycleInput(operation, input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
-  const allowed = operation === 'task-sessions' ? ['directory', 'cursor']
+  const allowed = operation === 'task-sessions' ? ['directory', 'cursor', 'settled']
     : ['archive-session', 'unarchive-session'].includes(operation) ? ['sessionID', 'directory'] : ['sessionID'];
   if (Object.entries(input).some(([key, value]) => !allowed.includes(key)
-    || typeof value !== 'string' || !value.trim() || value.length > 4096 || /[\x00-\x1f]/.test(value))) return false;
+    || (key === 'settled' ? typeof value !== 'boolean' : typeof value !== 'string' || !value.trim() || value.length > 4096 || /[\x00-\x1f]/.test(value)))) return false;
   if (input.directory !== undefined && !path.isAbsolute(input.directory)) return false;
   if (operation === 'task-sessions') return input.cursor === undefined || /^(0|[1-9]\d{0,8})$/.test(input.cursor);
   return typeof input.sessionID === 'string' && /^ses[A-Za-z0-9_]+$/.test(input.sessionID) && input.sessionID.length <= 256;
@@ -35,8 +35,11 @@ export function createProjectSessionLifecycle({ sessionIndexService, sessionArch
         .map((session) => ({
           sessionID: session.id, directory: session.directory, title: session.title,
           settled: Number(session.time?.settled ?? 0) > 0,
-          pinned: pins.has(session.id), activityUpdatedAt: session.metadata?.yuri?.titleRefresh?.activityUpdatedAt,
-        }));
+          pinned: pins.has(session.id), status: session.metadata?.yuri?.sessionStatus?.type ?? 'idle',
+          activityUpdatedAt: session.metadata?.yuri?.titleRefresh?.activityUpdatedAt,
+        }))
+        .filter((row) => input.settled === undefined || row.settled === input.settled)
+        .sort((a, b) => (b.activityUpdatedAt ?? 0) - (a.activityUpdatedAt ?? 0) || (a.sessionID < b.sessionID ? 1 : -1));
       const offset = Number(input.cursor ?? 0);
       return {
         sessions: rows.slice(offset, offset + 50),

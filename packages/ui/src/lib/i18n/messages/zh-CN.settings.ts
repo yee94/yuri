@@ -1319,7 +1319,7 @@ export const settingsDict = {
   'settings.yuri.keyboardShortcuts.action.cycle_favorite_model_forward.label': '向前轮换收藏模型',
   'settings.yuri.keyboardShortcuts.action.cycle_favorite_model_backward.label': '向后轮换收藏模型',
   'settings.yuri.keyboardShortcuts.action.open_model_selector.label': '打开模型选择器',
-  'settings.yuri.keyboardShortcuts.action.expand_input.label': '展开输入框',
+  'settings.yuri.keyboardShortcuts.action.toggle_sidebar_view.label': '切换侧边栏视图',
   'settings.yuri.keyboardShortcuts.action.clear_all_messages.label': '清空所有消息',
   'settings.yuri.keyboardShortcuts.action.open_timeline_dialog.label': '打开对话时间线',
   'settings.yuri.keyboardShortcuts.action.toggle_prompt_navigator.label': '显示或隐藏提示词导航',

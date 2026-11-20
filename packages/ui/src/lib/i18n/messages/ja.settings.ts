@@ -1351,7 +1351,7 @@ export const settingsDict = {
   'settings.yuri.keyboardShortcuts.action.cycle_agent.label': 'Agent を順に切替',
   'settings.yuri.keyboardShortcuts.action.cycle_favorite_model_forward.label': 'お気に入りモデルを次へ',
   'settings.yuri.keyboardShortcuts.action.cycle_favorite_model_backward.label': 'お気に入りモデルを前へ',
-  'settings.yuri.keyboardShortcuts.action.expand_input.label': '入力を拡大',
+  'settings.yuri.keyboardShortcuts.action.toggle_sidebar_view.label': 'サイドバー表示の切替',
   'settings.yuri.keyboardShortcuts.action.open_model_selector.label': 'モデルセレクターを開く',
 'settings.yuri.keyboardShortcuts.action.clear_all_messages.label': 'すべてのメッセージをクリア',
   'settings.yuri.keyboardShortcuts.action.open_timeline_dialog.label': '会話タイムラインを開く',

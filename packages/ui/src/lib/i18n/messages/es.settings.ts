@@ -1319,7 +1319,7 @@ export const settingsDict = {
   "settings.yuri.keyboardShortcuts.action.cycle_favorite_model_forward.label": "Siguiente modelo favorito",
   "settings.yuri.keyboardShortcuts.action.cycle_favorite_model_backward.label": "Modelo favorito anterior",
   "settings.yuri.keyboardShortcuts.action.open_model_selector.label": "Abrir selector de modelo",
-  "settings.yuri.keyboardShortcuts.action.expand_input.label": "Expandir entrada",
+  "settings.yuri.keyboardShortcuts.action.toggle_sidebar_view.label": "Cambiar vista de la barra lateral",
 "settings.yuri.keyboardShortcuts.action.clear_all_messages.label": "Borrar todos los mensajes",
   "settings.yuri.keyboardShortcuts.action.open_timeline_dialog.label": "Abrir línea de tiempo de conversación",
   "settings.yuri.keyboardShortcuts.action.toggle_prompt_navigator.label": "Mostrar u ocultar navegador de prompts",
