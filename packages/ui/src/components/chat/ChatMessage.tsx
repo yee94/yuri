@@ -1126,7 +1126,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                 respectReducedMotion
                             >
                                 <div {...messageHoverHandlers} className={cn('relative flex', isShellResult ? 'justify-start' : 'justify-end', !isMobile ? 'yuri-user-shell-hover-scope' : undefined)}>
-                                    <div className={cn(isShellResult ? 'w-full min-w-0' : 'max-w-[85%]', showStickyInlineHoverRow && !isShellResult ? 'pb-5' : undefined)}>
+                                    <div className={cn(isShellResult ? 'w-full min-w-0' : 'flex max-w-[85%] flex-col items-end', showStickyInlineHoverRow && !isShellResult ? 'pb-5' : undefined)}>
                                         <UserMessageBubble isShellResult={isShellResult}>
                                             <MessageBody
                                                 messageId={message.info.id}
