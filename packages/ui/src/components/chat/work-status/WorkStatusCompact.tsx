@@ -14,6 +14,7 @@ import { normalizePath } from '@/lib/pathNormalization';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useWorkStatusSubagents } from './useWorkStatusSubagents';
+import { useBlockingShellIds } from './useBlockingShellIds';
 import { WorkStatusTodos } from './WorkStatusTodos';
 import { GuiPluginWorkStatus } from '@/components/gui-plugins/GuiPluginWorkStatus';
 import type { GuiWorkStatusInput } from '@/lib/gui-plugins/work-status';
@@ -80,13 +81,14 @@ const LocalWorkStatusCompact: React.FC<Props> = (props) => {
   }, [availableWorktrees, directory, projects, sessionWorktree]);
   const subagents = useWorkStatusSubagents(sessionId, directory);
   const runningShells = useRunningSessionShells();
+  const blockingShellIds = useBlockingShellIds(sessionId, directory);
   const shells = React.useMemo<WorkStatusShell[]>(() => {
     if (!sessionId) return [];
     return [...runningShells]
-      .filter(([, owner]) => owner.sessionID === sessionId)
+      .filter(([id, owner]) => owner.sessionID === sessionId && !blockingShellIds.includes(id))
       .map(([id, owner]) => ({ id, directory: owner.directory, startedAt: owner.startedAt }))
       .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
-  }, [runningShells, sessionId]);
+  }, [blockingShellIds, runningShells, sessionId]);
   return <WorkStatusCompactContent {...props} project={project ?? undefined} worktree={worktree} subagents={subagents} shells={shells} />;
 };
 

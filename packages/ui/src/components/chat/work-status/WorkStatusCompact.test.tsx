@@ -17,6 +17,7 @@ const fixture = vi.hoisted(() => ({
   attached: new Map<string, WorktreeMetadata>(),
   sessions: [] as { id: string; parentID: string; title: string }[],
   shells: new Map<string, { sessionID: string; directory: string; startedAt?: number }>(),
+  blocking: [] as string[],
   faces: [] as { key: string; sessionID?: string; seed: string; label: string; phase: 'working' | 'done' }[],
   todowrite: undefined as { content: string; status: string; priority: string }[] | undefined,
   liveTodos: {} as Record<string, { content: string; status: string; priority: string }[]>,
@@ -46,6 +47,7 @@ vi.mock('@/sync/session-ui-store', () => ({ useSessionUIStore: (selector: (state
   worktreeMetadata: fixture.attached, availableWorktreesByProject: fixture.worktrees,
 }) }));
 vi.mock('./useWorkStatusSubagents', () => ({ useWorkStatusSubagents: () => fixture.faces }));
+vi.mock('./useBlockingShellIds', () => ({ useBlockingShellIds: () => fixture.blocking }));
 vi.mock('./WorkStatusShellView', () => ({
   WorkStatusShellRow: ({ shell, onOpen }: { shell: { id: string }; onOpen: (shell: { id: string }, command: string) => void }) =>
     <button type="button" data-shell-row={shell.id} onClick={() => onOpen(shell, 'printf demo')}>{shell.id}</button>,
@@ -79,6 +81,7 @@ beforeEach(() => {
   fixture.sessions = [];
   fixture.faces = [];
   fixture.shells = new Map();
+  fixture.blocking = [];
   useTerminalStore.setState({ sessions: new Map(), nextTabId: 1 });
   fixture.liveTodos = {};
   fixture.persistedTodos = {};
@@ -210,6 +213,17 @@ it('shows the disclosure for shells alone', async () => {
   fixture.shells = new Map([['only', { sessionID: 's', directory: '/repo' }]]);
   await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
   expect(host.querySelector('[role="group"][aria-label="Background tasks"]')?.textContent).toBe('1 working');
+});
+
+it('hides shells still blocked by a running shell tool call', async () => {
+  fixture.shells = new Map([
+    ['fg', { sessionID: 's', directory: '/repo' }],
+    ['bg', { sessionID: 's', directory: '/repo' }],
+  ]);
+  fixture.blocking = ['fg'];
+  await act(async () => root.render(<WorkStatusCompact sessionId="s" directory="/repo" />));
+  await act(async () => host.querySelector<HTMLButtonElement>('[role="group"][aria-label="Background tasks"] button')?.click());
+  expect([...host.querySelectorAll('[data-shell-row]')].map((row) => row.getAttribute('data-shell-row'))).toEqual(['bg']);
 });
 
 it('shows the session todos with a done count, keeps cancelled items struck through, and collapses on demand', async () => {
