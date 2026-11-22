@@ -115,8 +115,8 @@ final class YuriShareStore {
             throwIfDraftCancelled(context, draftID);
             JSONObject existing = loadDraftLocked(context, draftID);
             if (existing != null) return existing;
-            if (images.size() > MAX_IMAGES) throw new IllegalArgumentException("A share supports up to 10 images.");
-            if ((text == null || text.trim().isEmpty()) && images.isEmpty()) throw new IllegalArgumentException("Share text or at least one image.");
+            if (images.size() > MAX_IMAGES) throw new IllegalArgumentException("A share supports up to 10 files.");
+            if ((text == null || text.trim().isEmpty()) && images.isEmpty()) throw new IllegalArgumentException("Share text or at least one file.");
 
             File root = drafts(context); root.mkdirs();
             File temp = new File(root, "." + draftID);
@@ -129,13 +129,13 @@ final class YuriShareStore {
                     throwIfDraftCancelled(context, draftID);
                     Uri uri = images.get(i);
                     String mime = context.getContentResolver().getType(uri);
-                    if (mime == null || !mime.startsWith("image/")) throw new IllegalArgumentException("Only image attachments are supported.");
+                    if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
                     String name = displayName(context, uri);
                     File output = new File(temp, i + "-" + safeName(name));
                     long size = copyLimited(context.getContentResolver().openInputStream(uri), output, MAX_IMAGE_BYTES);
                     throwIfDraftCancelled(context, draftID);
                     total += size;
-                    if (total > MAX_TOTAL_BYTES) throw new IllegalArgumentException("Shared images exceed 20 MB.");
+                    if (total > MAX_TOTAL_BYTES) throw new IllegalArgumentException("Shared files exceed 20 MB.");
                     attachments.put(new JSONObject().put("stagedPath", output.getName()).put("originalName", name).put("mime", mime).put("byteSize", size));
                 }
                 long now = System.currentTimeMillis();
@@ -183,7 +183,7 @@ final class YuriShareStore {
             JSONObject draft = readJSON(draftFile);
             if (draft.optLong("expiresAt") <= System.currentTimeMillis() || !validAttachments(draft.optJSONArray("attachments"))) throw new IllegalStateException("The share draft has expired.");
             String finalText = text == null ? "" : text.trim();
-            if (finalText.isEmpty() && (draft.optJSONArray("attachments") == null || draft.optJSONArray("attachments").length() == 0)) throw new IllegalArgumentException("Share text or at least one image.");
+            if (finalText.isEmpty() && (draft.optJSONArray("attachments") == null || draft.optJSONArray("attachments").length() == 0)) throw new IllegalArgumentException("Share text or at least one file.");
             draft.put("text", finalText);
             writeAtomic(draftFile, draft.toString().getBytes(StandardCharsets.UTF_8));
             JSONObject target = draft.getJSONObject("target");
@@ -352,8 +352,8 @@ final class YuriShareStore {
     private static boolean nonEmpty(String value) { return value != null && !value.trim().isEmpty(); }
     private static JSONObject readJSON(File file) throws Exception { return new JSONObject(new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8)); }
     private static long copyLimited(InputStream input, File output, long maximum) throws Exception { if (input == null) throw new IllegalArgumentException("The shared image could not be read."); long count = 0; byte[] buffer = new byte[32768]; try (InputStream in = input; FileOutputStream out = new FileOutputStream(output)) { int read; while ((read = in.read(buffer)) != -1) { count += read; if (count > maximum) throw new IllegalArgumentException("An image exceeds 20 MB."); out.write(buffer, 0, read); } out.getFD().sync(); } return count; }
-    private static String displayName(Context context, Uri uri) { try (android.database.Cursor cursor = context.getContentResolver().query(uri, null, null, null, null)) { if (cursor != null && cursor.moveToFirst()) { int i = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0) { String value = cursor.getString(i); if (nonEmpty(value)) return value; } } } return "shared-image"; }
-    private static String safeName(String name) { return nonEmpty(name) ? name.replaceAll("[^A-Za-z0-9._-]", "_") : "shared-image"; }
+    private static String displayName(Context context, Uri uri) { try (android.database.Cursor cursor = context.getContentResolver().query(uri, null, null, null, null)) { if (cursor != null && cursor.moveToFirst()) { int i = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (i >= 0) { String value = cursor.getString(i); if (nonEmpty(value)) return value; } } } return "shared-file"; }
+    private static String safeName(String name) { return nonEmpty(name) ? name.replaceAll("[^A-Za-z0-9._-]", "_") : "shared-file"; }
     private static void writeAtomic(File file, byte[] bytes) throws Exception { File tmp = new File(file.getParentFile(), "." + file.getName()); try (FileOutputStream out = new FileOutputStream(tmp)) { out.write(bytes); out.getFD().sync(); } if (!tmp.renameTo(file)) throw new IllegalStateException("Could not write share envelope."); }
     private static void delete(File file) { if (file.isDirectory()) { File[] files = file.listFiles(); if (files != null) for (File child : files) delete(child); } file.delete(); }
     private static Icon assistantShortcutIcon(String seed, String emoji, String png) {

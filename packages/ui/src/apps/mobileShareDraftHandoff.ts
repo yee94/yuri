@@ -60,7 +60,7 @@ const deleteJournal = (storage: Storage | null, draftID: string): void => {
 const persistJournal = (storage: Storage | null, record: JournalRecord): boolean => writeJournal(storage, { ...readJournal(storage), [record.draftID]: record });
 const attachmentIDFor = (draftID: string, index: number): string => `native-share:${draftID}:${index}`;
 const resultTextFor = (existing: string, incoming: string | undefined): string => incoming ? (existing ? `${existing}\n\n${incoming}` : incoming) : existing;
-const isValidAttachment = (attachment: NativeShareDraftAttachment): boolean => attachment.mime.startsWith('image/') && attachment.byteSize > 0 && attachment.byteSize <= MAX_ANDROID_SHARE_ATTACHMENT_BYTES;
+const isValidAttachment = (attachment: NativeShareDraftAttachment): boolean => attachment.mime.length > 0 && attachment.byteSize > 0 && attachment.byteSize <= MAX_ANDROID_SHARE_ATTACHMENT_BYTES;
 const materialized = (record: JournalRecord, current: ReturnType<MobileShareDraftInput['getDraft']>): boolean => Boolean(current?.syntheticParts.some((part) => part.partID === mobileShareHandoffMarkerPartID(record.draftID) && part.text === '' && part.attachments.length === 0 && part.synthetic === true));
 const assistantIDFor = (record: JournalRecord): string | null => {
   const owner = record.targetDraftKey?.owner;

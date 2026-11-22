@@ -123,7 +123,6 @@ enum YuriShareStore {
         var attachments: [ShareAttachment] = []; var total = 0
         do {
             for (index, item) in items.enumerated() {
-                guard item.2.hasPrefix("image/") else { throw ShareError.unsupportedAttachment }
                 let destination = temporary.appendingPathComponent("\(index)-\(safeName(item.1))")
                 let bytes = try copyLimited(from: item.0, to: destination, maximum: maximumImageBytes)
                 total += bytes; guard total <= maximumTotalBytes else { throw ShareError.totalTooLarge }
@@ -206,8 +205,8 @@ enum YuriShareStore {
     }
 }
 
-enum ShareError: LocalizedError { case appGroupUnavailable, missingTarget, tooManyImages, imageTooLarge, totalTooLarge, unsupportedAttachment, imageUnavailable, unrecognizedImage, emptyShare, invalidOperation
-    var errorDescription: String? { switch self { case .appGroupUnavailable: return "Yuri shared storage is unavailable."; case .missingTarget: return "Choose a default share bot in Yuri before sharing."; case .tooManyImages: return "A share supports up to 10 images."; case .imageTooLarge: return "An image exceeds 8 MB."; case .totalTooLarge: return "Shared images exceed 16 MB."; case .unsupportedAttachment: return "Only image attachments are supported."; case .imageUnavailable: return "The shared image could not be loaded. Try sharing it again."; case .unrecognizedImage: return "The shared image format could not be identified safely."; case .emptyShare: return "Add text or at least one image before sharing."; case .invalidOperation: return "A valid operation ID is required." } }
+enum ShareError: LocalizedError { case appGroupUnavailable, missingTarget, tooManyImages, imageTooLarge, totalTooLarge, imageUnavailable, emptyShare, invalidOperation
+    var errorDescription: String? { switch self { case .appGroupUnavailable: return "Yuri shared storage is unavailable."; case .missingTarget: return "Choose a default share bot in Yuri before sharing."; case .tooManyImages: return "A share supports up to 10 files."; case .imageTooLarge: return "A file exceeds 8 MB."; case .totalTooLarge: return "Shared files exceed 16 MB."; case .imageUnavailable: return "The shared file could not be loaded. Try sharing it again."; case .emptyShare: return "Add text or at least one file before sharing."; case .invalidOperation: return "A valid operation ID is required." } }
 }
 
 private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }

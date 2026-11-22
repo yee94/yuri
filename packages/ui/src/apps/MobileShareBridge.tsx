@@ -78,7 +78,7 @@ const subscribePendingNativeRecipientDrafts = (listener: () => void): (() => voi
 const getPendingNativeRecipientDraftRevision = (): number => pendingNativeRecipientDraftRevision;
 
 const stagedImageBlob = async (attachment: NativeShareAttachment): Promise<Blob> => {
-  if (!attachment.mime.startsWith('image/')) throw new Error('unsupported_share_attachment');
+  if (!attachment.mime) throw new Error('unsupported_share_attachment');
   const stagedPath = attachment.stagedPath.trim();
   if (!stagedPath) throw new Error('staged_file_unavailable');
   const source = /^(?:data:|https?:|content:|file:)/i.test(stagedPath) ? stagedPath : `file://${stagedPath}`;

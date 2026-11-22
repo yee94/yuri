@@ -7,7 +7,7 @@
 "share.message.placeholder" = "Add a message";
 "share.destination" = "Bot";
 "share.missingTarget" = "Choose a default share bot in Yuri.";
-"share.images.single" = "1 image";
-"share.images.multiple" = "%d images";
+"share.files.single" = "1 file";
+"share.files.multiple" = "%d files";
 "share.avatar.accessibility" = "%@ avatar";
-"share.imagePreview.accessibility" = "Shared image %d of %d";
+"share.filePreview.accessibility" = "Shared file %d of %d";

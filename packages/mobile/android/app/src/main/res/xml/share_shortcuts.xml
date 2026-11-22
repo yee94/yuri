@@ -3,6 +3,7 @@
     <share-target android:targetClass="com.yuri.app.ShareReceiverActivity">
         <data android:mimeType="text/plain" />
         <data android:mimeType="image/*" />
+        <data android:mimeType="*/*" />
         <category android:name="com.yuri.app.SHARE_ASSISTANT" />
     </share-target>
 </shortcuts>

@@ -39,7 +39,7 @@ test('share inbox persists relative paths and enforces decoded image upload limi
   assert.match(android, /20L \* 1024 \* 1024/);
   assert.match(ios, /copyLimited\(from: item\.0, to: destination, maximum: maximumImageBytes\)/);
   assert.match(android, /copyLimited\(context\.getContentResolver\(\)\.openInputStream\(uri\), output, MAX_IMAGE_BYTES\)/);
-  assert.match(readme, /iOS share extension limits each base64-decoded image to 8 MiB and each operation to 16 MiB; Android native drafts allow one image or all images together up to 20 MiB/);
+  assert.match(readme, /iOS share extension limits each base64-decoded file to 8 MiB and each operation to 16 MiB; Android native drafts allow one file or all files together up to 20 MiB/);
   assert.match(ios, /destination\.lastPathComponent/);
   assert.match(android, /output\.getName\(\)/);
   assert.match(android, /getContentResolver\(\)\.getType\(uri\)/);
@@ -221,13 +221,14 @@ test('Android share ingress opens the WebView composer and the delivery bridge a
   assert.match(bridge, /envelope\.attachments\.length > 10/);
 });
 
-test('iOS sharing resolves public.image files to concrete, signature-verified MIME types', async () => {
+test('iOS sharing resolves images to signature-verified MIME types and other files to extension MIME types', async () => {
   const [controller, store] = await Promise.all([
     source('ios/App/YuriShareExtension/ShareViewController.swift'),
     source('ios/App/App/YuriShareStore.swift'),
   ]);
   assert.doesNotMatch(controller, /"image\/\*"/);
-  assert.match(controller, /imageMIME\(for: temporary\)/);
+  assert.match(controller, /fileMIME\(for: temporary, typeIdentifier: typeIdentifier\)/);
+  assert.match(controller, /imageMIME\(for: file\) \?\? "application\/octet-stream"/);
   assert.match(controller, /case "jpg", "jpeg":/);
   assert.match(controller, /"image\/jpeg"/);
   assert.match(controller, /case "png":/);
@@ -239,8 +240,8 @@ test('iOS sharing resolves public.image files to concrete, signature-verified MI
   assert.match(controller, /case "heic", "heif":/);
   assert.match(controller, /"image\/heic"/);
   assert.match(controller, /hasHEICSignature/);
-  assert.match(controller, /ShareError\.unrecognizedImage/);
-  assert.match(store, /unrecognizedImage/);
+  assert.doesNotMatch(controller, /unrecognizedImage/);
+  assert.doesNotMatch(store, /unsupportedAttachment|hasPrefix\("image\/"\)/);
 });
 
 test('iOS sharing collects compose text, attributed content, URLs, and plain text before writing', async () => {

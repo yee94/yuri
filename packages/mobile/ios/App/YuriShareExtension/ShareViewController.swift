@@ -16,10 +16,10 @@ class ShareViewController: UIViewController, UITextViewDelegate {
         static let messagePlaceholder = localized("share.message.placeholder", "Add a message")
         static let destination = localized("share.destination", "Bot")
         static let missingTarget = localized("share.missingTarget", "Choose a default share bot in Yuri.")
-        static let oneImage = localized("share.images.single", "1 image")
-        static let imageCount = localized("share.images.multiple", "%d images")
+        static let oneFile = localized("share.files.single", "1 file")
+        static let fileCount = localized("share.files.multiple", "%d files")
         static let assistantAvatar = localized("share.avatar.accessibility", "%@ avatar")
-        static let imagePreview = localized("share.imagePreview.accessibility", "Shared image %d of %d")
+        static let filePreview = localized("share.filePreview.accessibility", "Shared file %d of %d")
 
         private static func localized(_ key: String, _ value: String) -> String {
             NSLocalizedString(key, tableName: nil, bundle: .main, value: value, comment: "")
@@ -277,14 +277,14 @@ class ShareViewController: UIViewController, UITextViewDelegate {
             return
         }
 
-        let countText = collectedItems.count == 1 ? Strings.oneImage : String.localizedStringWithFormat(Strings.imageCount, collectedItems.count)
+        let countText = collectedItems.count == 1 ? Strings.oneFile : String.localizedStringWithFormat(Strings.fileCount, collectedItems.count)
         let countLabel = label(text: countText, style: .subheadline, color: .secondaryLabel)
         previewSection.addArrangedSubview(countLabel)
 
         previewStack.axis = .horizontal
         previewStack.spacing = 8
         for (index, item) in collectedItems.enumerated() {
-            let thumbnail = UIImageView(image: Self.thumbnailImage(at: item.0) ?? UIImage(systemName: "photo"))
+            let thumbnail = UIImageView(image: Self.thumbnailImage(at: item.0) ?? UIImage(systemName: item.2.hasPrefix("image/") ? "photo" : "doc"))
             thumbnail.contentMode = .scaleAspectFill
             thumbnail.backgroundColor = .tertiarySystemGroupedBackground
             thumbnail.tintColor = .secondaryLabel
@@ -292,7 +292,7 @@ class ShareViewController: UIViewController, UITextViewDelegate {
             thumbnail.layer.cornerCurve = .continuous
             thumbnail.clipsToBounds = true
             thumbnail.isAccessibilityElement = true
-            thumbnail.accessibilityLabel = String(format: Strings.imagePreview, index + 1, collectedItems.count)
+            thumbnail.accessibilityLabel = String(format: Strings.filePreview, index + 1, collectedItems.count)
             thumbnail.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 thumbnail.widthAnchor.constraint(equalToConstant: 64),
@@ -380,8 +380,8 @@ class ShareViewController: UIViewController, UITextViewDelegate {
         let extensionItems = extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
         let attributedText = extensionItems.compactMap { $0.attributedContentText?.string }
         let providers = extensionItems.compactMap(\.attachments).flatMap { $0 }
-        let imageProviders = providers.enumerated().filter { $0.element.hasItemConformingToTypeIdentifier(UTType.image.identifier) }
-        guard imageProviders.count <= YuriShareStore.maximumImages else {
+        let fileProviders = providers.enumerated().filter { Self.isFileProvider($0.element) }
+        guard fileProviders.count <= YuriShareStore.maximumImages else {
             completion(.failure(ShareError.tooManyImages))
             return
         }
@@ -393,6 +393,7 @@ class ShareViewController: UIViewController, UITextViewDelegate {
         var failure: Error?
 
         for (index, provider) in providers.enumerated() {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) { continue }
             if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
                 group.enter()
                 provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
@@ -416,8 +417,8 @@ class ShareViewController: UIViewController, UITextViewDelegate {
             }
         }
 
-        for (index, provider) in imageProviders {
-            let typeIdentifier = provider.registeredTypeIdentifiers.first { UTType($0)?.conforms(to: .image) == true } ?? UTType.image.identifier
+        for (index, provider) in fileProviders {
+            let typeIdentifier = Self.fileTypeIdentifier(for: provider)
             group.enter()
             provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, _ in
                 defer { group.leave() }
@@ -433,15 +434,9 @@ class ShareViewController: UIViewController, UITextViewDelegate {
                 let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
                 do {
                     try FileManager.default.copyItem(at: url, to: temporary)
-                    guard let mime = Self.imageMIME(for: temporary) else {
-                        try? FileManager.default.removeItem(at: temporary)
-                        lock.lock()
-                        if failure == nil { failure = ShareError.unrecognizedImage }
-                        lock.unlock()
-                        return
-                    }
+                    let mime = Self.fileMIME(for: temporary, typeIdentifier: typeIdentifier)
                     lock.lock()
-                    files.append((index, (temporary, provider.suggestedName ?? "shared-image.\(fileExtension)", mime)))
+                    files.append((index, (temporary, provider.suggestedName ?? "shared-file.\(fileExtension)", mime)))
                     lock.unlock()
                 } catch {
                     try? FileManager.default.removeItem(at: temporary)
@@ -541,12 +536,34 @@ class ShareViewController: UIViewController, UITextViewDelegate {
 
     private static func safeExtension(_ value: String) -> String {
         let sanitized = String(value.filter { $0.isLetter || $0.isNumber }).lowercased()
-        return sanitized.isEmpty ? "img" : sanitized
+        return sanitized.isEmpty ? "bin" : sanitized
     }
 
     private static func safeExtension(_ type: UTType?) -> String {
-        let ext = type?.preferredFilenameExtension ?? "img"
+        let ext = type?.preferredFilenameExtension ?? "bin"
         return safeExtension(ext)
+    }
+
+    private static func isFileProvider(_ provider: NSItemProvider) -> Bool {
+        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) || provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) { return true }
+        return provider.registeredTypeIdentifiers.contains { identifier in
+            guard let type = UTType(identifier) else { return false }
+            return type.conforms(to: .data) && !type.conforms(to: .url) && !type.conforms(to: .text)
+        }
+    }
+
+    private static func fileTypeIdentifier(for provider: NSItemProvider) -> String {
+        if let image = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) { return image }
+        return provider.registeredTypeIdentifiers.first { identifier in
+            guard let type = UTType(identifier) else { return false }
+            return type.conforms(to: .data) && !type.conforms(to: .url)
+        } ?? UTType.data.identifier
+    }
+
+    private static func fileMIME(for file: URL, typeIdentifier: String) -> String {
+        let declared = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? UTType(typeIdentifier)?.preferredMIMEType
+        guard let declared, !declared.hasPrefix("image/") else { return imageMIME(for: file) ?? "application/octet-stream" }
+        return declared
     }
 
     private static func imageMIME(for file: URL) -> String? {
