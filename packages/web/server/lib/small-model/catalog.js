@@ -1,4 +1,5 @@
 import { OpenCode } from '@opencode/client';
+import { isBlockedProviderId } from '../opencode/blocked-providers.js';
 
 // Directory-scoped OpenCode provider catalog for small-model resolution.
 // Never contacts models.dev — source of truth is provider.list + model.list,
@@ -45,7 +46,7 @@ const composeV2ProviderCatalogSource = (providers, models) => {
     const modelID = typeof model.id === 'string' && model.id
       ? model.id
       : (typeof model.modelID === 'string' ? model.modelID : '');
-    if (!providerID || !modelID) continue;
+    if (!providerID || !modelID || isBlockedProviderId(providerID)) continue;
     if (!modelsByProvider.has(providerID)) modelsByProvider.set(providerID, Object.create(null));
     const entry = { id: modelID };
     if (typeof model.family === 'string' && model.family) entry.family = model.family;
@@ -70,7 +71,7 @@ const composeV2ProviderCatalogSource = (providers, models) => {
 
   const catalogProviders = [];
   for (const provider of providers) {
-    if (!isRecord(provider) || typeof provider.id !== 'string' || !provider.id) continue;
+    if (!isRecord(provider) || typeof provider.id !== 'string' || !provider.id || isBlockedProviderId(provider.id)) continue;
     catalogProviders.push({
       id: provider.id,
       name: typeof provider.name === 'string' && provider.name ? provider.name : provider.id,
@@ -93,7 +94,7 @@ export function toSmallModelCatalog(source) {
 
   const catalog = Object.create(null);
   for (const provider of source.providers) {
-    if (!isRecord(provider) || typeof provider.id !== 'string' || !provider.id) continue;
+    if (!isRecord(provider) || typeof provider.id !== 'string' || !provider.id || isBlockedProviderId(provider.id)) continue;
     const models = Object.create(null);
     if (isRecord(provider.models)) {
       for (const modelKey of Object.keys(provider.models)) {

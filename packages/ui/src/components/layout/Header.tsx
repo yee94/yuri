@@ -2130,6 +2130,7 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
                               <div className="space-y-3 px-4 pb-2">
                                 {/* Window-level entries */}
                                 <UsageRingGrid
+                                  layout="mobile"
                                   items={group.entries.map(([label, window]) => ({
                                     key: `${group.providerId}-${label}`,
                                     label: formatWindowLabel(window.label ?? label),

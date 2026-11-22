@@ -1255,6 +1255,8 @@ export const settingsDict = {
   'settings.plugins.issue.toast': "Falha ao carregar o plugin: {name}",
   'settings.plugins.issue.toastMany': "{count} plugins falharam ao carregar",
   'settings.plugins.issue.view': "Ver",
+  'settings.providers.noModel.toast': "Nenhum modelo disponível. Conecte um provedor.",
+  'settings.providers.noModel.configure': "Configurar",
   'settings.plugins.status.failed.ref': 'Referência no log: {ref}',
   'settings.plugins.status.notReported.title': 'Não carregado',
   'settings.plugins.status.notReported.description': 'O OpenCode não informou este plugin aqui. Ele pode ainda estar sendo instalado, ou outra entrada da configuração pode desativá-lo.',

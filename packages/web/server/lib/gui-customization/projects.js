@@ -2,6 +2,7 @@ import path from 'node:path';
 import { authorizeScheduledTaskSkillRequest } from '../scheduled-tasks/session-skill-contract.js';
 import { remoteProjectOperations, validRemoteProjectInput, runRemoteProjectOperation, listRemoteTaskRows } from './projects-remote.js';
 import { lifecycleOperations, validLifecycleInput, pageTaskRows } from './projects-lifecycle.js';
+import { importSessionOperations, validImportSessionInput, runImportSession } from './projects-import.js';
 import { isBoundSkillCaller, parseSkillCaller } from './skill-caller.js';
 
 export const PROJECTS_SKILL_PATH = '/api/yuri/session-skills/projects';
@@ -10,6 +11,7 @@ const projectResult = ({ id, path, label }) => ({ id, path, ...(label ? { label 
 const validInput = (operation, input) => {
   if (remoteProjectOperations.includes(operation)) return validRemoteProjectInput(operation, input);
   if (lifecycleOperations.includes(operation)) return validLifecycleInput(operation, input);
+  if (importSessionOperations.includes(operation)) return validImportSessionInput(input);
   if (operation === 'task-view') return validLifecycleInput('task-sessions', input) && input.directory === undefined;
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
   const allowed = operation === 'add' ? ['path', 'label'] : operation === 'remove' ? ['projectId'] : [];
@@ -22,18 +24,21 @@ const validInput = (operation, input) => {
 };
 
 /** Session-bound Host registration; the shared project registry owns persistence. */
-export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, createClient, registerProject, removeProject, readSettingsFromDiskStrict, sanitizeProjects, remoteHostGateway, sessionLifecycle, hasAssistant }) {
-  app.post(PROJECTS_SKILL_PATH, express.json({ limit: '16kb' }), async (req, res) => {
+export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, createClient, registerProject, removeProject, readSettingsFromDiskStrict, sanitizeProjects, remoteHostGateway, sessionLifecycle, onImported = null, hasAssistant }) {
+  app.post(PROJECTS_SKILL_PATH, express.json({ limit: '16mb', verify: (req, _res, buf) => { req._rawBodyLength = buf.length; } }), async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!getIsSharedOpenCodeService() || !authorizeScheduledTaskSkillRequest(req, getOpenCodeAuthHeaders())) return res.status(403).json({ error: 'Forbidden' });
     const { operation, input = {} } = req.body ?? {};
+    if (operation !== 'import-session' && (req._rawBodyLength ?? 0) > 16 * 1024) return res.status(413).json({ code: 'payload_too_large', error: 'Request payload too large' });
     const caller = parseSkillCaller(req.body);
     if (!caller
-      || !['describe', 'list', 'add', 'remove', 'task-view', ...lifecycleOperations, ...remoteProjectOperations].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid project input' });
+      || !['describe', 'list', 'add', 'remove', 'task-view', ...lifecycleOperations, ...remoteProjectOperations, ...importSessionOperations].includes(operation) || !validInput(operation, input)) return res.status(400).json({ code: 'invalid_input', error: 'Invalid project input' });
     try {
       if (!await isBoundSkillCaller(req, caller, { createClient, hasAssistant })) return res.status(403).json({ error: 'Caller is not bound to this Host' });
-      if (operation === 'describe') return res.json({ supported: true, remoteSupported: Boolean(remoteHostGateway?.supported && remoteHostGateway?.acquireTask), lifecycleSupported: Boolean(sessionLifecycle), inputs: { add: '{path: existing absolute Host directory, label?: display name}', list: '{}',
+      const importSupported = typeof createClient?.()?.session?.import === 'function';
+      if (operation === 'describe') return res.json({ supported: true, remoteSupported: Boolean(remoteHostGateway?.supported && remoteHostGateway?.acquireTask), lifecycleSupported: Boolean(sessionLifecycle), importSupported, inputs: { add: '{path: existing absolute Host directory, label?: display name}', list: '{}',
         ...(removeProject ? { remove: '{projectId: exact ID from list} removes only the bound Host registration; preserves files, sessions and remote projects' } : {}),
+        ...(importSupported ? { 'import-session': '{directory: existing absolute Host directory, title?: string, source?: string, sourceId?: string, parentID?: string, registerProject?: boolean (default true), messages: [{role:"user"|"assistant"|"system", text?, time?, thinking?, tools?:[{name,input?,output?,incomplete?,isError?}]}] | events: [{kind:"user"|"assistant-text"|"thinking"|"tool"|"marker", text?, time?, name?, input?, output?, incomplete?, isError?}]} imports one normalized historical conversation into this Host via official session.import and indexes it; supply source+sourceId for idempotent retries' } : {}),
         'task-view': '{settled?: boolean (false = what the task view still lists as active), cursor?} THE task-view list: local sessions plus every Remote Project session (all project and worktree directories), newest activity first. Remote rows carry remote:{host,target} and settled=true means archived on that Host; archive them with archive-remote-session using the row directory and target',
         'task-sessions': '{directory?: absolute bound-Host directory, settled?: boolean filter (false = still active in the task view), cursor?: returned nextCursor} bounded Host index metadata ordered by activity, newest first; rows carry status, not full upstream history',
         'session-state': '{sessionID} read Host archive authority and nullable task projection; not upstream existence or live UI state',
@@ -44,6 +49,28 @@ export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService
         'create-session': '{target, directory, sessionID: new caller-generated ID, title?}', 'prompt-session': '{target, directory, sessionID, messageID: stable caller-generated ID, text}',
         'archive-remote-session': '{target, directory, sessionID} 「归档」 of a Remote Project session: writes the real archive on that remote Host, as the task/project view does; not a local settle', 'unarchive-remote-session': '{target, directory, sessionID} restores it' },
         completion: 'add and add-remote return the persisted project and created=true/false. add-remote registers on the target Host, then saves the Hub reference. Registration does not clone/create files, open a session or change an existing active selection. Retry the same target and path safely after an interrupted response.' });
+      if (operation === 'import-session') {
+        if (!importSupported) return res.status(501).json({ code: 'unsupported', error: 'Session import is unavailable on this Host' });
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        req.once('aborted', abort);
+        res.once('close', abort);
+        if (req.aborted || res.destroyed) abort();
+        try {
+          const result = await runImportSession(input, {
+            createClient,
+            registerProject,
+            onImported,
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]),
+          });
+          if (!controller.signal.aborted) return res.json(result);
+          return;
+        } finally {
+          req.removeListener('aborted', abort);
+          res.removeListener('close', abort);
+          controller.abort();
+        }
+      }
       if (operation === 'task-view') {
         const local = sessionLifecycle ? await sessionLifecycle('task-rows', {}) : { rows: [], historyComplete: false };
         const remote = await listRemoteTaskRows(remoteHostGateway);
@@ -97,6 +124,11 @@ export function registerProjectsSkill(app, { express, getIsSharedOpenCodeService
       if (operation === 'remove') {
         if (error?.code === 'not_found') return res.status(404).json({ code: 'not_found', error: 'Project is not registered on this Host' });
         return res.status(503).json({ code: 'project_operation_failed', error: 'Project removal was not confirmed; inspect the same project on the bound Host before retrying.' });
+      }
+      if (operation === 'import-session') {
+        const code = ['validation_error', 'session_conflict', 'unsupported', 'import_failed'].includes(error?.code) ? error.code : 'import_failed';
+        const status = code === 'validation_error' ? 400 : code === 'session_conflict' ? 409 : code === 'unsupported' ? 501 : 503;
+        return res.status(status).json({ code, error: 'Session import was not confirmed; inspect the bound Host before retrying.' });
       }
       const code = ['validation_error', 'project_unavailable', 'remote_unavailable', 'remote_target_mismatch', 'remote_response_invalid'].includes(error?.code) ? error.code : 'project_operation_failed';
       return res.status(code === 'validation_error' ? 400 : 503).json({ code, error: 'Project operation was not confirmed; inspect the same target before retrying. Never retry against the local Host.' });

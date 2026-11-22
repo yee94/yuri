@@ -17,6 +17,7 @@ import { openExternalUrl } from '@/lib/url';
 import type { ModelMetadata } from '@/types';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { isBlockedProviderId } from '@/lib/opencode/blockedProviders';
 import { opencodeClient } from '@/lib/opencode/client';
 import { filterMethodsWithIndex } from './providerAvailability';
 import { getRuntimeGeneration, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
@@ -265,7 +266,7 @@ const ProvidersPageContent: React.FC<{ initialConnectionId?: string }> = ({ init
   const unconnectedProviders = React.useMemo(
     () =>
       (connectionQuery.data?.integrations ?? [])
-        .filter((integration) => !integration.id.startsWith('mcp_') && integration.connections.length === 0)
+        .filter((integration) => !integration.id.startsWith('mcp_') && !isBlockedProviderId(integration.id) && integration.connections.length === 0)
         .sort((a, b) => {
           const labelA = (a.name || a.id).toLowerCase();
           const labelB = (b.name || b.id).toLowerCase();
@@ -321,7 +322,7 @@ const ProvidersPageContent: React.FC<{ initialConnectionId?: string }> = ({ init
     : selectedSources?.auth.type === 'api' || selectedIntegration?.connections.some((connection) => connection.type === 'credential' && connection.method === 'key')
       ? 'settings.providers.page.auth.apiKeyLabel'
       : selectedIntegration?.connections.some((connection) => connection.type === 'env') ? 'settings.providers.auth.environment' : 'settings.providers.auth.managed';
-  const quotaProvider = selectedProviderId === 'opencode' || selectedProviderId === 'opencode-go' ? 'opencode-go'
+  const quotaProvider = selectedProviderId === 'opencode-go' ? 'opencode-go'
     : selectedProviderId === 'ollama' || selectedProviderId === 'ollama-cloud' ? 'ollama-cloud' : selectedProviderId === 'cursor' ? 'cursor' : null;
 
   const handleSaveApiKey = useEvent(async (providerId: string) => {
@@ -352,7 +353,7 @@ const ProvidersPageContent: React.FC<{ initialConnectionId?: string }> = ({ init
       if (!scope.isCurrent()) return;
       void sourceQuery.refetch();
       const connected = refreshed.data?.providers.find((provider) =>
-        provider.id === providerId || provider.integrationID === integrationID);
+        !isBlockedProviderId(provider.id) && (provider.id === providerId || provider.integrationID === integrationID));
       if (connected) setSelectedProvider(connected.id);
       toast.success(t('settings.providers.page.toast.apiKeySaved'));
     } catch {
@@ -397,9 +398,9 @@ const ProvidersPageContent: React.FC<{ initialConnectionId?: string }> = ({ init
         void sourceQuery.refetch();
         toast.success(t('settings.providers.page.toast.oauthCompleted'));
         // Integration IDs can differ from the activated provider ID.
-        const connected = refreshed.data?.providers.find((provider) => provider.id === providerId)
+        const connected = refreshed.data?.providers.find((provider) => !isBlockedProviderId(provider.id) && provider.id === providerId)
           ?? (integrationID === ownIntegrationID
-            ? refreshed.data?.providers.find((provider) => provider.integrationID === integrationID)
+            ? refreshed.data?.providers.find((provider) => !isBlockedProviderId(provider.id) && provider.integrationID === integrationID)
             : undefined);
         if (connected) setSelectedProvider(connected.id);
         setAuthBusyKey(null);

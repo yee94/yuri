@@ -1,4 +1,5 @@
 import { getCatalogProvider } from './catalog.js';
+import { isBlockedProviderId } from '../opencode/blocked-providers.js';
 
 // Mirrors OpenCode's getSmallModel fallback chain over the connected OpenCode
 // catalog, with Yuri's own keyword + cheapest-first default when no
@@ -127,12 +128,12 @@ export function resolveSmallModel({ catalog, settingsSmallModel, configSmallMode
   // Yuri's own setting (Settings → Sessions → Small Model override)
   // outranks everything, including the OpenCode config.
   const fromSettings = parseModelRef(settingsSmallModel);
-  if (fromSettings) {
+  if (fromSettings && !isBlockedProviderId(fromSettings.providerID)) {
     return { ...fromSettings, source: 'settings' };
   }
 
   const explicit = parseModelRef(configSmallModel);
-  if (explicit) {
+  if (explicit && !isBlockedProviderId(explicit.providerID)) {
     return { ...explicit, source: 'config' };
   }
 
@@ -140,7 +141,7 @@ export function resolveSmallModel({ catalog, settingsSmallModel, configSmallMode
   // stays on the session's provider. Scan its families for a small model,
   // otherwise run on the session's own model — never silently switch to a
   // different provider's subscription.
-  const preferred = typeof preferredProviderID === 'string' && preferredProviderID
+  const preferred = typeof preferredProviderID === 'string' && preferredProviderID && !isBlockedProviderId(preferredProviderID)
     ? preferredProviderID
     : null;
   if (preferred && getCatalogProvider(catalog, preferred)) {
@@ -159,7 +160,7 @@ export function resolveSmallModel({ catalog, settingsSmallModel, configSmallMode
 
   // No session context (or its provider is not connected): scan the other
   // connected providers by family priority, then keyword+cost default.
-  const otherProviders = Object.keys(catalog || {}).filter((providerID) => providerID !== preferred);
+  const otherProviders = Object.keys(catalog || {}).filter((providerID) => providerID !== preferred && !isBlockedProviderId(providerID));
   for (const family of FAMILY_PRIORITY) {
     for (const providerID of otherProviders) {
       const match = pickWithinProvider(catalog, providerID, family);

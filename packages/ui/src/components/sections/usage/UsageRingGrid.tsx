@@ -10,6 +10,7 @@ import {
   getPaceStatusColor,
 } from '@/lib/quota';
 import { accountHeadingForWindows } from '@/lib/quota/accountGroups';
+import { formatTimeForPreference } from '@/lib/timeFormat';
 import type { TimeFormatPreference } from '@/stores/useUIStore';
 import type { UsageWindow } from '@/types/quota';
 
@@ -28,6 +29,7 @@ interface UsageRingGridProps {
   items: ReadonlyArray<UsageRingItem>;
   displayMode: 'usage' | 'remaining';
   timeFormatPreference: TimeFormatPreference;
+  layout?: 'desktop' | 'mobile';
   showPace?: boolean;
   className?: string;
 }
@@ -91,8 +93,8 @@ const totalsFirst = <T extends { item: UsageRingItem }>(rings: T[]): T[] => [
   ...rings.filter(({ item }) => !isTotalWindow(item)),
 ];
 
-// A card's first three windows are rings; anything past that, pooled or not, is said in words below them.
-const RINGS_SHOWN = 3;
+// A card's first three windows are rings on desktop (two on mobile); anything past that, pooled or not, is said in words below them.
+const RINGS_SHOWN = { desktop: 3, mobile: 2 };
 
 const UsageRing: React.FC<{
   item: UsageRingItem;
@@ -161,17 +163,49 @@ const UsageRing: React.FC<{
   );
 };
 
+const formatMobileResetTime = (
+  resetAt: number,
+  now: number,
+  locale: string,
+  timeFormatPreference: TimeFormatPreference,
+  clock: string,
+): string => {
+  const minutes = Math.max(1, Math.round((resetAt - now) / 60_000));
+  const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  if (minutes < 60) return relative.format(minutes, 'minute');
+
+  const at = new Date(resetAt);
+  const today = new Date(now);
+  if (at.toDateString() === today.toDateString()) return relative.format(Math.round(minutes / 60), 'hour');
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (at.toDateString() === tomorrow.toDateString()) {
+    return `${relative.format(1, 'day')} ${formatTimeForPreference(at, timeFormatPreference)}`;
+  }
+  return clock;
+};
+
 /** Magpie's "Resets 14:26 · 7d Sun 05:59" line: the first reset bare, one more by name, and no repeats. */
 const resetSummary = (
   items: ReadonlyArray<{ item: UsageRingItem; percent: number }>,
   timeFormatPreference: TimeFormatPreference,
   resetsAt: (when: string) => string,
+  mobileLocale?: string,
 ): string => {
+  const now = Date.now();
   const begun = items
-    .filter(({ item }) => (item.window.usedPercent ?? 0) > 0 && (item.window.resetAt ?? 0) > Date.now())
-    .map(({ item }) => ({ label: ringName(item), when: formatQuotaResetClock(item.window.resetAt as number, timeFormatPreference) }))
-    .filter((entry, index, all) => entry.when && all.findIndex((other) => other.when === entry.when) === index)
-    .slice(0, 2);
+    .flatMap(({ item }) => {
+      const { resetAt, usedPercent } = item.window;
+      if (resetAt == null || resetAt <= now || (usedPercent ?? 0) <= 0) return [];
+      return [{ item, resetAt, clock: formatQuotaResetClock(resetAt, timeFormatPreference) }];
+    })
+    .filter((entry, index, all) => entry.clock && all.findIndex((other) => other.clock === entry.clock) === index)
+    .slice(0, 2)
+    .map(({ item, resetAt, clock }) => ({
+      label: ringName(item),
+      when: mobileLocale ? formatMobileResetTime(resetAt, now, mobileLocale, timeFormatPreference, clock) : clock,
+    }));
   if (begun.length === 0) return '';
   return [resetsAt(begun[0].when), ...begun.slice(1).map((entry) => `${entry.label} ${entry.when}`)].join(' · ');
 };
@@ -184,10 +218,11 @@ export const UsageRingGrid: React.FC<UsageRingGridProps> = ({
   items,
   displayMode,
   timeFormatPreference,
+  layout = 'desktop',
   showPace = false,
   className,
 }) => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const sections = splitByAccount(items);
   const resetsAt = (when: string) => t('header.services.resetsAt', { when });
 
@@ -202,13 +237,13 @@ export const UsageRingGrid: React.FC<UsageRingGridProps> = ({
           else rings.push({ item, percent });
         }
         const ordered = totalsFirst(rings);
-        const shown = ordered.slice(0, RINGS_SHOWN);
+        const shown = ordered.slice(0, RINGS_SHOWN[layout]);
         // what the rings leave out is said as a line of words under them, with the windows that have no share
         const rows: Array<{ item: UsageRingItem; percent: number | null }> = [
           ...ordered.slice(shown.length),
           ...lines.map((item) => ({ item, percent: null })),
         ];
-        const reset = resetSummary(shown, timeFormatPreference, resetsAt);
+        const reset = resetSummary(shown, timeFormatPreference, resetsAt, layout === 'mobile' ? locale : undefined);
         const paced = showPace
           ? shown
               .map(({ item }) => (item.window.disablePace

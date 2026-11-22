@@ -11,14 +11,18 @@ Agent Connect reader/normalization adaptations use fixed commit
 
 - `sources.js`: default/custom Host roots, bounded traversal, JSONL/Zstandard,
   source identities and revision fingerprints.
+- `metadata.js`: source-specific project root and summarized-title enrichment
+  (Codex `state_*.sqlite` / `session_index.jsonl` / `.codex-global-state.json`,
+  Cursor `workspaceStorage` slug resolution, and linked git worktree collapsing).
 - `native.js`: current OpenCode instance metadata inventory and bounded message
   excerpts; existing sessions are attached in place, never copied.
 - `installations.js`: connected-Host executable/application detection, without
   launching agents. Scan returns per-source `true`, `false` (not detected), or
   `null` (unknown); leftover history directories are not installation evidence.
   Installation status never filters readable histories or authorizes writes.
-- `sqlite.js`: Cursor editor KV and CLI protobuf/blob readers, using private
-  DB+WAL snapshots. Original databases and SHM are never opened by SQLite.
+- `sqlite.js`: Cursor editor KV, Cursor CLI protobuf/blob, and Codex state
+  metadata readers, using private DB+WAL snapshots. Original databases and SHM
+  are never opened by SQLite.
 - `events.js`: active transcript normalization and native transfer projection.
 - `settings.js`: project-only rule/skill plans, conflicts, fingerprints, backups
   and JSONC-preserving writes through the existing config owner.
@@ -126,9 +130,9 @@ Checks retain owner/runtime fencing and do not trust persisted receipts alone.
 
 | Source | Reader behavior |
 | --- | --- |
-| Claude Code | projects JSONL, active UUID parent chain, compaction/snips, parallel assistant tool fragments and subagents |
-| Codex | sessions and archived_sessions JSONL, paired event/response user tracks, rollbacks, tool call/output pairs |
-| Cursor | agent-transcripts JSONL; editor state.vscdb composer/bubble KV; CLI chats store.db meta, ordered protobuf message references and archives |
+| Claude Code | projects JSONL, active UUID parent chain, compaction/snips, parallel assistant tool fragments, subagents, `custom-title`/`ai-title`/`summary` titles, linked worktree collapsing |
+| Codex | sessions and archived_sessions JSONL, paired event/response user tracks, rollbacks, tool call/output pairs, injected context XML filtering, internal `guardian` thread skipping, summarized titles from `state_*.sqlite`/`session_index.jsonl`, and project/worktree/projectless mapping from Codex state |
+| Cursor | agent-transcripts JSONL with `<user_query>`/XML wrapper cleanup and `workspaceStorage`/local slug project resolution; editor state.vscdb composer/bubble KV; CLI chats store.db meta, ordered protobuf message references, `<user_info>` workspace inference and archives |
 | DeepSeek Harness | session JSONL or concatenated Zstandard frames, latest physical generation, versions 0–4, sequenced surface replacement and tool/result pairing |
 | OpenCode | current instance official session inventory; “Next” registers original projects and refreshes existing session index entries without `session.import` |
 
@@ -151,9 +155,12 @@ usage unknown; schema-required counters are zero, not recovered usage evidence.
 ## Merge, revisions and retry
 
 Destination paths must be absolute and resolve through canonical existing ancestors.
-Preview/validation never creates a directory. Confirmed execution creates missing
-project directories and checks their canonical identity again, then uses the shared
-project registry before importing a session. Registration failure prevents session
+Preview/validation never creates a directory. Confirmed explicit `preview`/`planID`
+execution creates missing project directories and checks their canonical identity
+again, then uses the shared project registry before importing a session. Source-based
+background jobs skip sessions whose historical directory no longer exists on disk
+(`status: 'skipped'`, `code: 'directory_missing'`) instead of recreating deleted
+directories or registering phantom projects. Registration failure prevents session
 and settings writes for that project. Created directories/projects are not removed
 on later failure, to preserve concurrent user work. Multiple source paths
 may map to one destination project. Separate imports preserve selected parent/

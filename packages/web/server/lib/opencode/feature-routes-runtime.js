@@ -336,6 +336,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       sessionLifecycle: createProjectSessionLifecycle({
         sessionIndexService, sessionArchiveService, sessionMetadataStore, publishSessionIndexChange,
       }),
+      onImported: (session) => sessionIndexService?.upsert(session),
     });
     historyImportRuntime = registerHistoryImportRoutes(app, {
       express, uiAuthController, dataDir: yuriDataDir,

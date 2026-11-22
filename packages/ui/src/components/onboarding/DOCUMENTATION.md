@@ -17,9 +17,9 @@ directory updates; `lastDirectory` is migrated only from pre-registry settings,
 never from a deliberate empty registry.
 An existing project snapshot suppresses subsequent automatic onboarding, even if
 the last project is later deleted. Opening alone records pending progress, not
-completion. Closing postpones automatic presentation, retains the current step,
-and allows explicit resume from the command palette. Step-level “later” advances
-without making a configuration change or marking that capability ready.
+completion. Closing or choosing “Set up later” from any step immediately closes the dialog,
+postpones automatic presentation, retains the current step without making a
+configuration change, and allows explicit resume from the command palette.
 
 `useSetupTourStore` saves only step/dismissal, partitioned by the stable connected
 instance through `createInstanceScopedJSONStorage`; the open flag is transient.

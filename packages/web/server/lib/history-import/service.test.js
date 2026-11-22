@@ -536,3 +536,19 @@ test('combined native and external catalogs keep the shared bound and report ove
   expect(scan.errors).toContainEqual({ source: 'opencode', code: 'too_many_sessions' });
   expect(registered).not.toHaveBeenCalled();
 });
+
+test('source-based background import skips sessions whose historical project directory no longer exists', async () => {
+  const gone = path.join(directory, 'deleted-project-dir');
+  records.set('gone', { ...record('gone'), directory: gone });
+  const job = await service.start({ sources: ['claude'], confirm: true }, actor);
+  const done = await wait(job.id);
+  expect(done.state).toBe('completed');
+  expect(done.results).toEqual(expect.arrayContaining([
+    expect.objectContaining({ key: 'one', status: 'imported' }),
+    expect.objectContaining({ key: 'gone', status: 'skipped', code: 'directory_missing' }),
+  ]));
+  expect(client.session.import).toHaveBeenCalledOnce();
+  expect(registered).toHaveBeenCalledTimes(1);
+  expect(registered).toHaveBeenCalledWith({ path: directory });
+  await expect(fs.stat(gone)).rejects.toMatchObject({ code: 'ENOENT' });
+});

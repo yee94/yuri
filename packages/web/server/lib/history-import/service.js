@@ -53,8 +53,12 @@ export function createHistoryImportService({ dataDir, createClient, getRuntimeId
     return { sessions, errors: [...result.errors, ...native.errors, ...overflow],
       descriptors: new Map([...result.descriptors, ...native.descriptors].filter(([key]) => keys.has(key))), counts: input.includeCounts ? { ...result.counts, ...native.counts } : undefined };
   };
-  const readRecord = async (descriptor) => {
-    if (descriptor.source !== 'opencode') return read(descriptor);
+  const readRecord = async (descriptor, metadataCache) => {
+    if (descriptor.source !== 'opencode') {
+      const session = await read(descriptor, metadataCache);
+      if (!session) fail('source_missing');
+      return session;
+    }
     const info = await createClient().session.get({ sessionID: descriptor.sessionID }, { signal: AbortSignal.timeout(10000) });
     if (info.id !== descriptor.sessionID) fail('session_conflict');
     return { ...nativeRevision(info, descriptor.namespace), title: info.title || info.id, events: [], warnings: [], descriptor, native: info };
@@ -119,13 +123,25 @@ export function createHistoryImportService({ dataDir, createClient, getRuntimeId
     if (!Array.isArray(input.sessions) || !input.sessions.length || input.sessions.length > 5000
       || new Set(input.sessions.map((item) => item.key)).size !== input.sessions.length) fail('invalid_selection');
     const selected = []; const settings = []; const configHashes = {}; const settingsSeen = new Set(); const failures = [];
+    const metadataCache = new Map();
+    const allowMissing = !progress;
     for (const item of input.sessions) {
       if (progress && !progress.valid()) fail('runtime_changed');
       try {
       const descriptor = source.descriptors.get(item.key);
       if (!descriptor) fail('invalid_selection');
-      const directory = await targetDirectory(item.directory, true);
-       const session = await readRecord(descriptor);
+      let directory;
+      try { directory = await targetDirectory(item.directory, allowMissing); }
+      catch (error) {
+        if (progress && error?.code === 'ENOENT') {
+          failures.push({ key: item.key, phase: 'validation', status: 'skipped', code: 'directory_missing' });
+          progress.advance();
+          await setImmediate();
+          continue;
+        }
+        throw error;
+      }
+       const session = await readRecord(descriptor, metadataCache);
       const settingKey = `${session.source}:${session.directory}:${directory}`;
        if (session.source === 'opencode' && directory !== session.directory) fail('invalid_target');
        if (session.source !== 'opencode' && input.settings === true && !settingsSeen.has(settingKey)) {
@@ -155,7 +171,7 @@ export function createHistoryImportService({ dataDir, createClient, getRuntimeId
     const selectedIDs = new Set(selected.map((item) => `${item.source}:${item.namespace}:${item.id}`));
     if (selectedIDs.size !== selected.length) fail('invalid_selection');
     for (const item of selected) if (item.parentID && !selectedIDs.has(`${item.source}:${item.namespace}:${item.parentID}`)) item.warnings = [...item.warnings, 'parent_detached'];
-    const id = remember(plans, { owner, runtime: source.runtime, selected, settings, configHashes, failures, merge: input.merge === true });
+    const id = remember(plans, { owner, runtime: source.runtime, selected, settings, configHashes, failures, merge: input.merge === true, createMissingDirectories: allowMissing });
     return { id, merge: input.merge === true, sessions: selected.map(({ descriptor: _, namespace: _namespace, ...item }) => item),
       settings: settings.map(({ sourceDirectory: _, ...item }) => item), expires: Date.now() + TTL };
   };
@@ -216,6 +232,7 @@ export function createHistoryImportService({ dataDir, createClient, getRuntimeId
       for (const item of pending) if (blocked.has(sourceKey(item))) record({ key: item.key, phase: 'session', status: 'failed', code: blocked.get(sourceKey(item)) });
        for (const item of ordered) mapID.set(sourceKey(item), item.source === 'opencode' ? item.id : targetID([item], mapID.get(`${item.source}:${item.namespace}:${item.parentID}`)));
       const client = createClient();
+      const metadataCache = new Map();
       const groups = plan.merge ? [plan.selected] : ordered.map((item) => [item]);
       for (const group of groups) {
         if (!valid()) break;
@@ -226,9 +243,9 @@ export function createHistoryImportService({ dataDir, createClient, getRuntimeId
         try {
           const sessions = [];
           for (const entry of group) {
-             const session = await readRecord(entry.descriptor);
+             const session = await readRecord(entry.descriptor, metadataCache);
             if (session.hash !== entry.hash) fail('source_changed');
-            if (await targetDirectory(entry.directory, true) !== entry.directory) fail('target_changed');
+            if (await targetDirectory(entry.directory, plan.createMissingDirectories !== false) !== entry.directory) fail('target_changed');
             sessions.push(session);
           }
           if (parentID && !successful.has(parentKey)) fail('parent_failed');
@@ -248,7 +265,8 @@ export function createHistoryImportService({ dataDir, createClient, getRuntimeId
            const provenance = provenanceFor(group, plan.merge);
           const session = plan.merge ? { title: sessions.map((entry) => entry.title).join(' + ').slice(0, 200), events: combineSessions(sessions) } : sessions[0];
           const transfer = toNativeTransfer(session, item.directory, sessionID, provenance, parentID);
-          await ensureImportDirectory(item.directory);
+          if (plan.createMissingDirectories !== false) await ensureImportDirectory(item.directory);
+          else if (await targetDirectory(item.directory, false) !== item.directory) fail('target_changed');
           if (!valid()) break;
           if (!registered.has(item.directory)) { await registerProject({ path: item.directory }); registered.add(item.directory); }
           if (!valid()) break;

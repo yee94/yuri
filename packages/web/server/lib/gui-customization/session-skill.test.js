@@ -23,9 +23,11 @@ describe('built-in customization instructions', () => {
     expect(entry.value.length).toBeLessThan(1500);
     const file = JSON.parse(entry.value.match(/read (".*?") first/)[1]);
     expect(await fs.readFile(file, 'utf8')).toContain('name: yuri-customization');
-    for (const name of ['projects', 'appearance', 'ui-surfaces', 'plugin-styles', 'gui-api', 'workflow', 'global-pages', 'work-status', 'icons', 'file-previews', 'preview-exports', 'remote-connections', 'deep-links']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
+    for (const name of ['projects', 'history-import', 'appearance', 'ui-surfaces', 'plugin-styles', 'gui-api', 'workflow', 'global-pages', 'work-status', 'icons', 'file-previews', 'preview-exports', 'remote-connections', 'deep-links']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
     expect(entry.value).toContain('project management, task and session lifecycle');
+    expect(entry.value).toContain('session import');
     expect(await fs.readFile(file, 'utf8')).toContain('(references/projects.md)');
+    expect(await fs.readFile(file, 'utf8')).toContain('(references/history-import.md)');
     expect(entry.value).toContain('yuri:// deep links');
     expect(entry.value).toContain('resource identity');
     expect(await fs.readFile(file, 'utf8')).toContain('(references/deep-links.md)');

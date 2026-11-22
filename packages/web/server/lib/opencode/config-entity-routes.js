@@ -3,6 +3,7 @@ import path from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { OpenCode } from '@opencode/client';
 import { projectProviderCatalog } from './provider-catalog.js';
+import { isBlockedProviderId } from './blocked-providers.js';
 import { getGlobalConfigDirectory, writeConfigText } from './config-files.js';
 
 // Compose official v2 provider.list + model.list (+ optional default) into the
@@ -19,7 +20,7 @@ const composeV2ProviderCatalogSource = (providers, models, defaultModel) => {
     const modelID = typeof model.id === 'string' && model.id
       ? model.id
       : (typeof model.modelID === 'string' ? model.modelID : '');
-    if (!providerID || !modelID) continue;
+    if (!providerID || !modelID || isBlockedProviderId(providerID)) continue;
     if (!modelsByProvider.has(providerID)) modelsByProvider.set(providerID, Object.create(null));
     const entry = { id: modelID };
     if (typeof model.name === 'string' && model.name) entry.name = model.name;
@@ -37,7 +38,7 @@ const composeV2ProviderCatalogSource = (providers, models, defaultModel) => {
 
   const list = [];
   for (const provider of providers) {
-    if (!provider || typeof provider.id !== 'string' || !provider.id) continue;
+    if (!provider || typeof provider.id !== 'string' || !provider.id || isBlockedProviderId(provider.id)) continue;
     list.push({
       id: provider.id,
       name: typeof provider.name === 'string' && provider.name ? provider.name : provider.id,
@@ -49,7 +50,7 @@ const composeV2ProviderCatalogSource = (providers, models, defaultModel) => {
   const defaultModelID = typeof defaultModel?.id === 'string' && defaultModel.id
     ? defaultModel.id
     : (typeof defaultModel?.modelID === 'string' ? defaultModel.modelID : '');
-  if (defaultModel && typeof defaultModel.providerID === 'string' && defaultModelID) {
+  if (defaultModel && typeof defaultModel.providerID === 'string' && !isBlockedProviderId(defaultModel.providerID) && defaultModelID) {
     defaults[defaultModel.providerID] = defaultModelID;
   }
   return { providers: list, default: defaults };

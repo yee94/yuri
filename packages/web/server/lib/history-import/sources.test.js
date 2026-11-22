@@ -188,3 +188,97 @@ test('Codex active and archived copies share one identity across custom scan ent
   expect(direct.sessions[0].key).toBe(result.sessions[0].key);
   expect((await readSource(result.descriptors.get(result.sessions[0].key))).events[0].text).toBe('new');
 });
+
+test('Codex discovery uses summarized titles from state sqlite and session_index, skips guardian threads, and collapses worktrees', async () => {
+  const mainRepo = path.join(temporary, 'repos', 'main-app');
+  const worktreeDir = path.join(temporary, 'codex', 'worktrees', 'abc', 'main-app');
+  const defaultWorkspace = path.join(temporary, 'Documents', 'Codex');
+  await fs.mkdir(path.join(mainRepo, '.git', 'worktrees', 'wt1'), { recursive: true });
+  await fs.mkdir(worktreeDir, { recursive: true });
+  await fs.mkdir(defaultWorkspace, { recursive: true });
+  await fs.writeFile(path.join(worktreeDir, '.git'), `gitdir: ${path.join(mainRepo, '.git', 'worktrees', 'wt1')}\n`);
+
+  const codexHome = path.join(temporary, 'codex');
+  await save('codex/.codex-global-state.json', JSON.stringify({
+    'electron-saved-workspace-roots': [mainRepo, defaultWorkspace],
+    'thread-workspace-root-hints': {
+      'thread-projectless': defaultWorkspace,
+    },
+  }));
+  await save('codex/session_index.jsonl', lines([
+    { id: 'thread-indexed', thread_name: 'Indexed Summary Title' },
+    { id: 'thread-sqlite', thread_name: 'Old Index Title' },
+  ]));
+  const dbPath = path.join(codexHome, 'state_5.sqlite');
+  const db = new Database(dbPath);
+  db.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, name TEXT, title TEXT, cwd TEXT, project_id TEXT, git_origin_url TEXT, source TEXT)');
+  db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('thread-sqlite', '', 'SQLite Summary Title', '<permissions instructions>raw', worktreeDir, '', '', 'vscode');
+  db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('thread-projectless', '', 'Projectless Summary', 'raw prompt', codexHome, '', '', 'vscode');
+  db.close();
+
+  await save('codex/sessions/t1.jsonl', lines([
+    { type: 'session_meta', payload: { id: 'thread-sqlite', cwd: worktreeDir } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<permissions instructions>raw</permissions instructions>' }] } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'very long raw first prompt' } },
+  ]));
+  await save('codex/sessions/t2.jsonl', lines([
+    { type: 'session_meta', payload: { id: 'thread-indexed', cwd: mainRepo } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'another raw prompt' } },
+  ]));
+  await save('codex/sessions/t3.jsonl', lines([
+    { type: 'session_meta', payload: { id: 'thread-projectless', cwd: codexHome } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'ask something general' } },
+  ]));
+  await save('codex/sessions/guardian.jsonl', lines([
+    { type: 'session_meta', payload: { id: 'thread-guardian', cwd: mainRepo, source: { subagent: 'guardian' } } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'internal safety review' } },
+  ]));
+
+  const result = await discoverSources({
+    sources: ['codex'],
+    roots: [{ source: 'codex', path: path.join(codexHome, 'sessions') }],
+  });
+  expect(result.sessions.map((s) => s.id).sort()).toEqual(['thread-indexed', 'thread-projectless', 'thread-sqlite']);
+  const byId = new Map(result.sessions.map((s) => [s.id, s]));
+  expect(byId.get('thread-sqlite')).toMatchObject({ title: 'SQLite Summary Title', directory: mainRepo });
+  expect(byId.get('thread-indexed')).toMatchObject({ title: 'Indexed Summary Title', directory: mainRepo });
+  expect(byId.get('thread-projectless')).toMatchObject({ title: 'Projectless Summary', directory: defaultWorkspace });
+  const reread = await readSource(result.descriptors.get(byId.get('thread-sqlite').key));
+  expect(reread).toMatchObject({ title: 'SQLite Summary Title', directory: mainRepo });
+});
+
+test('Cursor CLI infers workspace directory from <user_info> and strips XML from fallback title', async () => {
+  const file = path.join(temporary, 'cli-store.db');
+  const db = new Database(file);
+  db.exec('CREATE TABLE meta (key TEXT, value TEXT); CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB)');
+  const ids = ['aa', 'bb'];
+  const root = Buffer.concat(ids.map((id) => Buffer.from([0x0a, 1, Number.parseInt(id, 16)])));
+  const put = db.prepare('INSERT INTO blobs VALUES (?, ?)');
+  put.run('root', root);
+  put.run('aa', Buffer.from(JSON.stringify({ role: 'user', content: `<user_info>\nOS Version: darwin\nWorkspace Path: ${temporary}\n</user_info>` })));
+  put.run('bb', Buffer.from(JSON.stringify({ role: 'user', content: '<user_query>Explain request latency</user_query>' })));
+  db.prepare('INSERT INTO meta VALUES (?, ?)').run('0', Buffer.from(JSON.stringify({ agentId: 'cli-info', latestRootBlobId: 'root', name: 'New Agent' })).toString('hex'));
+  db.close();
+  const session = await readCursorCli(file);
+  expect(session).toMatchObject({ id: 'cli-info', directory: temporary, title: 'Explain request latency' });
+});
+
+test('DSH reads concatenated Zstandard frames including skippable frames', async () => {
+  const frame1 = zstdCompressSync(Buffer.from(lines([{ type: 'session', id: 'dsh-multi', version: 4, cwd: temporary }])));
+  const skip = Buffer.alloc(12);
+  skip.writeUInt32LE(0x184d2a50, 0);
+  skip.writeUInt32LE(4, 4);
+  skip.writeUInt32LE(0x12345678, 8);
+  const frame2 = zstdCompressSync(Buffer.from(lines([
+    { type: 'user/message', seq: 0, time: 1, surfaceOp: 'append', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'first turn' }] } },
+    { type: 'session/title', seq: 1, time: 2, data: { title: 'Concatenated Zstd Title' } },
+  ])));
+  const frame3 = zstdCompressSync(Buffer.from(lines([
+    { type: 'assistant/message', seq: 2, time: 3, surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'second frame reply' }] } } },
+  ])));
+  await save('dsh/sessions/project/dsh-multi/session.v4.jsonl.zstd', Buffer.concat([frame1, skip, frame2, frame3]));
+  const result = await discoverSources({ sources: ['dsh'], roots: [{ source: 'dsh', path: path.join(temporary, 'dsh') }] });
+  expect(result.errors).toEqual([]);
+  expect(result.sessions).toHaveLength(1);
+  expect(result.sessions[0]).toMatchObject({ id: 'dsh-multi', title: 'Concatenated Zstd Title', directory: temporary, messages: 2 });
+});

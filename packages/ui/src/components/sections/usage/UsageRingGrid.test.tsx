@@ -14,7 +14,7 @@ vi.mock('@/components/ui/ProviderLogo', () => ({
 }));
 vi.mock('@/lib/i18n', () => ({
   getCurrentIntlLocale: () => 'en-US',
-  useI18n: () => ({ t: (key: string, values?: Record<string, unknown>) => (values?.when ? `resets[${values.when}]` : key) }),
+  useI18n: () => ({ locale: 'zh-CN', t: (key: string, values?: Record<string, unknown>) => (values?.when ? `resets[${values.when}]` : key) }),
 }));
 import { SortableUsageItem, SortableUsageList, UsageProviderLogo } from './SortableUsageCards';
 import { UsageRingGrid, type UsageRingItem } from './UsageRingGrid';
@@ -63,6 +63,31 @@ describe('UsageRingGrid', () => {
     expect(apart).toMatch(/\] · B /);
   });
 
+  it('shows mobile reset times as a countdown or tomorrow while keeping the clock in the tooltip', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 22, 12));
+      const items = [
+        item('a', win({ resetAt: new Date(2026, 10, 22, 14).getTime() }), 'A'),
+        item('b', win({ resetAt: new Date(2026, 10, 23, 9).getTime() }), 'B'),
+      ];
+      const html = renderToStaticMarkup(
+        <UsageRingGrid items={items} displayMode="usage" timeFormatPreference="24h" layout="mobile" />,
+      );
+      expect(html).toContain('>resets[2小时后] · B 明天 09:00<');
+      expect(html).toContain('resets[14:00]');
+      expect(render(items)).not.toContain('2小时后');
+
+      vi.setSystemTime(new Date(2026, 10, 22, 23, 45));
+      const nearMidnight = [item('a', win({ resetAt: new Date(2026, 10, 23, 0, 5).getTime() }))];
+      expect(renderToStaticMarkup(
+        <UsageRingGrid items={nearMidnight} displayMode="usage" timeFormatPreference="24h" layout="mobile" />,
+      )).toContain('>resets[20分钟后]<');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('names rings by their span and pool like Magpie', () => {
     const html = render([
       item('a', win({ label: '5 hours' }), 'x'),
@@ -97,6 +122,24 @@ describe('UsageRingGrid', () => {
     const html = render(['a', 'b', 'c', 'd'].map((key) => item(key, win({ pool: 'Gemini' }))));
     expect(html.match(/role="progressbar"/g)).toHaveLength(3);
     expect(html).toContain('>d<');
+  });
+
+  it('limits mobile to two rings per account without dropping overflow values', () => {
+    const items = ['alice', 'bob'].flatMap((accountName) => [
+      item(`${accountName}-5h`, win({ accountName }), `${accountName} 5h`),
+      item(`${accountName}-7d`, win({ accountName, usedPercent: 42 }), `${accountName} 7d`),
+      item(`${accountName}-total`, win({ accountName }), 'Total'),
+    ]);
+    const html = renderToStaticMarkup(
+      <UsageRingGrid items={items} displayMode="usage" timeFormatPreference="24h" layout="mobile" />,
+    );
+    expect(html.match(/role="progressbar"/g)).toHaveLength(4);
+    expect(html.match(/aria-label="Total"/g)).toHaveLength(2);
+    expect(html).toContain('aria-label="alice 5h"');
+    expect(html).toContain('aria-label="bob 5h"');
+    expect(html).toContain('>alice 7d<');
+    expect(html).toContain('>bob 7d<');
+    expect(html.match(/>42%</g)).toHaveLength(2);
   });
 
   it('names a remote Magpie\'s pooled window by its span, not by its whole name', () => {

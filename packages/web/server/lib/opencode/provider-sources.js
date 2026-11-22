@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { currentClient } from './auth.js';
+import { isBlockedProviderId } from './blocked-providers.js';
 import { getGlobalConfigDirectory } from './config-files.js';
 
 export async function readProviderSources(directory, client = currentClient()) {
@@ -28,6 +29,7 @@ export async function readProviderSources(directory, client = currentClient()) {
   const result = Object.create(null);
   for (const provider of providers.data) {
     if (!provider || typeof provider.id !== 'string') throw new Error('Unable to read provider sources');
+    if (isBlockedProviderId(provider.id)) continue;
     const connections = connectionsByIntegration.get(provider.integrationID || provider.id) ?? [];
     const credential = connections.find((connection) => connection.type === 'credential');
     const documents = documentsByProvider.get(provider.id) ?? [];

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { Schema } from 'effect';
 import { SessionMessage } from '@opencode/schema/session-message';
 import { SessionTransfer } from '@opencode/schema/session-transfer';
-import { combineSessions, parseTranscript, toNativeTransfer } from './events.js';
+import { combineSessions, isCodexInternalThread, parseTranscript, toNativeTransfer } from './events.js';
 
 const at = '2026-01-01T00:00:00.000Z';
 const claude = (id, parent, type, content, extra = {}) => ({ uuid: id, parentUuid: parent, type, timestamp: at, sessionId: 'chat', cwd: '/project', message: { content }, ...extra });
@@ -88,6 +88,16 @@ describe('source readers', () => {
     expect(() => parseTranscript('dsh', [{ type: 'session', version: 99, id: 'd' }], 'fallback')).toThrow('unsupported_source_version');
     expect(() => parseTranscript('dsh', [{ type: 'session', version: 4, id: 'd' }, { type: 'user/message', seq: 10 }], 'fallback')).toThrow('invalid_source');
   });
+  test('DSH non-sequenced records do not break subsequent sequence validation', () => {
+    const entries = [
+      { type: 'session', version: 4, id: 'dsh-unseq', cwd: '/project' },
+      { type: 'user/message', seq: 0, time: 1, surfaceOp: 'append', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] } },
+      { type: 'reasoning-chunks', time: 2, data: { chunks: ['thinking'] } },
+      { type: 'assistant/message', seq: 1, time: 3, surfaceOp: 'append', data: { message: { content: [{ type: 'text', text: 'world' }] } } },
+    ];
+    const result = parseTranscript('dsh', entries, 'fallback');
+    expect(result.events.map((event) => event.text)).toEqual(['hello', 'world']);
+  });
 });
 
 test('native transfer round-trips the installed official schemas, with no permissions or native replay data', () => {
@@ -107,4 +117,47 @@ test('explicit merge deduplicates only a shared prefix and preserves continuatio
   const u = (text) => ({ kind: 'user', text, time: 1 });
   const result = combineSessions([{ title: 'a', events: [u('hello'), u('continue')] }, { title: 'b', events: [u('hello'), u('different'), u('continue'), u('continue')] }]);
   expect(result.filter((event) => event.kind === 'user').map((event) => event.text)).toEqual(['hello', 'continue', 'different', 'continue', 'continue']);
+});
+
+test('Codex ignores injected XML context blocks and strips desktop wrapper tags when deriving titles', () => {
+  const entries = [
+    { type: 'session_meta', payload: { id: 'codex-xml', cwd: '/project' } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<permissions instructions>\nallow\n</permissions instructions>' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>\n<cwd>/project</cwd>\n</environment_context>' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<collaboration_mode># Collaboration Mode: Default</collaboration_mode>' }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<recommended_plugins>foo</recommended_plugins>\n<timestamp>2026-01-01</timestamp>\nFix onboarding import titles' }] } },
+    { type: 'event_msg', payload: { type: 'user_message', message: '<recommended_plugins>foo</recommended_plugins>\n<timestamp>2026-01-01</timestamp>\nFix onboarding import titles' } },
+  ];
+  const result = parseTranscript('codex', entries, 'fallback');
+  expect(result.title).toBe('Fix onboarding import titles');
+  expect(result.events.filter((e) => e.kind === 'user')).toHaveLength(1);
+});
+
+test('Codex detects internal guardian subagent threads', () => {
+  expect(isCodexInternalThread([{ type: 'session_meta', payload: { id: 'g1', source: { subagent: { other: 'guardian' } } } }])).toBe(true);
+  expect(isCodexInternalThread([{ type: 'session_meta', payload: { id: 'g2', source: { subagent: 'guardian' } } }])).toBe(true);
+  expect(isCodexInternalThread([{ type: 'session_meta', payload: { id: 'r', source: { subagent: { thread_spawn: { parent_thread_id: 'p' } } } } }])).toBe(false);
+});
+
+test('Claude prefers summarized titles over raw first message and skips XML system tags in fallback titles', () => {
+  const named = parseTranscript('claude', [
+    claude('u1', null, 'user', '<local-command-caveat>ignore</local-command-caveat>\nhello'),
+    { type: 'ai-title', aiTitle: 'AI Summarized Title' },
+    { type: 'custom-title', customTitle: 'Custom Session Title' },
+  ], 'fallback');
+  expect(named.title).toBe('Custom Session Title');
+
+  const fallback = parseTranscript('claude', [
+    claude('u1', null, 'user', '<command-name>/clear</command-name>'),
+    claude('u2', 'u1', 'user', '<system-reminder>internal</system-reminder>\nActual user question', { timestamp: '2026-01-01T00:00:01Z' }),
+  ], 'fallback');
+  expect(fallback.title).toBe('Actual user question');
+});
+
+test('Cursor strips XML wrappers from user messages and fallback titles', () => {
+  const result = parseTranscript('cursor', [
+    { role: 'user', content: '<user_info>\nWorkspace Path: /project\n</user_info>' },
+    { role: 'user', content: '<attached_files>a.ts</attached_files>\n<user_query>Refactor sidebar grouping</user_query>' },
+  ], 'fallback');
+  expect(result.title).toBe('Refactor sidebar grouping');
 });

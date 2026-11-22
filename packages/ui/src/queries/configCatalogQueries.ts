@@ -10,6 +10,7 @@ import { withConfigQueryDeadline } from './configQueryDeadline';
 import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 import { captureProjectScope } from '@/lib/api/project-scope';
 import { projectAgent } from '@/lib/opencode/agent-identity';
+import { isBlockedProviderId } from '@/lib/opencode/blockedProviders';
 
 // 空 catalog 绝不能永久 fresh：成功或失败后的空列表都必须在下一次
 // ensure/fetchQuery 时重新请求，避免 UI 被空 SWR 快照永久困住。
@@ -68,7 +69,7 @@ const loadProviderCatalogFromV2 = async (directory: string | null, signal: Abort
       ? model.id
       : typeof model?.modelID === 'string' ? model.modelID : '';
     const name = typeof model?.name === 'string' ? model.name : modelID;
-    if (!providerID || !modelID || !name) continue;
+    if (!providerID || !modelID || !name || isBlockedProviderId(providerID)) continue;
     const bucket = modelsByProvider.get(providerID) ?? {};
     const entry: {
       id: string;
@@ -96,16 +97,18 @@ const loadProviderCatalogFromV2 = async (directory: string | null, signal: Abort
   for (const entry of Array.isArray(configEntries) ? configEntries : []) {
     const model = entry?.type === 'document' ? entry.info?.model : undefined;
     const selection = parseModelIdentifier(model);
-    if (selection) defaults[selection.providerId] = selection.modelId;
+    if (selection && !isBlockedProviderId(selection.providerId)) defaults[selection.providerId] = selection.modelId;
   }
 
   return {
     schemaVersion: 1 as const,
-    providers: providersResult.data.map((provider) => ({
-      id: provider.id,
-      name: provider.name,
-      models: modelsByProvider.get(provider.id) ?? {},
-    })),
+    providers: providersResult.data
+      .filter((provider) => !isBlockedProviderId(provider.id))
+      .map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        models: modelsByProvider.get(provider.id) ?? {},
+      })),
     default: defaults,
     partial: false,
   };

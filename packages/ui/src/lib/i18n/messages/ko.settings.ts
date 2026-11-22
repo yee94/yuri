@@ -1255,6 +1255,8 @@ export const settingsDict = {
   'settings.plugins.issue.toast': "플러그인 로드 실패: {name}",
   'settings.plugins.issue.toastMany': "플러그인 {count}개 로드 실패",
   'settings.plugins.issue.view': "보기",
+  'settings.providers.noModel.toast': "사용 가능한 모델이 없습니다. 프로바이더를 연결하세요.",
+  'settings.providers.noModel.configure': "설정하기",
   'settings.plugins.status.failed.ref': '로그 참조: {ref}',
   'settings.plugins.status.notReported.title': '로드되지 않음',
   'settings.plugins.status.notReported.description': 'OpenCode가 여기에서 이 플러그인을 보고하지 않았습니다. 아직 설치 중이거나 다른 설정 항목이 비활성화했을 수 있습니다.',

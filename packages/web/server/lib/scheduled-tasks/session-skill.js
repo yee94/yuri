@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { makeOpenCodeV2Client } from '../opencode/v2-client.js';
+import { isBlockedProviderId } from '../opencode/blocked-providers.js';
 import { readSharedServiceRegistration, resolveSharedServiceRegistrationPath } from '../opencode/shared-service.js';
 import { selectScheduledTaskProject } from './managed-tool-route.js';
 import { authorizeScheduledTaskSkillRequest, SCHEDULED_TASK_SKILL_KEY, SCHEDULED_TASK_SKILL_PATH } from './session-skill-contract.js';
@@ -174,7 +175,8 @@ export const registerScheduledTaskSessionSkill = (app, {
         const { projectId: _projectId, ...taskInput } = payload;
         const execution = taskInput.execution;
         if (!execution || typeof execution !== 'object' || Array.isArray(execution)) return res.status(400).json({ error: 'Execution is required' });
-        const model = session.model ?? (await client.model.default({ directory: project.path })).data;
+        const rawModel = session.model ?? (await client.model.default({ directory: project.path })).data;
+        const model = rawModel && !isBlockedProviderId(rawModel.providerID) ? rawModel : undefined;
         req.body = { task: { ...taskInput, id: taskID, sourceSessionID: sessionID, execution: {
           providerID: model?.providerID, modelID: model?.id, agent: session.agent, variant: model?.variant,
           ...execution,

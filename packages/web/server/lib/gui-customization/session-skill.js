@@ -5,7 +5,7 @@ import { remoteConnectionsCommand } from './remote-connections-client.mjs';
 import { sessionSkillCommand } from './session-skill-command.mjs';
 
 const scripts = { 'remote-connections.mjs': './remote-connections-client.mjs', 'projects.mjs': './projects-client.mjs', 'session-skill-command.mjs': './session-skill-command.mjs' };
-const files = ['SKILL.md', 'references/projects.md', 'references/appearance.md', 'references/ui-surfaces.md', 'references/plugin-styles.md', 'references/gui-api.md', 'references/workflow.md', 'references/global-pages.md', 'references/work-status.md', 'references/icons.md', 'references/file-previews.md', 'references/preview-exports.md', 'references/remote-connections.md', 'references/deep-links.md', ...Object.keys(scripts)];
+const files = ['SKILL.md', 'references/projects.md', 'references/history-import.md', 'references/appearance.md', 'references/ui-surfaces.md', 'references/plugin-styles.md', 'references/gui-api.md', 'references/workflow.md', 'references/global-pages.md', 'references/work-status.md', 'references/icons.md', 'references/file-previews.md', 'references/preview-exports.md', 'references/remote-connections.md', 'references/deep-links.md', ...Object.keys(scripts)];
 
 /** Stage immutable, shipped instructions; never edit the user's global skills/config. */
 export function createCustomizationSkillInstaller({ yuriDataDir }) {
@@ -44,7 +44,7 @@ export function createCustomizationSkillInstaller({ yuriDataDir }) {
     const projects = projectsCommand ? `\nBound project helper: ${projectsCommand}\n` : ' No bound project helper is provided.';
     const remote = remoteCommand ? ` Bound local desktop helper: ${remoteCommand}` : ' No bound SSH/Relay command is provided.';
     await client.session.instructions.entry.put({ sessionID, key: 'yuri.customization',
-      value: `Yuri customization covers project management, task and session lifecycle (archive, settled; local and remote sessions), remote hosts and sessions, resource identity and yuri:// deep links, SSH, configuration sync, Relay pairing and GUI customization. For these capabilities, read ${JSON.stringify(file)} first, then load only the matching reference.${projects}${remote}`,
+      value: `Yuri customization covers project management, task and session lifecycle (archive, settled; local and remote sessions), session import, remote hosts and sessions, resource identity and yuri:// deep links, SSH, configuration sync, Relay pairing and GUI customization. For these capabilities, read ${JSON.stringify(file)} first, then load only the matching reference.${projects}${remote}`,
     });
   };
   install.resolve = resolve;

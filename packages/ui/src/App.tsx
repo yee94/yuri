@@ -72,6 +72,7 @@ import { useAppFontEffects } from '@/apps/useAppFontEffects';
 import { startPerfDiagnosticsController } from '@/sync/perf-diagnostics';
 import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
 import { PluginIssueNotifier } from '@/components/sections/plugins/PluginIssueNotifier';
+import { NoModelNotifier } from '@/components/sections/providers/NoModelNotifier';
 import { StartupSessionSyncOverlay } from '@/components/session/StartupSessionSyncOverlay';
 import { ContentIndexOnboarding } from '@/components/onboarding/ContentIndexOnboarding';
 import { DesktopRuntimeSwitchOverlay } from '@/components/desktop/DesktopRuntimeSwitchOverlay';
@@ -1126,6 +1127,7 @@ function App({ apis }: AppProps) {
                     <>
                       <ConfigUpdateOverlay />
                       <PluginIssueNotifier />
+                      <NoModelNotifier />
                       <ContentIndexOnboarding />
                       <AboutDialogWrapper />
                       {showMemoryDebug && (

@@ -1255,6 +1255,8 @@ export const settingsDict = {
   'settings.plugins.issue.toast': "插件加载失败：{name}",
   'settings.plugins.issue.toastMany': "{count} 个插件加载失败",
   'settings.plugins.issue.view': "查看",
+  'settings.providers.noModel.toast': "暂无可用模型，请先配置提供商",
+  'settings.providers.noModel.configure': "去配置",
   'settings.plugins.status.failed.ref': '日志引用：{ref}',
   'settings.plugins.status.notReported.title': '未加载',
   'settings.plugins.status.notReported.description': 'OpenCode 尚未在此处报告此插件。它可能仍在安装，或被其他配置项禁用。',

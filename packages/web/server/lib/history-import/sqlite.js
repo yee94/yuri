@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { fail, timestamp, textOf } from './events.js';
+import { deriveFallbackTitle, fail, timestamp, textOf, unwrapCursorUserText } from './events.js';
 
 const MAX_DB_BYTES = 1024 * 1024 * 1024;
 const stamp = async (file) => {
@@ -86,7 +86,7 @@ async function readCursorEditorSnapshot(file, wantedID, limit, includeCount = fa
           } else if (bubble.thinking?.text) events.push({ kind: 'thinking', text: bubble.thinking.text, time });
           else if (bubble.text) events.push({ kind: 'assistant-text', text: bubble.text, time });
         }
-        return { id: head.composerId, title: head.name || composer.name || events.find((event) => event.kind === 'user')?.text?.slice(0, 100) || head.composerId,
+        return { id: head.composerId, title: head.name || composer.name || deriveFallbackTitle(events, head.composerId),
           directory: folderPath(head.workspaceIdentifier?.uri ?? composer.workspaceIdentifier?.uri), parentID: head.parentComposerId,
           events, warnings: [...warnings] };
       }).filter((session) => session.events.length);
@@ -163,6 +163,7 @@ export async function readCursorCli(file) {
     const time = timestamp(meta.createdAt ?? sidecar.createdAtMs);
     const events = []; const results = new Map(); const warnings = new Set(['tools_archived', 'usage_unknown']);
     for (const message of entries) for (const part of Array.isArray(message.content) ? message.content : []) if (part.type === 'tool-result') results.set(part.toolCallId, part);
+    let inferredDir = '';
     for (const message of entries) {
       if (!['user', 'assistant'].includes(message.role)) continue;
       const content = typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : message.content;
@@ -170,7 +171,13 @@ export async function readCursorCli(file) {
       for (const part of content) {
         if (part.type === 'text') {
           let text = part.text;
-          if (message.role === 'user') text = text.match(/<user_query>([\s\S]*?)<\/user_query>/)?.[1] ?? text;
+          if (message.role === 'user') {
+            if (!inferredDir) {
+              const ws = text.match(/<user_info>[\s\S]*?Workspace Path:\s*([^\r\n]+)/i)?.[1]?.trim();
+              if (ws && path.isAbsolute(ws)) inferredDir = ws;
+            }
+            text = unwrapCursorUserText(text);
+          }
           events.push({ kind: message.role === 'user' ? 'user' : 'assistant-text', text, time });
         } else if (part.type === 'reasoning') events.push({ kind: 'thinking', text: part.text ?? '', time });
         else if (part.type === 'tool-call') {
@@ -181,7 +188,49 @@ export async function readCursorCli(file) {
       }
     }
     if (!events.length) fail('empty_transcript');
-    return { id: meta.agentId ?? path.basename(path.dirname(file)), title: sidecar.title ?? meta.name ?? '', directory: sidecar.cwd ?? '',
+    const id = meta.agentId ?? path.basename(path.dirname(file));
+    const explicitTitle = typeof sidecar.title === 'string' && sidecar.title.trim() ? sidecar.title.trim()
+      : typeof meta.name === 'string' && meta.name.trim() && meta.name.trim() !== 'New Agent' ? meta.name.trim() : '';
+    return { id, title: explicitTitle || deriveFallbackTitle(events, id), directory: sidecar.cwd || inferredDir || '',
       parentID: meta.subagentInfo?.parentAgentId, events, warnings: [...warnings] };
+  });
+}
+
+export async function readCodexStateMetadata(file) {
+  return readSqliteSnapshot(file, (db) => {
+    const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
+    const projectRootsById = new Map();
+    const definedRoots = new Set();
+    if (tables.has('project_roots')) {
+      for (const row of db.prepare('SELECT project_id, path FROM project_roots ORDER BY project_id, position').all()) {
+        if (typeof row.project_id !== 'string' || typeof row.path !== 'string' || !path.isAbsolute(row.path)) continue;
+        const resolved = path.resolve(row.path);
+        const list = projectRootsById.get(row.project_id) ?? [];
+        list.push(resolved);
+        projectRootsById.set(row.project_id, list);
+        definedRoots.add(resolved);
+      }
+    }
+    const threads = new Map();
+    if (tables.has('threads')) {
+      const columns = new Set(db.prepare('PRAGMA table_info(threads)').all().map((row) => row.name));
+      if (columns.has('id')) {
+        const select = ['id'];
+        for (const column of ['name', 'cwd', 'project_id', 'git_origin_url', 'source']) {
+          if (columns.has(column)) select.push(column);
+        }
+        for (const row of db.prepare(`SELECT ${select.join(', ')} FROM threads`).all()) {
+          if (typeof row.id !== 'string' || !row.id) continue;
+          threads.set(row.id, {
+            name: typeof row.name === 'string' && row.name.trim() ? row.name.trim() : '',
+            cwd: typeof row.cwd === 'string' && path.isAbsolute(row.cwd) ? path.resolve(row.cwd) : '',
+            projectID: typeof row.project_id === 'string' && row.project_id ? row.project_id : '',
+            gitOriginUrl: typeof row.git_origin_url === 'string' && row.git_origin_url.trim() ? row.git_origin_url.trim() : '',
+            source: typeof row.source === 'string' ? row.source : '',
+          });
+        }
+      }
+    }
+    return { projectRootsById, definedRoots, threads };
   });
 }

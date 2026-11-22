@@ -913,6 +913,8 @@ export const settingsDict = {
   'settings.plugins.issue.toast': "Nie udało się załadować pluginu: {name}",
   'settings.plugins.issue.toastMany': "Nie udało się załadować pluginów: {count}",
   'settings.plugins.issue.view': "Pokaż",
+  'settings.providers.noModel.toast': "Brak dostępnych modeli. Połącz dostawcę.",
+  'settings.providers.noModel.configure': "Skonfiguruj",
   'settings.plugins.status.failed.ref': 'Odwołanie w logu: {ref}',
   'settings.plugins.status.notReported.title': 'Nie załadowany',
   'settings.plugins.status.notReported.description': 'OpenCode nie zgłosił tu tego pluginu. Może nadal się instalować albo inny wpis konfiguracji go wyłącza.',

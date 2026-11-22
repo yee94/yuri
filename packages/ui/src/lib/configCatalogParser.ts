@@ -1,4 +1,5 @@
 import type { ConfigCatalogCapabilities, ConfigCatalogModel, ConfigCatalogProvider, ProviderCatalog } from '@/types/configCatalog';
+import { isBlockedProviderId } from '@/lib/opencode/blockedProviders';
 
 const MAX_PROVIDERS = 200;
 const MAX_MODELS_PER_PROVIDER = 500;
@@ -173,6 +174,7 @@ export const parseProviderCatalog = (value: unknown): ProviderCatalog => {
     if (providerIndex >= MAX_PROVIDERS) continue;
     const rawProvider = record(candidate);
     const id = identifier(rawProvider?.id);
+    if (id && isBlockedProviderId(id)) continue;
     const name = displayName(rawProvider?.name);
     const rawModels = record(rawProvider?.models);
     if (!rawProvider || !id || !name || !rawModels || providerIDs.has(id)) { localPartial = true; continue; }
@@ -192,6 +194,7 @@ export const parseProviderCatalog = (value: unknown): ProviderCatalog => {
   const rawDefaults = record(input.default)!;
   const defaults: Record<string, string> = {};
   for (const [index, [key, value]] of Object.entries(rawDefaults).entries()) {
+    if (isBlockedProviderId(key)) continue;
     const safeKey = identifier(key), safeValue = identifier(value);
     if (index >= MAX_DEFAULTS || !safeKey || !safeValue) { localPartial = true; continue; }
     defaults[safeKey] = safeValue;

@@ -1,6 +1,25 @@
 .yuri-history-import { display: flex; flex-direction: column; gap: 12px; width: 100%; min-width: 0; padding-block: 4px; }
 .yuri-import-heading { margin: 0 0 2px; font-size: 16px; line-height: 1.5; font-weight: 500; letter-spacing: -0.02em; }
 .yuri-import-subtitle { margin: -8px 0 2px; color: var(--surface-muted-foreground); font-size: 12px; line-height: 1.6; }
+.yuri-import-ai-card {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--interactive-border); border-radius: 10px; corner-shape: round;
+  background: var(--surface-muted);
+}
+.yuri-import-ai-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.yuri-import-ai-header h3 { margin: 0; font-size: 13px; line-height: 1.4; font-weight: 500; color: var(--surface-foreground); }
+.yuri-import-ai-icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--surface-foreground); }
+.yuri-import-ai-description { margin: 0; color: var(--surface-muted-foreground); font-size: 12px; line-height: 1.6; }
+.yuri-import-ai-example {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--interactive-border); border-radius: 8px;
+  background: var(--surface-background);
+}
+.yuri-import-ai-prompt { min-width: 0; font-family: inherit; font-size: 12px; line-height: 1.5; color: var(--surface-foreground); overflow-wrap: anywhere; }
+.yuri-import-ai-copy { flex-shrink: 0; gap: 4px; color: var(--surface-muted-foreground); }
+.yuri-import-manual-heading { margin-top: 6px; color: var(--surface-muted-foreground); font-size: 12px; line-height: 1.4; }
 .yuri-import-source-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .yuri-import-source-card[data-slot="button"] {
   position: relative; display: flex; flex-direction: row; align-items: center; justify-content: flex-start;

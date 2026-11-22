@@ -22,6 +22,7 @@ import type {
   TextPartInput,
 } from "./v2-types";
 import { projectAgent } from "./agent-identity";
+import { isBlockedProviderId } from "./blockedProviders";
 import { skillAttachmentsFromText } from "@/composer/skill-attachments";
 import { mergeConfigDocuments, projectSession } from "./v2-types";
 import {
@@ -2345,13 +2346,16 @@ class OpencodeService {
       const defaults: { [key: string]: string } = {};
       try {
         const modelDefault = await this.client.model.default(locationOf(effectiveDirectory));
-        if (modelDefault?.data) {
+        if (modelDefault?.data && !isBlockedProviderId(modelDefault.data.providerID)) {
           defaults[modelDefault.data.providerID] = modelDefault.data.modelID;
         }
       } catch {
         // default model is optional; keep providers observable
       }
-      return { providers: response.data, default: defaults };
+      return {
+        providers: response.data.filter((provider) => !isBlockedProviderId(provider?.id)),
+        default: defaults,
+      };
     })();
 
     this.configProvidersInFlight.set(key, request);

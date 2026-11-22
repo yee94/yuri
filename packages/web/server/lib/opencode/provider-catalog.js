@@ -1,3 +1,5 @@
+import { isBlockedProviderId } from './blocked-providers.js';
+
 const MAX_PROVIDERS = 200;
 const MAX_MODELS_PER_PROVIDER = 500;
 const MAX_DEFAULTS = 100;
@@ -196,6 +198,7 @@ export function projectProviderCatalog(source) {
   const providers = [];
   const providerIds = new Set();
   for (const provider of source.providers.slice(0, MAX_PROVIDERS)) {
+    if (isRecord(provider) && isBlockedProviderId(provider.id)) continue;
     if (!isRecord(provider) || !isSafeIdentifier(provider.id) || !isSafeDisplayName(provider.name) || !isRecord(provider.models) || providerIds.has(provider.id)) {
       partial = true;
       continue;
@@ -231,6 +234,7 @@ export function projectProviderCatalog(source) {
   const defaults = createDictionary();
   let defaultCount = 0;
   for (const key of ownKeys(source.default)) {
+    if (isBlockedProviderId(key)) continue;
     if (defaultCount >= MAX_DEFAULTS) {
       partial = true;
       break;

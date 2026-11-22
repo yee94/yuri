@@ -9,7 +9,7 @@ async function main() {
     const [encoded, operation] = process.argv.slice(2);
     const binding = JSON.parse(Buffer.from(encoded, 'base64url').toString());
     const lifecycle = ['task-sessions', 'session-state', 'settle-session', 'unsettle-session', 'archive-session', 'unarchive-session'];
-    const operations = ['list', 'add', 'remove', 'task-view', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session', 'archive-remote-session', 'unarchive-remote-session'];
+    const operations = ['list', 'add', 'remove', 'import-session', 'task-view', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session', 'archive-remote-session', 'unarchive-remote-session'];
     if (!['describe', ...operations].includes(operation)) throw new Error();
     const origin = new URL(binding.hostOrigin);
     if (origin.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(origin.hostname) || origin.username || origin.password) throw new Error();
@@ -18,15 +18,16 @@ async function main() {
     bound = true;
     let input = {};
     if (!['describe', 'list', 'remote-hosts', 'remote-projects'].includes(operation)) {
+      const maxBytes = operation === 'import-session' ? 16 * 1024 * 1024 : 16 * 1024;
       let text = '';
       for await (const chunk of process.stdin) {
         text += chunk;
-        if (Buffer.byteLength(text) > 16 * 1024) throw new Error();
+        if (Buffer.byteLength(text) > maxBytes) throw new Error();
       }
       input = JSON.parse(text);
     }
     const response = await fetch(new URL('/api/yuri/session-skills/projects', origin), {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(['create-session', 'prompt-session'].includes(operation) ? 305_000 : 30_000),
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(['create-session', 'prompt-session'].includes(operation) ? 305_000 : operation === 'import-session' ? 65_000 : 30_000),
       headers: { 'content-type': 'application/json', authorization: `Basic ${Buffer.from(`opencode:${registration.password}`).toString('base64')}` },
       body: JSON.stringify({ ...(binding.assistantID ? { assistantID: binding.assistantID } : { sessionID: binding.sessionID }), operation, input }),
     });
@@ -34,7 +35,7 @@ async function main() {
     if (!response.ok) {
       const terminal = [401, 403, 501].includes(response.status);
       console.error(JSON.stringify({ error: 'Project API operation failed', status: response.status, terminal,
-        ...(['invalid_input', 'session_not_found', 'session_archived', 'session_operation_failed', 'not_found', 'directory_mismatch', 'validation_error', 'project_unavailable', 'project_operation_failed', 'remote_unavailable', 'remote_target_mismatch', 'remote_response_invalid'].includes(result?.code) ? { code: result.code } : {}),
+        ...(['invalid_input', 'session_not_found', 'session_archived', 'session_conflict', 'session_operation_failed', 'import_failed', 'not_found', 'directory_mismatch', 'validation_error', 'project_unavailable', 'project_operation_failed', 'remote_unavailable', 'remote_target_mismatch', 'remote_response_invalid'].includes(result?.code) ? { code: result.code } : {}),
         recovery: terminal ? 'Stop this workflow; resume only with a new supported session and its bound project describe command.'
           : 'Result not confirmed. Inspect the same target before retrying; retain sessionID/messageID for interrupted writes. Never switch to local or claim success from a failed request.',
       }));
@@ -42,6 +43,7 @@ async function main() {
       return;
     }
     if (['add', 'add-remote'].includes(operation) && (typeof result.project?.id !== 'string' || typeof result.project?.path !== 'string' || typeof result.created !== 'boolean')) throw new Error();
+    if (operation === 'import-session' && (typeof result.session?.id !== 'string' || typeof result.imported !== 'boolean')) throw new Error();
     if (operation === 'remove' && (result.projectId !== input.projectId || result.removed !== true)) throw new Error();
     if (operation === 'remote-hosts' && (!Array.isArray(result.hosts) || !Array.isArray(result.failed) || typeof result.complete !== 'boolean')) throw new Error();
     if (operation === 'list' && !Array.isArray(result.projects)) throw new Error();
@@ -63,6 +65,7 @@ async function main() {
     if (operation === 'describe' && result.supported !== true) throw new Error();
     console.log(JSON.stringify(operation === 'describe' ? { ...result,
       commands: Object.fromEntries(operations.filter((op) => (op === 'remove' ? typeof result.inputs?.remove === 'string'
+        : op === 'import-session' ? result.importSupported === true
         : op === 'task-view' ? result.lifecycleSupported || result.remoteSupported : lifecycle.includes(op) ? result.lifecycleSupported : result.remoteSupported || ['list', 'add'].includes(op))).map((op) => [op, sessionSkillCommand(process.execPath, process.argv[1], encoded, op)])),
     } : result));
   } catch {

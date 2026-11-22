@@ -28,6 +28,8 @@ export function HistoryImportStep({ onBusy, directory = null, onPrimaryChange, o
   const [sources, setSources] = React.useState<HistorySource[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [copiedExample, setCopiedExample] = React.useState(false);
+  const copiedTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const job = useImportJobQuery();
   const running = job.data?.state === 'running';
   const scan = useImportSourcesQuery(job.isSuccess && !running);
@@ -43,8 +45,24 @@ export function HistoryImportStep({ onBusy, directory = null, onPrimaryChange, o
     : value.filter((id) => id !== source)));
   React.useEffect(() => {
     const lifetime = new AbortController(); controller.current = lifetime;
-    return () => { lifetime.abort(); notifyBusy(false); };
+    return () => {
+      lifetime.abort();
+      if (copiedTimer.current) { clearTimeout(copiedTimer.current); copiedTimer.current = null; }
+      notifyBusy(false);
+    };
   }, [transport, generation, notifyBusy]);
+
+  const copyExamplePrompt = useEvent(() => {
+    const example = t('historyImport.ai.example');
+    const done = () => {
+      setCopiedExample(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => { setCopiedExample(false); copiedTimer.current = null; }, 2000);
+    };
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(example).then(done).catch(() => {});
+    }
+  });
 
   const previewGroups = React.useMemo(() => {
     const groups = historySources.map((source) => ({ ...source, sessions: [] as ImportSession[] }));
@@ -103,6 +121,22 @@ export function HistoryImportStep({ onBusy, directory = null, onPrimaryChange, o
         {[...new Set(job.data.results.filter((result) => result.status === 'failed' && result.code).map((result) => result.code))].map((code) => <code key={code}> {code}</code>)}
       </p>}
     </div>}
+    <section className="yuri-import-ai-card" data-history-ai-recommendation aria-labelledby="yuri-import-ai-heading">
+      <div className="yuri-import-ai-header">
+        <Icon name="ai-generate-2" className="yuri-import-ai-icon" />
+        <h3 id="yuri-import-ai-heading">{t('historyImport.ai.title')}</h3>
+        <span className="yuri-tour-recommended">{t('tour.recommended')}</span>
+      </div>
+      <p className="yuri-import-ai-description">{t('historyImport.ai.description')}</p>
+      <div className="yuri-import-ai-example">
+        <code className="yuri-import-ai-prompt">{t('historyImport.ai.example')}</code>
+        <Button type="button" variant="ghost" size="xs" data-history-ai-copy className="yuri-import-ai-copy" onClick={copyExamplePrompt}>
+          <Icon name={copiedExample ? 'check' : 'file-copy'} className="size-3.5" />
+          <span>{t(copiedExample ? 'historyImport.ai.copied' : 'historyImport.ai.copy')}</span>
+        </Button>
+      </div>
+    </section>
+    <div className="yuri-import-manual-heading">{t('historyImport.manualHeading')}</div>
     <div className="yuri-import-source-grid" aria-label={t('historyImport.sources')}>
       {historySources.map((source) => {
         const installed = scan.data?.installations?.[source.id];

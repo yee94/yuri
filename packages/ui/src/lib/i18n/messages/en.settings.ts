@@ -1288,6 +1288,8 @@ export const settingsDict = {
   'settings.plugins.issue.toast': "Plugin failed to load: {name}",
   'settings.plugins.issue.toastMany': "{count} plugins failed to load",
   'settings.plugins.issue.view': "View",
+  'settings.providers.noModel.toast': "No model available. Connect a provider.",
+  'settings.providers.noModel.configure': "Configure",
   'settings.plugins.status.failed.ref': 'Log reference: {ref}',
   'settings.plugins.status.notReported.title': 'Not loaded',
   'settings.plugins.status.notReported.description': "OpenCode hasn't reported this plugin here. It may still be installing, or another config entry may disable it.",

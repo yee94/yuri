@@ -134,9 +134,20 @@ test('no-model and network errors preserve the direct-provider step instead of c
   expect(fixture.close).not.toHaveBeenCalled();
 });
 
-test('all four steps can be postponed without saving plugins, history or credentials', async () => {
-  await render(); await click('Set up later'); await click('Set up later'); await click('Set up later'); await click('Set up later');
+test('Set up later closes the entire tour immediately from any step without saving plugins, history or credentials', async () => {
+  await render();
+  await click('Set up later');
   expect(fixture.close).toHaveBeenCalledOnce();
+  expect(useSetupTourStore.getState().progress[fixture.runtime]?.step ?? 0).toBe(0);
+  expect(fixture.savePlugins).not.toHaveBeenCalled();
+  expect(fixture.save).not.toHaveBeenCalled();
+
+  fixture.close.mockClear();
+  await act(async () => { useSetupTourStore.getState().move(fixture.runtime, 2); });
+  await tick();
+  await click('Set up later');
+  expect(fixture.close).toHaveBeenCalledOnce();
+  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(2);
   expect(fixture.savePlugins).not.toHaveBeenCalled();
   expect(fixture.save).not.toHaveBeenCalled();
 });

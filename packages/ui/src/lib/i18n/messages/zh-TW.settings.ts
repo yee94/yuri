@@ -2267,6 +2267,8 @@
   'settings.plugins.issue.toast': "外掛載入失敗：{name}",
   'settings.plugins.issue.toastMany': "{count} 個外掛載入失敗",
   'settings.plugins.issue.view': "檢視",
+  'settings.providers.noModel.toast': "暫無可用模型，請先設定提供者",
+  'settings.providers.noModel.configure': "前往設定",
   'settings.plugins.status.failed.ref': '日誌參照：{ref}',
   'settings.plugins.status.notReported.title': '未載入',
   'settings.plugins.status.notReported.description': 'OpenCode 尚未在此回報這個外掛。它可能仍在安裝，或被其他設定項目停用。',

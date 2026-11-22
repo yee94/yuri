@@ -53,5 +53,9 @@ directory/session/model/Git state. Changing Host or session remounts the panel
 without carrying another machine's open state.
 
 The existing branch, context, provider/account/model usage presentation remains
-shared with local chat. These component tests do not establish iOS production
+shared with local chat. Mobile usage shows up to two rings per account and keeps
+the remaining windows as label/value rows; desktop keeps up to three rings.
+Mobile reset summaries use minutes or hours for near deadlines and show
+tomorrow with the clock time; ring tooltips keep the clock time.
+These component tests do not establish iOS production
 timing or real SSH/Relay reachability.

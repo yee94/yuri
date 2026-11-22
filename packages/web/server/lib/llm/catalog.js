@@ -1,3 +1,5 @@
+import { isBlockedProviderId } from '../opencode/blocked-providers.js';
+
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 const stringID = (value) => (typeof value === 'string' && value.trim() ? value.trim() : '');
@@ -41,11 +43,12 @@ export function projectConnectedModels(source) {
   const providersIn = Array.isArray(source?.providers) ? source.providers : [];
   const modelsIn = Array.isArray(source?.models) ? source.models : [];
 
+  const hasProvidersList = providersIn.length > 0;
   const providerMeta = new Map();
   for (const provider of providersIn) {
     if (!isRecord(provider)) continue;
     const providerID = stringID(provider.id);
-    if (!providerID) continue;
+    if (!providerID || isBlockedProviderId(providerID)) continue;
     providerMeta.set(providerID, {
       id: providerID,
       name: stringID(provider.name) || providerID,
@@ -59,8 +62,8 @@ export function projectConnectedModels(source) {
     const providerID = stringID(model.providerID);
     // External model id for session model refs.
     const modelID = stringID(model.id);
-    if (!providerID || !modelID) continue;
-    if (providerMeta.size > 0 && !providerMeta.has(providerID)) continue;
+    if (!providerID || !modelID || isBlockedProviderId(providerID)) continue;
+    if (hasProvidersList && !providerMeta.has(providerID)) continue;
     const name = stringID(model.name) || modelID;
     const entry = {
       providerID,
@@ -75,7 +78,7 @@ export function projectConnectedModels(source) {
 
   const connected = [];
   const providers = [];
-  const providerIDs = providerMeta.size > 0
+  const providerIDs = hasProvidersList
     ? [...providerMeta.keys()]
     : [...modelsByProvider.keys()];
   for (const providerID of providerIDs) {
@@ -118,7 +121,7 @@ export function parseModelRef(model, providerID, modelID) {
 }
 
 export function isConnectedModel(catalog, providerID, modelID) {
-  if (!catalog || !stringID(providerID) || !stringID(modelID)) return false;
+  if (!catalog || !stringID(providerID) || !stringID(modelID) || isBlockedProviderId(providerID)) return false;
   return catalog.models.some((entry) => entry.providerID === providerID && entry.modelID === modelID);
 }
 

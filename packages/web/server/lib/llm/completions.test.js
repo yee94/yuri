@@ -140,10 +140,10 @@ describe('createChatCompletion', () => {
     await createChatCompletion({
       generateText,
       loadCatalog: async () => ({
-        models: [{ providerID: 'opencode', modelID: 'deepseek-v4-flash', acceptsImages: false }],
-        connected: ['opencode'],
+        models: [{ providerID: 'opencode-go', modelID: 'deepseek-v4-flash', acceptsImages: false }],
+        connected: ['opencode-go'],
       }),
-      body: { model: 'opencode/deepseek-v4-flash', messages: [{ role: 'user', content: 'look' }] },
+      body: { model: 'opencode-go/deepseek-v4-flash', messages: [{ role: 'user', content: 'look' }] },
     })
     expect(generateText.mock.calls[0][0].forwardImageParts).toBe(false)
   })
@@ -184,10 +184,10 @@ describe('createChatCompletion', () => {
     await expect(createChatCompletion({
       generateText,
       loadCatalog: async () => ({
-        models: [{ providerID: 'opencode', modelID: 'gpt-5-nano' }],
-        connected: ['opencode'],
+        models: [{ providerID: 'opencode-go', modelID: 'gpt-5-nano' }],
+        connected: ['opencode-go'],
       }),
-      body: { model: 'opencode/gpt-5-nano', messages: [{ role: 'user', content: 'hi' }] },
+      body: { model: 'opencode-go/gpt-5-nano', messages: [{ role: 'user', content: 'hi' }] },
     })).rejects.toMatchObject({
       code: 'upstream_error',
       statusCode: 502,

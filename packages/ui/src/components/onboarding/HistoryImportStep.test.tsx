@@ -154,7 +154,7 @@ test('Next starts Host-owned scanning immediately, shows progress, and can conti
   expect(fixture.complete).not.toHaveBeenCalled();
   expect(container.querySelector('[role="status"]')?.textContent).toContain(en['historyImport.phase.scanning']);
   expect(container.querySelector('[role="status"]')?.previousElementSibling?.className).toBe('yuri-import-subtitle');
-  expect(container.querySelector('[role="status"]')?.nextElementSibling?.className).toBe('yuri-import-source-grid');
+  expect(container.querySelector('[role="status"]')?.nextElementSibling?.className).toBe('yuri-import-ai-card');
   expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: 'start' });
   expect(container.querySelector('progress')?.hasAttribute('value')).toBe(false);
   await click(en['historyImport.background']);
@@ -240,7 +240,7 @@ test('validation progress is authoritative and shown before any items are writte
   expect(container.querySelector('[role="status"]')?.textContent).toContain(en['historyImport.phase.validating']);
   expect(container.querySelector('progress')?.value).toBe(7);
   expect(container.querySelector('progress')?.max).toBe(10);
-  expect(container.querySelector('[role="status"]')?.nextElementSibling?.className).toBe('yuri-import-source-grid');
+  expect(container.querySelector('[role="status"]')?.nextElementSibling?.className).toBe('yuri-import-ai-card');
   expect(scroll).not.toHaveBeenCalled();
   expect(fixture.fetch.mock.calls.some(([url]) => url.endsWith('/preview') || url.endsWith('/start'))).toBe(false);
   expect(fixture.complete).not.toHaveBeenCalled();
@@ -394,6 +394,23 @@ test('failed detection never presents a successful zero count or permits an impo
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(container.querySelectorAll('[data-history-session]')).toHaveLength(2);
   expect(container.querySelector('button[form="yuri-tour-import"]')?.hasAttribute('disabled')).toBe(false);
+});
+
+test('presents AI-assisted import as the primary recommendation before manual source selection and copies the example prompt', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  await render();
+  const aiCard = container.querySelector('[data-history-ai-recommendation]');
+  const grid = container.querySelector('.yuri-import-source-grid');
+  expect(aiCard).not.toBeNull();
+  expect(grid).not.toBeNull();
+  expect(Boolean(aiCard!.compareDocumentPosition(grid!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  expect(aiCard!.textContent).toContain(en['historyImport.ai.title']);
+  expect(aiCard!.textContent).toContain(en['historyImport.ai.example']);
+  expect(container.querySelector('.yuri-import-manual-heading')?.textContent).toBe(en['historyImport.manualHeading']);
+  await click(en['historyImport.ai.copy']);
+  expect(writeText).toHaveBeenCalledWith(en['historyImport.ai.example']);
+  expect(container.querySelector('[data-history-ai-copy]')?.textContent).toContain(en['historyImport.ai.copied']);
 });
 
 test('every shipped locale has complete, non-placeholder import translations', () => {

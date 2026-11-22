@@ -5,7 +5,8 @@ import os from 'node:os';
 import { createInterface } from 'node:readline';
 import * as zlib from 'node:zlib';
 import { setImmediate } from 'node:timers/promises';
-import { digest, fail, parseTranscript } from './events.js';
+import { digest, fail, isCodexInternalThread, parseTranscript } from './events.js';
+import { defaultCursorUserDir, enrichSessionMetadata } from './metadata.js';
 import { readCursorCli, readCursorEditor, readCursorEditorInventory } from './sqlite.js';
 
 const MAX_BYTES = 64 * 1024 * 1024;
@@ -20,9 +21,7 @@ const namespaceFor = (source, file) => {
 };
 
 export function defaultSources(home = os.homedir(), env = process.env, platform = process.platform) {
-  const cursorUser = platform === 'darwin' ? path.join(home, 'Library/Application Support/Cursor/User')
-    : platform === 'win32' ? path.join(env.APPDATA || path.join(home, 'AppData/Roaming'), 'Cursor/User')
-      : path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Cursor/User');
+  const cursorUser = defaultCursorUserDir(home, env, platform);
   const codex = env.CODEX_HOME || path.join(home, '.codex');
   return [
     { source: 'claude', path: path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects') },
@@ -59,19 +58,91 @@ async function* walk(root, budget, depth = 0) {
   }
 }
 
+function decompressZstdFrames(buffer) {
+  if (typeof zlib.zstdDecompressSync !== 'function') fail('compression_unsupported');
+  if (!buffer.length) return Buffer.alloc(0);
+  const chunks = [];
+  let offset = 0;
+  let total = 0;
+  while (offset < buffer.length) {
+    if (offset + 4 > buffer.length) fail('invalid_source');
+    const magic = buffer.readUInt32LE(offset);
+    if ((magic & 0xfffffff0) === 0x184d2a50) {
+      // RFC 8878 skippable frame: 4-byte magic + 4-byte LE size + payload.
+      if (offset + 8 > buffer.length) fail('invalid_source');
+      const skipSize = buffer.readUInt32LE(offset + 4);
+      const next = offset + 8 + skipSize;
+      if (next > buffer.length) fail('invalid_source');
+      offset = next;
+      continue;
+    }
+    if (magic !== 0xfd2fb528) fail('invalid_source');
+    let cursor = offset + 4;
+    if (cursor >= buffer.length) fail('invalid_source');
+    const fhd = buffer[cursor++];
+    if ((fhd & 0x08) !== 0) fail('invalid_source');
+    const singleSegment = (fhd & 0x20) !== 0;
+    const hasChecksum = (fhd & 0x04) !== 0;
+    const dictIdSize = [0, 1, 2, 4][fhd & 0x03];
+    const fcsFlag = (fhd >> 6) & 0x03;
+    const fcsSize = singleSegment ? [1, 2, 4, 8][fcsFlag] : [0, 2, 4, 8][fcsFlag];
+    cursor += (singleSegment ? 0 : 1) + dictIdSize + fcsSize;
+    if (cursor > buffer.length) fail('invalid_source');
+    let lastBlock = false;
+    while (!lastBlock) {
+      if (cursor + 3 > buffer.length) fail('invalid_source');
+      const header = buffer[cursor] | (buffer[cursor + 1] << 8) | (buffer[cursor + 2] << 16);
+      cursor += 3;
+      lastBlock = (header & 1) === 1;
+      const blockType = (header >> 1) & 3;
+      const blockSize = header >> 3;
+      if (blockType === 3) fail('invalid_source');
+      cursor += blockType === 1 ? 1 : blockSize;
+      if (cursor > buffer.length) fail('invalid_source');
+    }
+    if (hasChecksum) {
+      cursor += 4;
+      if (cursor > buffer.length) fail('invalid_source');
+    }
+    const frame = buffer.subarray(offset, cursor);
+    let out;
+    try {
+      out = zlib.zstdDecompressSync(frame, { maxOutputLength: MAX_BYTES - total + 1 });
+    } catch (error) {
+      if (error?.code === 'ERR_BUFFER_TOO_LARGE' || /maxOutputLength/i.test(error?.message ?? '')) fail('source_too_large');
+      fail('invalid_source');
+    }
+    total += out.length;
+    if (total > MAX_BYTES) fail('source_too_large');
+    chunks.push(out);
+    offset = cursor;
+  }
+  return chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total);
+}
+
 export async function readJsonLines(file) {
   const stat = await fs.lstat(file);
   if (!stat.isFile() || stat.isSymbolicLink()) fail('invalid_source');
   if (stat.size > MAX_BYTES) fail('source_too_large');
   const compressed = /\.(?:zstd|zst)$/.test(file);
-  if (compressed && typeof zlib.createZstdDecompress !== 'function') fail('compression_unsupported');
+  if (compressed) {
+    if (typeof zlib.zstdDecompressSync !== 'function') fail('compression_unsupported');
+    const raw = await fs.readFile(file);
+    const decoded = decompressZstdFrames(raw).toString('utf8');
+    const entries = []; let bytes = 0;
+    for (const line of decoded.split(/\r?\n/)) {
+      bytes += Buffer.byteLength(line);
+      if (bytes > MAX_BYTES || line.length > 8 * 1024 * 1024 || entries.length >= 100000) fail('source_too_large');
+      if (!line.trim()) continue;
+      try { const entry = JSON.parse(line); if (!entry || typeof entry !== 'object' || Array.isArray(entry)) fail('invalid_source'); entries.push(entry); }
+      catch { fail('invalid_source'); }
+      if (entries.length % 128 === 0) await setImmediate();
+    }
+    return { entries, modified: stat.mtimeMs };
+  }
   const input = createReadStream(file);
-  const stream = compressed ? input.pipe(zlib.createZstdDecompress()) : input;
-  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  const lines = createInterface({ input, crlfDelay: Infinity });
   const entries = []; let bytes = 0;
-  // Forward source errors into the decompression stream (pipe does not do so).
-  const onError = (error) => stream.destroy(error);
-  if (stream !== input) input.on('error', onError);
   try {
     for await (const line of lines) {
       bytes += Buffer.byteLength(line);
@@ -81,24 +152,27 @@ export async function readJsonLines(file) {
       catch { fail('invalid_source'); }
       if (entries.length % 128 === 0) await setImmediate();
     }
-  } finally { lines.close(); stream.destroy(); input.destroy(); input.off('error', onError); }
+  } finally { lines.close(); input.destroy(); }
   return { entries, modified: stat.mtimeMs };
 }
 
-export async function readSource(descriptor) {
+export async function readSource(descriptor, metadataCache = new Map()) {
   let session;
+  let entries = [];
   if (descriptor.format === 'cursor-editor') {
     const sessions = await readCursorEditor(descriptor.path, descriptor.sessionID);
     session = sessions.find((item) => item.id === descriptor.sessionID);
     if (!session) fail('source_missing');
   } else if (descriptor.format === 'cursor-cli') session = await readCursorCli(descriptor.path);
   else {
-    const { entries } = await readJsonLines(descriptor.path);
+    ({ entries } = await readJsonLines(descriptor.path));
+    if (descriptor.source === 'codex' && isCodexInternalThread(entries)) return null;
     const fallback = path.basename(descriptor.path).replace(/\.jsonl.*$/, '');
     const child = descriptor.source === 'claude' && path.basename(path.dirname(descriptor.path)) === 'subagents';
     session = parseTranscript(descriptor.source, child ? entries.map((entry) => ({ ...entry, isSidechain: false })) : entries, fallback);
     if (child) { session.id = fallback; session.parentID = path.basename(path.dirname(path.dirname(descriptor.path))); }
   }
+  await enrichSessionMetadata(descriptor, session, entries, metadataCache);
   return { ...session, source: descriptor.source, namespace: descriptor.namespace,
     hash: digest({ version: 1, ...session }), descriptor };
 }
@@ -110,6 +184,10 @@ export async function discoverSources({ sources = sourceKinds, roots, limitPerSo
   if (typeof includeCounts !== 'boolean') fail('invalid_source');
   const locations = roots?.length ? roots.filter((root) => sources.includes(root.source)) : defaults.filter((root) => sources.includes(root.source));
   const sessions = []; const errors = []; const descriptors = new Map(); const positions = new Map(); const budget = { count: 0 };
+  const metadataCache = new Map();
+  const cursorStateRoot = locations.find((root) => root.source === 'cursor' && path.basename(root.path) === 'state.vscdb' && path.basename(path.dirname(root.path)) === 'globalStorage');
+  const cursorUserDir = cursorStateRoot ? path.dirname(path.dirname(cursorStateRoot.path)) : undefined;
+  if (cursorUserDir) metadataCache.set('cursorUserDir', cursorUserDir);
   const sampleCounts = Object.fromEntries(sourceKinds.map((source) => [source, 0]));
   const candidateCounts = Object.fromEntries(sources.map((source) => [source, 0]));
   const unknownCounts = new Set(); const countedFiles = new Set();
@@ -135,7 +213,8 @@ export async function discoverSources({ sources = sourceKinds, roots, limitPerSo
         if (sampleCounts[root.source] >= perSourceLimit && (!includeCounts || format !== 'cursor-editor')) continue;
         const namespace = namespaceFor(root.source, file);
         const modified = (await fs.stat(file)).mtimeMs;
-        const descriptor = { source: root.source, namespace, path: file, format, modified };
+        const descriptor = { source: root.source, namespace, path: file, format, modified,
+          ...(root.source === 'cursor' && cursorUserDir ? { cursorUserDir } : {}) };
         try {
           const remaining = limitPerSource === undefined ? undefined : Math.max(0, limitPerSource - sampleCounts[root.source]);
           let records;
@@ -144,7 +223,18 @@ export async function discoverSources({ sources = sourceKinds, roots, limitPerSo
             candidateCounts[root.source] += inventory.count;
             records = inventory.sessions;
             if (inventory.error) errors.push({ source: root.source, file: path.basename(file), code: inventory.error.code ?? 'source_unreadable' });
-          } else records = format === 'cursor-editor' ? await readCursorEditor(file, undefined, remaining) : [await readSource(descriptor)];
+          } else if (format === 'cursor-editor') {
+            records = await readCursorEditor(file, undefined, remaining);
+          } else {
+            const record = await readSource(descriptor, metadataCache);
+            if (!record) {
+              if (includeCounts) candidateCounts[root.source] = Math.max(0, candidateCounts[root.source] - 1);
+              records = [];
+            } else records = [record];
+          }
+          if (format === 'cursor-editor') {
+            for (const session of records) await enrichSessionMetadata(descriptor, session, [], metadataCache);
+          }
           for (const session of records) {
             if (sampleCounts[root.source] >= perSourceLimit) break;
             const key = digest(`${root.source}:${namespace}:${session.id}`);

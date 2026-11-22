@@ -12,6 +12,7 @@ describe('assistant built-in skill pointers', () => {
     expect(prompt).toContain('read_opencode_skill({"id":"opencode"})');
     expect(prompt).toContain('nextOffset');
     expect(prompt).toContain('project management, task and session lifecycle');
+    expect(prompt).toContain('session import');
     expect(prompt).toContain('resource identity and yuri:// deep links');
     expect(prompt).toContain('only granted project tools are available');
     expect(prompt).toContain('no bound local desktop helper');

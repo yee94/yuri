@@ -1255,6 +1255,8 @@ export const settingsDict = {
   'settings.plugins.issue.toast': "Не вдалося завантажити плагін: {name}",
   'settings.plugins.issue.toastMany': "Не вдалося завантажити плагінів: {count}",
   'settings.plugins.issue.view': "Показати",
+  'settings.providers.noModel.toast': "Немає доступних моделей. Підключіть провайдера.",
+  'settings.providers.noModel.configure': "Налаштувати",
   'settings.plugins.status.failed.ref': 'Посилання в журналі: {ref}',
   'settings.plugins.status.notReported.title': 'Не завантажено',
   'settings.plugins.status.notReported.description': 'OpenCode не повідомив про цей плагін тут. Можливо, він ще встановлюється, або інший запис конфігурації його вимикає.',

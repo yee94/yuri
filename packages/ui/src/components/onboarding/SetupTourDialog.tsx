@@ -124,9 +124,9 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
   const current = () => !lifetime.current?.signal.aborted && generation === getRuntimeGeneration() && transport === getRuntimeTransportIdentity();
   const move = (next: SetupTourStep) => { setPage('tour'); setError(null); useSetupTourStore.getState().move(runtime, next); };
   const finish = () => { if (current()) onClose(); };
-  const later = () => { if (step === 3) finish(); else move((step + 1) as SetupTourStep); };
+  const advance = () => { if (step === 3) finish(); else move((step + 1) as SetupTourStep); };
   const proceed = async () => {
-    if (step === 2) { later(); return; }
+    if (step === 2) { advance(); return; }
     if (submitting.current || busy || !lifetime.current) return;
     submitting.current = true; setBusy(true); setError(null);
     try {
@@ -144,7 +144,7 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
         }
         await useConfigStore.getState().loadProviders({ directory, forceRefresh: true, source: 'setup-tour' });
       }
-      if (current()) later();
+      if (current()) advance();
     } catch {
       if (current()) setError(t('tour.operationFailed'));
     } finally {
@@ -235,7 +235,7 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
       <footer className="yuri-tour-footer">
         {(page !== 'tour' || readme !== null) && <Button variant="ghost" size="sm" disabled={busy} onClick={back}>{t('onboarding.common.actions.back')}</Button>}
         {readme === null && <div className="ml-auto flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" size="sm" disabled={busy} onClick={later}>{t('tour.later')}</Button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={finish}>{t('tour.later')}</Button>
           {step === 2 ? <Button size="sm" type="submit" form="yuri-tour-import" disabled={busy || importAction.disabled} aria-busy={busy}>{busy && <Icon name="loader-4" className="size-3 animate-spin" />}{t(importAction.background ? 'historyImport.background' : 'historyImport.next')}</Button>
             : step === 3 ? <Button size="sm" disabled={busy} type={page === 'voice' ? 'submit' : 'button'} form={page === 'voice' ? 'yuri-tour-voice' : undefined} onClick={page === 'voice' ? undefined : finish}>{t(page === 'voice' ? 'settings.common.actions.saveChanges' : 'tour.finish')}</Button>
             : <Button size="sm" disabled={busy || step < 2 && (!plugins.data || plugins.isError)} aria-busy={busy} onClick={() => void proceed()}>{busy && <Icon name="loader-4" className="size-3 animate-spin" />}{t('tour.continue')}</Button>}

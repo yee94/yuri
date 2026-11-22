@@ -15,6 +15,7 @@ import { McpDropdownContent } from '@/components/mcp/McpDropdown';
 import { AboutSettings } from '@/components/sections/yuri/AboutSettings';
 import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
 import { PluginIssueNotifier } from '@/components/sections/plugins/PluginIssueNotifier';
+import { NoModelNotifier } from '@/components/sections/providers/NoModelNotifier';
 import { MobileAppUpdateToast } from '@/components/update/MobileAppUpdateToast';
 import { MobileOtaUpdateNotice } from '@/components/update/MobileOtaUpdateNotice';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
@@ -1586,6 +1587,7 @@ const MobileUsageLimits: React.FC<{
             </div>
             {group.rows.length > 0 ? (
               <UsageRingGrid
+                layout="mobile"
                 className="mt-2"
                 items={group.rows.map((row) => ({
                   key: row.key,
@@ -3376,6 +3378,7 @@ const MobileShell: React.FC<{
         <MobileSessionStatusBar />
       </ErrorBoundary>
       <PluginIssueNotifier />
+      <NoModelNotifier />
       </MobileGlobalSearchHost>
     </DedicatedMobileAppProvider>
     </MobileAutoReadProvider>

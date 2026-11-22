@@ -149,6 +149,7 @@ const MobileUsageLimits: React.FC<{
             </div>
             {group.rows.length > 0 ? (
               <UsageRingGrid
+                layout="mobile"
                 className="mt-2"
                 items={group.rows.map((row) => ({
                   key: row.key,

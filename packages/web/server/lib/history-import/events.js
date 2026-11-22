@@ -126,7 +126,68 @@ function activeClaudeChain(entries, warnings) {
   return recovered;
 }
 
-const contextPrefixes = ['# agents.md instructions', '<user_instructions', '<environment_context', '<additional_context', '<skill', '<system-reminder', '<permissions instructions', '<turn_aborted', '<subagent_notification', '<internal_model_context', '<user_shell_command'];
+const contextPrefixes = [
+  '# agents.md instructions', '<user_instructions', '<environment_context', '<additional_context',
+  '<skill', '<system-reminder', '<permissions instructions', '<collaboration_mode', '<turn_aborted', '<subagent_notification',
+  '<internal_model_context', '<user_shell_command', '<recommended_plugins', '<codex_internal_context',
+  '<external_codex_apps_open_page', '<in-app-browser-context', '<app-context', '<codex_apps_client_time_context',
+];
+const metadataTagNames = [
+  'system-reminder', 'system_reminder', 'timestamp', 'ide_opened_file', 'ide_selection',
+  'local-command-caveat', 'local-command-stdout', 'command-name', 'command-message', 'command-args',
+  'manually_attached_skills', 'image_files', 'uploaded_documents', 'cursor_commands',
+  'attached_files', 'open_and_recently_viewed_files', 'git_status', 'recommended_plugins',
+  'codex_internal_context', 'external_codex_apps_open_page', 'in-app-browser-context',
+  'environment_context', 'additional_context', 'user_instructions', 'skill', 'collaboration_mode',
+  'turn_aborted', 'subagent_notification', 'internal_model_context', 'user_shell_command',
+  'app-context', 'codex_apps_client_time_context', 'user_info',
+];
+const metadataBlockPattern = new RegExp(`<(?:${metadataTagNames.join('|')})(?:\\s[^>]*)?>[\\s\\S]*?(?:<\\/(?:${metadataTagNames.join('|')})>|$)`, 'gi');
+
+export function unwrapCursorUserText(text) {
+  if (typeof text !== 'string' || !text) return '';
+  const query = text.match(/<user_query(?:\s[^>]*)?>([\s\S]*?)<\/user_query>/i);
+  if (query) {
+    const inner = query[1].trim();
+    if (inner) return inner;
+  }
+  const stripped = text.replace(metadataBlockPattern, ' ').replace(/^\s*\[Image\]\s*/i, '').trim();
+  return stripped || text.trim();
+}
+
+export function cleanTitleText(text) {
+  if (typeof text !== 'string' || !text) return '';
+  const query = text.match(/<user_query(?:\s[^>]*)?>([\s\S]*?)<\/user_query>/i);
+  const candidate = query?.[1] ?? text;
+  const cleaned = candidate
+    .replace(metadataBlockPattern, ' ')
+    .replace(/^\s*\[Image\]\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.slice(0, 100);
+}
+
+export function deriveFallbackTitle(events, fallbackID) {
+  for (const event of events) {
+    if (event.kind !== 'user') continue;
+    const candidate = cleanTitleText(event.text);
+    if (candidate) return candidate;
+  }
+  return String(fallbackID);
+}
+
+export function isCodexInternalThread(entries) {
+  const head = entries.find((entry) => entry.type === 'session_meta')?.payload;
+  const subagent = head?.source?.subagent;
+  return subagent === 'guardian' || subagent?.other === 'guardian';
+}
+
+export function extractCodexGitOriginUrl(entries) {
+  const head = entries.find((entry) => entry.type === 'session_meta')?.payload;
+  const url = head?.git?.repository_url;
+  return typeof url === 'string' && url.trim() ? url.trim() : '';
+}
+
 function codexUser(entry) {
   const payload = entry.payload;
   if (entry.type === 'event_msg' && payload?.type === 'user_message') return { kind: 'event', text: textOf(payload.message) };
@@ -156,13 +217,16 @@ function codexBoundaries(lines) {
 export function parseTranscript(source, entries, fallbackID, fallbackTime = 0) {
   const warnings = new Set(['tools_archived', 'usage_unknown']);
   const head = source === 'codex' ? entries.find((entry) => entry.type === 'session_meta')?.payload ?? {} : entries[0] ?? {};
-  let id = head.sessionId ?? head.session_id ?? head.id ?? fallbackID;
+  let id = source === 'codex'
+    ? head.id ?? head.session_id ?? head.sessionId ?? fallbackID
+    : head.sessionId ?? head.session_id ?? head.id ?? fallbackID;
   let directory = head.cwd ?? '';
   let title = '';
   const events = [];
   const add = (kind, text, entry, extra = {}) => {
-    if (!text && !extra.files?.length && kind !== 'tool') return;
-    events.push({ kind, text, time: timestamp(entry.timestamp ?? entry.time ?? entry.createdAt, fallbackTime), ...extra });
+    const normalized = source === 'cursor' && kind === 'user' ? unwrapCursorUserText(text) : text;
+    if (!normalized && !extra.files?.length && kind !== 'tool') return;
+    events.push({ kind, text: normalized, time: timestamp(entry.timestamp ?? entry.time ?? entry.createdAt, fallbackTime), ...extra });
   };
   const blocks = (content, role, entry, results = new Map()) => {
     if (typeof content === 'string') { add(role, content, entry); return; }
@@ -188,8 +252,9 @@ export function parseTranscript(source, entries, fallbackID, fallbackTime = 0) {
     const results = new Map();
     for (const entry of messages) for (const part of Array.isArray(entry.message?.content) ? entry.message.content : []) if (part.type === 'tool_result') results.set(part.tool_use_id, part);
     for (const entry of entries) {
-      if (entry.type === 'custom-title') title = entry.customTitle ?? title;
-      else if (entry.type === 'ai-title' && !title) title = entry.aiTitle ?? '';
+      if (entry.type === 'custom-title' && typeof entry.customTitle === 'string' && entry.customTitle.trim()) title = entry.customTitle.trim();
+      else if (entry.type === 'ai-title' && !title && typeof entry.aiTitle === 'string' && entry.aiTitle.trim()) title = entry.aiTitle.trim();
+      else if (entry.type === 'summary' && !title && typeof entry.summary === 'string' && entry.summary.trim()) title = entry.summary.trim();
       directory ||= entry.cwd ?? ''; id = entry.sessionId ?? id;
     }
     for (const entry of messages) {
@@ -248,8 +313,10 @@ export function parseTranscript(source, entries, fallbackID, fallbackTime = 0) {
     const surface = []; const surfaceTypes = ['system/message', 'developer/message', 'user/message', 'assistant/message', 'tool/result'];
     let expectedSeq = 0;
     for (const entry of entries.slice(1)) {
-      if (entry.seq !== undefined && entry.seq !== expectedSeq) fail('invalid_source');
-      expectedSeq++;
+      if (entry.seq !== undefined) {
+        if (entry.seq !== expectedSeq) fail('invalid_source');
+        expectedSeq++;
+      }
       if (!surfaceTypes.includes(entry.type)) continue;
       if (entry.surfaceOp && entry.surfaceOp !== 'append') {
         const op = entry.surfaceOp;
@@ -293,7 +360,8 @@ export function parseTranscript(source, entries, fallbackID, fallbackTime = 0) {
     }
   } else fail('invalid_source');
   if (!events.length) fail('empty_transcript');
-  title ||= events.find((event) => event.kind === 'user')?.text?.replace(/\s+/g, ' ').slice(0, 100) ?? String(id);
+  title = typeof title === 'string' ? title.trim() : '';
+  title ||= deriveFallbackTitle(events, id);
   let parentID = source === 'codex' ? head.source?.subagent?.thread_spawn?.parent_thread_id ?? head.parent_thread_id
     : head.origin === 'subagent' || head.delegationDepth > 0 ? head.parentSession : undefined;
   if (parentID != null && String(parentID) === String(id)) { parentID = undefined; warnings.add('parent_detached'); }

@@ -1288,6 +1288,8 @@ export const settingsDict = {
   'settings.plugins.issue.toast': "プラグインの読み込みに失敗：{name}",
   'settings.plugins.issue.toastMany': "{count} 件のプラグインの読み込みに失敗",
   'settings.plugins.issue.view': "表示",
+  'settings.providers.noModel.toast': "利用できるモデルがありません。Provider を接続してください。",
+  'settings.providers.noModel.configure': "設定する",
   'settings.plugins.status.failed.ref': 'ログ参照: {ref}',
   'settings.plugins.status.notReported.title': '未読み込み',
   'settings.plugins.status.notReported.description': 'OpenCode はここでこの Plugin を報告していません。インストール中か、別の設定エントリで無効化されている可能性があります。',

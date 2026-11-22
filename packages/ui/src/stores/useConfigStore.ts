@@ -8,6 +8,7 @@ import {
     projectAgent,
     resolveAgentSendIdentity,
 } from "@/lib/opencode/agent-identity";
+import { isBlockedProviderId } from "@/lib/opencode/blockedProviders";
 import { opencodeClient } from "@/lib/opencode/client";
 import { scopeMatches, subscribeToConfigChanges } from "@/lib/configSync";
 import type { ModelMetadata } from "@/types";
@@ -32,8 +33,6 @@ import { parseProviderCatalog } from "@/lib/configCatalogParser";
 import type { ConfigCatalogModel, ConfigCatalogProvider } from "@/types/configCatalog";
 import { ensureSettingsBootstrapQuery, readSettingsBootstrapSnapshot } from "@/queries/settingsBootstrapQueries";
 
-const FALLBACK_PROVIDER_ID = "opencode";
-const FALLBACK_MODEL_ID = "big-pickle";
 // Sentinel selectedProviderId used by the providers UI while the "Add provider"
 // form is open. It is intentionally not a real provider id and must not be
 // persisted as a stable provider selection.
@@ -108,7 +107,9 @@ type GitModelSelection = { providerId: string; modelId: string };
 type ProviderModelSelection = { providerId: string; modelId: string; variant?: string } | null;
 
 const sanitizePersistedSelectedProviderId = (providerId: string | undefined): string => (
-    providerId === ADD_PROVIDER_SENTINEL || providerId === CUSTOM_PROVIDER_SENTINEL ? "" : (providerId ?? "")
+    providerId === ADD_PROVIDER_SENTINEL || providerId === CUSTOM_PROVIDER_SENTINEL || isBlockedProviderId(providerId)
+        ? ""
+        : (providerId ?? "")
 );
 
 const preserveAddProviderSelection = (currentSelectedProviderId: string | undefined, nextProviderId: string): string => (
@@ -178,7 +179,7 @@ const resolveProviderModelSelection = ({
     settingsDefaultModel?: string;
     settingsDefaultVariant?: string;
 }): ProviderModelSelection => {
-    if (currentProviderId && currentModelId) {
+    if (currentProviderId && currentModelId && !isBlockedProviderId(currentProviderId)) {
         return {
             providerId: currentProviderId,
             modelId: currentModelId,
@@ -188,17 +189,13 @@ const resolveProviderModelSelection = ({
 
     if (settingsDefaultModel) {
         const parsed = parseModelString(settingsDefaultModel);
-        if (parsed) {
+        if (parsed && !isBlockedProviderId(parsed.providerId)) {
             return {
                 providerId: parsed.providerId,
                 modelId: parsed.modelId,
                 variant: parsed.variant ?? settingsDefaultVariant,
             };
         }
-    }
-
-    if (hasProviderModel(providers, FALLBACK_PROVIDER_ID, FALLBACK_MODEL_ID)) {
-        return { providerId: FALLBACK_PROVIDER_ID, modelId: FALLBACK_MODEL_ID };
     }
 
     const firstProvider = providers[0];
@@ -240,7 +237,7 @@ type DefaultAgentModelSelection = {
 //     Agent: settings.defaultAgent → opencode default_agent → build → first primary → first
 //     Model: project.defaultModel → settings.defaultModel
 //            → resolved agent's pinned model+variant → opencode config.model
-//            → opencode/big-pickle → first
+//            → first available provider/model
 //
 // We only remember the user's last explicit pick as one unit per Project (plus one global
 // fallback), not "which model agent B used last". Existing-session restore reads chat
@@ -269,7 +266,7 @@ const resolveDefaultAgentModelSelection = ({
     globalLastUserSelection?: LastUserSelection;
 }): DefaultAgentModelSelection => {
     const tryUnitSelection = (selection?: LastUserSelection): DefaultAgentModelSelection | null => {
-        if (!selection) {
+        if (!selection || isBlockedProviderId(selection.providerId)) {
             return null;
         }
         // Accept authoritative id or legacy persisted display name (e.g. "Build").
@@ -324,7 +321,7 @@ const resolveDefaultAgentModelSelection = ({
 
     if (effectiveDefaultModel) {
         const parsed = parseModelString(effectiveDefaultModel);
-        if (parsed) {
+        if (parsed && !isBlockedProviderId(parsed.providerId)) {
             providerId = parsed.providerId;
             modelId = parsed.modelId;
             variant = parsed.variant ?? (projectDefaultModel ? undefined : settingsDefaultVariant);
@@ -333,7 +330,8 @@ const resolveDefaultAgentModelSelection = ({
 
     if (!providerId
         && resolvedAgent?.model?.providerID
-        && resolvedAgent.model?.modelID) {
+        && resolvedAgent.model?.modelID
+        && !isBlockedProviderId(resolvedAgent.model.providerID)) {
         providerId = resolvedAgent.model.providerID;
         modelId = resolvedAgent.model.modelID;
         variant = resolvedAgent.variant;
@@ -342,7 +340,7 @@ const resolveDefaultAgentModelSelection = ({
     // OpenCode's global default model — used when neither our settings nor the agent pin a model.
     if (!providerId && opencodeDefaultModel) {
         const parsed = parseModelString(opencodeDefaultModel);
-        if (parsed) {
+        if (parsed && !isBlockedProviderId(parsed.providerId)) {
             providerId = parsed.providerId;
             modelId = parsed.modelId;
             variant = parsed.variant;
@@ -350,16 +348,11 @@ const resolveDefaultAgentModelSelection = ({
     }
 
     if (!providerId) {
-        if (hasProviderModel(providers, FALLBACK_PROVIDER_ID, FALLBACK_MODEL_ID)) {
-            providerId = FALLBACK_PROVIDER_ID;
-            modelId = FALLBACK_MODEL_ID;
-        } else {
-            const firstProvider = providers[0];
-            const firstModel = firstProvider?.models[0];
-            if (firstProvider && firstModel) {
-                providerId = firstProvider.id;
-                modelId = firstModel.id;
-            }
+        const firstProvider = providers[0];
+        const firstModel = firstProvider?.models[0];
+        if (firstProvider && firstModel) {
+            providerId = firstProvider.id;
+            modelId = firstModel.id;
         }
     }
 
@@ -579,7 +572,7 @@ const sanitizeAgentModelSelections = (value: unknown): { [agentName: string]: Ag
         const providerId = sanitizeSelectionIdentifier(rawSelection.providerId);
         const modelId = sanitizeSelectionIdentifier(rawSelection.modelId);
         const variant = sanitizeSelectionIdentifier(rawSelection.variant);
-        if (!safeAgentName || !providerId || !modelId || (rawSelection.variant !== undefined && !variant)) continue;
+        if (!safeAgentName || !providerId || isBlockedProviderId(providerId) || !modelId || (rawSelection.variant !== undefined && !variant)) continue;
         entries.push([safeAgentName, { providerId, modelId, ...(variant ? { variant } : {}) }]);
     }
     return Object.fromEntries(entries);
@@ -591,7 +584,7 @@ const sanitizeLastUserSelection = (value: unknown): LastUserSelection | undefine
     const providerId = sanitizeSelectionIdentifier(value.providerId);
     const modelId = sanitizeSelectionIdentifier(value.modelId);
     const variant = sanitizeSelectionIdentifier(value.variant);
-    if (!agentName || !providerId || !modelId || (value.variant !== undefined && !variant)) return undefined;
+    if (!agentName || !providerId || isBlockedProviderId(providerId) || !modelId || (value.variant !== undefined && !variant)) return undefined;
     return { agentName, providerId, modelId, ...(variant ? { variant } : {}) };
 };
 
@@ -667,13 +660,15 @@ const sanitizePersistedCatalogState = (persistedState: unknown): Partial<ConfigS
                 lastSelectedAgentName,
                 agentModelSelections,
             );
+            const rawCurrentProviderId = normalizeOptionalString(rawSnapshot.currentProviderId) ?? '';
+            const blockedCurrentProvider = isBlockedProviderId(rawCurrentProviderId);
             directoryScoped[directoryKey] = {
                 ...createEmptyDirectoryScopedConfig(),
                 providers: [],
                 agents: [],
-                currentProviderId: normalizeOptionalString(rawSnapshot.currentProviderId) ?? '',
-                currentModelId: normalizeOptionalString(rawSnapshot.currentModelId) ?? '',
-                currentVariant: normalizeOptionalString(rawSnapshot.currentVariant),
+                currentProviderId: blockedCurrentProvider ? '' : rawCurrentProviderId,
+                currentModelId: blockedCurrentProvider ? '' : (normalizeOptionalString(rawSnapshot.currentModelId) ?? ''),
+                currentVariant: blockedCurrentProvider ? undefined : normalizeOptionalString(rawSnapshot.currentVariant),
                 currentAgentName: normalizeOptionalString(rawSnapshot.currentAgentName),
                 selectedProviderId: sanitizePersistedSelectedProviderId(normalizeOptionalString(rawSnapshot.selectedProviderId)),
                 // Legacy map retained only so older clients/data can re-derive; new cascade ignores it.
@@ -681,7 +676,7 @@ const sanitizePersistedCatalogState = (persistedState: unknown): Partial<ConfigS
                 lastSelectedAgentName: lastUserSelection?.agentName ?? lastSelectedAgentName,
                 lastUserSelection,
                 defaultProviders: {},
-                selectionSource: rawSnapshot.selectionSource === 'manual' ? 'manual' : 'auto',
+                selectionSource: !blockedCurrentProvider && rawSnapshot.selectionSource === 'manual' ? 'manual' : 'auto',
             };
         }
     }
@@ -717,10 +712,13 @@ const sanitizePersistedCatalogState = (persistedState: unknown): Partial<ConfigS
             lastUserSelection: undefined,
             globalLastUserSelection: undefined,
             providerConfigLoadingByDirectory: {},
+            providerCatalogSettledByDirectory: {},
             agentConfigLoadingByDirectory: {},
         };
     }
 
+    const rawTopLevelProviderId = normalizeOptionalString(persistedState.currentProviderId) ?? '';
+    const blockedTopLevelProvider = isBlockedProviderId(rawTopLevelProviderId);
     return {
         ...preferences,
         catalogTransportIdentity: currentTransport,
@@ -728,9 +726,9 @@ const sanitizePersistedCatalogState = (persistedState: unknown): Partial<ConfigS
         providers: [],
         agents: [],
         defaultProviders: {},
-        currentProviderId: normalizeOptionalString(persistedState.currentProviderId) ?? '',
-        currentModelId: normalizeOptionalString(persistedState.currentModelId) ?? '',
-        currentVariant: normalizeOptionalString(persistedState.currentVariant),
+        currentProviderId: blockedTopLevelProvider ? '' : rawTopLevelProviderId,
+        currentModelId: blockedTopLevelProvider ? '' : (normalizeOptionalString(persistedState.currentModelId) ?? ''),
+        currentVariant: blockedTopLevelProvider ? undefined : normalizeOptionalString(persistedState.currentVariant),
         currentAgentName: normalizeOptionalString(persistedState.currentAgentName),
         selectedProviderId: sanitizePersistedSelectedProviderId(normalizeOptionalString(persistedState.selectedProviderId)),
         agentModelSelections: legacyTopLevelSelections,
@@ -771,7 +769,8 @@ const resolveSelectionWithManualGuard = ({
     const manualAgent = findAgentBySelectionKey(agents, currentAgentName);
     const manualAgentName = manualAgent?.name ?? currentAgentName;
     const manualModelValid = !!currentProviderId
-        && !!currentModelId;
+        && !!currentModelId
+        && !isBlockedProviderId(currentProviderId);
     const preserveManual = selectionSource === "manual" && (!!manualAgentName || manualModelValid);
 
     return {
@@ -789,6 +788,7 @@ interface ConfigStore {
     catalogTransportIdentity: string;
     directoryScoped: Record<string, DirectoryScopedConfig>;
     providerConfigLoadingByDirectory: Record<string, boolean>;
+    providerCatalogSettledByDirectory: Record<string, boolean>;
     agentConfigLoadingByDirectory: Record<string, boolean>;
 
     providers: ProviderWithModelList[];
@@ -980,6 +980,7 @@ export const useConfigStore = create<ConfigStore>()(
                 catalogTransportIdentity: getRuntimeTransportIdentity(),
                 directoryScoped: {},
                 providerConfigLoadingByDirectory: {},
+                providerCatalogSettledByDirectory: {},
                 agentConfigLoadingByDirectory: {},
 
                 providers: [],
@@ -1186,7 +1187,29 @@ export const useConfigStore = create<ConfigStore>()(
                             if (apiResult.partial && previousProviders.length > 0) return;
                             // Bootstrap empty snapshots remain provisional. An explicit V2
                             // domain/credential refresh can authoritatively disconnect the last provider.
-                            if (processedProviders.length === 0 && (!options?.allowEmpty || apiResult.partial)) return;
+                            if (processedProviders.length === 0 && (!options?.allowEmpty || apiResult.partial)) {
+                                if (!apiResult.partial) {
+                                    set((state) => {
+                                        if (!isCurrent() || state.catalogTransportIdentity !== transport) return state;
+                                        const nextState: Partial<ConfigStore> = {
+                                            providerCatalogSettledByDirectory: {
+                                                ...state.providerCatalogSettledByDirectory,
+                                                [directoryKey]: true,
+                                            },
+                                        };
+                                        if (state.activeDirectoryKey === directoryKey && isBlockedProviderId(state.currentProviderId)) {
+                                            nextState.currentProviderId = "";
+                                            nextState.currentModelId = "";
+                                            nextState.currentVariant = undefined;
+                                            if (isBlockedProviderId(state.selectedProviderId)) {
+                                                nextState.selectedProviderId = "";
+                                            }
+                                        }
+                                        return nextState;
+                                    });
+                                }
+                                return;
+                            }
 
                             set((state) => {
                                 if (!isCurrent() || state.catalogTransportIdentity !== transport) return state;
@@ -1244,6 +1267,12 @@ export const useConfigStore = create<ConfigStore>()(
                                         ...state.directoryScoped,
                                         [directoryKey]: nextSnapshot,
                                     },
+                                    ...(!apiResult.partial ? {
+                                        providerCatalogSettledByDirectory: {
+                                            ...state.providerCatalogSettledByDirectory,
+                                            [directoryKey]: true,
+                                        },
+                                    } : {}),
                                 };
 
                                 if (state.activeDirectoryKey === directoryKey) {
@@ -2302,7 +2331,11 @@ export const useConfigStore = create<ConfigStore>()(
                     }
 
                     const opencodeDefaultAgent = normalizeOptionalString(syncedConfig.default_agent);
-                    const opencodeDefaultModel = normalizeModelIdentifier(syncedConfig.model);
+                    const normalizedDefaultModel = normalizeModelIdentifier(syncedConfig.model);
+                    const parsedDefaultModel = normalizedDefaultModel ? parseModelString(normalizedDefaultModel) : null;
+                    const opencodeDefaultModel = parsedDefaultModel && isBlockedProviderId(parsedDefaultModel.providerId)
+                        ? undefined
+                        : normalizedDefaultModel;
 
                     set((state) => {
                         const snapshot = state.directoryScoped[directoryKey];
