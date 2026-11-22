@@ -50,7 +50,7 @@ export function MobileHomeViewMenu({ value, onChange }: Props) {
           />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="bottom" className="min-w-44">
+      <DropdownMenuContent align="start" side="bottom" className="flex min-w-44 flex-col gap-1">
         {VIEW_OPTIONS.map((option) => (
           <DropdownMenuItem
             key={option.id}
