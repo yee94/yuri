@@ -15,7 +15,10 @@ import { MobileSheetHeaderActions } from '@/components/ui/MobileResizableSheet';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { Icon } from '@/components/icon/Icon';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
+import { ReadAloudButton } from '@/components/dictation/ReadAloudButton';
+import { SpeechFollowButton, useSpeechScrollFollow } from '@/components/dictation/useSpeechScrollFollow';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import { stripLeadingFrontmatter } from '@/lib/markdown/frontmatter';
 import { useResolvedImageResource } from '@/components/chat/imageSource';
 import type { ToolPopupContent } from '@/components/chat/message/types';
 import { TextSelectionMenu } from '@/components/chat/message/TextSelectionMenu';
@@ -36,6 +39,7 @@ import { useFileContentQuery, useFileDirectoryQuery, useFileSearchQuery, useFile
 import { cn } from '@/lib/utils';
 import { useMobileBackRoute } from '@/mobile/mobileBackNavigation';
 import { useUIStore } from '@/stores/useUIStore';
+import { useConfigStore } from '@/stores/useConfigStore';
 
 const ToolOutputDialog = lazyWithChunkRecovery(() => import('@/components/chat/message/ToolOutputDialog'));
 
@@ -449,6 +453,8 @@ const MobileSearchResults: React.FC<{
 const MobileFileDetailActions: React.FC<{
   path: string;
   canUseText: boolean;
+  ttsText: string;
+  getSpeechTarget: () => HTMLElement | null;
   htmlViewMode: HtmlViewMode;
   htmlFullscreen: boolean;
   onToggleHtmlViewMode: () => void;
@@ -458,6 +464,8 @@ const MobileFileDetailActions: React.FC<{
 }> = ({
   path,
   canUseText,
+  ttsText,
+  getSpeechTarget,
   htmlViewMode,
   htmlFullscreen,
   onToggleHtmlViewMode,
@@ -466,10 +474,24 @@ const MobileFileDetailActions: React.FC<{
   onCopyContent,
 }) => {
   const { t } = useI18n();
+  const showMessageTTSButtons = useConfigStore((state) => state.showMessageTTSButtons);
   const html = isHtmlFile(path);
+  const markdown = isMarkdownFile(path);
 
   return (
     <>
+      {markdown && canUseText && showMessageTTSButtons && ttsText.trim() ? (
+        <ReadAloudButton
+          text={ttsText}
+          getTarget={getSpeechTarget}
+          isTouchContext
+          readAloudLabel={t('filesView.tts.readAloud')}
+          stopSpeakingLabel={t('filesView.tts.stopSpeaking')}
+          showTooltip={false}
+          menuSide="bottom"
+          menuAlign="end"
+        />
+      ) : null}
       {html && canUseText ? (
         <>
           <Button
@@ -584,7 +606,16 @@ const MobileFileDetail: React.FC<{
     setImagePopup((previous) => (previous.open === open ? previous : { ...previous, open }));
   });
 
+  const handleMarkdownPopup = useEvent((popup: ToolPopupContent) => {
+    setImagePopup(popup);
+  });
+
   const html = isHtmlFile(path);
+  const markdown = isMarkdownFile(path);
+  const ttsText = React.useMemo(() => (markdown ? stripLeadingFrontmatter(content) : ''), [content, markdown]);
+  const [markdownScrollContainer, setMarkdownScrollContainer] = React.useState<HTMLElement | null>(null);
+  const getSpeechTarget = useEvent(() => markdownScrollContainer);
+  useSpeechScrollFollow(markdownScrollContainer, markdown && !isBinary && !isLoading && !error);
   const [htmlFullscreen, setHtmlFullscreen] = React.useState(false);
   const htmlFullscreenSurfaceRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -615,6 +646,8 @@ const MobileFileDetail: React.FC<{
     <MobileFileDetailActions
       path={path}
       canUseText={!isBinary && !isLoading && !error}
+      ttsText={ttsText}
+      getSpeechTarget={getSpeechTarget}
       htmlViewMode={htmlViewMode}
       htmlFullscreen={htmlFullscreen}
       onToggleHtmlViewMode={toggleHtmlViewMode}
@@ -697,7 +730,7 @@ const MobileFileDetail: React.FC<{
           {fileActions}
         </MobileSheetHeaderActions>
       )}
-      <div ref={contentContainerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <div ref={contentContainerRef} className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
         {preview ?? (isBinary && !isLoading && !error ? (
           <BinaryFileFallback key={path} path={path} />
         ) : html && !isLoading && !error ? (
@@ -728,8 +761,16 @@ const MobileFileDetail: React.FC<{
             </button>
           </ScrollShadow>
         ) : (
-          <MobileTextFile path={path} content={content} />
+          <MobileTextFile
+            path={path}
+            content={content}
+            markdownScrollRef={setMarkdownScrollContainer}
+            onShowPopup={handleMarkdownPopup}
+          />
         ))}
+        {!preview && markdown && !isBinary && !isLoading && !error ? (
+          <SpeechFollowButton scrollContainer={markdownScrollContainer} />
+        ) : null}
       </div>
       <TextSelectionMenu containerRef={contentContainerRef} />
       {imagePopup.open ? (
@@ -756,7 +797,12 @@ const MobileHtmlPreview: React.FC<{ path: string }> = ({ path }) => {
     iframeStyle={{ backgroundColor: 'var(--surface-background)' }} />;
 };
 
-const MobileTextFile: React.FC<{ path: string; content: string }> = ({ path, content }) => {
+const MobileTextFile: React.FC<{
+  path: string;
+  content: string;
+  markdownScrollRef?: React.Ref<HTMLElement>;
+  onShowPopup?: (content: ToolPopupContent) => void;
+}> = ({ path, content, markdownScrollRef, onShowPopup }) => {
   const { currentTheme, availableThemes, lightThemeId, darkThemeId } = useThemeSystem();
   const lightTheme = React.useMemo(
     () => availableThemes.find((theme) => theme.metadata.id === lightThemeId) ?? getDefaultTheme(false),
@@ -778,9 +824,21 @@ const MobileTextFile: React.FC<{ path: string; content: string }> = ({ path, con
   );
 
   if (isMarkdownFile(path)) {
+    const markdownDirectory = getParentDirectory(path) ?? undefined;
     return (
-      <ScrollShadow className="h-full overflow-y-auto px-4 py-4">
-        <SimpleMarkdownRenderer content={content} enableFileReferences={false} />
+      <ScrollShadow
+        ref={markdownScrollRef}
+        className="relative h-full overflow-y-auto px-4 py-4"
+        data-speech-identity={`file:${path}`}
+        data-speech-content="true"
+      >
+        <SimpleMarkdownRenderer
+          content={content}
+          baseDirectory={markdownDirectory}
+          onShowPopup={onShowPopup}
+          stripFrontmatter
+          enableFileReferences={false}
+        />
       </ScrollShadow>
     );
   }

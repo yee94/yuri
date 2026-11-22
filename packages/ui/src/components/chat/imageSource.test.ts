@@ -37,6 +37,16 @@ describe('resolveImageSource', () => {
       source: 'assets/My%20Photo.png',
       path: '/workspace/project/assets/My Photo.png',
     });
+    expect(resolveImageSource('./assets/photo.png?raw=1#hero', '/workspace/project/docs')).toEqual({
+      kind: 'runtime-file',
+      source: './assets/photo.png?raw=1#hero',
+      path: '/workspace/project/docs/assets/photo.png',
+    });
+    expect(resolveImageSource('../shared/diagram.svg#dark', '/workspace/project/docs')).toEqual({
+      kind: 'runtime-file',
+      source: '../shared/diagram.svg#dark',
+      path: '/workspace/project/shared/diagram.svg',
+    });
   });
 
   test('normalizes POSIX and Windows file URLs', () => {
@@ -177,7 +187,8 @@ describe('image source contracts', () => {
     expect(decorateSource).not.toContain('isRelayTransport(ctx.imageTransportIdentity)');
     const decorateImagesStart = decorateSource.indexOf('export const decorateMarkdownImages');
     const imageScanStart = decorateSource.indexOf('root.querySelectorAll<HTMLImageElement>(MARKDOWN_IMAGE_SELECTOR)', decorateImagesStart);
-    expect(decorateSource.indexOf('if (!ctx.imagePreviewEnabled)', decorateImagesStart)).toBeLessThan(imageScanStart);
+    expect(imageScanStart).toBeGreaterThan(decorateImagesStart);
+    expect(decorateSource.indexOf('if (!needsRuntimeImageStream(resolved))', imageScanStart)).toBeGreaterThan(imageScanStart);
     expect(decorateSource).toContain("'focus-visible:outline-[var(--interactive-focus-ring)]'");
     expect(decorateSource).toContain("'rounded-xl'");
     expect(decorateSource).toContain("'border-border/80'");

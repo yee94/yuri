@@ -1,3 +1,5 @@
+import { stripLeadingFrontmatter } from '@/lib/markdown/frontmatter';
+
 /**
  * Client-side text sanitization for TTS output.
  * Removes markdown, URLs, file paths, and other non-speakable content.
@@ -5,7 +7,7 @@
  */
 export function sanitizeForTTS(text: string, preserveParagraphs = false): string {
     if (!text) return '';
-    return text
+    return stripLeadingFrontmatter(text)
         // Remove fenced code blocks entirely (multi-line code is unreadable),
         // but keep inline-code CONTENT and only strip the backticks: agents
         // routinely inline meaningful words ("You are on `main`").

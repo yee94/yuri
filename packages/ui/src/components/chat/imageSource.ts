@@ -57,7 +57,8 @@ export const resolveImageSource = (source: string, effectiveDirectory: string) =
     return { kind: 'direct', source: trimmed };
   }
 
-  const pathSource = decodeFileUrlPart(trimmed);
+  const withoutQueryOrHash = trimmed.split(/[?#]/, 1)[0] ?? trimmed;
+  const pathSource = decodeFileUrlPart(withoutQueryOrHash);
   const path = isAbsoluteFilePath(pathSource)
     ? normalizeFilePath(pathSource)
     : toAbsoluteFilePath(effectiveDirectory, pathSource);

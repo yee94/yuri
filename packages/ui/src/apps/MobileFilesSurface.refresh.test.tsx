@@ -19,6 +19,7 @@ vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: vi.fn() }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeTransportIdentity: () => 'mobile-refresh-test',
   getRuntimeGeneration: () => 0,
+  getRuntimeKey: () => 'mobile-refresh-test',
   getRuntimeApiBaseUrl: () => '',
   subscribeRuntimeEndpointChanged: () => () => {},
   isRuntimeEndpointIdentityChange: () => false,

@@ -69,7 +69,15 @@ vi.mock('@/stores/useGitStore', () => ({ useGitStatus: () => null, useGitStore: 
 vi.mock('@/components/views/GitView', () => ({ GitView: ({ isActive }: { isActive: boolean }) => <div data-testid="git-view" data-active={isActive} /> }));
 vi.mock('@/hooks/useMessageTTS', () => ({ useMessageTTS: () => ({ isPlaying: false, play: harness.noop, stop: harness.noop }) }));
 vi.mock('@/components/chat/MarkdownRenderer', () => ({
-  SimpleMarkdownRenderer: ({ content }: { content: string }) => <article data-testid="markdown-preview">{content}</article>,
+  SimpleMarkdownRenderer: ({ content, baseDirectory, onShowPopup }: { content: string; baseDirectory?: string; onShowPopup?: unknown }) => (
+    <article
+      data-testid="markdown-preview"
+      data-base-directory={baseDirectory ?? ''}
+      data-has-popup={onShowPopup ? 'true' : 'false'}
+    >
+      {content}
+    </article>
+  ),
 }));
 vi.mock('@/components/diagram', () => ({ DiagramEditor: () => null }));
 vi.mock('@/components/views/DiffView', () => ({ DiffView: () => null }));
@@ -1241,5 +1249,16 @@ describe('ContextPanel writable file navigation', () => {
     expect(activeFilePath()).toBe('/repo/B.ts');
     expect(host.querySelector('[data-testid="editor"]')?.textContent).toBe('recovered-B');
     expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  test('passes the markdown file parent directory and popup handler into SimpleMarkdownRenderer for relative image preview', async () => {
+    window.localStorage.setItem('yuri:files:md-viewer-mode', 'preview');
+    harness.files.readFile.mockResolvedValue({ content: '# Guide\n\n![diagram](./assets/diagram.png)' });
+    useUIStore.getState().openContextFile('/repo', '/repo/docs/guide/README.md');
+    await act(async () => reactRoot.render(<ContextPanel directory="/repo" />));
+    const preview = host.querySelector('[data-testid="markdown-preview"]');
+    expect(preview).not.toBeNull();
+    expect(preview?.getAttribute('data-base-directory')).toBe('/repo/docs/guide');
+    expect(preview?.getAttribute('data-has-popup')).toBe('true');
   });
 });

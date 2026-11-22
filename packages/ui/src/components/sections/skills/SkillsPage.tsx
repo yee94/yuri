@@ -131,6 +131,15 @@ const SkillsInstalledPage: React.FC = () => {
   const isNewSkill = Boolean(skillDraft && skillDraft.name === selectedSkillName && !selectedSkill);
   const hasStaleSelection = Boolean(selectedSkillName && !selectedSkill && !skillDraft);
   const isReadOnlySkill = selectedSkill?.path === '<built-in>';
+  const selectedSkillDirectory = React.useMemo(() => {
+    const rawPath = selectedSkill?.path?.trim();
+    if (!rawPath || rawPath === '<built-in>') return undefined;
+    const normalized = rawPath.replace(/\\/g, '/').replace(/\/+$/g, '');
+    if (normalized.toLowerCase().endsWith('/skill.md')) {
+      return normalized.slice(0, -'/skill.md'.length) || '/';
+    }
+    return normalized;
+  }, [selectedSkill?.path]);
 
   React.useEffect(() => {
     if (!hasStaleSelection) {
@@ -629,6 +638,7 @@ const SkillsInstalledPage: React.FC = () => {
                     <SimpleMarkdownRenderer
                       content={skillMarkdown}
                       className="typography-markdown-body"
+                      baseDirectory={selectedSkillDirectory}
                       stripFrontmatter
                       enableFileReferences={false}
                     />

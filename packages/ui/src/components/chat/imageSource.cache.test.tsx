@@ -400,6 +400,47 @@ test('the legacy marked renderer releases its display lease and reuses bytes on 
   expect(state.fetch).toHaveBeenCalledTimes(1);
 });
 
+test('SimpleMarkdownRenderer resolves relative images against baseDirectory without requiring onShowPopup and forwards directory on click', async () => {
+  const { SimpleMarkdownRenderer } = await import('./MarkdownRendererImpl');
+  await render(
+    <SimpleMarkdownRenderer
+      content="![diagram](./images/diagram.png?v=1#light)"
+      baseDirectory="/workspace/docs/guide"
+      enableFileReferences={false}
+    />,
+  );
+  await vi.waitFor(() => expect(host.querySelector('img')?.src).toMatch(/^blob:/));
+  expect(state.stat).toHaveBeenCalledWith('/workspace/docs/guide/images/diagram.png');
+  expect(state.fetch).toHaveBeenCalledWith(
+    '/api/fs/raw',
+    expect.objectContaining({ query: expect.objectContaining({ path: '/workspace/docs/guide/images/diagram.png' }) }),
+  );
+  const onShowPopup = vi.fn();
+  await render(
+    <SimpleMarkdownRenderer
+      content="![diagram](../shared/diagram.png)"
+      baseDirectory="/workspace/docs/guide"
+      enableFileReferences={false}
+      onShowPopup={onShowPopup}
+    />,
+  );
+  await vi.waitFor(() => expect(state.fetch).toHaveBeenCalledWith(
+    '/api/fs/raw',
+    expect.objectContaining({ query: expect.objectContaining({ path: '/workspace/docs/shared/diagram.png' }) }),
+  ));
+  const image = host.querySelector('img')!;
+  await act(async () => {
+    image.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  });
+  expect(onShowPopup).toHaveBeenCalledWith(expect.objectContaining({
+    open: true,
+    image: expect.objectContaining({
+      url: '../shared/diagram.png',
+      directory: '/workspace/docs/guide',
+    }),
+  }));
+});
+
 test('native readers get separate progressive display URLs from one body', async () => {
   state.native = true;
   let body!: ReadableStreamDefaultController<Uint8Array>;

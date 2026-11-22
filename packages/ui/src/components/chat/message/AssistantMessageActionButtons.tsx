@@ -1,12 +1,9 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { VoiceActivityIcon } from '@/components/dictation/VoiceActivityIcon';
+import { ReadAloudButton } from '@/components/dictation/ReadAloudButton';
 import { Icon } from '@/components/icon/Icon';
-import { useMessageTTS } from '@/hooks/useMessageTTS';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { AutoReadPlaybackContext } from '@/mobile/chat/auto-read-context';
@@ -33,16 +30,12 @@ export const AssistantMessageActionButtons = React.memo(({
     const chatSurfaceMode = useChatSurfaceMode();
     const sessionSurface = useSessionSurface();
     const sessionSurfaceActions = getSessionSurfaceActionAvailability(sessionSurface);
-    const { isPlaying: isManualTTSPlaying, play: playTTS, stop: stopTTS, canResume: canResumeTTS } = useMessageTTS();
     const autoReadPlayback = React.useContext(AutoReadPlaybackContext);
     const isAutoReadPlaying = Boolean(autoReadPlayback && autoReadPlayback.sessionId === sessionId && autoReadPlayback.messageId === messageId);
-    const isTTSPlaying = isManualTTSPlaying || isAutoReadPlaying;
     const showMessageTTSButtons = useConfigStore((state) => state.showMessageTTSButtons);
-    const voiceProvider = useConfigStore((state) => state.voiceProvider);
     const [copyHintVisible, setCopyHintVisible] = React.useState(false);
     const [isMessageCopied, setIsMessageCopied] = React.useState(false);
-    const [ttsMenuOpen, setTTSMenuOpen] = React.useState(false);
-    const ttsButtonRef = React.useRef<HTMLButtonElement | null>(null);
+    const ttsAnchorRef = React.useRef<HTMLSpanElement | null>(null);
     const copyHintTimeoutRef = React.useRef<number | null>(null);
     const copiedResetTimeoutRef = React.useRef<number | null>(null);
     const canCopyMessage = Boolean(onCopyMessage);
@@ -111,30 +104,7 @@ export const AssistantMessageActionButtons = React.memo(({
         if (!allowSourceSession || !targetSessionId || !sessionSurface.directory || !sessionSurface.openSourceSession) return;
         sessionSurface.openSourceSession(targetSessionId, sessionSurface.directory);
     });
-    const readAloudTooltip = React.useMemo(() => {
-        if (isTTSPlaying) return t('chat.messageBody.tts.stopSpeaking');
-        const providerLabel = voiceProvider === 'browser' ? 'Browser' : voiceProvider === 'openai' ? 'OpenAI' : voiceProvider === 'openai-compatible' ? 'Custom' : 'Say';
-        return t('chat.messageBody.tts.readAloudWithProvider', { provider: providerLabel });
-    }, [isTTSPlaying, t, voiceProvider]);
-    const startTTS = useEvent((restart = false) => {
-        setTTSMenuOpen(false);
-        if (!ttsText.trim()) return;
-        const target = ttsButtonRef.current?.closest<HTMLElement>('[data-message-text-export-root]') ?? undefined;
-        void playTTS(ttsText, (error) => { if (error) toast.error(t('chat.messageBody.tts.failed')); }, { target, restart });
-    });
-    const handleTTSMenuOpenChange = useEvent((open: boolean, details: Parameters<NonNullable<React.ComponentProps<typeof DropdownMenu>['onOpenChange']>>[1]) => {
-        if (!open) { setTTSMenuOpen(false); return; }
-        if (isTTSPlaying) {
-            details.cancel();
-            if (isAutoReadPlaying) autoReadPlayback?.stop();
-            stopTTS();
-            return;
-        }
-        const target = ttsButtonRef.current?.closest<HTMLElement>('[data-message-text-export-root]') ?? undefined;
-        if (canResumeTTS(ttsText, target)) { setTTSMenuOpen(true); return; }
-        details.cancel();
-        startTTS();
-    });
+    const getSpeechTarget = useEvent(() => ttsAnchorRef.current?.closest<HTMLElement>('[data-message-text-export-root]') ?? undefined);
     return <>
         {onCopyMessage && <Tooltip>
             <TooltipTrigger asChild>
@@ -163,27 +133,21 @@ export const AssistantMessageActionButtons = React.memo(({
             </TooltipTrigger>
             <TooltipContent sideOffset={6}>{t('chat.messageBody.actions.openSourceSession')}</TooltipContent>
         </Tooltip> : null}
-        {chatSurfaceMode !== 'mini-chat' && showMessageTTSButtons && hasCopyableText && ttsText.trim() && <DropdownMenu
-            open={ttsMenuOpen && !isTTSPlaying} onOpenChange={handleTTSMenuOpenChange} modal={false}>
-            <Tooltip>
-                <TooltipTrigger asChild><DropdownMenuTrigger asChild>
-                    <Button ref={ttsButtonRef} type="button" variant="ghost" size="icon"
-                        className={cn(MESSAGE_ACTION_ICON_BUTTON_CLASS, '!bg-transparent shadow-none', isTTSPlaying ? 'text-[var(--primary-base)]' : 'hover:text-foreground/80')}
-                        aria-label={isTTSPlaying ? t('chat.messageBody.tts.stopSpeaking') : t('chat.messageBody.tts.readAloud')}
-                        aria-pressed={isTTSPlaying} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-                        <VoiceActivityIcon kind="speaker" active={isTTSPlaying} className={MESSAGE_ACTION_ICON_CLASS} />
-                    </Button>
-                </DropdownMenuTrigger></TooltipTrigger>
-                <TooltipContent sideOffset={6}>{readAloudTooltip}</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent side="top" align="start" sideOffset={6} onClick={(event) => event.stopPropagation()}>
-                <DropdownMenuItem className={isTouchContext ? 'min-h-11 px-3' : undefined} onSelect={() => startTTS(false)}>
-                    <Icon name="play" weight={MESSAGE_ACTION_ICON_WEIGHT} className="size-4" />{t('chat.messageBody.tts.resume')}
-                </DropdownMenuItem>
-                <DropdownMenuItem className={isTouchContext ? 'min-h-11 px-3' : undefined} onSelect={() => startTTS(true)}>
-                    <Icon name="restart" weight={MESSAGE_ACTION_ICON_WEIGHT} className="size-4" />{t('chat.messageBody.tts.restart')}
-                </DropdownMenuItem>
-            </DropdownMenuContent>
-        </DropdownMenu>}
+        {chatSurfaceMode !== 'mini-chat' && showMessageTTSButtons && hasCopyableText && ttsText.trim() && (
+            <span ref={ttsAnchorRef} className="inline-flex">
+                <ReadAloudButton
+                    text={ttsText}
+                    getTarget={getSpeechTarget}
+                    isTouchContext={isTouchContext}
+                    externalActive={isAutoReadPlaying}
+                    onExternalStop={autoReadPlayback?.stop}
+                    menuSide="top"
+                    menuAlign="start"
+                    buttonClassName={MESSAGE_ACTION_ICON_BUTTON_CLASS}
+                    iconClassName={MESSAGE_ACTION_ICON_CLASS}
+                    stopPropagation
+                />
+            </span>
+        )}
     </>;
 });

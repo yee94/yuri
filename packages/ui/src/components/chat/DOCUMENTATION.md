@@ -625,7 +625,7 @@ File saves reuse complete source bytes, including relative `/api/fs/raw?path=...
 
 HTML direct previews retain original URLs/origins, relative references and existing iframe sandbox behavior. Host `/api/fs/serve` offers private ETag revalidation after authorization; this is independent of client persistence and is not guaranteed durable across browser restarts. Plain HTTP LAN HTML subresources remain browser-owned. No environment blocker or service worker is introduced.
 
-Markdown (Markstream and marked) and attachment popup entrypoints capture the originating directory in `ToolPopupContent.image.directory`. The fullscreen gallery resolves relative sources against that snapshot, so changing the active session/worktree while it is open cannot reinterpret its paths. Callers without a snapshot retain the active-directory fallback.
+Markdown (Markstream and marked) and attachment popup entrypoints capture the originating directory in `ToolPopupContent.image.directory`. File Markdown previews (`FilesView`, `MobileFilesSurface`, `SkillsPage`) pass the Markdown file's parent directory via `SimpleMarkdownRenderer.baseDirectory` so relative image paths (including query/fragment suffixes) resolve against the file's directory rather than the workspace root and stream through the runtime image owner on both direct and Relay transports even without an explicit popup callback; file preview surfaces also wire `onShowPopup` to their `ToolOutputDialog` so inline images open fullscreen against the same directory snapshot. The fullscreen gallery resolves relative sources against that snapshot, so changing the active session/worktree while it is open cannot reinterpret its paths. Callers without a snapshot retain the active-directory fallback.
 
 `ToolOutputDialog` image and video previews share `MediaSaveButton`: one icon-only
 download action in the shared control row, alongside image zoom controls. Mobile
@@ -856,6 +856,16 @@ Native iOS retains the native foot-inset anchor rather than measuring its hidden
 Stops remove highlighting and the speech action without forcing a bottom
 jump or hiding the independent bottom action. The same shared UI applies to web,
 Electron, VS Code, hosted mobile and Capacitor; no native bridge changes are needed.
+
+Markdown file previews in `MobileFilesSurface` and `FilesView` reuse the same
+`ReadAloudButton` (with `VoiceActivityIcon`, Resume/Restart menu, error recovery
+toast, and frontmatter-stripped text) and `useSpeechScrollFollow` / `SpeechFollowButton`
+against the Markdown preview's `[data-speech-content]` scroll owner, keeping
+highlighting, auto-scroll safe zone, and follow-toggle parity with chat replies.
+Both Markdown preview display (`stripFrontmatter` on `SimpleMarkdownRenderer` and its
+skeleton fallback) and `sanitizeForTTS` strip leading YAML (`---` ... `---` / `...`)
+and TOML (`+++` ... `+++`) frontmatter blocks via `@/lib/markdown/frontmatter` while
+preserving normal horizontal rules.
 
 ## Mobile hold-to-talk
 

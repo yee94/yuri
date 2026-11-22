@@ -23,4 +23,11 @@ describe('sanitizeForTTS', () => {
         expect(sanitizeForTTS('On `main`![](a.png)and![Preview](b.png)ready!'))
             .toBe('On main and ready!');
     });
+
+    it('strips leading YAML/TOML frontmatter before speaking', () => {
+        const yaml = '\n---\ntitle: Demo\nauthor: Yee\n---\n\n正文第一段。';
+        const toml = '+++\ntitle = "Demo"\n+++\n\n正文第二段。';
+        expect(sanitizeForTTS(yaml)).toBe('正文第一段。');
+        expect(sanitizeForTTS(toml)).toBe('正文第二段。');
+    });
 });

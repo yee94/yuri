@@ -44,6 +44,7 @@ import { scheduleAfterPaintTask } from '@/lib/afterPaintTaskQueue';
 import { resolveStreamingRenderCadence } from './streamingRenderCadence';
 import { acquireMarkdownImage, needsRuntimeImageStream, resolveImageSource } from './imageSource';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { stripLeadingFrontmatter } from '@/lib/markdown/frontmatter';
 import {
   FILE_REFERENCE_OPEN_TITLE,
   extractPathCandidateFromElement,
@@ -189,19 +190,12 @@ const useMarkdownImageInteractions = ({
     }
 
     reconcileRef.current = () => {};
-    if (!imagePreviewEnabled) {
-      for (const [image, state] of images) {
-        state.controller?.abort();
-        state.release?.();
-        images.delete(image);
-      }
-      return;
-    }
 
     const container = containerRef.current;
     if (!container) return;
 
     const openImage = (image: HTMLImageElement) => {
+      if (!imagePreviewEnabled) return;
       const images = Array.from(container.querySelectorAll<HTMLImageElement>(MARKDOWN_IMAGE_SELECTOR));
       const index = images.indexOf(image);
       if (index < 0) return;
@@ -335,6 +329,8 @@ const useMarkdownImageInteractions = ({
       if (!(target instanceof Element)) return;
       const image = target.closest<HTMLImageElement>(MARKDOWN_IMAGE_SELECTOR);
       if (!image) return;
+      const state = images.get(image);
+      if (!imagePreviewEnabled && !(state && !state.objectUrl)) return;
       event.preventDefault();
       event.stopPropagation();
       activateImage(image);
@@ -343,11 +339,14 @@ const useMarkdownImageInteractions = ({
       if (event.key !== 'Enter' && event.key !== ' ') return;
       const target = event.target;
       if (!(target instanceof HTMLImageElement) || !target.matches(MARKDOWN_IMAGE_SELECTOR)) return;
+      const state = images.get(target);
+      if (!imagePreviewEnabled && !(state && !state.objectUrl)) return;
       event.preventDefault();
       event.stopPropagation();
       activateImage(target);
     };
     const handleContextMenu = (event: MouseEvent) => {
+      if (!imagePreviewEnabled) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       const image = target.closest<HTMLImageElement>(MARKDOWN_IMAGE_SELECTOR);
@@ -408,18 +407,6 @@ const DEFAULT_MERMAID_CONTROLS: MermaidControlOptions = {
   showPanZoomControls: true,
 };
 const DEFAULT_MERMAID_FULLSCREEN_ENABLED = true;
-
-const stripLeadingFrontmatter = (markdown: string): string => {
-  const frontmatterMatch = markdown.match(
-    /^(?:\uFEFF)?(---|\+\+\+)[^\S\r\n]*\r?\n[\s\S]*?\r?\n\1[^\S\r\n]*(?:\r?\n|$)/,
-  );
-
-  if (!frontmatterMatch) {
-    return markdown;
-  }
-
-  return markdown.slice(frontmatterMatch[0].length);
-};
 
 export type MarkdownVariant = 'assistant' | 'tool' | 'reasoning';
 
@@ -1382,6 +1369,7 @@ const SimpleMarkdownRendererImpl: React.FC<{
   variant?: MarkdownVariant;
   disableLinkSafety?: boolean;
   stripFrontmatter?: boolean;
+  baseDirectory?: string;
   onShowPopup?: (content: ToolPopupContent) => void;
   mermaidControls?: MermaidControlOptions;
   mermaidTheme?: Theme;
@@ -1393,6 +1381,7 @@ const SimpleMarkdownRendererImpl: React.FC<{
   variant = 'assistant',
   disableLinkSafety,
   stripFrontmatter = false,
+  baseDirectory,
   onShowPopup,
   mermaidControls = DEFAULT_MERMAID_CONTROLS,
   mermaidTheme,
@@ -1404,7 +1393,8 @@ const SimpleMarkdownRendererImpl: React.FC<{
   const currentTheme = useCurrentMermaidTheme();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [richReady, revealRichContent] = useRichMarkdownReveal(false);
-  const effectiveDirectory = useEffectiveDirectory() ?? '';
+  const activeDirectory = useEffectiveDirectory() ?? '';
+  const effectiveDirectory = baseDirectory ?? activeDirectory;
 
   const renderedContent = React.useMemo(
     () => (stripFrontmatter ? stripLeadingFrontmatter(content) : content),
@@ -1501,6 +1491,7 @@ export const SimpleMarkdownRenderer = React.memo(SimpleMarkdownRendererImpl, (pr
     && prev.className === next.className
     && prev.disableLinkSafety === next.disableLinkSafety
     && prev.stripFrontmatter === next.stripFrontmatter
+    && prev.baseDirectory === next.baseDirectory
     && prev.onShowPopup === next.onShowPopup
     && prevMermaidControls.download === nextMermaidControls.download
     && prevMermaidControls.copy === nextMermaidControls.copy

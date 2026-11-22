@@ -635,10 +635,6 @@ export const clearMarkdownImagePlaceholder = (image: HTMLImageElement): void => 
 };
 
 export const decorateMarkdownImages = (root: HTMLElement, ctx: DecorateContext): void => {
-  if (!ctx.imagePreviewEnabled) {
-    return;
-  }
-
   const images = root.querySelectorAll<HTMLImageElement>(MARKDOWN_IMAGE_SELECTOR);
   for (const image of Array.from(images)) {
     const source = image.getAttribute('data-md-image-source') ?? image.getAttribute('src') ?? '';
@@ -646,15 +642,25 @@ export const decorateMarkdownImages = (root: HTMLElement, ctx: DecorateContext):
     // Only host/runtime file paths need placeholders + streamed display URLs.
     // Browser-native http(s)/data/blob sources keep the direct img path.
     if (!needsRuntimeImageStream(resolved)) {
+      if (!ctx.imagePreviewEnabled) {
+        continue;
+      }
       image.setAttribute('data-md-image-source', source);
       ensureMarkdownImagePresentation(image);
       image.setAttribute('data-md-image-state', image.complete && image.naturalWidth > 0 ? 'loaded' : 'loading');
       continue;
     }
 
-    image.classList.add(...MARKDOWN_IMAGE_CLASS, ...MARKDOWN_IMAGE_INTERACTIVE_CLASS);
-    image.setAttribute('role', 'button');
-    image.setAttribute('tabindex', '0');
+    image.classList.add(...MARKDOWN_IMAGE_CLASS);
+    if (ctx.imagePreviewEnabled) {
+      image.classList.add(...MARKDOWN_IMAGE_INTERACTIVE_CLASS);
+      image.setAttribute('role', 'button');
+      image.setAttribute('tabindex', '0');
+    } else {
+      image.classList.remove(...MARKDOWN_IMAGE_INTERACTIVE_CLASS);
+      image.removeAttribute('role');
+      image.removeAttribute('tabindex');
+    }
     image.setAttribute('data-md-image-source', source);
     ensureMarkdownImagePresentation(image);
     setMarkdownImagePlaceholder(image);

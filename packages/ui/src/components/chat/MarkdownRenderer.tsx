@@ -10,6 +10,7 @@ import { MarkdownLoadingPlaceholder } from './markdown/MarkdownLoadingSkeleton';
 import { markdownHeightCacheKey, recallMarkdownHeight } from './markdown/markdownHeightCache';
 import { isVideoSource } from './video';
 import { resolveEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { stripLeadingFrontmatter } from '@/lib/markdown/frontmatter';
 
 // Thin lazy wrapper around the MarkdownRenderer implementation.
 // The full implementation (marked + Shiki highlighting + KaTeX + morphdom
@@ -107,12 +108,15 @@ export const MarkdownRenderer: React.FC<React.ComponentPropsWithoutRef<typeof Ma
 
 export const SimpleMarkdownRenderer: React.FC<React.ComponentPropsWithoutRef<typeof SimpleMarkdownRendererLazy>> = (props) => {
   const hydrationEnabled = useMarkdownHydrationEnabled();
+  const fallbackContent = props.stripFrontmatter && typeof props.content === 'string'
+    ? stripLeadingFrontmatter(props.content)
+    : props.content;
   if (!hydrationEnabled) {
-    return <MarkdownSkeletonFallback {...props} animated={false} />;
+    return <MarkdownSkeletonFallback {...props} content={fallbackContent} animated={false} />;
   }
 
   return (
-    <React.Suspense fallback={<MarkdownSkeletonFallback {...props} />}>
+    <React.Suspense fallback={<MarkdownSkeletonFallback {...props} content={fallbackContent} />}>
       <SimpleMarkdownRendererLazy {...props} />
     </React.Suspense>
   );

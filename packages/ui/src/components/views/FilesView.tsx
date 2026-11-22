@@ -37,6 +37,7 @@ import { CodeMirrorEditor } from '@/components/ui/CodeMirrorEditor';
 import { PreviewToggleButton } from './PreviewToggleButton';
 import { BinaryFileFallback } from './BinaryFileFallback';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import { stripLeadingFrontmatter } from '@/lib/markdown/frontmatter';
 import type { ToolPopupContent } from '@/components/chat/message/types';
 import { attachmentCitationDisplay } from '@/composer/inline-visual';
 import { languageByExtension, loadLanguageByExtension } from '@/lib/codemirror/languageByExtension';
@@ -81,7 +82,8 @@ import { useProjectDirectory as useEffectiveDirectory } from '@/lib/api/useProje
 import { useInputStore } from '@/sync/input-store';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { Icon } from "@/components/icon/Icon";
-import { useMessageTTS } from '@/hooks/useMessageTTS';
+import { ReadAloudButton } from '@/components/dictation/ReadAloudButton';
+import { SpeechFollowButton, useSpeechScrollFollow } from '@/components/dictation/useSpeechScrollFollow';
 import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
 import { getDefaultTheme } from '@/lib/theme/themes';
 import { isDesktopLocalOriginActive, openDesktopFileInApp, openDesktopPath } from '@/lib/desktop';
@@ -370,7 +372,7 @@ const getFileIcon = (filePath: string, extension?: string): React.ReactNode => {
 const isMarkdownFile = (path: string): boolean => {
   if (!path) return false;
   const ext = path.toLowerCase().split('.').pop();
-  return ext === 'md' || ext === 'markdown';
+  return ext === 'md' || ext === 'mdx' || ext === 'markdown';
 };
 
 interface FileRowProps {
@@ -939,7 +941,8 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const [searching, setSearching] = React.useState(false);
 
   const [fileContent, setFileContent] = React.useState<string>('');
-  const { isPlaying: isTTSPlaying, play: playTTS, stop: stopTTS } = useMessageTTS();
+  const [markdownScrollContainer, setMarkdownScrollContainer] = React.useState<HTMLElement | null>(null);
+  const [fullscreenMarkdownScrollContainer, setFullscreenMarkdownScrollContainer] = React.useState<HTMLElement | null>(null);
   const [fileLoading, setFileLoading] = React.useState(false);
   const [fileError, setFileError] = React.useState<string | null>(null);
   const [desktopImageSrc, setDesktopImageSrc] = React.useState<string>('');
@@ -2556,6 +2559,16 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const canCopyPath = Boolean(selectedFile && displaySelectedPath.length > 0);
   const canEdit = Boolean(selectedFile && !isSelectedBinary && !fileLoading && !fileError && loadedFilePath === selectedFilePath && !selectedFileIsOutsideWorkspace && !isSelectedImage && !isSelectedPdf && files.writeFile && fileContent.length <= MAX_VIEW_CHARS);
   const isMarkdown = Boolean(!isSelectedBinary && selectedFile?.path && isMarkdownFile(selectedFile.path));
+  const isMarkdownPreviewActive = Boolean(isMarkdown && mdViewMode === 'preview');
+  const markdownTtsText = React.useMemo(
+    () => (isMarkdownPreviewActive ? stripLeadingFrontmatter(fileContent) : ''),
+    [fileContent, isMarkdownPreviewActive],
+  );
+  const activeMarkdownScrollContainer = mode === 'full' && isFullscreen
+    ? fullscreenMarkdownScrollContainer
+    : markdownScrollContainer;
+  const getMarkdownSpeechTarget = useEvent(() => activeMarkdownScrollContainer);
+  useSpeechScrollFollow(activeMarkdownScrollContainer, isMarkdownPreviewActive && !fileLoading && !fileError);
   const isHtml = Boolean(!isSelectedBinary && selectedFile?.path && isHtmlFile(selectedFile.path));
   const isDrawio = Boolean(!isSelectedBinary && selectedFile?.path && isDrawioFile(selectedFile.path));
   const isTextFile = Boolean(selectedFile && !isSelectedBinary && !isSelectedImage && !isSelectedPdf);
@@ -3252,6 +3265,15 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     setImagePopup((previous) => (previous.open === open ? previous : { ...previous, open }));
   }, []);
 
+  const handleMarkdownPopup = useEvent((popup: ToolPopupContent) => {
+    setImagePopup(popup);
+  });
+
+  const selectedMarkdownDirectory = React.useMemo(
+    () => (selectedFile?.path ? getParentDirectoryPath(selectedFile.path) || root || undefined : undefined),
+    [root, selectedFile?.path],
+  );
+
   const renderImagePreview = React.useCallback((file: FileNode, options?: { fullHeight?: boolean }) => {
     const alt = file.name || t('filesView.editor.imageAltFallback');
     return (
@@ -3632,33 +3654,22 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
           />
         )}
 
-        {isMarkdown && getMdViewMode() === 'preview' && showMessageTTSButtons && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="size-6 p-0 text-muted-foreground opacity-65 hover:bg-transparent hover:opacity-100 focus-visible:bg-transparent active:bg-transparent"
-                aria-label={isTTSPlaying ? t('filesView.tts.stopSpeaking') : t('filesView.tts.readAloud')}
-                onClick={() => {
-                  if (isTTSPlaying) {
-                    stopTTS();
-                  } else if (fileContent.trim()) {
-                    void playTTS(fileContent);
-                  }
-                }}
-              >
-                {isTTSPlaying ? (
-                  <Icon name="stop" className="size-4 text-[color:var(--status-success)]" />
-                ) : (
-                  <Icon name="volume-up" className="size-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent sideOffset={8}>
-              {isTTSPlaying ? t('filesView.tts.stopSpeaking') : t('filesView.tts.readAloud')}
-            </TooltipContent>
-          </Tooltip>
+        {isMarkdown && getMdViewMode() === 'preview' && showMessageTTSButtons && markdownTtsText.trim() && (
+          <ReadAloudButton
+            text={markdownTtsText}
+            getTarget={getMarkdownSpeechTarget}
+            isTouchContext={isMobile}
+            readAloudLabel={t('filesView.tts.readAloud')}
+            stopSpeakingLabel={t('filesView.tts.stopSpeaking')}
+            tooltipLabel={t('filesView.tts.readAloud')}
+            tooltipSide="bottom"
+            tooltipSideOffset={8}
+            menuSide="bottom"
+            menuAlign="end"
+            buttonSize="sm"
+            buttonClassName="size-6 p-0 text-muted-foreground opacity-65 hover:bg-transparent hover:opacity-100 focus-visible:bg-transparent active:bg-transparent"
+            iconClassName="size-4"
+          />
         )}
 
         {isDrawio && (
@@ -4094,29 +4105,39 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
               />
             </div>
           ) : selectedFile && isMarkdown && getMdViewMode() === 'preview' ? (
-            <div className="h-full overflow-auto p-3">
-              {fileContent.length > 500 * 1024 && (
-                <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
-                  {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
-                </div>
-              )}
-              <ErrorBoundary
-                fallback={
-                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
-                    <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {t('filesView.error.switchToEditMode')}
-                    </div>
-                  </div>
-                }
+            <div className="relative h-full">
+              <div
+                ref={setMarkdownScrollContainer}
+                className="relative h-full overflow-auto p-3"
+                data-speech-identity={`file:${selectedFile.path}`}
+                data-speech-content="true"
               >
-                <SimpleMarkdownRenderer
-                  content={fileContent}
-                  className="typography-markdown-body"
-                  stripFrontmatter
-                  enableFileReferences={false}
-                />
-              </ErrorBoundary>
+                {fileContent.length > 500 * 1024 && (
+                  <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
+                    {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
+                  </div>
+                )}
+                <ErrorBoundary
+                  fallback={
+                    <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+                      <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {t('filesView.error.switchToEditMode')}
+                      </div>
+                    </div>
+                  }
+                >
+                  <SimpleMarkdownRenderer
+                    content={fileContent}
+                    className="typography-markdown-body"
+                    baseDirectory={selectedMarkdownDirectory}
+                    onShowPopup={handleMarkdownPopup}
+                    stripFrontmatter
+                    enableFileReferences={false}
+                  />
+                </ErrorBoundary>
+              </div>
+              <SpeechFollowButton scrollContainer={markdownScrollContainer} />
             </div>
           ) : selectedFile && isHtml && htmlViewMode === 'preview' ? (
             <ProjectFilePreview path={selectedFile.path} directory={projectScope?.location.directory ?? root ?? ''}
@@ -4436,29 +4457,39 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
           ) : isSelectedPdf ? (
             renderPdfPreview(selectedFile)
           ) : isMarkdown && getMdViewMode() === 'preview' ? (
-            <div className="h-full overflow-auto p-4">
-              {fileContent.length > 500 * 1024 && (
-                  <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
-                    {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
-                  </div>
-                )}
-              <ErrorBoundary
-                fallback={
-                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
-                    <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {t('filesView.error.switchToEditMode')}
-                    </div>
-                  </div>
-                }
+            <div className="relative h-full">
+              <div
+                ref={setFullscreenMarkdownScrollContainer}
+                className="relative h-full overflow-auto p-4"
+                data-speech-identity={`file:${selectedFile.path}`}
+                data-speech-content="true"
               >
-                <SimpleMarkdownRenderer
-                  content={fileContent}
-                  className="typography-markdown-body"
-                  stripFrontmatter
-                  enableFileReferences={false}
-                />
-              </ErrorBoundary>
+                {fileContent.length > 500 * 1024 && (
+                    <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
+                      {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
+                    </div>
+                  )}
+                <ErrorBoundary
+                  fallback={
+                    <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+                      <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {t('filesView.error.switchToEditMode')}
+                      </div>
+                    </div>
+                  }
+                >
+                  <SimpleMarkdownRenderer
+                    content={fileContent}
+                    className="typography-markdown-body"
+                    baseDirectory={selectedMarkdownDirectory}
+                    onShowPopup={handleMarkdownPopup}
+                    stripFrontmatter
+                    enableFileReferences={false}
+                  />
+                </ErrorBoundary>
+              </div>
+              <SpeechFollowButton scrollContainer={fullscreenMarkdownScrollContainer} />
             </div>
           ) : canUseShikiFileView && textViewMode === 'view' ? (
             renderShikiFileView(selectedFile, draftContent)

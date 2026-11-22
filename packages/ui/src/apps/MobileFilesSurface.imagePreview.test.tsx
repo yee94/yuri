@@ -8,6 +8,7 @@ import { MarkstreamImageNode } from '@/components/chat/markstream/markstreamImag
 const state = vi.hoisted(() => ({
   fetch: vi.fn(), open: vi.fn(), write: vi.fn(), end: vi.fn(), release: vi.fn(), abort: vi.fn(),
   showPopup: vi.fn(),
+  fileContent: undefined as string | undefined,
   t: (key: string) => key,
   native: true,
 }));
@@ -27,9 +28,16 @@ vi.mock('@/lib/relay/native-asset-bridge', () => ({
 }));
 vi.mock('@/lib/relay/runtime-tunnel', () => ({ isRelayModeActive: () => true }));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/workspace' }));
-vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ files: { readFile: vi.fn() } }) }));
+vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ files: { readFile: vi.fn(), statFile: vi.fn() }, runtime: { isVSCode: false } }) }));
+vi.mock('@/lib/api/useProjectRuntimeAPIs', () => ({
+  useProjectRuntimeAPIs: () => ({ files: { readFile: vi.fn(), statFile: vi.fn() }, runtime: { isVSCode: false }, projectScope: undefined }),
+  useProjectDirectory: () => '/workspace',
+}));
 vi.mock('@/queries/fileQueries', () => ({
-  useFileDirectoryQuery: () => ({}), useFileSearchQuery: () => ({}), useFileContentQuery: () => ({}), useFileStatWatcher: () => ({}),
+  useFileDirectoryQuery: () => ({}),
+  useFileSearchQuery: () => ({}),
+  useFileContentQuery: () => ({ data: state.fileContent, isLoading: false, error: null }),
+  useFileStatWatcher: () => (state.fileContent !== undefined ? { data: { isBinary: false, size: state.fileContent.length, mtimeMs: 1 }, isFetchedAfterMount: true, error: null } : {}),
 }));
 vi.mock('@/mobile/mobileBackNavigation', () => ({ useMobileBackRoute: () => {} }));
 vi.mock('@/stores/useUIStore', () => ({ useUIStore: (select: (s: unknown) => unknown) => select({ isMobile: true, pendingFileFocusPath: null, setPendingFileFocusPath: () => {} }) }));
@@ -40,15 +48,26 @@ vi.mock('@/components/chat/markstream/markstreamCodeBlock', () => ({ MarkstreamC
 vi.mock('@/components/chat/markstream/markstreamHostContext', () => ({ useMarkstreamHostContext: () => ({ onShowPopup: state.showPopup }) }));
 vi.mock('@/components/views/PierreDiffViewer', () => ({ PIERRE_RUNTIME_BASE_CSS: '' }));
 vi.mock('@pierre/diffs/react', () => ({ File: () => null }));
-vi.mock('@/contexts/useThemeSystem', () => ({ useThemeSystem: () => ({ currentTheme: { metadata: { variant: 'light' } }, availableThemes: [] }) }));
+vi.mock('@/contexts/useThemeSystem', () => ({
+  useThemeSystem: () => ({ currentTheme: { metadata: { variant: 'light' } }, availableThemes: [] }),
+  useOptionalThemeSystem: () => null,
+}));
 vi.mock('@/lib/shiki/appThemeRegistry', () => ({ ensurePierreThemeRegistered: () => {} }));
 vi.mock('@/components/ui/ScrollShadow', () => ({ ScrollShadow: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('@/components/ui/MobileResizableSheet', () => ({ MobileSheetHeaderActions: () => null }));
+vi.mock('@/components/gui-plugins/GuiFileLinkBridge', () => ({
+  GuiFileLinkBridge: ({ children }: { children: (view: { preview: React.ReactNode; controls: null }) => React.ReactNode }) =>
+    children({ preview: null, controls: null }),
+}));
+vi.mock('@/components/chat/MarkdownRenderer', async () => {
+  const { SimpleMarkdownRenderer } = await import('@/components/chat/MarkdownRendererImpl');
+  return { SimpleMarkdownRenderer };
+});
 vi.mock('@/components/chat/message/ToolOutputDialog', async () => {
   const { useResolvedImageSource } = await import('@/components/chat/imageSource');
-  return { default: function PreviewDialog({ popup }: { popup: { image: { url: string } } }) {
+  return { default: function PreviewDialog({ popup }: { popup: { image: { url: string; directory?: string } } }) {
     state.showPopup(popup);
-    const source = useResolvedImageSource(popup.image.url, '/workspace', 'preview');
+    const source = useResolvedImageSource(popup.image.url, popup.image.directory ?? '/workspace', 'preview');
     return <img data-test-fullscreen src={source || undefined} />;
   } };
 });
@@ -58,6 +77,7 @@ let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 beforeEach(() => {
   state.native = true;
+  state.fileContent = undefined;
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   state.fetch.mockImplementation(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }));
   let id = 0;
@@ -149,4 +169,26 @@ test('mobile relay file detail and clicked fullscreen use native streams, never 
   expect(state.showPopup).toHaveBeenCalledWith(expect.objectContaining({ image: expect.objectContaining({ url: '/workspace/icons-zoom.png' }) }));
   await act(async () => root.render(null));
   expect(state.release).toHaveBeenCalledTimes(2);
+});
+
+test('mobile markdown file preview resolves relative images against the markdown file directory over relay', async () => {
+  state.fileContent = '# Guide\n\n![cover](./assets/cover.png)';
+  await act(async () => root.render(
+    <MobileFilesSurface initialFilePath="/workspace/docs/guide/README.md" directFilePreview hideFileHeader />,
+  ));
+  await vi.waitFor(() => expect(host.querySelector('img')?.getAttribute('src')).toMatch(/^yuri-asset:\/\//));
+  expect(state.fetch).toHaveBeenCalledWith(
+    '/api/fs/raw',
+    expect.objectContaining({ query: { path: '/workspace/docs/guide/assets/cover.png' }, signal: expect.any(AbortSignal) }),
+  );
+  await act(async () => {
+    host.querySelector('img')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  });
+  await vi.waitFor(() => expect(state.showPopup).toHaveBeenCalledWith(expect.objectContaining({
+    open: true,
+    image: expect.objectContaining({
+      url: './assets/cover.png',
+      directory: '/workspace/docs/guide',
+    }),
+  })));
 });
