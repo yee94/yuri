@@ -2387,7 +2387,6 @@
   'assistants.contact.removeAttachment': '移除附件',
   'assistants.contact.attachment.image': '已附加的圖片',
   'assistants.contact.attachment.file': '已附加的檔案',
-  'assistants.contact.attachment.tooLarge': '請選擇 25 MiB 以內的檔案。',
   'assistants.contact.attachment.download': '下載檔案',
   'assistants.contact.attachment.loadFailed': '檔案載入失敗。',
   'assistants.contact.history.gap': '部分訊息尚未載入，請重試。',

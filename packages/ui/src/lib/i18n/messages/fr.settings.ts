@@ -2387,7 +2387,6 @@ export const settingsDict = {
   'assistants.contact.removeAttachment': 'Retirer la pièce jointe',
   'assistants.contact.attachment.image': 'Image jointe',
   'assistants.contact.attachment.file': 'Fichier joint',
-  'assistants.contact.attachment.tooLarge': 'Choisissez un fichier de 25 Mio maximum.',
   'assistants.contact.attachment.download': 'Télécharger le fichier',
   'assistants.contact.attachment.loadFailed': 'Impossible de charger ce fichier.',
   'assistants.contact.history.gap': 'Certains messages restent à charger. Réessayez.',

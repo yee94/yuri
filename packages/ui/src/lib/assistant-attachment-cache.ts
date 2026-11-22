@@ -1,6 +1,6 @@
 /** Assistant descriptor/error and display adapter. Complete bytes and flights
  * belong to runtime-file-resource; there is no Assistant body database or LRU. */
-import { ASSISTANT_ATTACHMENT_MAX_BYTES, isAssistantAttachmentDescriptor, type AssistantAttachmentDescriptor } from './assistant-attachment-upload';
+import { isAssistantAttachmentDescriptor, type AssistantAttachmentDescriptor } from './assistant-attachment-upload';
 import { clearRuntimeImageCacheLeases, forgetFileResourceTag, readVerifiedFileResource } from './runtime-file-resource';
 import { getRuntimeAuthGeneration, getRuntimeBearerTokenSync, invalidateRuntimeAuthSession, subscribeRuntimeAuthGeneration } from './runtime-auth';
 import { getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from './runtime-switch';
@@ -8,6 +8,8 @@ import { runtimeFetch } from './runtime-fetch';
 import { isRelayImageDisplayUrlLive, releaseRelayImageDisplayRetain, releaseRelayImageDisplayUrl, retainRelayImageDisplayUrl, RELAY_IMAGE_MAX_BYTES, streamVerifiedBlobDisplayUrl } from './relay/relay-image-stream';
 
 const ASSISTANT_ATTACHMENT_DISPLAY_MAX_BYTES = RELAY_IMAGE_MAX_BYTES;
+/** Client memory guard for reading an attachment back as a Blob (preview/open); not a send limit. */
+export const ASSISTANT_ATTACHMENT_READ_MAX_BYTES = 25 * 1024 * 1024;
 type AssistantAttachmentAuthScopeKind = 'bearer-hash' | 'memory-ephemeral';
 type AssistantAttachmentCacheScope = {
   transportIdentity: string; authScope: string; authScopeKind: AssistantAttachmentAuthScopeKind; authGeneration: number;
@@ -125,7 +127,7 @@ const readBlob = async (id: string, descriptor: AssistantAttachmentDescriptor, m
   } finally { requests.delete(controller); signal?.removeEventListener('abort', abort); }
 };
 export const getAssistantAttachmentBlob = (id: string, descriptor: AssistantAttachmentDescriptor, options: { signal?: AbortSignal } = {}): Promise<Blob> =>
-  readBlob(id, descriptor, ASSISTANT_ATTACHMENT_MAX_BYTES, options.signal);
+  readBlob(id, descriptor, ASSISTANT_ATTACHMENT_READ_MAX_BYTES, options.signal);
 
 export const getAssistantAttachmentDisplay = async (id: string, descriptor: AssistantAttachmentDescriptor, options: { signal?: AbortSignal } = {}): Promise<{ url: string; release: () => void }> => {
   ensureLifecycle(); requireDescriptor(id, descriptor, ASSISTANT_ATTACHMENT_DISPLAY_MAX_BYTES);

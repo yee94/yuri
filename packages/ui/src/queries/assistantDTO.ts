@@ -1,4 +1,5 @@
 import type { Message, Part } from '@/lib/opencode/v2-types';
+import type { AssistantAttachmentDescriptor } from '@/lib/assistant-attachment-upload';
 
 export type AssistantSource = 'composer' | 'ios-share' | 'android-share';
 export type AssistantMode = 'continuous' | 'stateless';
@@ -11,7 +12,7 @@ export type AssistantLatestMessagePreview = {
   text: string;
   fallbackKind: 'image' | 'file' | 'session' | 'assistant' | 'schedule' | null;
 };
-export type AssistantPart = { type: 'text'; text: string; synthetic?: boolean } | { type: 'file'; mime: string; url: string };
+export type AssistantPart = { type: 'text'; text: string; synthetic?: boolean } | { type: 'file'; mime: string; url: string } | AssistantAttachmentDescriptor;
 
 export interface AssistantCapabilityDTO { supported: boolean; enabled: boolean; revision: number; serverInstanceID: string | null; sharingAvailable: boolean; }
 /** Server-authoritative in-flight contact turn. Local SSE/optimistic is temporary only. */

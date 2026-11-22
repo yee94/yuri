@@ -13,7 +13,6 @@ mock.module('@/lib/runtime-fetch', () => ({
 }));
 
 const {
-  ASSISTANT_ATTACHMENT_MAX_BYTES,
   AssistantAttachmentUploadError,
   digestSha256Hex,
   isAssistantAttachmentDescriptor,
@@ -66,12 +65,11 @@ describe('uploadAssistantAttachment', () => {
     expect(headers.get('X-Attachment-Filename')).toBe(encodeURIComponent('photo.png'));
   });
 
-  test('rejects oversized files before network', async () => {
-    const huge = new File([new Uint8Array(ASSISTANT_ATTACHMENT_MAX_BYTES + 1)], 'big.bin', {
-      type: 'application/octet-stream',
-    });
-    await expectCode(() => uploadAssistantAttachment('a', huge, 'u'), 'too-large');
-    expect(fetchCalls).toHaveLength(0);
+  test('does not cap file size client-side but still maps a server 413 to too-large', async () => {
+    const big = new File([new Uint8Array(26 * 1024 * 1024)], 'big.bin', { type: 'application/octet-stream' });
+    fetchResults.push(new Response('', { status: 413 }));
+    await expectCode(() => uploadAssistantAttachment('a', big, 'u'), 'too-large');
+    expect(fetchCalls).toHaveLength(1);
   });
 
   test('rejects hash mismatch in response with integrity code', async () => {

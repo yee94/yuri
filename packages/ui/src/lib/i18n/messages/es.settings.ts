@@ -2387,7 +2387,6 @@ export const settingsDict = {
   'assistants.contact.removeAttachment': 'Quitar adjunto',
   'assistants.contact.attachment.image': 'Imagen adjunta',
   'assistants.contact.attachment.file': 'Archivo adjunto',
-  'assistants.contact.attachment.tooLarge': 'Elige un archivo de hasta 25 MiB.',
   'assistants.contact.attachment.download': 'Descargar archivo',
   'assistants.contact.attachment.loadFailed': 'No se pudo cargar este archivo.',
   'assistants.contact.history.gap': 'Aún faltan algunos mensajes. Vuelve a intentar cargarlos.',

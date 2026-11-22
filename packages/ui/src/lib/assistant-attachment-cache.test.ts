@@ -495,19 +495,19 @@ describe('getAssistantAttachmentBlob', () => {
   });
 
   test('rejects size over max', async () => {
-    const { ASSISTANT_ATTACHMENT_MAX_BYTES } = await import('./assistant-attachment-upload');
+    const { ASSISTANT_ATTACHMENT_READ_MAX_BYTES } = await import('./assistant-attachment-cache');
     const descriptor: AssistantAttachmentDescriptor = {
       type: 'file',
       attachmentID: 'big',
       sha256: 'c'.repeat(64),
-      size: ASSISTANT_ATTACHMENT_MAX_BYTES + 1,
+      size: ASSISTANT_ATTACHMENT_READ_MAX_BYTES + 1,
       mime: 'application/octet-stream',
     };
     await expectErrorCode(() => getAssistantAttachmentBlob('asst-1', descriptor), 'too-large');
   });
 
   test('oversize stream cancels reader', async () => {
-    const { ASSISTANT_ATTACHMENT_MAX_BYTES } = await import('./assistant-attachment-upload');
+    const { ASSISTANT_ATTACHMENT_READ_MAX_BYTES } = await import('./assistant-attachment-cache');
     const descriptor: AssistantAttachmentDescriptor = {
       type: 'file',
       attachmentID: 'stream-big',
@@ -519,7 +519,7 @@ describe('getAssistantAttachmentBlob', () => {
     fetchImpl = async () => {
       const body = new ReadableStream<Uint8Array>({
         pull(controller) {
-          controller.enqueue(new Uint8Array(ASSISTANT_ATTACHMENT_MAX_BYTES + 1));
+          controller.enqueue(new Uint8Array(ASSISTANT_ATTACHMENT_READ_MAX_BYTES + 1));
         },
         cancel() {
           cancelled = true;

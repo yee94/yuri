@@ -486,9 +486,6 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
       result.attachments.forEach((attachment) => URL.revokeObjectURL(attachment.url))
       return
     }
-    if (result.skippedTooLarge > 0) {
-      setSendError(t('assistants.contact.attachment.tooLarge'))
-    }
     if (result.attachments.length === 0) return
     setAttachments((current) => mergeContactComposerAttachments(current, result.attachments))
   })

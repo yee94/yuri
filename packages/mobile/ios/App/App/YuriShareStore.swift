@@ -27,8 +27,9 @@ enum YuriShareStore {
     private static let donationLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.yee94.yuri", category: "share-donation")
     static let appGroup = "group.com.yee94.yuri"
     static let catalogKey = "yuriShareCatalog"
-    static let maximumImageBytes = 8 * 1024 * 1024
-    static let maximumTotalBytes = 16 * 1024 * 1024
+    // Technical ceiling only (matches the server upload ceiling), not a product limit.
+    static let maximumImageBytes = 2 * 1024 * 1024 * 1024
+    static let maximumTotalBytes = 2 * 1024 * 1024 * 1024
     static let maximumImages = 10
     static let lifetime: TimeInterval = 24 * 60 * 60
 
@@ -206,7 +207,7 @@ enum YuriShareStore {
 }
 
 enum ShareError: LocalizedError { case appGroupUnavailable, missingTarget, tooManyImages, imageTooLarge, totalTooLarge, imageUnavailable, emptyShare, invalidOperation
-    var errorDescription: String? { switch self { case .appGroupUnavailable: return "Yuri shared storage is unavailable."; case .missingTarget: return "Choose a default share bot in Yuri before sharing."; case .tooManyImages: return "A share supports up to 10 files."; case .imageTooLarge: return "A file exceeds 8 MB."; case .totalTooLarge: return "Shared files exceed 16 MB."; case .imageUnavailable: return "The shared file could not be loaded. Try sharing it again."; case .emptyShare: return "Add text or at least one file before sharing."; case .invalidOperation: return "A valid operation ID is required." } }
+    var errorDescription: String? { switch self { case .appGroupUnavailable: return "Yuri shared storage is unavailable."; case .missingTarget: return "Choose a default share bot in Yuri before sharing."; case .tooManyImages: return "A share supports up to 10 files."; case .imageTooLarge: return "A file exceeds 2 GB."; case .totalTooLarge: return "Shared files exceed 2 GB."; case .imageUnavailable: return "The shared file could not be loaded. Try sharing it again."; case .emptyShare: return "Add text or at least one file before sharing."; case .invalidOperation: return "A valid operation ID is required." } }
 }
 
 private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }

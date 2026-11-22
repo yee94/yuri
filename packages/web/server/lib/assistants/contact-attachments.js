@@ -5,7 +5,6 @@
  */
 import crypto from 'node:crypto';
 import {
-  MAX_PROMPT_ATTACHMENT_BYTES,
   PROMPT_ATTACHMENT_ID,
   PROMPT_ATTACHMENT_MIME,
   PROMPT_ATTACHMENT_SHA256,
@@ -21,9 +20,20 @@ import {
 } from '../fs/prompt-attachment-store.js';
 import { getContactGeneration } from './contact-store.js';
 
-export const CONTACT_ATTACHMENT_MAX_BYTES = MAX_PROMPT_ATTACHMENT_BYTES;
-/** Total inbound file bytes per contact send (sum of attachments). */
+/**
+ * Not a product limit: uploads are buffered in memory before the content-addressed write,
+ * so this only guards the Node Buffer ceiling. Files above the inline threshold are never
+ * sent to the model as bytes; they are referenced by their on-disk path instead.
+ */
+export const CONTACT_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+/** Files up to this size are inlined as data URLs for the model; larger ones are referenced by path. */
+export const CONTACT_ATTACHMENT_INLINE_MAX_BYTES = 20 * 1024 * 1024;
+/** Total inlined file bytes per contact send (referenced-by-path files do not count). */
 export const CONTACT_ATTACHMENT_TURN_BUDGET_BYTES = 50 * 1024 * 1024;
+/** Bytes a file contributes to the inline budget: 0 when it is referenced by path instead. */
+export const inlineBudgetBytes = (size) => (
+  Number.isSafeInteger(size) && size > 0 && size <= CONTACT_ATTACHMENT_INLINE_MAX_BYTES ? size : 0
+);
 export const CONTACT_ATTACHMENT_MIGRATE_BATCH = 20;
 export const CONTACT_ATTACHMENT_MIGRATE_BATCH_BYTES = 50 * 1024 * 1024;
 /**
@@ -334,7 +344,7 @@ export async function readContactAttachmentBytes({
     ? assertContactAttachmentReadable(db, { attachmentID, assistantID })
     : assertContactAttachmentOwned(db, { attachmentID, assistantID });
   const { buffer, size } = await readPromptAttachmentBytes(dataDir, row.relative_path, {
-    maxBytes: Math.max(CONTACT_ATTACHMENT_HISTORICAL_MAX_BYTES, CONTACT_ATTACHMENT_MAX_BYTES * 4),
+    maxBytes: Math.max(CONTACT_ATTACHMENT_HISTORICAL_MAX_BYTES, CONTACT_ATTACHMENT_MAX_BYTES),
     expectedSize: Number.isSafeInteger(row.size) ? row.size : undefined,
     expectedSha256: typeof row.sha256 === 'string' && row.sha256 ? row.sha256 : undefined,
   });
@@ -377,6 +387,17 @@ export async function materializeContactFilePart(db, dataDir, assistantID, part,
   }
   if (typeof part.attachmentID === 'string' && part.attachmentID) {
     try {
+      const row = assertContactAttachmentOwned(db, { attachmentID: part.attachmentID, assistantID });
+      if (Number.isSafeInteger(row.size) && row.size > CONTACT_ATTACHMENT_INLINE_MAX_BYTES) {
+        // Too large to inline: leave the bytes on disk and hand the model an absolute path it can read with tools.
+        const filePath = absoluteObjectPath(dataDir, row.relative_path);
+        const name = typeof row.filename === 'string' && row.filename ? row.filename : part.attachmentID;
+        return {
+          type: 'text',
+          synthetic: true,
+          text: `Attachment ${JSON.stringify(name)} (${row.mime}, ${row.size} bytes): ${JSON.stringify(filePath)}\nThe file is stored on this machine and its contents are not included in this message. Read or process it with the read/bash tools at that exact path as needed.`,
+        };
+      }
       const { buffer, mime, filename, size, sha256 } = await readContactAttachmentBytes({
         db,
         dataDir,
@@ -430,8 +451,7 @@ export async function materializeContactParts(db, dataDir, assistantID, parts = 
   let known = 0;
   for (const part of list) {
     if (part?.type !== 'file') continue;
-    const sz = canonicalFileSize(part);
-    if (sz != null) known += sz;
+    known += inlineBudgetBytes(canonicalFileSize(part));
   }
   if (budgetBytes >= 0 && known > budgetBytes) {
     fail('attachment_budget_exceeded', `Contact attachment materialize exceeds ${budgetBytes} byte budget`);
@@ -445,8 +465,8 @@ export async function materializeContactParts(db, dataDir, assistantID, parts = 
       out.push(part);
       continue;
     }
-    const est = canonicalFileSize(part);
-    if (est != null && budgetBytes >= 0 && used + est > budgetBytes) {
+    const est = inlineBudgetBytes(canonicalFileSize(part));
+    if (est > 0 && budgetBytes >= 0 && used + est > budgetBytes) {
       fail('attachment_budget_exceeded', `Contact attachment materialize exceeds ${budgetBytes} byte budget`);
     }
     const materialized = await materializeContactFilePart(db, dataDir, assistantID, part, { historySoftFail });
@@ -489,7 +509,7 @@ export async function materializeContactHistory(db, dataDir, assistantID, histor
   const turnFileBytes = (turn) => turn.reduce((sum, message) => (
     sum + (message?.parts || [])
       .filter((p) => p?.type === 'file')
-      .reduce((s, p) => s + (canonicalFileSize(p) ?? 0), 0)
+      .reduce((s, p) => s + inlineBudgetBytes(canonicalFileSize(p)), 0)
   ), 0);
 
   // Newest turns first until budget fills (complete turn groups only).

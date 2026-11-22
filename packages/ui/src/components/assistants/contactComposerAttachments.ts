@@ -1,7 +1,6 @@
 import { createUuid } from '@/lib/uuid'
 import type { ChatPromptAttachment } from '@/components/chat/ChatPromptComposer'
 
-export const MAX_CONTACT_COMPOSER_FILE_BYTES = 25 * 1024 * 1024
 const MAX_CONTACT_COMPOSER_FILES = 64
 export type ContactComposerAttachment = ChatPromptAttachment & { file: File }
 
@@ -22,15 +21,10 @@ export const filesFromDrop = (dataTransfer: DataTransfer | null | undefined): Fi
 export const readContactComposerFiles = async (
   files: ArrayLike<File> | null | undefined,
   createId: () => string = createUuid,
-): Promise<{ attachments: ContactComposerAttachment[]; skippedTooLarge: number }> => {
+): Promise<{ attachments: ContactComposerAttachment[] }> => {
   const attachments: ContactComposerAttachment[] = []
-  let skippedTooLarge = 0
   for (const file of Array.from(files || [])) {
     if (!file || file.size <= 0) continue
-    if (file.size > MAX_CONTACT_COMPOSER_FILE_BYTES) {
-      skippedTooLarge += 1
-      continue
-    }
     const url = URL.createObjectURL(file)
     attachments.push({
       id: createId(),
@@ -40,7 +34,7 @@ export const readContactComposerFiles = async (
       file,
     })
   }
-  return { attachments, skippedTooLarge }
+  return { attachments }
 }
 
 export const mergeContactComposerAttachments = <T extends ChatPromptAttachment>(

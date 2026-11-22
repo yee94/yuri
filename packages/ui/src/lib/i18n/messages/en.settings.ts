@@ -2387,7 +2387,6 @@ export const settingsDict = {
   'assistants.contact.removeAttachment': 'Remove attachment',
   'assistants.contact.attachment.image': 'Attached image',
   'assistants.contact.attachment.file': 'Attached file',
-  'assistants.contact.attachment.tooLarge': 'Choose a file up to 25 MiB.',
   'assistants.contact.attachment.download': 'Download file',
   'assistants.contact.attachment.loadFailed': 'Could not load this file.',
   'assistants.contact.history.gap': 'Some messages are still missing. Retry to load them.',

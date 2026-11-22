@@ -7,6 +7,7 @@ import { useEvent } from '@reactuses/core';
 import { connectMobileShareConnection, loadMobileConnections, mobileConnectionKey } from './mobileConnections';
 import { getRuntimeGeneration, getRuntimeKey, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { uploadAssistantAttachment } from '@/lib/assistant-attachment-upload';
 import { AssistantShareOperationError, fetchAssistantCapability, forceRefreshAssistantSnapshot, ensureAssistantSnapshot, sendAssistantShare, waitForAssistantShare, type AssistantPart } from '@/queries/assistantQueries';
 import { useAssistantUIStore, type AssistantCatalogEntry } from '@/stores/useAssistantUIStore';
 import { drainMobileShareItems, retryMobileShareCleanupStage, type MobileShareDrainItem } from './mobileShareDrain';
@@ -38,6 +39,7 @@ type YuriSharePlugin = {
 
 const YuriShare = registerPlugin<YuriSharePlugin>('YuriShare');
 const OUTBOX_KEY = 'yuri.mobile-share.outbox.v1';
+const INLINE_SHARE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export type MobileShareState = 'pending' | 'resolving-instance' | 'connecting' | 'auth-required' | 'offline' | 'target-stale' | 'dispatching' | 'reconciling' | 'delivered' | 'failed';
 type OutboxItem = { envelope: NativeShareEnvelope; messageID: string; state: MobileShareState; cleanupPhase?: 'server-completed' | 'native-acked' | 'files-released'; updatedAt: number; error?: string };
 
@@ -103,8 +105,15 @@ const partsFor = async (envelope: NativeShareEnvelope): Promise<AssistantPart[]>
   const parts: AssistantPart[] = [];
   if (envelope.text?.trim()) parts.push({ type: 'text', text: envelope.text });
   if (envelope.attachments.length > 10) throw new Error('too_many_share_attachments');
-  for (const attachment of envelope.attachments) {
-    if (attachment.byteSize <= 0 || attachment.byteSize > 20 * 1024 * 1024) throw new Error('invalid_share_attachment');
+  for (const [index, attachment] of envelope.attachments.entries()) {
+    if (attachment.byteSize <= 0) throw new Error('invalid_share_attachment');
+    if (attachment.byteSize > INLINE_SHARE_ATTACHMENT_BYTES) {
+      // Too large for an inline data URL: upload the bytes to the Assistant's machine and send a descriptor.
+      const blob = await stagedImageBlob(attachment);
+      const file = new File([blob], attachment.originalName.trim() || 'attachment', { type: attachment.mime });
+      parts.push(await uploadAssistantAttachment(envelope.assistantID, file, `share-${envelope.operationID}-${index}`));
+      continue;
+    }
     parts.push({ type: 'file', mime: attachment.mime, url: await imageDataUrl(attachment) });
   }
   if (parts.length === 0) throw new Error('empty_share');

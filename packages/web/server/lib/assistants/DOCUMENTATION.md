@@ -782,7 +782,8 @@ Reply language follows the user's latest substantive message and conversation co
   `X-Content-Type-Options: nosniff`. Stale generation after clear-chat → 404.
 - Bytes are content-addressed under `dataDir/prompt-attachments` (shared with Chat prompt uploads).
   DB metadata stores only controlled `relative_path` + descriptor; client paths/urls are never authority.
-- New uploads capped at **25 MiB**; image magic-byte checks for PNG/JPEG/GIF/WEBP/BMP.
+- No product size limit on uploads (only a 2 GiB technical ceiling from in-memory buffering); image magic-byte checks for PNG/JPEG/GIF/WEBP/BMP.
+- Files up to `CONTACT_ATTACHMENT_INLINE_MAX_BYTES` (20 MiB) are inlined as data URLs at execution time. Larger files are never read into the prompt: `materializeContactFilePart` returns a synthetic text part with the file's absolute path on the Yuri machine, which the contact's `read`/`bash` tools open on demand. Only inlined bytes count toward the 50 MiB per-turn budget (`inlineBudgetBytes`). WeChat inbound media follows the same rules, so large files are downloaded and stored instead of marked `size_limit`.
 - Admission accepts `attachmentID` refs (validated ownership) or legacy data URLs (landed to disk then stored as descriptors).
 - Harness + assign materialize descriptors to data URLs **only at execution time**; DB/UI keep descriptors.
 - Clear-memory keeps attachment rows; clear-chat bumps generation so external GETs fail while in-flight

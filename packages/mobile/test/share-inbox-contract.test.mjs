@@ -34,12 +34,12 @@ test('share inbox persists relative paths and enforces decoded image upload limi
   for (const content of [ios, android]) {
     assert.match(content, /consumedAt/);
   }
-  assert.match(ios, /8 \* 1024 \* 1024/);
-  assert.match(ios, /16 \* 1024 \* 1024/);
-  assert.match(android, /20L \* 1024 \* 1024/);
+  assert.match(ios, /maximumImageBytes = 2 \* 1024 \* 1024 \* 1024/);
+  assert.match(ios, /maximumTotalBytes = 2 \* 1024 \* 1024 \* 1024/);
+  assert.match(android, /MAX_IMAGE_BYTES = 2L \* 1024 \* 1024 \* 1024/);
   assert.match(ios, /copyLimited\(from: item\.0, to: destination, maximum: maximumImageBytes\)/);
   assert.match(android, /copyLimited\(context\.getContentResolver\(\)\.openInputStream\(uri\), output, MAX_IMAGE_BYTES\)/);
-  assert.match(readme, /iOS share extension limits each base64-decoded file to 8 MiB and each operation to 16 MiB; Android native drafts allow one file or all files together up to 20 MiB/);
+  assert.match(readme, /Share files have no product size limit; the native stores only enforce a 2 GiB technical ceiling per file and per operation/);
   assert.match(ios, /destination\.lastPathComponent/);
   assert.match(android, /output\.getName\(\)/);
   assert.match(android, /getContentResolver\(\)\.getType\(uri\)/);

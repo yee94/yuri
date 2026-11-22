@@ -1,6 +1,6 @@
 import { createDecipheriv } from 'node:crypto';
 import path from 'node:path';
-import { MAX_PROMPT_ATTACHMENT_BYTES } from '../../fs/prompt-attachment-store.js';
+import { CONTACT_ATTACHMENT_MAX_BYTES } from '../contact-attachments.js';
 
 const CDN = 'https://novac2c.cdn.weixin.qq.com/c2c/download';
 const fail = (code) => { throw Object.assign(new Error(code), { code }); };
@@ -40,8 +40,9 @@ export async function downloadWeixinMedia(source, { fetchImpl = fetch, signal } 
   if (!source.full_url && !source.encrypt_query_param) fail('media_missing_reference');
   const key = aesKey(source);
   if (!key && source.kind !== 'image') fail('media_invalid_key');
-  const limit = Math.min(MAX_PROMPT_ATTACHMENT_BYTES, 20 * 1024 * 1024);
-  const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000);
+  const limit = CONTACT_ATTACHMENT_MAX_BYTES;
+  const timeout = AbortSignal.timeout(10 * 60_000);
+  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   requestSignal.throwIfAborted();
   const response = await fetchImpl(url.href, { redirect: 'error', signal: requestSignal });
   if (!response.ok || !response.body) fail('media_download_failed');

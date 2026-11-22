@@ -40,13 +40,12 @@ describe('WeChat CDN media boundary', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('bounds declared and streaming bytes, cancels oversized bodies and rejects invalid image bytes/padding', async () => {
-    await expect(downloadWeixinMedia(source, { fetchImpl: async () => new Response('x', { headers: { 'content-length': String(26 * 1024 * 1024) } }) }))
-      .rejects.toMatchObject({ code: 'media_too_large' });
-    const cancel = vi.fn();
-    const body = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(26 * 1024 * 1024)); }, cancel });
-    await expect(downloadWeixinMedia(source, { fetchImpl: async () => new Response(body) })).rejects.toMatchObject({ code: 'media_too_large' });
-    expect(cancel).toHaveBeenCalled();
+  it('downloads files above the old 20 MiB cap and rejects invalid image bytes/padding', async () => {
+    const file = { ...source, kind: 'file', filename: 'large.pdf' };
+    const large = Buffer.alloc(32 * 1024 * 1024, 1);
+    const result = await downloadWeixinMedia(file, { fetchImpl: async () => new Response(encrypted(large)) });
+    expect(result.buffer.length).toBe(large.length);
+    expect(result).toMatchObject({ filename: 'large.pdf', mime: 'application/pdf' });
     await expect(downloadWeixinMedia(source, { fetchImpl: async () => new Response(encrypted(Buffer.from('<html>not an image</html>'))) }))
       .rejects.toMatchObject({ code: 'media_invalid_image' });
     await expect(downloadWeixinMedia(source, { fetchImpl: async () => new Response(Buffer.alloc(16)) })).rejects.toThrow();

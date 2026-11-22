@@ -8,9 +8,6 @@
  */
 import { runtimeFetch } from '@/lib/runtime-fetch';
 
-/** Hard cap for a single assistant contact attachment upload (25 MiB). */
-export const ASSISTANT_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
-
 /**
  * Frozen structural descriptor stored in the assistant contact DB after upload.
  * UI never invents a second attachment store — this is the durable reference.
@@ -68,15 +65,12 @@ const assertSafeIntegerSize = (size: number): void => {
   if (!Number.isSafeInteger(size) || size < 0) {
     throw new AssistantAttachmentUploadError(0, 'rejected', 'Invalid attachment size');
   }
-  if (size > ASSISTANT_ATTACHMENT_MAX_BYTES) {
-    throw new AssistantAttachmentUploadError(413, 'too-large');
-  }
 };
 
 /**
  * Parse a complete server descriptor. No local fallbacks for missing fields.
  * Expected payload fields: type:'file', attachmentID, sha256, size, mime, filename?
- * @param options.enforceUploadLimit when true (upload path), reject size > 25 MiB
+ * @param options.enforceUploadLimit when true (upload path), validate the size as a safe integer
  */
 export const parseAssistantAttachmentDescriptor = (
   payload: unknown,
@@ -109,7 +103,7 @@ export const parseAssistantAttachmentDescriptor = (
   if (!mime) {
     throw new AssistantAttachmentUploadError(0, 'integrity', 'Attachment response missing mime');
   }
-  // Upload responses always enforce the 25 MiB cap; type-guard parsing does not.
+  // Upload responses are always size-validated; type-guard parsing is not.
   if (options.enforceUploadLimit === true || expected) {
     assertSafeIntegerSize(size);
   }
@@ -223,7 +217,7 @@ export const uploadAssistantAttachment = async (
   return descriptor;
 };
 
-/** Type guard for frozen descriptors (DB / network). Does not enforce the 25 MiB upload cap. */
+/** Type guard for frozen descriptors (DB / network). Does not re-validate the upload size. */
 export const isAssistantAttachmentDescriptor = (value: unknown): value is AssistantAttachmentDescriptor => {
   try {
     parseAssistantAttachmentDescriptor(value, undefined, { enforceUploadLimit: false });

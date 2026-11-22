@@ -2387,7 +2387,6 @@ export const settingsDict = {
   'assistants.contact.removeAttachment': 'Видалити вкладення',
   'assistants.contact.attachment.image': 'Додане зображення',
   'assistants.contact.attachment.file': 'Доданий файл',
-  'assistants.contact.attachment.tooLarge': 'Виберіть файл розміром до 25 МіБ.',
   'assistants.contact.attachment.download': 'Завантажити файл',
   'assistants.contact.attachment.loadFailed': 'Не вдалося завантажити файл.',
   'assistants.contact.history.gap': 'Деякі повідомлення ще відсутні. Спробуйте завантажити їх знову.',

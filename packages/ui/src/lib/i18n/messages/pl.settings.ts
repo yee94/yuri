@@ -2388,7 +2388,6 @@ export const settingsDict = {
   'assistants.contact.removeAttachment': 'Usuń załącznik',
   'assistants.contact.attachment.image': 'Dołączony obraz',
   'assistants.contact.attachment.file': 'Dołączony plik',
-  'assistants.contact.attachment.tooLarge': 'Wybierz plik o rozmiarze do 25 MiB.',
   'assistants.contact.attachment.download': 'Pobierz plik',
   'assistants.contact.attachment.loadFailed': 'Nie udało się wczytać pliku.',
   'assistants.contact.history.gap': 'Brakuje jeszcze części wiadomości. Spróbuj wczytać je ponownie.',

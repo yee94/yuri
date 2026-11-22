@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { encodeWeixinTOON } from './toon.js';
-import { CONTACT_ATTACHMENT_TURN_BUDGET_BYTES } from '../contact-attachments.js';
+import { CONTACT_ATTACHMENT_TURN_BUDGET_BYTES, inlineBudgetBytes } from '../contact-attachments.js';
 
 const kinds = { 1: 'text', 2: 'image', 3: 'voice', 4: 'file', 5: 'video' };
 const privateField = /token|ticket|aes|encrypt|authorization|cookie|password|secret|credential|signature|^sig$|(?:^|_)auth(?:_|$)|(?:^|_)key$|full_url|^media$|^thumb_media$|^base_info$|^__proto__$|^constructor$|^prototype$/i;
@@ -120,7 +120,7 @@ export async function prepareWeixinInput(receipt, { api, service, assistantID, s
       if (item.kind === 'voice' && item.transcription === 'provided') { item.mediaStatus = 'not_downloaded'; continue; }
       const { buffer, mime, filename } = await api.downloadMedia(source, signal);
       assertCurrent();
-      if (total + buffer.length > CONTACT_ATTACHMENT_TURN_BUDGET_BYTES) throw new Error('media_budget');
+      if (total + inlineBudgetBytes(buffer.length) > CONTACT_ATTACHMENT_TURN_BUDGET_BYTES) throw new Error('media_budget');
       const sha256 = createHash('sha256').update(buffer).digest('hex');
       const uploadID = `wx_${createHash('sha256').update(`${receipt.id}:${position}`).digest('hex')}`;
       const attachment = await service.putAssistantContactAttachment(assistantID, uploadID, {
@@ -129,7 +129,7 @@ export async function prepareWeixinInput(receipt, { api, service, assistantID, s
           'x-attachment-filename': encodeURIComponent(filename) },
       });
       assertCurrent();
-      total += buffer.length;
+      total += inlineBudgetBytes(buffer.length);
       parts.push(attachment);
       item.mediaStatus = 'attached';
       item.attachmentID = attachment.attachmentID;

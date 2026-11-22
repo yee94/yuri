@@ -47,6 +47,7 @@ import {
 } from './contact-store.js';
 import {
   CONTACT_ATTACHMENT_TURN_BUDGET_BYTES,
+  inlineBudgetBytes,
   assertContactAttachmentOwned,
   assertContactAttachmentReadable,
   canonicalDescriptorFromRow,
@@ -1709,7 +1710,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             fail(error?.code === 'not_found' ? 'not_found' : 'validation_error', error?.message);
           }
           const descriptor = canonicalDescriptorFromRow(row);
-          turnBytes += descriptor.size || 0;
+          turnBytes += inlineBudgetBytes(descriptor.size);
           if (turnBytes > CONTACT_ATTACHMENT_TURN_BUDGET_BYTES) {
             fail('validation_error', 'Contact attachment total exceeds 50MiB budget');
           }
@@ -1732,7 +1733,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
               assistantID,
             });
             const canonical = canonicalDescriptorFromRow(row);
-            turnBytes += canonical.size || 0;
+            turnBytes += inlineBudgetBytes(canonical.size);
             if (turnBytes > CONTACT_ATTACHMENT_TURN_BUDGET_BYTES) {
               fail('validation_error', 'Contact attachment total exceeds 50MiB budget');
             }

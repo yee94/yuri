@@ -2387,7 +2387,6 @@ export const settingsDict = {
   'assistants.contact.removeAttachment': '첨부 제거',
   'assistants.contact.attachment.image': '첨부 이미지',
   'assistants.contact.attachment.file': '첨부 파일',
-  'assistants.contact.attachment.tooLarge': '25 MiB 이하의 파일을 선택하세요.',
   'assistants.contact.attachment.download': '파일 다운로드',
   'assistants.contact.attachment.loadFailed': '파일을 불러오지 못했습니다.',
   'assistants.contact.history.gap': '일부 메시지가 아직 로드되지 않았습니다. 다시 시도하세요.',

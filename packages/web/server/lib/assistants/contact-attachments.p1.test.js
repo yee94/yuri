@@ -24,7 +24,7 @@ import {
   canonicalDescriptorFromRow,
   getContactAttachmentRow,
 } from './contact-attachments.js';
-import { storePromptAttachmentBytes } from '../fs/prompt-attachment-store.js';
+import { absoluteObjectPath, storePromptAttachmentBytes } from '../fs/prompt-attachment-store.js';
 
 const require = createRequire(import.meta.url);
 
@@ -206,18 +206,46 @@ describe('P1 contact attachment faults', () => {
       oneA, oneB, { ...oneA, filename: 'c.bin' },
     ], { budgetBytes: 2 })).rejects.toMatchObject({ code: 'attachment_budget_exceeded' });
 
-    // Two 25MiB under 50MiB turn budget must complete (pre-sum + per-file gate, no silent continue).
-    const twentyFive = 25 * 1024 * 1024;
-    const bigA = { type: 'file', mime: 'application/octet-stream', url: 'data:application/octet-stream;base64,QQ==', size: twentyFive, filename: 'big-a.bin' };
-    const bigB = { type: 'file', mime: 'application/octet-stream', url: 'data:application/octet-stream;base64,Qg==', size: twentyFive, filename: 'big-b.bin' };
+    // Two 20MiB (the inline ceiling) under 50MiB turn budget must complete (pre-sum + per-file gate, no silent continue).
+    const twenty = 20 * 1024 * 1024;
+    const bigA = { type: 'file', mime: 'application/octet-stream', url: 'data:application/octet-stream;base64,QQ==', size: twenty, filename: 'big-a.bin' };
+    const bigB = { type: 'file', mime: 'application/octet-stream', url: 'data:application/octet-stream;base64,Qg==', size: twenty, filename: 'big-b.bin' };
     const fiftyFit = await materializeContactParts(db, dataDir, 'asst_a', [bigA, bigB], {
       budgetBytes: 50 * 1024 * 1024,
     });
     expect(fiftyFit.filter((p) => p.type === 'file')).toHaveLength(2);
 
     await expect(materializeContactParts(db, dataDir, 'asst_a', [
-      bigA, bigB, { ...bigA, size: 1, filename: 'extra.bin' },
+      bigA, bigB, { ...bigA, filename: 'c.bin' },
     ], { budgetBytes: 50 * 1024 * 1024 })).rejects.toMatchObject({ code: 'attachment_budget_exceeded' });
+
+    await fsp.rm(directory, { recursive: true, force: true });
+  });
+
+  it('uploads files above the old 25MiB cap and references anything over the inline ceiling by absolute path', async () => {
+    const { db, dataDir, directory } = open();
+    const big = Buffer.alloc(26 * 1024 * 1024, 7);
+    const digest = createHash('sha256').update(big).digest('hex');
+    const desc = await putContactAttachment({
+      db, dataDir, assistantID: 'asst_a', uploadID: 'up_big', stream: streamOf(big),
+      headers: {
+        'x-content-size': String(big.length),
+        'x-content-sha256': digest,
+        'content-type': 'application/pdf',
+        'x-attachment-filename': encodeURIComponent('report.pdf'),
+      },
+    });
+    expect(desc.size).toBe(big.length);
+
+    // Budget of 1 byte proves referenced-by-path files do not consume the inline budget.
+    const [reference] = await materializeContactParts(db, dataDir, 'asst_a', [desc], { budgetBytes: 1 });
+    expect(reference).toMatchObject({ type: 'text', synthetic: true });
+    const row = getContactAttachmentRow(db, desc.attachmentID);
+    const filePath = absoluteObjectPath(dataDir, row.relative_path);
+    expect(reference.text).toContain(JSON.stringify(filePath));
+    expect(reference.text).toContain('report.pdf');
+    expect(path.isAbsolute(filePath)).toBe(true);
+    expect((await fsp.stat(filePath)).size).toBe(big.length);
 
     await fsp.rm(directory, { recursive: true, force: true });
   });
