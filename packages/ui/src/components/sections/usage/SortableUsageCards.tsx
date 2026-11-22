@@ -123,6 +123,8 @@ export const UsageProviderLogo: React.FC<{ providerId: string; name: string; cla
   return (
     <button
       type="button"
+      data-usage-drag-handle="true"
+      data-mobile-press-feedback="none"
       {...handle.attributes}
       {...handle.listeners}
       ref={handle.setActivatorNodeRef}

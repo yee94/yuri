@@ -837,7 +837,7 @@ Reopening refreshes the snapshot, and switching instances clears retained target
 - `hooks/useSessionSidebarSections.ts`: Composes final per-project sections and group search metadata for rendering.
 - `hooks/useProjectSessionSelection.ts`: Resolves active/current project-session selection logic and session-directory context.
 - `hooks/useGroupOrdering.ts`: Applies persisted/custom group order with stable fallback ordering; archived groups are reorderable.
-- `hooks/useArchivedAutoFolders.ts`: Maintains archived auto-folder structure and assignment behavior.
+- `hooks/useArchivedAutoFolders.ts`: Maintains archived auto-folder structure and assignment behavior by reading `foldersMap` imperatively (re-running on `foldersHydrationGeneration` rather than subscribing to its own `foldersMap` writes), batching additions per folder via `addSessionsToFolder`, and preserving currently assigned archived session IDs during cleanup.
 - `hooks/useSidebarPersistence.ts`: Persists sidebar UI state (expanded/collapsed/group order/active session) to instance-scoped storage (`yuri.inst.{runtimeKey}.*`) + desktop settings. Project registry order and `projectSortOrder` are Host-authoritative with instance-scoped startup caches. Desktop and mobile project lists use `lib/projectOrder.ts`; manual mode follows the registry and alphabetical modes use a fixed collation locale across devices. Session pin membership is derived from the server session-index snapshot (`pinnedSessionIds` plus in-window `time.pinned`), not localStorage.
 - `hooks/useProjectRepoStatus.ts`: Tracks per-project git-repo state and root branch metadata.
 - `hooks/useProjectSessionLists.ts`: Reads live and archived project buckets from the shared ownership index.

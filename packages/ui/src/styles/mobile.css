@@ -3195,6 +3195,17 @@ button.yuri-mobile-schedule-assistant::before {
     min-width: 0 !important;
   }
 
+  /* Usage card provider logo doubles as the drag handle; keep its 16px icon
+     footprint instead of inflating to the 36px touch floor and widening the
+     logo-to-title gap. */
+  :root.mobile-pointer:not(.desktop-runtime)
+    button[data-usage-drag-handle="true"],
+  :root.mobile-pointer:not(.desktop-runtime)
+    [data-usage-drag-handle="true"][role="button"] {
+    min-height: 0 !important;
+    min-width: 0 !important;
+  }
+
   :root.mobile-pointer:not(.desktop-runtime)
     .yuri-transcript-scroll-controls button {
     min-height: 0 !important;

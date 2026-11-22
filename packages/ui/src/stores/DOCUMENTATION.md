@@ -718,10 +718,13 @@ List labels are a fetch hint, not the archive contract; this does not add
   isolation. Global/root catalog callers keep the default exclusion. The tree
   builder attaches children only under present, visible parents and never promotes
   orphan children into roots; the option does not initiate any child requests.
-`fullCatalogSessionIds` and `fullCatalogGeneration` update only after
+`fullCatalogSessionIds` and `fullCatalogGeneration` replace the snapshot only after
 one complete active+archived catalog result; retention cleanup consumes that snapshot.
-Directory refreshes preserve it, failed catalog loads preserve the prior snapshot,
-and runtime switches clear it. Initial loading and background refreshing are separate
+Once a complete catalog exists (`fullCatalogGeneration > 0`), incremental live upserts,
+directory/archived refreshes, and local archives extend `fullCatalogSessionIds` with newly
+seen IDs (preserving the previous Set reference when no new IDs appear) and explicit
+removals prune deleted IDs, without bumping `fullCatalogGeneration`. Failed catalog loads
+preserve the prior snapshot, and runtime switches clear it. Initial loading and background refreshing are separate
 sets so an in-flight refresh never hides an existing session snapshot.
 Sidebar project headers subscribe to project-local boolean membership in those
 sets; the sidebar orchestration observes only the aggregate pending boolean for

@@ -1816,6 +1816,44 @@ describe('useGlobalSessionsStore', () => {
     expect(useSessionFoldersStore.getState().sessionOrderByScope['/repo/app']).toEqual(['ses_25']);
   });
 
+  test('monotonically tracks newly upserted, archived, and removed session IDs in fullCatalogSessionIds', async () => {
+    const existing = buildSession('https://share.example/1', {
+      id: 'ses_1',
+      directory: '/repo/app',
+      time: { created: 1, updated: 1 },
+    });
+    restoreGetSdkClient = installSdkList(async () => ({ data: [existing], cursor: {} }));
+
+    await useGlobalSessionsStore.getState().loadSessions();
+    const initialGeneration = useGlobalSessionsStore.getState().fullCatalogGeneration;
+    expect(initialGeneration).toBe(1);
+    expect(useGlobalSessionsStore.getState().fullCatalogSessionIds.has('ses_1')).toBe(true);
+
+    const freshArchived = buildSession('https://share.example/2', {
+      id: 'ses_2',
+      directory: '/repo/app',
+      time: { created: 2, updated: 2, archived: 3 },
+    });
+    useGlobalSessionsStore.getState().upsertSession(freshArchived);
+    expect(useGlobalSessionsStore.getState().fullCatalogSessionIds.has('ses_2')).toBe(true);
+    expect(useGlobalSessionsStore.getState().fullCatalogGeneration).toBe(initialGeneration);
+
+    const freshActive = buildSession('https://share.example/3', {
+      id: 'ses_3',
+      directory: '/repo/app',
+      time: { created: 3, updated: 3 },
+    });
+    useGlobalSessionsStore.getState().upsertSession(freshActive);
+    useGlobalSessionsStore.getState().archiveSessions(['ses_3'], 4);
+    expect(useGlobalSessionsStore.getState().fullCatalogSessionIds.has('ses_3')).toBe(true);
+    expect(useGlobalSessionsStore.getState().fullCatalogGeneration).toBe(initialGeneration);
+
+    useGlobalSessionsStore.getState().removeSessions(['ses_2']);
+    expect(useGlobalSessionsStore.getState().fullCatalogSessionIds.has('ses_2')).toBe(false);
+    expect(useGlobalSessionsStore.getState().fullCatalogSessionIds.has('ses_3')).toBe(true);
+    expect(useGlobalSessionsStore.getState().fullCatalogGeneration).toBe(initialGeneration);
+  });
+
   test('keeps the current global load flight after a stale runtime load settles', async () => {
     const resolvers: Array<(value: SessionListResult) => void> = [];
     const list: SessionListFn = () => new Promise<SessionListResult>((resolve) => { resolvers.push(resolve); });

@@ -1,13 +1,22 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { UsageWindow } from '@/types/quota';
 
 vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
+vi.mock('@/components/ui/ProviderLogo', () => ({
+  ProviderLogo: ({ providerId, className }: { providerId: string; className?: string }) => (
+    <span data-logo={providerId} className={className} />
+  ),
+}));
 vi.mock('@/lib/i18n', () => ({
   getCurrentIntlLocale: () => 'en-US',
   useI18n: () => ({ t: (key: string, values?: Record<string, unknown>) => (values?.when ? `resets[${values.when}]` : key) }),
 }));
+import { SortableUsageItem, SortableUsageList, UsageProviderLogo } from './SortableUsageCards';
 import { UsageRingGrid, type UsageRingItem } from './UsageRingGrid';
 
 const win = (patch: Partial<UsageWindow> = {}): UsageWindow => ({
@@ -120,5 +129,26 @@ describe('UsageRingGrid', () => {
     const on = renderToStaticMarkup(<UsageRingGrid items={[item('x', window)]} displayMode="usage" timeFormatPreference="24h" showPace />);
     expect(off).not.toContain('+120%');
     expect(on).toContain('+120%');
+  });
+
+  it('opts usage card logo drag handles out of the 36px mobile button floor', () => {
+    const html = renderToStaticMarkup(
+      <SortableUsageList ids={['claude', 'antigravity']}>
+        <SortableUsageItem id="claude">
+          <UsageProviderLogo providerId="claude" name="Claude Code" className="size-4 shrink-0" />
+        </SortableUsageItem>
+        <SortableUsageItem id="antigravity">
+          <UsageProviderLogo providerId="antigravity" name="Antigravity" className="size-4 shrink-0" />
+        </SortableUsageItem>
+      </SortableUsageList>,
+    );
+    expect(html.match(/data-usage-drag-handle="true"/g)).toHaveLength(2);
+    expect(html.match(/data-mobile-press-feedback="none"/g)).toHaveLength(2);
+
+    const here = dirname(fileURLToPath(import.meta.url));
+    const mobileCss = readFileSync(join(here, '../../../styles/mobile.css'), 'utf-8');
+    expect(mobileCss).toMatch(
+      /button\[data-usage-drag-handle="true"\],\s*:root\.mobile-pointer:not\(\.desktop-runtime\)\s*\[data-usage-drag-handle="true"\]\[role="button"\]\s*\{\s*min-height:\s*0\s*!important;\s*min-width:\s*0\s*!important;/,
+    );
   });
 });

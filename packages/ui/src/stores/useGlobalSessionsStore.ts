@@ -806,6 +806,40 @@ const shareIndexMap = <T,>(previous: Map<string, T>, next: Map<string, T>): Map<
   return unchanged ? previous : next;
 };
 
+const extendFullCatalogSessionIds = (
+  state: GlobalSessionsState,
+  ...sessionLists: readonly (readonly Session[])[]
+): Set<string> => {
+  if (state.fullCatalogGeneration === 0) {
+    return state.fullCatalogSessionIds;
+  }
+  let next: Set<string> | null = null;
+  for (const list of sessionLists) {
+    for (const session of list) {
+      if (!session.id || state.fullCatalogSessionIds.has(session.id)) continue;
+      next ??= new Set(state.fullCatalogSessionIds);
+      next.add(session.id);
+    }
+  }
+  return next ?? state.fullCatalogSessionIds;
+};
+
+const pruneFullCatalogSessionIds = (
+  state: GlobalSessionsState,
+  idsToRemove: ReadonlySet<string>,
+): Set<string> => {
+  if (state.fullCatalogGeneration === 0 || idsToRemove.size === 0) {
+    return state.fullCatalogSessionIds;
+  }
+  let next: Set<string> | null = null;
+  for (const id of idsToRemove) {
+    if (!state.fullCatalogSessionIds.has(id)) continue;
+    next ??= new Set(state.fullCatalogSessionIds);
+    next.delete(id);
+  }
+  return next ?? state.fullCatalogSessionIds;
+};
+
 const applySessionIndexSnapshotState = (
   state: GlobalSessionsState,
   snapshot: SessionIndexSnapshot,
@@ -930,9 +964,12 @@ const applySessionIndexSnapshotState = (
     }
   }
 
+  const nextFullCatalogSessionIds = extendFullCatalogSessionIds(state, activeSessions);
+
   const patch: Partial<GlobalSessionsState> = {
     activeSessions,
     sessionsByDirectory,
+    fullCatalogSessionIds: nextFullCatalogSessionIds,
     cachedDirectories: shareIndexSet(state.cachedDirectories, snapshotDirectories),
     sessionIndexSyncByDirectory: shareIndexMap(state.sessionIndexSyncByDirectory, nextSyncMetadata),
     activePaginationByDirectory: shareIndexMap(state.activePaginationByDirectory, nextPagination),
@@ -1018,6 +1055,7 @@ const applyDirectoryRefreshPatch = (
 
   const nextStatus = input.markReady ? 'ready' as const : state.status;
   const nextHasLoaded = input.markReady ? true : state.hasLoaded;
+  const nextFullCatalogSessionIds = extendFullCatalogSessionIds(state, nextActiveSessions, nextArchivedSessions);
 
   if (
     nextActiveSessions === state.activeSessions
@@ -1025,6 +1063,7 @@ const applyDirectoryRefreshPatch = (
     && nextSessionsByDirectory === state.sessionsByDirectory
     && nextLoadedDirectories === state.loadedDirectories
     && nextLoadingDirectories === state.loadingDirectories
+    && nextFullCatalogSessionIds === state.fullCatalogSessionIds
     && state.status === nextStatus
     && state.hasLoaded === nextHasLoaded
   ) {
@@ -1037,6 +1076,7 @@ const applyDirectoryRefreshPatch = (
     sessionsByDirectory: nextSessionsByDirectory,
     loadedDirectories: nextLoadedDirectories,
     loadingDirectories: nextLoadingDirectories,
+    fullCatalogSessionIds: nextFullCatalogSessionIds,
     hasLoaded: nextHasLoaded,
     status: nextStatus,
   };
@@ -1122,11 +1162,13 @@ const applySnapshot = (
   const nextSessionsByDirectory = nextActiveSessions === state.activeSessions
     ? state.sessionsByDirectory
     : buildSessionsByDirectory(nextActiveSessions);
+  const nextFullCatalogSessionIds = extendFullCatalogSessionIds(state, nextActiveSessions, nextArchivedSessions);
 
   if (
     nextActiveSessions === state.activeSessions
     && nextArchivedSessions === state.archivedSessions
     && nextSessionsByDirectory === state.sessionsByDirectory
+    && nextFullCatalogSessionIds === state.fullCatalogSessionIds
     && state.hasLoaded
     && state.status === status
   ) {
@@ -1137,6 +1179,7 @@ const applySnapshot = (
     activeSessions: nextActiveSessions,
     archivedSessions: nextArchivedSessions,
     sessionsByDirectory: nextSessionsByDirectory,
+    fullCatalogSessionIds: nextFullCatalogSessionIds,
     hasLoaded: true,
     status,
   };
@@ -1867,6 +1910,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
               ? state.activeSessions
               : nextActiveSessions,
             sessionsByDirectory: buildSessionsByDirectory(nextActiveSessions),
+            fullCatalogSessionIds: extendFullCatalogSessionIds(state, mergedDirectorySessions),
             activePaginationByDirectory: nextPagination,
           };
         });
@@ -1957,6 +2001,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
               sessionsByDirectory: nextActiveSessions === state.activeSessions
                 ? state.sessionsByDirectory
                 : buildSessionsByDirectory(nextActiveSessions),
+              fullCatalogSessionIds: extendFullCatalogSessionIds(state, nextActiveSessions, nextArchivedSessions),
               archivedLoadedDirectories: nextLoaded,
               archivedLoadingDirectories: nextLoading,
             };
@@ -2010,9 +2055,12 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
         ? upsertSessionIntoList(state.archivedSessions, sessionWithMetadata)
         : state.archivedSessions.filter((candidate) => candidate.id !== session.id);
 
+      const nextFullCatalogSessionIds = extendFullCatalogSessionIds(state, [sessionWithMetadata]);
+
       if (
         nextActiveSessions === state.activeSessions
         && nextArchivedSessions === state.archivedSessions
+        && nextFullCatalogSessionIds === state.fullCatalogSessionIds
       ) {
         return state;
       }
@@ -2023,6 +2071,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
         sessionsByDirectory: nextActiveSessions === state.activeSessions
           ? state.sessionsByDirectory
           : buildSessionsByDirectory(nextActiveSessions),
+        fullCatalogSessionIds: nextFullCatalogSessionIds,
       };
     });
   },
@@ -2060,10 +2109,12 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
     set((state) => {
       const nextActiveSessions = state.activeSessions.filter((session) => !idSet.has(session.id));
       const nextArchivedSessions = state.archivedSessions.filter((session) => !idSet.has(session.id));
+      const nextFullCatalogSessionIds = pruneFullCatalogSessionIds(state, idSet);
 
       if (
         nextActiveSessions.length === state.activeSessions.length
         && nextArchivedSessions.length === state.archivedSessions.length
+        && nextFullCatalogSessionIds === state.fullCatalogSessionIds
       ) {
         return state;
       }
@@ -2071,7 +2122,10 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
       return {
         activeSessions: nextActiveSessions,
         archivedSessions: nextArchivedSessions,
-        sessionsByDirectory: buildSessionsByDirectory(nextActiveSessions),
+        sessionsByDirectory: nextActiveSessions.length === state.activeSessions.length
+          ? state.sessionsByDirectory
+          : buildSessionsByDirectory(nextActiveSessions),
+        fullCatalogSessionIds: nextFullCatalogSessionIds,
       };
     });
   },
@@ -2109,6 +2163,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
         activeSessions: nextActiveSessions,
         archivedSessions: [...movedSessions, ...remainingArchivedSessions],
         sessionsByDirectory: buildSessionsByDirectory(nextActiveSessions),
+        fullCatalogSessionIds: extendFullCatalogSessionIds(state, movedSessions),
       };
     });
   },

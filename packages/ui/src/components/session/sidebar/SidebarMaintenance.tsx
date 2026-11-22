@@ -16,14 +16,14 @@ export const SidebarMaintenance = React.memo(function SidebarMaintenance({ norma
   const fullCatalogSessionIds = useGlobalSessionsStore((state) => state.fullCatalogSessionIds);
   const fullCatalogGeneration = useGlobalSessionsStore((state) => state.fullCatalogGeneration);
   const isSessionsLoading = useSessionUIStore((state) => state.isLoading);
-  const foldersMap = useSessionFoldersStore((state) => state.foldersMap);
+  const foldersHydrationGeneration = useSessionFoldersStore((state) => state.foldersHydrationGeneration);
   const createFolder = useSessionFoldersStore((state) => state.createFolder);
-  const addSessionToFolder = useSessionFoldersStore((state) => state.addSessionToFolder);
+  const addSessionsToFolder = useSessionFoldersStore((state) => state.addSessionsToFolder);
   const cleanupSessions = useSessionFoldersStore((state) => state.cleanupSessions);
   useSessionFolderCleanup({ normalizedProjects, fullCatalogSessionIds, fullCatalogGeneration, isSessionsLoading, cleanupSessions });
   useArchivedAutoFolders({
     normalizedProjects, ownership, enabled, fullCatalogSessionIds, fullCatalogGeneration,
-    isSessionsLoading, foldersMap, createFolder, addSessionToFolder, cleanupSessions,
+    isSessionsLoading, foldersHydrationGeneration, createFolder, addSessionsToFolder, cleanupSessions,
   });
   return null;
 });

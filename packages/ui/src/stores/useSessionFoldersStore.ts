@@ -40,6 +40,7 @@ interface SessionFoldersState {
   collapsedFolderIds: Set<string>;
   sessionOrderByScope: SessionOrderMap;
   sessionOrderActivityByScope: SessionOrderActivityMap;
+  foldersHydrationGeneration: number;
 }
 
 interface SessionFoldersActions {
@@ -330,6 +331,7 @@ export const useSessionFoldersStore = create<SessionFoldersStore>()(
       collapsedFolderIds: readPersistedCollapsed(),
       sessionOrderByScope: readPersistedSessionOrder(),
       sessionOrderActivityByScope: readPersistedSessionOrderActivity(),
+      foldersHydrationGeneration: 0,
 
       getFoldersForScope: (scopeKey: string): SessionFolder[] => {
         if (!scopeKey) return [];
@@ -770,10 +772,11 @@ const hydrateSessionFoldersFromDisk = async (): Promise<void> => {
       return;
     }
 
-    useSessionFoldersStore.setState({
+    useSessionFoldersStore.setState((state) => ({
       foldersMap: diskFolders,
       collapsedFolderIds: diskCollapsed,
-    });
+      foldersHydrationGeneration: state.foldersHydrationGeneration + 1,
+    }));
 
     persistFolders(diskFolders);
     persistCollapsed(diskCollapsed);
@@ -811,12 +814,13 @@ const resetSessionFoldersForInstanceSwitch = (): void => {
     clearTimeout(persistCollapsedTimer);
     persistCollapsedTimer = undefined;
   }
-  useSessionFoldersStore.setState({
+  useSessionFoldersStore.setState((state) => ({
     foldersMap: readPersistedFolders(),
     collapsedFolderIds: readPersistedCollapsed(),
     sessionOrderByScope: readPersistedSessionOrder(),
     sessionOrderActivityByScope: readPersistedSessionOrderActivity(),
-  });
+    foldersHydrationGeneration: state.foldersHydrationGeneration + 1,
+  }));
   void hydrateSessionFoldersFromDisk();
 };
 

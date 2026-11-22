@@ -1,4 +1,5 @@
 import React from 'react';
+import { useSessionFoldersStore, type SessionFolder } from '@/stores/useSessionFoldersStore';
 import {
   getArchivedScopeKey,
   resolveArchivedFolderName,
@@ -10,21 +11,15 @@ type ProjectForArchivedFolders = {
   normalizedPath: string;
 };
 
-type FolderEntry = {
-  id: string;
-  name: string;
-  sessionIds: string[];
-};
-
 type Args = {
   normalizedProjects: ProjectForArchivedFolders[];
   ownership: SessionOwnershipIndex;
   isSessionsLoading: boolean;
   fullCatalogSessionIds: Set<string>;
   fullCatalogGeneration: number;
-  foldersMap: Record<string, FolderEntry[]>;
-  createFolder: (scopeKey: string, name: string, parentId?: string | null) => FolderEntry;
-  addSessionToFolder: (scopeKey: string, folderId: string, sessionId: string) => void;
+  foldersHydrationGeneration?: number;
+  createFolder: (scopeKey: string, name: string, parentId?: string | null) => SessionFolder;
+  addSessionsToFolder: (scopeKey: string, folderId: string, sessionIds: string[]) => void;
   cleanupSessions: (scopeKey: string, existingSessionIds: Set<string>) => void;
   /** When false, skip archived-folder derivation (hidden sidebar). */
   enabled?: boolean;
@@ -37,9 +32,9 @@ export const useArchivedAutoFolders = (args: Args): void => {
     isSessionsLoading,
     fullCatalogSessionIds,
     fullCatalogGeneration,
-    foldersMap,
+    foldersHydrationGeneration = 0,
     createFolder,
-    addSessionToFolder,
+    addSessionsToFolder,
     cleanupSessions,
     enabled = true,
   } = args;
@@ -49,12 +44,15 @@ export const useArchivedAutoFolders = (args: Args): void => {
       return;
     }
 
+    const currentFoldersMap = useSessionFoldersStore.getState().foldersMap;
+
     normalizedProjects.forEach((project) => {
       const scopeKey = getArchivedScopeKey(project.normalizedPath);
       const projectArchivedSessions = ownership.archivedSessionsByProject.get(project.id) ?? [];
 
-      const existingFolders = foldersMap[scopeKey] ?? [];
+      const existingFolders = currentFoldersMap[scopeKey] ?? [];
       const folderByName = new Map(existingFolders.map((folder) => [folder.name.toLowerCase(), folder]));
+      const missingSessionsByFolderId = new Map<string, string[]>();
 
       projectArchivedSessions.forEach((session) => {
         const folderName = resolveArchivedFolderName(session, project.normalizedPath);
@@ -66,12 +64,24 @@ export const useArchivedAutoFolders = (args: Args): void => {
         }
 
         if (!folder.sessionIds.includes(session.id)) {
-          addSessionToFolder(scopeKey, folder.id, session.id);
+          const batch = missingSessionsByFolderId.get(folder.id);
+          if (batch) {
+            batch.push(session.id);
+          } else {
+            missingSessionsByFolderId.set(folder.id, [session.id]);
+          }
         }
       });
 
+      missingSessionsByFolderId.forEach((sessionIds, folderId) => {
+        addSessionsToFolder(scopeKey, folderId, sessionIds);
+      });
+
       if (fullCatalogGeneration > 0) {
-        cleanupSessions(scopeKey, fullCatalogSessionIds);
+        const validSessionIds = projectArchivedSessions.some((session) => !fullCatalogSessionIds.has(session.id))
+          ? new Set([...fullCatalogSessionIds, ...projectArchivedSessions.map((session) => session.id)])
+          : fullCatalogSessionIds;
+        cleanupSessions(scopeKey, validSessionIds);
       }
     });
   }, [
@@ -81,9 +91,9 @@ export const useArchivedAutoFolders = (args: Args): void => {
     isSessionsLoading,
     fullCatalogGeneration,
     fullCatalogSessionIds,
-    foldersMap,
+    foldersHydrationGeneration,
     createFolder,
-    addSessionToFolder,
+    addSessionsToFolder,
     cleanupSessions,
   ]);
 };
