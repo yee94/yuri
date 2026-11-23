@@ -1400,6 +1400,7 @@ export function createContactTools({
         'Needs name, prompt, and a daily/weekly/once/cron schedule (time + timezone).',
         'Preserve the user reporting intent in prompt: deliver requested findings, or keep successful background work quiet when no report is wanted.',
         'Reuses this contact\'s provider/model unless the user named another connected model.',
+        'By default every run appends to the same worker session (the first run creates it); pass reuseSession="false" only when the user wants a fresh session per run.',
         'After success, call reference_resource to send its schedule card.',
       ].join(' '),
       parameters: scheduleTaskParameters,

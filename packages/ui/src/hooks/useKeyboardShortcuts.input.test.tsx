@@ -14,6 +14,7 @@ import { useAssistantUIStore } from '@/stores/useAssistantUIStore';
 import { assistantSnapshotQueryOptions } from '@/queries/assistantQueries';
 import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { getSessionSwitchIntent } from '@/lib/sessionSwitchIntent';
 import type { ChatInputSurface } from '@/components/chat/chatInputSurface';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 
@@ -126,6 +127,18 @@ test('a Tab consumed by the input never cycles again in the global listener', as
   textarea.addEventListener('keydown', (event) => event.preventDefault(), { once: true });
   await press({ key: 'Tab', code: 'Tab' });
   expect(mocks.cycle).not.toHaveBeenCalled();
+});
+
+test('Command+E reopens the sidebar and switches views without navigating the focused conversation', async () => {
+  vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Macintosh');
+  await act(async () => useUIStore.setState({ sidebarView: 'projects', isSidebarOpen: false }));
+  const intent = getSessionSwitchIntent();
+  for (const sidebarView of ['tasks', 'projects']) {
+    expect((await press({ key: 'e', code: 'KeyE', metaKey: true })).defaultPrevented).toBe(true);
+    expect(useUIStore.getState()).toMatchObject({ sidebarView, isSidebarOpen: true, activeMainTab: 'chat' });
+    expect(useSessionUIStore.getState().currentSessionId).toBe('session-input');
+    expect(getSessionSwitchIntent()).toBe(intent);
+  }
 });
 
 async function selectRemote(hubId: string | undefined = 'hub') {

@@ -6,6 +6,7 @@ type ReconcileSessionFocusArgs = {
   pinnedFocuses: readonly SessionFocusIdentity[];
   projectFocuses: readonly SessionFocusIdentity[];
   fallbackProjectId: string | null;
+  preferPinnedWithoutProject?: boolean;
 };
 
 const findPreferredFocus = (
@@ -41,6 +42,7 @@ export const reconcileSessionFocus = ({
   pinnedFocuses,
   projectFocuses,
   fallbackProjectId,
+  preferPinnedWithoutProject = false,
 }: ReconcileSessionFocusArgs): SessionFocusIdentity | null => {
   if (!currentSessionId) return null;
 
@@ -51,14 +53,13 @@ export const reconcileSessionFocus = ({
     currentSessionId,
     preferredProjectId,
     fallbackProjectId,
-  ) ?? {
-    scope: 'project',
-    sessionId: currentSessionId,
-    projectId: fallbackProjectId,
+  );
+  const projectFallback: SessionFocusIdentity = {
+    scope: 'project', sessionId: currentSessionId, projectId: fallbackProjectId,
   };
 
-  if (!focusMatchesCurrentSession || focus.scope === 'project') {
-    return projectFocus;
+  if ((!focusMatchesCurrentSession || focus.scope === 'project') && (projectFocus || !preferPinnedWithoutProject)) {
+    return projectFocus ?? projectFallback;
   }
 
   return findPreferredFocus(
@@ -66,5 +67,5 @@ export const reconcileSessionFocus = ({
     currentSessionId,
     preferredProjectId,
     fallbackProjectId,
-  ) ?? projectFocus;
+  ) ?? projectFocus ?? projectFallback;
 };

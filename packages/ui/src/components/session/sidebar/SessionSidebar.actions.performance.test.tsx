@@ -13,6 +13,9 @@ import {
     publishSidebarNumberedNavigation,
 } from '@/sync/sidebar-numbered-navigation';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
+import { useSessionFocusStore } from '@/stores/useSessionFocusStore';
+import { reconcileSessionFocus } from './sessionFocusReconciliation';
+import { resolveFocusedProjectTarget } from './resolveFocusedProjectTarget';
 
 test('task header add opens the add-project dialog rather than a new session', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -76,6 +79,7 @@ test('archiving the focused task keeps the archive shelf closed and focuses the 
     let intent = {};
     const compiled = ts.transpileModule(`return function Surface({ taskBuckets, currentSessionId = 'b', id = 'b', nextSettled = true, taskViewActive = true }) {
         const taskViewAvailable = true, activeMainTab = 'chat', pinnedSessions = [], pinnedSessionIds = new Set();
+        const rankedTaskBuckets = taskBuckets;
         const sessionOwnership = { bySessionId: new Map(['a', 'b', 'c'].map(id => [id, { projectId: 'project', scopeDirectory: '/repo' }])) };
         const [taskShelves, setTaskShelves] = React.useState({ settledOpen: false, settledLimit: 30 });
         const handleSessionSelect = select, openNewSessionDraft = draft;
@@ -369,6 +373,82 @@ test('collapsing the sidebar retains pinned and in-progress shortcut targets unt
         await act(async () => root.unmount());
         expect(activateSidebarNumberedSession(1)).toBe(false);
         clearSidebarNumberedNavigation();
+        vi.unstubAllGlobals();
+    }
+});
+
+test('changing sidebar views follows the routed session in both directions without a new navigation intent', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');
+    const ast = ts.createSourceFile('SessionSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const statements: string[] = [];
+    const visit = (node: ts.Node) => {
+        if (ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => [
+            'pinnedFocusIdentities', 'projectFocusIdentities', 'focusedProjectTarget',
+            'revealedSessionSwitchRevisionRef', 'revealedForCurrentSessionRef',
+        ].includes(declaration.name.getText(ast)))) statements.push(node.getText(ast));
+        if (ts.isExpressionStatement(node) && /^React\.use(?:Layout)?Effect\(/.test(node.getText(ast))
+            && /reconcileSessionFocus|revealedForCurrentSessionRef/.test(node.getText(ast))) statements.push(node.getText(ast));
+        ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    const compiled = ts.transpileModule(`return function Surface({ taskViewActive, pinned, isVisible = true }) {
+        const sessionFocus = useSessionFocusStore(state => state.focus);
+        const currentSessionId = 'current', isProjectSessionsSyncing = false;
+        const row = { node: { session: { id: currentSessionId }, children: [] }, projectId: 'project' };
+        const projectSections = [{ project: { id: 'project' }, groups: [{ sessions: [row.node] }] }];
+        const projectNavigationTargets = [target];
+        const pinnedNavigationTargets = pinned || !taskViewActive ? [{ ...target, scope: 'pinned' }] : [];
+        const taskNavigationTargets = pinned ? [] : [target];
+        const sessionSidebarMetaById = new Map([[currentSessionId, row]]);
+        const sessionSwitchIntent = intent;
+        const setCollapsedGroups = noop, setVisibleSessionCountByGroup = noop;
+        ${statements.join('\n')}
+        return null;
+    }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    const target = { scope: 'project' as const, sessionId: 'current', projectId: 'project', directory: '/project' };
+    const intent = { sessionId: target.sessionId, revision: 42 };
+    const focus = (scope: 'pinned' | 'project') => ({ scope, sessionId: target.sessionId, projectId: target.projectId });
+    const expand = vi.fn();
+    const Surface = new Function(
+        'React', 'useSessionFocusStore', 'reconcileSessionFocus', 'resolveFocusedProjectTarget',
+        'syncSidebarVisualSelection', 'ensureProjectExpanded', 'target', 'intent', 'noop', compiled,
+    )(React, useSessionFocusStore, reconcileSessionFocus, resolveFocusedProjectTarget,
+        useSessionFocusStore.getState().setFocus, expand, target, intent, () => {});
+    const root = createRoot(document.createElement('div'));
+    const render = async (taskViewActive: boolean, pinned = false, isVisible = true) => {
+        await act(async () => root.render(<Surface taskViewActive={taskViewActive} pinned={pinned} isVisible={isVisible} />));
+    };
+    const select = async (scope: 'pinned' | 'project') => {
+        await act(async () => useSessionFocusStore.getState().setFocus(focus(scope)));
+    };
+    try {
+        await select('pinned');
+        await render(false);
+        expect(useSessionFocusStore.getState().focus).toEqual(focus('pinned'));
+        await render(true);
+        expect.soft(useSessionFocusStore.getState().focus).toEqual(focus('project'));
+        expect.soft(expand).not.toHaveBeenCalled();
+        await render(false);
+        expect.soft(expand).toHaveBeenCalledExactlyOnceWith('project');
+        expand.mockClear();
+
+        await render(true);
+        await render(false, false, false);
+        expect.soft(expand).not.toHaveBeenCalled();
+        await render(false);
+        expect.soft(expand).toHaveBeenCalledExactlyOnceWith('project');
+        expand.mockClear();
+        for (let index = 0; index < 50; index++) await render(false);
+        expect(expand).not.toHaveBeenCalled();
+
+        await render(false, true);
+        await select('project');
+        await render(true, true);
+        expect(useSessionFocusStore.getState().focus).toEqual(focus('pinned'));
+    } finally {
+        await act(async () => root.unmount());
+        useSessionFocusStore.getState().setFocus(null);
         vi.unstubAllGlobals();
     }
 });

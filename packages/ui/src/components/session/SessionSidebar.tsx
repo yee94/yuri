@@ -2175,8 +2175,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     }
     // Pinned rows first, then the unlabeled in-progress rows; both live in the
     // top `pinned` scope (VS Code included — its pinned list is simply empty).
-    // The task view owns running rows in its In progress shelf, so the top
-    // section contributes pinned rows only there.
+    // The task view renders running rows as task cards, so its top section
+    // contributes pinned rows only.
     const topItems = taskViewActive ? pinnedItems : [...pinnedItems, ...displayInProgressItems];
     return topItems.map((item, visibleIndex) => {
       const session = item.node.session;
@@ -2335,30 +2335,19 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   }, [numberedSidebarSessionTargets]);
 
   const pinnedFocusIdentities = React.useMemo<SessionFocusIdentity[]>(() => {
-    if (!currentSessionId || hasSessionSearchQuery) {
-      return [];
-    }
-
-    const identities: SessionFocusIdentity[] = [];
-    const visit = (node: SessionNode, projectId: string | null): void => {
-      if (node.session.id === currentSessionId) {
-        identities.push({
-          scope: "pinned",
-          sessionId: currentSessionId,
-          projectId,
-        });
-        return;
-      }
-      node.children.forEach((child) => visit(child, projectId));
-    };
-    pinnedItems.forEach((item) => visit(item.node, item.projectId));
-    inProgressItems.forEach((item) => visit(item.node, item.projectId));
-    return identities;
-  }, [currentSessionId, hasSessionSearchQuery, inProgressItems, pinnedItems]);
+    if (!currentSessionId) return [];
+    return pinnedNavigationTargets
+      .filter((target) => target.sessionId === currentSessionId)
+      .map(({ scope, sessionId, projectId }) => ({ scope, sessionId, projectId }));
+  }, [currentSessionId, pinnedNavigationTargets]);
 
   const projectFocusIdentities = React.useMemo<SessionFocusIdentity[]>(() => {
     if (!currentSessionId) {
       return [];
+    }
+    if (taskViewActive) {
+      const task = taskNavigationTargets.find((target) => target.sessionId === currentSessionId);
+      return task ? [{ scope: task.scope, sessionId: task.sessionId, projectId: task.projectId }] : [];
     }
     const identities: SessionFocusIdentity[] = [];
     const visit = (node: SessionNode, projectId: string): void => {
@@ -2378,7 +2367,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       });
     });
     return identities;
-  }, [currentSessionId, projectSections]);
+  }, [currentSessionId, projectSections, taskNavigationTargets, taskViewActive]);
 
   React.useLayoutEffect(
     () =>
@@ -2390,7 +2379,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   );
 
   React.useLayoutEffect(() => {
-    if (!isVisible || isProjectSessionsSyncing) {
+    if (!isVisible || (!taskViewActive && isProjectSessionsSyncing)) {
       return;
     }
 
@@ -2402,6 +2391,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       fallbackProjectId: currentSessionId
         ? (sessionSidebarMetaById.get(currentSessionId)?.projectId ?? null)
         : null,
+      preferPinnedWithoutProject: taskViewActive,
     });
     syncSidebarVisualSelection(reconciledFocus);
   }, [
@@ -2412,11 +2402,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     pinnedFocusIdentities,
     sessionFocus,
     sessionSidebarMetaById,
+    taskViewActive,
   ]);
 
   // Deep links announce focus with projectId=null; resolve among already-loaded
   // navigation targets only (never invent unloaded sessions).
   const focusedProjectTarget = React.useMemo(() => {
+    if (taskViewActive) return null;
     const metaProjectId = sessionFocus?.sessionId
       ? (sessionSidebarMetaById.get(sessionFocus.sessionId)?.projectId ?? null)
       : null;
@@ -2425,7 +2417,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       projectNavigationTargets,
       metaProjectId,
     );
-  }, [projectNavigationTargets, sessionFocus, sessionSidebarMetaById]);
+  }, [projectNavigationTargets, sessionFocus, sessionSidebarMetaById, taskViewActive]);
 
   const revealedSessionSwitchRevisionRef = React.useRef<number | null>(null);
   const revealedForCurrentSessionRef = React.useRef<string | null>(null);
@@ -2443,7 +2435,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   // fetch more sessions from the server. Unloaded ids produce no target and
   // are ignored.
   React.useLayoutEffect(() => {
-    if (!focusedProjectTarget?.projectId) {
+    // A task-view visit ends the current reveal cycle without touching the router.
+    if (taskViewActive) {
+      revealedSessionSwitchRevisionRef.current = null;
+      revealedForCurrentSessionRef.current = null;
+      return;
+    }
+    if (!isVisible || !focusedProjectTarget?.projectId) {
       return;
     }
     const sessionId = focusedProjectTarget.sessionId;
@@ -2508,7 +2506,9 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   }, [
     currentSessionId,
     focusedProjectTarget,
+    isVisible,
     sessionSwitchIntent,
+    taskViewActive,
   ]);
 
   const renderSessionNode = useStableRenderCallback(
