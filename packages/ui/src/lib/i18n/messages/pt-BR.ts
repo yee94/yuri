@@ -572,6 +572,8 @@ export const dict: Record<I18nKey, string> = {
   "sessions.scheduledTasks.editor.enabled.label": "Ativado",
   "sessions.scheduledTasks.editor.goal.label": "Executar como objetivo",
   "sessions.scheduledTasks.editor.goal.aria": "Executar esta tarefa como um objetivo que o agente persegue até concluir",
+  "sessions.scheduledTasks.editor.reuseSession.label": "Anexar à mesma sessão",
+  "sessions.scheduledTasks.editor.reuseSession.aria": "Anexar cada execução à sessão da execução anterior em vez de criar uma nova sessão",
   "sessions.scheduledTasks.editor.goal.budgetLabel": "Orçamento de tokens",
   "sessions.scheduledTasks.editor.goal.budgetAria": "Limitar o objetivo a um orçamento de tokens",
   "sessions.scheduledTasks.editor.actions.closeAria": "Fechar",

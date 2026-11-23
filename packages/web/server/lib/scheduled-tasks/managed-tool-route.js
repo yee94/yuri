@@ -152,11 +152,12 @@ const validateTaskInputFields = (input) => {
   }
   if (input.execution !== undefined) {
     const execution = asObject(input.execution, 'input.execution');
-    hasOnlyKeys(execution, new Set(['prompt', 'providerID', 'modelID', 'agent', 'variant', 'goalEnabled']), 'input.execution');
+    hasOnlyKeys(execution, new Set(['prompt', 'providerID', 'modelID', 'agent', 'variant', 'goalEnabled', 'reuseSession']), 'input.execution');
     for (const key of ['prompt', 'providerID', 'modelID', 'agent', 'variant']) {
       if (execution[key] !== undefined) asString(execution[key], `input.execution.${key}`, key === 'prompt' ? MAX_PROMPT_LENGTH : MAX_ID_LENGTH);
     }
     if (execution.goalEnabled !== undefined && typeof execution.goalEnabled !== 'boolean') throw new Error('input.execution.goalEnabled is invalid');
+    if (execution.reuseSession !== undefined && typeof execution.reuseSession !== 'boolean') throw new Error('input.execution.reuseSession is invalid');
   }
 };
 

@@ -423,6 +423,7 @@ interface MarkdownRendererProps {
   variant?: MarkdownVariant;
   onShowPopup?: (content: ToolPopupContent) => void;
   enableFileReferences?: boolean;
+  openLinksExternally?: boolean;
 }
 
 const FILE_REFERENCE_ANNOTATION_DELAY_MS = 160;
@@ -1230,6 +1231,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   variant = 'assistant',
   onShowPopup,
   enableFileReferences = true,
+  openLinksExternally = false,
 }) => {
   const currentTheme = useCurrentMermaidTheme();
   const { editor, runtime } = useRuntimeAPIs();
@@ -1271,7 +1273,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   useExternalLinkInteractions({
     containerRef,
     effectiveDirectory,
-    openInAppBrowser,
+    openInAppBrowser: openLinksExternally ? undefined : openInAppBrowser,
     fileReference: enableFileReferences && !isStreaming ? { effectiveDirectory, scope: hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined, editor, preferRuntimeEditor: runtime.isVSCode, onShowPopup } : undefined,
   });
   const {
@@ -1360,6 +1362,7 @@ export const MarkdownRenderer = React.memo(MarkdownRendererImpl, (prev, next) =>
     && prev.messageId === next.messageId
     && prev.onShowPopup === next.onShowPopup
     && prev.enableFileReferences === next.enableFileReferences
+    && prev.openLinksExternally === next.openLinksExternally
     && prev.part?.id === next.part?.id;
 });
 

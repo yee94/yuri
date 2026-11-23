@@ -557,6 +557,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.scheduledTasks.editor.enabled.label': '활성화됨',
   'sessions.scheduledTasks.editor.goal.label': '목표로 실행',
   'sessions.scheduledTasks.editor.goal.aria': '이 작업을 에이전트가 완료까지 추진하는 목표로 실행합니다',
+  'sessions.scheduledTasks.editor.reuseSession.label': '같은 세션에 이어서 실행',
+  'sessions.scheduledTasks.editor.reuseSession.aria': '실행할 때마다 새 세션을 만들지 않고 이전 실행의 세션에 이어서 추가합니다',
   'sessions.scheduledTasks.editor.goal.budgetLabel': '토큰 예산',
   'sessions.scheduledTasks.editor.goal.budgetAria': '목표를 토큰 예산으로 제한합니다',
   'sessions.scheduledTasks.editor.actions.closeAria': '닫기',

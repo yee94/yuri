@@ -557,6 +557,8 @@ export const dict = {
   'sessions.scheduledTasks.editor.enabled.label': 'Enabled',
   'sessions.scheduledTasks.editor.goal.label': 'Run as goal',
   'sessions.scheduledTasks.editor.goal.aria': 'Run this schedule as a goal the agent pursues to completion',
+  'sessions.scheduledTasks.editor.reuseSession.label': 'Append to the same session',
+  'sessions.scheduledTasks.editor.reuseSession.aria': 'Append each run to the previous run\'s session instead of creating a new session',
   'sessions.scheduledTasks.editor.goal.budgetLabel': 'Token budget',
   'sessions.scheduledTasks.editor.goal.budgetAria': 'Limit the goal to a token budget',
   'sessions.scheduledTasks.editor.actions.closeAria': 'Close',

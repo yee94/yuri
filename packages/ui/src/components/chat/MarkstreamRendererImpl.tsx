@@ -62,6 +62,7 @@ interface MarkstreamRendererProps {
   variant?: MarkdownVariant;
   onShowPopup?: (content: ToolPopupContent) => void;
   enableFileReferences?: boolean;
+  openLinksExternally?: boolean;
 }
 
 const markdownContentClassName = (variant: MarkdownVariant): string =>
@@ -81,6 +82,7 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
   variant = 'assistant',
   onShowPopup,
   enableFileReferences = true,
+  openLinksExternally = false,
 }) => {
   const themeSystem = useOptionalThemeSystem();
   const isDark = themeSystem?.currentTheme.metadata.variant === 'dark';
@@ -145,7 +147,7 @@ const MarkstreamRendererImpl: React.FC<MarkstreamRendererProps> = ({
       onShowPopup,
       fileReference: fileReferenceOptions,
       effectiveDirectory,
-      openInAppBrowser,
+      openInAppBrowser: openLinksExternally ? undefined : openInAppBrowser,
     });
   });
   const handleKeyDown = useEvent((event: KeyboardEvent) => {
@@ -202,6 +204,7 @@ const MarkstreamRendererCore = React.memo(MarkstreamRendererImpl, (prev, next) =
     && prev.messageId === next.messageId
     && prev.onShowPopup === next.onShowPopup
     && prev.enableFileReferences === next.enableFileReferences
+    && prev.openLinksExternally === next.openLinksExternally
     && prev.part?.id === next.part?.id
 ));
 

@@ -282,6 +282,7 @@ const normalizeExecution = (value) => {
   const variant = asNonEmptyString(value.variant);
   const agent = asNonEmptyString(value.agent);
   const goalEnabled = value.goalEnabled === true;
+  const reuseSession = value.reuseSession === true;
 
   if (!prompt) {
     throw new Error('execution.prompt is required');
@@ -303,6 +304,7 @@ const normalizeExecution = (value) => {
     ...(variant ? { variant } : {}),
     ...(agent ? { agent } : {}),
     ...(goalEnabled ? { goalEnabled: true } : {}),
+    ...(reuseSession ? { reuseSession: true } : {}),
   };
 };
 

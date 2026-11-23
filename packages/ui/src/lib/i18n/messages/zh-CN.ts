@@ -557,6 +557,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.scheduledTasks.editor.enabled.label': '已启用',
   'sessions.scheduledTasks.editor.goal.label': '作为目标运行',
   'sessions.scheduledTasks.editor.goal.aria': '将此计划作为代理持续推进直至完成的目标运行',
+  'sessions.scheduledTasks.editor.reuseSession.label': '追加到同一会话',
+  'sessions.scheduledTasks.editor.reuseSession.aria': '每次运行都追加到上一次运行的会话，而不是新建会话',
   'sessions.scheduledTasks.editor.goal.budgetLabel': 'Tokens 预算',
   'sessions.scheduledTasks.editor.goal.budgetAria': '用 Tokens 预算限制该目标',
   'sessions.scheduledTasks.editor.actions.closeAria': '关闭',

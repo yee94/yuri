@@ -572,6 +572,8 @@ export const dict: Record<I18nKey, string> = {
   "sessions.scheduledTasks.editor.enabled.label": "Увімкнено",
   "sessions.scheduledTasks.editor.goal.label": "Виконати як ціль",
   "sessions.scheduledTasks.editor.goal.aria": "Виконати це завдання як ціль, яку агент веде до завершення",
+  "sessions.scheduledTasks.editor.reuseSession.label": "Додавати до тієї самої сесії",
+  "sessions.scheduledTasks.editor.reuseSession.aria": "Додавати кожен запуск до сесії попереднього запуску замість створення нової сесії",
   "sessions.scheduledTasks.editor.goal.budgetLabel": "Бюджет токенів",
   "sessions.scheduledTasks.editor.goal.budgetAria": "Обмежити ціль бюджетом токенів",
   "sessions.scheduledTasks.editor.actions.closeAria": "Закрити",

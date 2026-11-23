@@ -22,6 +22,7 @@ export type ScheduledTask = {
     variant?: string;
     agent?: string;
     goalEnabled?: boolean;
+    reuseSession?: boolean;
   };
   state: {
     createdAt: number;

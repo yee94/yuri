@@ -835,6 +835,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                                 isStreaming={message.status === 'streaming'}
                                 variant="assistant"
                                 enableFileReferences={false}
+                                openLinksExternally
                                 onShowPopup={handleShowPopup}
                                 className="w-full min-w-0 [overflow-wrap:anywhere]"
                               />

@@ -570,6 +570,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.scheduledTasks.editor.enabled.label': '已啟用',
   'sessions.scheduledTasks.editor.goal.label': '作為目標執行',
   'sessions.scheduledTasks.editor.goal.aria': '將此任務作為代理持續推進直至完成的目標執行',
+  'sessions.scheduledTasks.editor.reuseSession.label': '附加到同一個工作階段',
+  'sessions.scheduledTasks.editor.reuseSession.aria': '每次執行都附加到上一次執行的工作階段，而不是建立新的工作階段',
   'sessions.scheduledTasks.editor.goal.budgetLabel': 'Tokens 預算',
   'sessions.scheduledTasks.editor.goal.budgetAria': '以 Tokens 預算限制該目標',
   'sessions.scheduledTasks.editor.actions.closeAria': '關閉',

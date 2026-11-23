@@ -33,6 +33,7 @@ export default async function scheduledTaskPlugin() {
         additionalProperties: false,
         properties: {
           prompt: { type: 'string' }, providerID: { type: 'string' }, modelID: { type: 'string' }, agent: { type: 'string' }, variant: { type: 'string' }, goalEnabled: { type: 'boolean' },
+          reuseSession: { type: 'boolean', description: 'true appends each run to the previous run session instead of creating a new one. Default false.' },
         },
       },
     },

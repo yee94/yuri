@@ -841,6 +841,33 @@ export const createScheduledTasksRuntime = (deps) => {
     }
   };
 
+  // Reuse falls back to a new session when the previous one is gone or still busy; goal runs always start fresh.
+  const resolveReusableSession = async ({ client, task, signal }) => {
+    const candidate = task.state?.lastSessionId;
+    if (!task.execution.reuseSession || task.execution.goalEnabled || typeof candidate !== 'string' || !candidate) {
+      return null;
+    }
+    const requestOptions = signal ? { signal } : undefined;
+    try {
+      const session = await client.session.get({ sessionID: candidate }, requestOptions);
+      if (!session || session.id !== candidate || session.error) return null;
+      return (await isSessionFamilyBusy(client, candidate, requestOptions)) === false ? candidate : null;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return null;
+    }
+  };
+
+  const readTailMessageID = async (client, sessionID, requestOptions) => {
+    try {
+      const messages = await listLatestMessages(client, sessionID, requestOptions);
+      return readMessageInfo(messages?.[0])?.id ?? null;
+    } catch (error) {
+      if (requestOptions?.signal?.aborted) throw error;
+      return null;
+    }
+  };
+
   const runSessionPrompt = async ({ client, sessionID, projectPath, task, signal }) => {
     signal?.throwIfAborted?.();
     const requestOptions = signal ? { signal } : undefined;
@@ -867,6 +894,7 @@ export const createScheduledTasksRuntime = (deps) => {
     signal,
     projectPath,
     goalEnabled,
+    baselineMessageID = null,
   }) => {
     const requestOptions = signal ? { signal } : undefined;
     let emptyIdleProbes = 0;
@@ -899,7 +927,11 @@ export const createScheduledTasksRuntime = (deps) => {
       try {
         const messages = await listLatestMessages(client, sessionID, requestOptions);
         if (messages) {
-          const classified = classifyMessageTail(messages, executionErrorsBySession.get(sessionID));
+          // A reused session still ends with the previous run's turn until the new prompt lands.
+          const staleTail = baselineMessageID !== null && readMessageInfo(messages[0])?.id === baselineMessageID;
+          const classified = staleTail
+            ? { outcome: 'awaiting_assistant' }
+            : classifyMessageTail(messages, executionErrorsBySession.get(sessionID));
           if (classified.outcome === 'success' || classified.outcome === 'error') {
             return classified;
           }
@@ -1038,24 +1070,31 @@ export const createScheduledTasksRuntime = (deps) => {
     };
 
     try {
-      const isolationMetadata = buildScheduledTaskMetadata({
-        projectID,
-        taskID: task.id,
-        runID,
-        name: task.name,
-      });
-      const session = await delivery.createSession({
-        client,
-        input: buildSessionCreateInput(task, projectPath, title, isolationMetadata),
-        signal,
-        deadlineMs: createPhaseDeadlineMs,
-        sleep,
-      });
-      sessionID = session?.id;
-      if (!sessionID) {
-        throw new Error('failed to create session; creation outcome unknown');
+      const reusedSessionID = await resolveReusableSession({ client, task, signal });
+      let baselineMessageID = null;
+      if (reusedSessionID) {
+        sessionID = reusedSessionID;
+        baselineMessageID = await readTailMessageID(client, sessionID, signal ? { signal } : undefined);
+      } else {
+        const isolationMetadata = buildScheduledTaskMetadata({
+          projectID,
+          taskID: task.id,
+          runID,
+          name: task.name,
+        });
+        const session = await delivery.createSession({
+          client,
+          input: buildSessionCreateInput(task, projectPath, title, isolationMetadata),
+          signal,
+          deadlineMs: createPhaseDeadlineMs,
+          sleep,
+        });
+        sessionID = session?.id;
+        if (!sessionID) {
+          throw new Error('failed to create session; creation outcome unknown');
+        }
+        await persistScheduledTaskIsolation(sessionID, projectPath, isolationMetadata);
       }
-      await persistScheduledTaskIsolation(sessionID, projectPath, isolationMetadata);
 
       if (signal) {
         if (signal.aborted) {
@@ -1123,6 +1162,7 @@ export const createScheduledTasksRuntime = (deps) => {
         signal,
         projectPath,
         goalEnabled: task.execution.goalEnabled || /^\/goal\b/i.test(task.execution.prompt.trim()),
+        baselineMessageID,
       });
 
       const finishedAt = Date.now();

@@ -678,6 +678,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.scheduledTasks.editor.enabled.label': 'Włączone',
   'sessions.scheduledTasks.editor.goal.label': 'Uruchom jako cel',
   'sessions.scheduledTasks.editor.goal.aria': 'Uruchom to zadanie jako cel, do którego agent dąży aż do ukończenia',
+  'sessions.scheduledTasks.editor.reuseSession.label': 'Dołącz do tej samej sesji',
+  'sessions.scheduledTasks.editor.reuseSession.aria': 'Dołączaj każde uruchomienie do sesji poprzedniego uruchomienia zamiast tworzyć nową sesję',
   'sessions.scheduledTasks.editor.goal.budgetLabel': 'Budżet tokenów',
   'sessions.scheduledTasks.editor.goal.budgetAria': 'Ogranicz cel budżetem tokenów',
   'sessions.scheduledTasks.editor.actions.closeAria': 'Zamknij',

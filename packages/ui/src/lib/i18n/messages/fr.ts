@@ -338,6 +338,8 @@ export const dict = {
   'sessions.scheduledTasks.editor.enabled.label': 'Activé',
   'sessions.scheduledTasks.editor.goal.label': 'Exécuter comme objectif',
   'sessions.scheduledTasks.editor.goal.aria': 'Exécuter cette tâche comme un objectif que l\'agent poursuit jusqu\'au bout',
+  'sessions.scheduledTasks.editor.reuseSession.label': 'Ajouter à la même session',
+  'sessions.scheduledTasks.editor.reuseSession.aria': 'Ajouter chaque exécution à la session de l\'exécution précédente au lieu de créer une nouvelle session',
   'sessions.scheduledTasks.editor.goal.budgetLabel': 'Budget de tokens',
   'sessions.scheduledTasks.editor.goal.budgetAria': 'Limiter l’objectif à un budget de tokens',
   'sessions.scheduledTasks.editor.actions.closeAria': 'Fermer',

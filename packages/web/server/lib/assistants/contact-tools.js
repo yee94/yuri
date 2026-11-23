@@ -250,6 +250,7 @@ const scheduleTaskParameters = typeboxObject({
   providerID: typeboxOptional(typeboxString('OpenCode provider ID. Defaults to this contact\'s provider.')),
   modelID: typeboxOptional(typeboxString('OpenCode model ID. Defaults to this contact\'s model.')),
   model: typeboxOptional(typeboxString('Optional provider/model string such as opencode-go/deepseek-v4-flash.')),
+  reuseSession: typeboxOptional(typeboxString('"false" to open a fresh session on every run. Default: every run appends to the same session.')),
 });
 
 const listScheduledTasksParameters = typeboxObject({

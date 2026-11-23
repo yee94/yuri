@@ -475,6 +475,7 @@ type ScheduledTaskDraft = {
     variant: string;
     agent: string;
     goalEnabled: boolean;
+    reuseSession: boolean;
   };
   state?: ScheduledTask['state'];
 };
@@ -525,6 +526,7 @@ const toDraft = (
         variant: defaults.variant,
         agent: defaults.agent,
         goalEnabled: false,
+        reuseSession: false,
       },
     };
   }
@@ -559,6 +561,7 @@ const toDraft = (
       variant: task.execution.variant || '',
       agent: task.execution.agent || '',
       goalEnabled: task.execution.goalEnabled === true,
+      reuseSession: task.execution.reuseSession === true,
     },
     state: task.state,
   };
@@ -1161,6 +1164,7 @@ export function ScheduledTaskEditorDialog(props: {
         ...(draft.execution.variant.trim() ? { variant: draft.execution.variant.trim() } : {}),
         ...(draft.execution.agent.trim() ? { agent: draft.execution.agent.trim() } : {}),
         ...(draft.execution.goalEnabled ? { goalEnabled: true } : {}),
+        ...(draft.execution.reuseSession ? { reuseSession: true } : {}),
       },
       ...(draft.state ? { state: draft.state } : {}),
     };
@@ -1583,6 +1587,21 @@ export function ScheduledTaskEditorDialog(props: {
                 </span>
               </label>
             ) : null}
+            {groupedPanel ? (
+              <label className={cn(panelRowClassName, 'cursor-pointer')}>
+                <span className="typography-ui-label text-foreground">{t('sessions.scheduledTasks.editor.reuseSession.label')}</span>
+                <span data-settings-value="" className="yuri-settings-split-row-control">
+                  <Checkbox
+                    checked={draft.execution.reuseSession}
+                    onChange={(reuseSession) => setDraft((prev) => ({
+                      ...prev,
+                      execution: { ...prev.execution, reuseSession },
+                    }))}
+                    ariaLabel={t('sessions.scheduledTasks.editor.reuseSession.aria')}
+                  />
+                </span>
+              </label>
+            ) : null}
           </div>
         </div>
 
@@ -1675,6 +1694,17 @@ export function ScheduledTaskEditorDialog(props: {
                 ariaLabel={t('sessions.scheduledTasks.editor.goal.aria')}
               />
               <span className="typography-meta">{t('sessions.scheduledTasks.editor.goal.label')}</span>
+            </label>
+            <label className="inline-flex cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={draft.execution.reuseSession}
+                onChange={(reuseSession) => setDraft((prev) => ({
+                  ...prev,
+                  execution: { ...prev.execution, reuseSession },
+                }))}
+                ariaLabel={t('sessions.scheduledTasks.editor.reuseSession.aria')}
+              />
+              <span className="typography-meta">{t('sessions.scheduledTasks.editor.reuseSession.label')}</span>
             </label>
           </div> : null}
       </div>

@@ -1048,6 +1048,64 @@ describe('scheduled-tasks run history and session lifecycle', () => {
     expect(client.active.mock.invocationCallOrder[0]).toBeGreaterThan(client.prompt.mock.invocationCallOrder[0]);
   });
 
+  describe('reuseSession', () => {
+    const reuseTask = {
+      ...scheduledTask,
+      execution: { ...scheduledTask.execution, reuseSession: true },
+      state: { ...scheduledTask.state, lastSessionId: 'ses_prev' },
+    };
+    const createReuseRuntime = (history, projectConfigRuntime) => createRuntime(projectConfigRuntime.updateScheduledTaskState, {
+      runHistoryStore: history,
+      waitForOpenCodeReady: vi.fn(async () => {}),
+      projectConfigRuntime,
+    });
+    const createProjectConfig = (task) => ({
+      listScheduledTasks: vi.fn(async () => [task]),
+      updateScheduledTaskState: vi.fn(async (_projectID, _taskID, state) => ({
+        task: { ...task, state: { ...task.state, ...state } },
+      })),
+      upsertScheduledTask: vi.fn(),
+    });
+
+    it('appends to the previous session without creating one and ignores the stale tail until the new turn lands', async () => {
+      const history = createHistoryStore();
+      let listed = 0;
+      const client = createSuccessfulClient({
+        sessionID: 'ses_prev',
+        messageListImpl: () => {
+          listed += 1;
+          return { data: [listed <= 2 ? completedAssistant('msg_old') : completedAssistant('msg_new')] };
+        },
+      });
+      const runtime = createReuseRuntime(history, createProjectConfig(reuseTask));
+      await runtime.syncProject('project-1');
+      const result = await runtime.runNow('project-1', 'task-1');
+
+      expect(result.ok).toBe(true);
+      expect(client.create).not.toHaveBeenCalled();
+      expect(client.prompt).toHaveBeenCalledWith({ sessionID: 'ses_prev', text: 'run' }, expect.anything());
+      expect(history.attachSession).toHaveBeenCalledWith(expect.any(String), 'ses_prev');
+      expect(history.finishRun).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: 'success', sessionId: 'ses_prev' }));
+      expect(listed).toBeGreaterThan(2);
+    });
+
+    it.each([
+      ['the previous session is gone', (client) => client.get.mockRejectedValue(Object.assign(new Error('missing'), { status: 404 }))],
+      ['the previous session is busy', (client) => client.active.mockResolvedValueOnce({ ses_prev: { type: 'running' } })],
+    ])('creates a new session when %s', async (_name, arrange) => {
+      const history = createHistoryStore();
+      const client = createSuccessfulClient({ sessionID: 'ses_prev' });
+      arrange(client);
+      client.create.mockResolvedValue({ id: 'ses_new' });
+      const runtime = createReuseRuntime(history, createProjectConfig(reuseTask));
+      await runtime.syncProject('project-1');
+      await runtime.runNow('project-1', 'task-1');
+
+      expect(client.create).toHaveBeenCalledTimes(1);
+      expect(client.prompt).toHaveBeenCalledWith({ sessionID: 'ses_new', text: 'run' }, expect.anything());
+    });
+  });
+
   it('refuses before session create when Host metadata persist is not configured', async () => {
     const history = createHistoryStore();
     const client = createSuccessfulClient();

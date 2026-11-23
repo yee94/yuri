@@ -2898,6 +2898,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         prompt: params.prompt,
         providerID: params.providerID,
         modelID: params.modelID,
+        reuseSession: params.reuseSession !== false && params.reuseSession !== 'false',
       },
     });
     const taskID = upserted?.task?.id;

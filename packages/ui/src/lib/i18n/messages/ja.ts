@@ -557,6 +557,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.scheduledTasks.editor.enabled.label': '有効',
   'sessions.scheduledTasks.editor.goal.label': 'ゴールとして実行',
   'sessions.scheduledTasks.editor.goal.aria': 'このタスクをエージェントが完了まで追求するゴールとして実行します',
+  'sessions.scheduledTasks.editor.reuseSession.label': '同じセッションに追記',
+  'sessions.scheduledTasks.editor.reuseSession.aria': '実行ごとに新しいセッションを作成せず、前回実行のセッションに追記します',
   'sessions.scheduledTasks.editor.goal.budgetLabel': 'トークン予算',
   'sessions.scheduledTasks.editor.goal.budgetAria': 'ゴールをトークン予算で制限します',
   'sessions.scheduledTasks.editor.actions.closeAria': '閉じる',
