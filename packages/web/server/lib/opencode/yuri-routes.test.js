@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { registerYuriRoutes } from './yuri-routes.js';
+import { configureOpenCodeCredentials } from './auth.js';
+import { registerConfigSyncRoutes } from '../config-sync/routes.js';
 import { checkForUpdates } from '../package-manager.js';
 
 vi.mock('../session-index/routes.js', () => ({ registerSessionIndexRoutes: vi.fn() }));
@@ -12,6 +14,20 @@ vi.mock('../package-manager.js', () => ({
   getUpdateCommand: vi.fn(),
   detectPackageManagerDetails: vi.fn(),
 }));
+
+describe('config-sync credential client injection', () => {
+  it('reads provider credentials through the backend-configured OpenCode client', async () => {
+    const list = vi.fn().mockResolvedValue([{
+      id: 'cred_1', integrationID: 'openai', label: 'Work', active: true, value: { type: 'key', key: 'secret' },
+    }]);
+    configureOpenCodeCredentials(() => ({ credential: { list } }));
+    registerYuriRoutes(express(), { express, process: { versions: {}, env: {} } });
+
+    const { receiver } = vi.mocked(registerConfigSyncRoutes).mock.calls[0][1];
+    await expect(receiver.credentialInventory()).resolves.toEqual({ bytes: expect.any(Number) });
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('remote update installation runtime boundary', () => {
   beforeEach(() => {

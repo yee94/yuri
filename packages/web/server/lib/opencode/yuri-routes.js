@@ -2,6 +2,9 @@ import { registerSessionIndexRoutes } from '../session-index/routes.js';
 import { registerTranscriptCacheRoutes } from '../transcript-cache/routes.js';
 import { registerContentSearchRoutes } from '../content-search/routes.js';
 import { registerConfigSyncRoutes } from '../config-sync/routes.js';
+import { createConfigSyncReceiver } from '../config-sync/receiver.js';
+import { createCredentialSync } from '../config-sync/credentials.js';
+import { currentClient } from './auth.js';
 import { registerHostUpdateRoutes } from '../host-update/routes.js';
 
 export const registerYuriRoutes = (app, dependencies) => {
@@ -23,7 +26,12 @@ export const registerYuriRoutes = (app, dependencies) => {
   });
   registerTranscriptCacheRoutes(app, { transcriptCacheService });
   registerContentSearchRoutes(app, { contentSearch: dependencies.contentSearch, uiAuthController: dependencies.uiAuthController });
-  registerConfigSyncRoutes(app, { express });
+  // config-sync is installer-owned under desktop backend OTA, so its own `auth.js`
+  // instance is never configured. Inject this backend's configured client.
+  registerConfigSyncRoutes(app, {
+    express,
+    receiver: createConfigSyncReceiver({ credentials: createCredentialSync(currentClient) }),
+  });
   if (dependencies.hostUpdates) registerHostUpdateRoutes(app, {
     express, runtime: dependencies.hostUpdates, uiAuthController: dependencies.uiAuthController,
   });
