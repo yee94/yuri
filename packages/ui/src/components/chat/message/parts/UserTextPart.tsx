@@ -313,7 +313,7 @@ const UserTextPart: React.FC<UserTextPartProps> = ({ part, messageId, agentMenti
             ) : null}
             {textContent.trim().length > 0 ? <div
                 className={cn(
-                    "break-words font-sans",
+                    "break-words [overflow-wrap:anywhere] font-sans",
                     isPreview ? "typography-meta" : "typography-markdown-body",
                     isExpanded && "pb-3",
                     isCollapsed && "line-clamp-10",
