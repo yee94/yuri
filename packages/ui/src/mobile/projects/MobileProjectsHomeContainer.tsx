@@ -30,7 +30,7 @@ import { openRemoteProjectDraft } from '@/router/openRemoteProjectSession';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
 import { useSetSessionSettled } from '@/queries/sessionIndexSettleQueries';
 import { SETTLED_SHELF_PAGE_SIZE, type SidebarView } from '@/components/session/sidebar/taskView';
-import { syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
+import { refreshGlobalSessionsForDirectories, syncGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
 import { prefetchSessionTranscript } from '@/sync/session-actions';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isSessionSharingAvailable } from '@/sync/session-sharing-availability';
@@ -484,6 +484,32 @@ export function MobileProjectsHomeContainer({
       );
     })();
   });
+
+  // Background→foreground: the event stream may have missed session-index tips
+  // while the app was suspended, so pull authoritative snapshots for every local
+  // project root and its worktrees. Failures keep the previous list.
+  const handleSystemResume = useEvent(() => {
+    const worktreeCatalog = useSessionUIStore.getState().availableWorktreesByProject;
+    const directories = new Set<string>();
+    for (const project of useProjectsStore.getState().projects) {
+      if (project.hostId) continue;
+      const root = normalizePath(project.path);
+      if (!root) continue;
+      directories.add(root);
+      const worktrees = worktreeCatalog.get(project.path) ?? [];
+      for (const worktree of worktrees) {
+        const directory = normalizePath(worktree.path);
+        if (directory) directories.add(directory);
+      }
+    }
+    if (directories.size === 0) return;
+    void refreshGlobalSessionsForDirectories(directories, model.allSessions).catch(() => undefined);
+  });
+
+  React.useEffect(() => {
+    window.addEventListener('yuri:system-resume', handleSystemResume);
+    return () => window.removeEventListener('yuri:system-resume', handleSystemResume);
+  }, [handleSystemResume]);
 
   const handleWorktreeCreated = useEvent((worktreePath: string, options?: { sessionId?: string }) => {
     const projectId = worktreeDialogProjectId;
