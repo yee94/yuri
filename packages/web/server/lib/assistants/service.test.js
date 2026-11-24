@@ -5487,7 +5487,7 @@ describe('assistants service', () => {
       await service.whenContactTurnSettled(peer.messageID);
       expect(turns).toHaveLength(2);
       expect(turns[0].history.some((item) => item.content.includes('hello'))).toBe(false);
-      expect(turns[1].history.some((item) => item.content === 'first reply')).toBe(true);
+      expect(turns[1].history.some((item) => item.role === 'assistant' && item.content.includes('first reply'))).toBe(true);
       expect(turns[1].assistant.modelID).toBe('m');
       const db = new (require('better-sqlite3'))(path.join(directory, 'assistants.sqlite'));
       try { expect(db.prepare('SELECT resume_allowed FROM assistant_contact_watch WHERE session_id=?').get('ses_still_watched').resume_allowed).toBe(1); }

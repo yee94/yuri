@@ -77,6 +77,36 @@ describe('Assistant DTO parsing', () => {
       status: 'running',
       admittedAt: 99,
     });
+    expect(withActive?.activeContactTurns).toEqual([
+      {
+        turnID: 'turn_1',
+        messageID: 'turn_1',
+        status: 'running',
+        admittedAt: 99,
+      },
+    ]);
+    const withQueue = parseAssistantSnapshotDTO({
+      revision: 2,
+      enabled: true,
+      assistants: [{
+        ...assistantContractFixtures.assistant,
+        working: true,
+        activeContactTurn: { turnID: 'turn_1', messageID: 'turn_1', status: 'running', admittedAt: 10 },
+        activeContactTurns: [
+          { turnID: 'turn_1', messageID: 'turn_1', status: 'running', admittedAt: 10 },
+          { turnID: 'turn_2', messageID: 'turn_2', status: 'queued', admittedAt: 20 },
+        ],
+      }],
+    }).assistants[0];
+    expect(withQueue?.activeContactTurns).toEqual([
+      { turnID: 'turn_1', messageID: 'turn_1', status: 'running', admittedAt: 10 },
+      { turnID: 'turn_2', messageID: 'turn_2', status: 'queued', admittedAt: 20 },
+    ]);
+    expect(() => parseAssistantSnapshotDTO({
+      revision: 3,
+      enabled: true,
+      assistants: [{ ...assistantContractFixtures.assistant, activeContactTurns: [null] }],
+    })).toThrow(AssistantAPIError);
     expect('skillRoots' in snapshot.assistants[0]).toBe(false);
     expect(binding.directory).toBe('/workspace');
     expect(compact.binding.sessionID).toBe('ses_fixture');

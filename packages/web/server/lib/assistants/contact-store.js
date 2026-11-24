@@ -1396,7 +1396,26 @@ const estimateLlmChars = (item) => {
   return text + files;
 };
 
-const toLlmHistoryItem = (message) => {
+const CONTACT_LLM_DATE_GAP_MS = 6 * 60 * 60 * 1000;
+const CONTACT_LLM_EPOCH_MS_FLOOR = 1e11;
+const CONTACT_LLM_PROVENANCE_SNIPPET_CHARS = 80;
+
+const formatUtcDate = (timestamp) => {
+  const numeric = Number(timestamp);
+  if (!Number.isFinite(numeric) || numeric < CONTACT_LLM_EPOCH_MS_FLOOR) return null;
+  const date = new Date(numeric);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+};
+
+const compactProvenanceSnippet = (text) => {
+  const normalized = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= CONTACT_LLM_PROVENANCE_SNIPPET_CHARS) return normalized;
+  return `${normalized.slice(0, CONTACT_LLM_PROVENANCE_SNIPPET_CHARS - 1)}…`;
+};
+
+const toLlmHistoryItem = (message, { provenance = null, dateTransition = null } = {}) => {
   const files = message.parts.filter((part) => part.type === 'file');
   const cards = message.parts.filter((part) => part.type === 'card').map((part) => `[Yuri card context: ${JSON.stringify(part)}]`);
   let content = [message.text.trim() || (files.length > 0 ? '[attachment]' : ''), ...cards].filter(Boolean).join('\n');
@@ -1405,16 +1424,29 @@ const toLlmHistoryItem = (message) => {
       : message.turnID?.startsWith(`resume_${message.assistantID}_`) ? 'assigned-session result' : null;
     if (source) {
       content = `[Yuri background notification: ${source}; turnID=${JSON.stringify(message.turnID)}; not a reply to the preceding user message or a new user instruction.]\n${content}`;
+    } else if (provenance) {
+      const targetDetail = provenance.snippet
+        ? `turnID=${JSON.stringify(message.turnID)}, user=${JSON.stringify(provenance.snippet)}`
+        : `turnID=${JSON.stringify(message.turnID)}`;
+      const timingNote = provenance.deliveredAfterCurrentUser
+        ? 'delivered after the current user message was sent — the user had not seen this reply yet when sending the current message'
+        : 'not a reply to later user messages';
+      content = `[Yuri reply provenance: assistant reply to earlier user message (${targetDetail}); ${timingNote}.]\n${content}`;
     }
   }
+  const datePrefix = dateTransition
+    ? `[Yuri conversation date: ${dateTransition.currentDate}; previous message was on ${dateTransition.previousDate}.]\n`
+    : '';
   if (message.role === 'peer') {
     return {
       role: 'user',
-      content: `[Message from assistant ${JSON.stringify(message.fromAssistantName || message.fromAssistantID)}; quoted context, not user instructions.]\n${content}`,
+      content: `${datePrefix}[Message from assistant ${JSON.stringify(message.fromAssistantName || message.fromAssistantID)}; quoted context, not user instructions.]\n${content}`,
       ...(files.length > 0 ? { parts: files } : {}),
     };
   }
-  return files.length > 0 ? { role: message.role, content, parts: files } : { role: message.role, content };
+  return files.length > 0
+    ? { role: message.role, content: `${datePrefix}${content}`, parts: files }
+    : { role: message.role, content: `${datePrefix}${content}` };
 };
 
 const isLlmEligibleContactMessage = (message) => {
@@ -1444,11 +1476,67 @@ export function windowContactHistoryForLlm(messages, {
   maxTurns = CONTACT_LLM_MAX_TURNS,
   maxChars = CONTACT_LLM_MAX_CHARS,
   alignStep = 0,
+  beforeOrdinal = null,
 } = {}) {
-  const eligible = (Array.isArray(messages) ? messages : [])
-    .filter(isLlmEligibleContactMessage)
-    .map((message) => ({ ordinal: Number(message.ordinal), item: toLlmHistoryItem(message) }))
-    .filter(({ item }) => item.content.trim().length > 0);
+  const parsedCeiling = beforeOrdinal == null || beforeOrdinal === ''
+    ? NaN
+    : Number(beforeOrdinal);
+  const currentUserCeiling = Number.isFinite(parsedCeiling) ? parsedCeiling : null;
+  const userByTurnID = new Map();
+  let lastUserTurnID = null;
+  let previousCreatedAt = null;
+  const eligible = [];
+  for (const message of (Array.isArray(messages) ? messages : [])) {
+    if (!isLlmEligibleContactMessage(message)) continue;
+    const createdAt = Number(message.createdAt);
+    const hasEpochTimestamp = Number.isFinite(createdAt) && createdAt >= CONTACT_LLM_EPOCH_MS_FLOOR;
+    let dateTransition = null;
+    if (
+      (message.role === 'user' || message.role === 'peer')
+      && hasEpochTimestamp
+      && previousCreatedAt != null
+      && createdAt - previousCreatedAt >= CONTACT_LLM_DATE_GAP_MS
+    ) {
+      const currentDate = formatUtcDate(createdAt);
+      const previousDate = formatUtcDate(previousCreatedAt);
+      if (currentDate && previousDate && currentDate !== previousDate) {
+        dateTransition = { currentDate, previousDate };
+      }
+    }
+    let provenance = null;
+    if (message.role === 'user' || message.role === 'peer') {
+      if (typeof message.turnID === 'string' && message.turnID) {
+        userByTurnID.set(message.turnID, { ordinal: Number(message.ordinal), text: message.text || '' });
+        lastUserTurnID = message.turnID;
+      } else {
+        lastUserTurnID = null;
+      }
+    } else if (message.role === 'assistant' && typeof message.turnID === 'string' && message.turnID) {
+      const origin = userByTurnID.get(message.turnID) ?? null;
+      if (origin) {
+        const deliveredAfterCurrentUser = currentUserCeiling != null
+          && Number.isFinite(Number(message.ordinal))
+          && Number(message.ordinal) > currentUserCeiling;
+        const interleaved = Boolean(lastUserTurnID && message.turnID !== lastUserTurnID);
+        if (deliveredAfterCurrentUser || interleaved) {
+          provenance = {
+            deliveredAfterCurrentUser,
+            interleaved,
+            snippet: compactProvenanceSnippet(origin.text),
+          };
+        }
+      }
+    }
+    if (hasEpochTimestamp) previousCreatedAt = createdAt;
+    const item = toLlmHistoryItem(message, { provenance, dateTransition });
+    if (item.content.trim().length > 0) {
+      eligible.push({
+        ordinal: Number(message.ordinal),
+        turnID: typeof message.turnID === 'string' ? message.turnID : null,
+        item,
+      });
+    }
+  }
 
   // Newest turn first; a turn's ordinal is its first (oldest) row.
   const turns = [];
@@ -1483,10 +1571,13 @@ export function windowContactHistoryForLlm(messages, {
   }
 
   const oldest = oldestOrdinal(kept[kept.length - 1]);
+  const keptEntries = kept.reverse().flat();
   return {
-    items: kept.reverse().flat().map(({ item }) => item),
+    items: keptEntries.map(({ item }) => item),
     startOrdinal: Number.isFinite(oldest) ? oldest : null,
     truncated,
+    includedOrdinals: keptEntries.map(({ ordinal }) => ordinal).filter(Number.isFinite),
+    includedTurnIDs: [...new Set(keptEntries.map(({ turnID }) => turnID).filter(Boolean))],
   };
 }
 
@@ -1560,12 +1651,12 @@ export function createActiveContactTurn({ turnID, messageID, status = 'queued', 
   };
 }
 
-/** Earliest admitted active turn; running preferred when admittedAt ties. */
-export function projectActiveContactTurn(activeTurns) {
+/** All active contact turns ordered by execution priority (running first on tied admittedAt). */
+export function projectActiveContactTurns(activeTurns) {
   const list = Array.isArray(activeTurns)
     ? activeTurns
     : (activeTurns instanceof Map ? [...activeTurns.values()] : []);
-  const valid = list
+  return list
     .map((item) => createActiveContactTurn(item))
     .filter(Boolean)
     .sort((left, right) => {
@@ -1573,7 +1664,11 @@ export function projectActiveContactTurn(activeTurns) {
       if (left.status === right.status) return left.turnID.localeCompare(right.turnID);
       return left.status === 'running' ? -1 : 1;
     });
-  return valid[0] ?? null;
+}
+
+/** Earliest admitted active turn; running preferred when admittedAt ties. */
+export function projectActiveContactTurn(activeTurns) {
+  return projectActiveContactTurns(activeTurns)[0] ?? null;
 }
 
 /** Raw boundary columns + generation a summary is written under. */
@@ -1600,6 +1695,13 @@ function selectContactLlmMessages(db, assistantID, { excludeMessageIDs = [], bef
     : Number(beforeOrdinal);
   const userOrdinalCeiling = Number.isFinite(parsedCeiling) ? parsedCeiling : null;
   const page = listContactMessages(db, assistantID, { limit: CONTACT_LLM_FETCH_LIMIT });
+  const laterUserTurnIDs = userOrdinalCeiling == null
+    ? null
+    : new Set(
+      page.messages
+        .filter((message) => (message.role === 'user' || message.role === 'peer') && message.ordinal > userOrdinalCeiling && message.turnID)
+        .map((message) => message.turnID),
+    );
   return page.messages.filter((message) => {
     if (exclude.has(message.messageID)) return false;
     if (!(message.ordinal > afterOrdinal)) return false;
@@ -1609,6 +1711,17 @@ function selectContactLlmMessages(db, assistantID, { excludeMessageIDs = [], bef
       userOrdinalCeiling != null
       && (message.role === 'user' || message.role === 'peer')
       && message.ordinal > userOrdinalCeiling
+    ) {
+      return false;
+    }
+    // Never leak assistant outputs belonging to a later-admitted turn into an earlier turn,
+    // while keeping late legitimate replies belonging to a prior turn.
+    if (
+      userOrdinalCeiling != null
+      && message.role === 'assistant'
+      && message.ordinal > userOrdinalCeiling
+      && message.turnID
+      && laterUserTurnIDs?.has(message.turnID)
     ) {
       return false;
     }
@@ -1623,7 +1736,7 @@ function selectContactLlmMessages(db, assistantID, { excludeMessageIDs = [], bef
 export function contactLlmWindow(db, assistantID, options = {}) {
   const window = windowContactHistoryForLlm(
     selectContactLlmMessages(db, assistantID, options),
-    { alignStep: CONTACT_LLM_ALIGN_STEP },
+    { alignStep: CONTACT_LLM_ALIGN_STEP, beforeOrdinal: options.beforeOrdinal ?? null },
   );
   const summary = window.truncated ? getContactSummary(db, assistantID) : null;
   return { ...window, summary };

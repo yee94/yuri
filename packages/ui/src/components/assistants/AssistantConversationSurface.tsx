@@ -37,6 +37,7 @@ import {
 } from '@/queries/assistantQueries'
 import { AssistantAPIError } from '@/queries/assistantDTO'
 import { getAssistantPresentation } from './assistantPresentation'
+import { findLateReplyOrigin, getQueuedContactTurnIDs } from './contactTurnProvenance'
 import {
   admitContactTurnPreview,
   applyContactBubbleDelta,
@@ -332,6 +333,7 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const processing = contactTurnPreviewWorking(scopedTurnPreviews)
   // Server working is authoritative across remount; local preview is temporary.
   const serverWorking = Boolean(assistant.working || assistant.activeContactTurn)
+  const queuedTurnIDs = getQueuedContactTurnIDs(assistant.activeContactTurns, assistant.activeContactTurn)
   // Domain snapshot revision only — never the per-assistant config revision.
   const snapshotRevision = snapshotQuery.data?.revision ?? null
   const streamingTextLength = scopedTurnPreviews.reduce((total, preview) => (
@@ -745,6 +747,8 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
               const optimistic = optimisticByID.get(message.messageID)
               const preview = previewByTurnID.get(message.turnID)
               const failedPreviewRow = message.status === 'failed' && message.messageID.endsWith(':preview:failed')
+              const isQueuedUserTurn = isUser && !optimistic && queuedTurnIDs.has(message.turnID)
+              const lateReplyOrigin = !sameAssistantRun ? findLateReplyOrigin(transcript, messageIndex) : null
               const userPart = (content: React.ReactNode, key: string) => isUser ? (
                 <ContactUserMessagePart key={key} failedTurn={active ? optimistic : undefined} retryDisabled={sending} onRetry={retrySend}>{content}</ContactUserMessagePart>
               ) : content
@@ -789,6 +793,16 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                     {isPeer ? (
                       <span className="mb-0.5 px-1 typography-micro text-muted-foreground/75">
                         {t('assistants.contact.peer.from', { name: senderName })}
+                      </span>
+                    ) : null}
+                    {lateReplyOrigin ? (
+                      <span
+                        data-assistant-contact-reply-to={lateReplyOrigin.turnID}
+                        className="mb-0.5 max-w-full truncate px-1 typography-micro text-muted-foreground/75"
+                      >
+                        {lateReplyOrigin.hasText
+                          ? t('assistants.contact.turn.replyTo', { excerpt: lateReplyOrigin.excerpt })
+                          : t('assistants.contact.turn.replyToAttachment')}
                       </span>
                     ) : null}
                     {message.parts.map((part, index) => {
@@ -845,6 +859,15 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
                       }
                       return null
                     })}
+                    {isQueuedUserTurn ? (
+                      <span
+                        role="status"
+                        data-assistant-contact-queued=""
+                        className="px-1 typography-micro text-muted-foreground/75"
+                      >
+                        {t('assistants.contact.turn.queued')}
+                      </span>
+                    ) : null}
                     {readPosition?.messageID === message.messageID ? <AssistantReadMarker
                       key={`${transportIdentity}:${assistant.id}:${readPosition.generation}:${readPosition.ordinal}`}
                       assistantID={assistant.id}

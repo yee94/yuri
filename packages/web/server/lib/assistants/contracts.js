@@ -21,6 +21,7 @@ export const assistantContractFixtures = Object.freeze({
     assignedSessionIDs: Object.freeze([]),
     working: false,
     activeContactTurn: null,
+    activeContactTurns: Object.freeze([]),
     /** Last visible contact bubble for list desc; null when transcript empty. */
     latestMessagePreview: Object.freeze({
       messageID: 'msg_contact_fixture',

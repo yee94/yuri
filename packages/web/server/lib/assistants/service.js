@@ -16,10 +16,12 @@ import { ensureContactSummary } from './summary.js';
 import {
   CONTACT_PAGE_DEFAULT_LIMIT,
   CONTACT_PAGE_MAX_LIMIT,
+  CONTACT_SUMMARY_PREFIX,
   advanceContactReadWatermark,
   bumpContactGeneration,
   clearContactMemory as clearContactMemoryStore,
   contactHistoryForLlm,
+  contactLlmWindow,
   createActiveContactTurn,
   deleteContactMessages,
   deleteContactReadState,
@@ -40,6 +42,7 @@ import {
   migrateContactReadStateDefaultRead,
   nextContactOrdinal,
   projectActiveContactTurn,
+  projectActiveContactTurns,
   readContactChannelPage,
   resetContactReadWatermarkForGeneration,
   updateSessionCardStatus,
@@ -259,7 +262,7 @@ const awaitWithDeadline = async (work, ms = CONTACT_CATALOG_DEADLINE_MS, code = 
   }
 };
 
-export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders, getServerId = async () => null, getAllowedRoots = () => [], listProjects = async () => [], registerProject = null, /** (assistantID) => Promise<{file, projectsCommand, remoteCommand}|null> */ resolveCustomizationSkill = null, readModelPreferences = async () => null, listScheduledTasks = null, sessionIndexService = null, upsertScheduledTask = null, patchScheduledTask = null, syncScheduledTaskProject = null, globalEventHub = null, onRevisionTip = null, onContactTurnEvent = null, onContactTurnComplete = null, /** Host archive op: ({ sessionID, directory, archivedAt }) => Promise */ archiveSessionHost = null, /** Idempotent Host metadata drop after successful SDK delete */ forgetSessionHost = null, /** Host store write: (sessionId, patch) => Promise */ persistSessionMetadata = null, /** After Host isolation metadata is committed. */ onSystemSessionPersisted = null, clock = () => Date.now(), setIntervalFn = setInterval, clearIntervalFn = clearInterval, setImmediateFn = setImmediate, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, reconcileIntervalMs = 60_000, clientFactory, fetchImpl, remoteHostGateway = null, createChatCompletion = null, runContactTurn = defaultRunContactTurn, listWorktrees = defaultListWorktrees, resolvePrimaryWorktreeRoot = defaultResolvePrimaryWorktreeRoot } = {}) => {
+export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders, getServerId = async () => null, getAllowedRoots = () => [], listProjects = async () => [], registerProject = null, /** (assistantID) => Promise<{file, projectsCommand, remoteCommand}|null> */ resolveCustomizationSkill = null, readModelPreferences = async () => null, listScheduledTasks = null, sessionIndexService = null, upsertScheduledTask = null, patchScheduledTask = null, syncScheduledTaskProject = null, globalEventHub = null, onRevisionTip = null, onContactTurnEvent = null, onContactTurnComplete = null, onContactTurnTrace = null, /** Host archive op: ({ sessionID, directory, archivedAt }) => Promise */ archiveSessionHost = null, /** Idempotent Host metadata drop after successful SDK delete */ forgetSessionHost = null, /** Host store write: (sessionId, patch) => Promise */ persistSessionMetadata = null, /** After Host isolation metadata is committed. */ onSystemSessionPersisted = null, clock = () => Date.now(), setIntervalFn = setInterval, clearIntervalFn = clearInterval, setImmediateFn = setImmediate, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, reconcileIntervalMs = 60_000, clientFactory, fetchImpl, remoteHostGateway = null, createChatCompletion = null, runContactTurn = defaultRunContactTurn, listWorktrees = defaultListWorktrees, resolvePrimaryWorktreeRoot = defaultResolvePrimaryWorktreeRoot } = {}) => {
   const execution = createAssistantExecutionAccessor(remoteHostGateway);
   const targetFields = () => execution.current() ? { target: execution.current().target } : {};
   const scopedWork = (params, work) => execution.run(params, work);
@@ -407,7 +410,8 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   };
   const output = (row, latestMessagePreview, unreadSnapshot) => {
     const watches = listInFlightWatches(db, row.assistant_id);
-    const activeContactTurn = projectActiveContactTurn(activeContactTurnsFor(row.assistant_id));
+    const activeContactTurns = projectActiveContactTurns(activeContactTurnsFor(row.assistant_id));
+    const activeContactTurn = activeContactTurns[0] ?? null;
     const preview = latestMessagePreview !== undefined
       ? latestMessagePreview
       : getLatestContactMessagePreview(db, row.assistant_id);
@@ -444,6 +448,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       // on the session card / assignedSessionIDs and must not keep the avatar lit.
       working: activeContactTurn != null,
       activeContactTurn,
+      activeContactTurns,
       // Contact-transcript list desc: authoritative last visible bubble (not
       // defaultPrompt / updatedAt). null when the contact has no list-visible rows.
       latestMessagePreview: preview ?? null,
@@ -3681,11 +3686,51 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
   };
   const enqueueContactTurn = ({ row, messageID, userText, userParts, language = '', registeredProjects = null, peer = false }) => {
     const turnID = messageID;
+    const admittedAt = now();
+    const traceEnabled = typeof onContactTurnTrace === 'function' || process.env.YURI_ASSISTANT_TRACE === '1';
+    const traceState = {
+      assistantID: row.assistant_id,
+      turnID,
+      messageID,
+      peer: Boolean(peer),
+      admittedAt,
+      startedAt: null,
+      settledAt: null,
+      beforeOrdinal: null,
+      historyCount: 0,
+      historyStartOrdinal: null,
+      historyTruncated: false,
+      historySummaryIncluded: false,
+      historyOrdinals: [],
+      historyTurnIDs: [],
+      completionCalls: [],
+      toolCalls: [],
+      status: null,
+      errorCode: null,
+    };
+    const emitTurnTrace = (status, errorCode = null) => {
+      if (!traceEnabled || traceState.status !== null) return;
+      traceState.status = status;
+      traceState.errorCode = errorCode;
+      traceState.settledAt = now();
+      const payload = {
+        ...traceState,
+        queueWaitMs: traceState.startedAt != null ? Math.max(0, traceState.startedAt - traceState.admittedAt) : null,
+        durationMs: traceState.startedAt != null ? Math.max(0, traceState.settledAt - traceState.startedAt) : 0,
+      };
+      if (process.env.YURI_ASSISTANT_TRACE === '1') {
+        console.info('[assistants] turn_trace', JSON.stringify(payload));
+      }
+      if (typeof onContactTurnTrace === 'function') {
+        try { onContactTurnTrace(payload); } catch { /* Diagnostics must not break turns. */ }
+      }
+    };
     const assistantSnapshot = output(row);
     const controller = new AbortController();
     contactControllers.set(messageID, { assistantID: row.assistant_id, controller });
     const finishCancelled = () => {
       settleActiveContactTurn(row.assistant_id, turnID, { bumpRevision: true });
+      emitTurnTrace('cancelled');
       emitContactTurnEvent('yuri:contact-turn-end', { assistantID: row.assistant_id, turnID, status: 'cancelled' });
       resolveContactTurnSettlement(messageID, { status: 'cancelled' });
       contactControllers.delete(messageID);
@@ -3694,7 +3739,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
       turnID,
       messageID,
       status: 'queued',
-      admittedAt: now(),
+      admittedAt,
     });
     emitContactTurnEvent('yuri:contact-turn-start', {
       assistantID: row.assistant_id,
@@ -3707,6 +3752,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         if (controller.signal.aborted) { finishCancelled(); return; }
         if (closed) {
           settleActiveContactTurn(row.assistant_id, turnID, { bumpRevision: true });
+          emitTurnTrace('error', 'closed');
           resolveContactTurnSettlement(messageID, { status: 'error', error: 'closed' });
           return;
         }
@@ -3714,6 +3760,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           const live = assistant(row.assistant_id);
           if (!live || live.tombstone_at || !getContactMessage(db, messageID)) { finishCancelled(); return; }
         }
+        traceState.startedAt = now();
         markActiveContactTurnRunning(row.assistant_id, turnID);
         // Load the LLM window when the lane runs — not at admit time — so a
         // prior turn's clear-memory cannot leave queued work with stale history.
@@ -3724,10 +3771,20 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
         ).get(messageID);
         const parsedOrdinal = admitted?.ordinal == null ? NaN : Number(admitted.ordinal);
         const beforeOrdinal = Number.isFinite(parsedOrdinal) ? parsedOrdinal : null;
-        const history = contactHistoryForLlm(db, row.assistant_id, {
+        const llmWindow = contactLlmWindow(db, row.assistant_id, {
           excludeMessageIDs: [messageID],
           beforeOrdinal,
         });
+        const history = llmWindow.summary
+          ? [{ role: 'user', content: `${CONTACT_SUMMARY_PREFIX}${llmWindow.summary.text}` }, ...llmWindow.items]
+          : llmWindow.items;
+        traceState.beforeOrdinal = beforeOrdinal;
+        traceState.historyCount = history.length;
+        traceState.historyStartOrdinal = llmWindow.startOrdinal;
+        traceState.historyTruncated = llmWindow.truncated;
+        traceState.historySummaryIncluded = Boolean(llmWindow.summary);
+        traceState.historyOrdinals = llmWindow.includedOrdinals ?? [];
+        traceState.historyTurnIDs = llmWindow.includedTurnIDs ?? [];
         const assignedCards = [];
         const spokenByIndex = new Map();
         let contactResetThisTurn = false;
@@ -3863,10 +3920,17 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
                 assistantID: row.assistant_id, turnID, userMessageID: messageID, spokenByIndex, bubbleIndex, delta, done, signal: controller.signal,
               });
             },
+            ...(traceEnabled ? {
+              onTurnTrace: ({ completionCalls = [], toolCalls = [] } = {}) => {
+                traceState.completionCalls = completionCalls;
+                traceState.toolCalls = toolCalls;
+              },
+            } : {}),
           });
           if (controller.signal.aborted) { finishCancelled(); return; }
           if (closed) {
             settleActiveContactTurn(row.assistant_id, turnID, { bumpRevision: true });
+            emitTurnTrace('error', 'closed');
             resolveContactTurnSettlement(messageID, { status: 'error', error: 'closed' });
             return;
           }
@@ -3884,6 +3948,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
             const detail = 'Assistant returned no text';
             persistContactTurnError(row.assistant_id, { messageID, turnID, detail });
             settleActiveContactTurn(row.assistant_id, turnID, { bumpRevision: true });
+            emitTurnTrace('error', 'empty_reply');
             emitContactTurnEvent('yuri:contact-turn-end', {
               assistantID: row.assistant_id,
               turnID,
@@ -3923,6 +3988,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           });
           // persistContactAssistantReply already bumps; clear activity without a second tip.
           settleActiveContactTurn(row.assistant_id, turnID);
+          emitTurnTrace('complete');
           emitContactTurnEvent('yuri:contact-turn-end', {
             assistantID: row.assistant_id,
             turnID,
@@ -3945,6 +4011,7 @@ export const createAssistantsService = ({ dbPath, dataDir, buildOpenCodeUrl, get
           const statusCode = error?.code === 'no_provider' ? 'no_provider' : (error?.code || 'upstream_error');
           persistContactTurnError(row.assistant_id, { messageID, turnID, detail });
           settleActiveContactTurn(row.assistant_id, turnID, { bumpRevision: true });
+          emitTurnTrace('error', statusCode);
           emitContactTurnEvent('yuri:contact-turn-end', {
             assistantID: row.assistant_id,
             turnID,
