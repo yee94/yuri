@@ -1,7 +1,7 @@
 import { Rpc } from '@opencode/schema/rpc';
 
 const object = { type: 'object', additionalProperties: true };
-export const LLM_BRIDGE_VERSION = 2;
+export const LLM_BRIDGE_VERSION = 3;
 export const LlmBridge = Rpc.define({
   id: 'yuri.llm',
   methods: {
@@ -17,7 +17,13 @@ export const LlmBridge = Rpc.define({
         required: ['providerID', 'modelID', 'messages', 'cacheKey'], additionalProperties: false,
       },
       output: object,
-      errors: { unavailable: object, generation_failed: object },
+      errors: {
+        unavailable: object,
+        runtime_incompatible: object,
+        model_not_found: object,
+        invalid_model_options: object,
+        generation_failed: object,
+      },
     },
   },
   events: {},

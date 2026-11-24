@@ -43,7 +43,8 @@ import { openAssistant } from '@/stores/useAssistantUIStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { opencodeClient } from '@/lib/opencode/client';
-import { isRuntimeEndpointIdentityChange, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { isRuntimeEndpointIdentityChange, isRuntimeInstanceChange, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { startDesktopTransportRecovery } from '@/lib/desktopRelayRestore';
 import { createRuntimeEndpointTransitionCoalescer } from '@/lib/runtime-endpoint-transition';
 import { SyncProvider } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
@@ -67,7 +68,7 @@ import {
   isEmbeddedSessionChat,
 } from '@/components/layout/contextPanelEmbeddedChat';
 import { SyncAppEffects } from '@/apps/AppEffects';
-import { resetAppForRuntimeEndpointChange } from '@/apps/runtimeEndpointReset';
+import { reconnectAppForTransportSwitch, resetAppForRuntimeEndpointChange } from '@/apps/runtimeEndpointReset';
 import { useAppFontEffects } from '@/apps/useAppFontEffects';
 import { startPerfDiagnosticsController } from '@/sync/perf-diagnostics';
 import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
@@ -257,6 +258,7 @@ function App({ apis }: AppProps) {
   const [initRetryExhausted, setInitRetryExhausted] = React.useState(false);
   const [initRetryEpoch, setInitRetryEpoch] = React.useState(0);
   const [runtimeEndpointEpoch, setRuntimeEndpointEpoch] = React.useState(0);
+  const [, setTransportSwitchEpoch] = React.useState(0);
   const [desktopRuntimeTransition, setDesktopRuntimeTransition] = React.useState({ epoch: 0, startedAt: 0 });
   const [manualInitRetrying, setManualInitRetrying] = React.useState(false);
   const startupUpdateCheckStartedRef = React.useRef(false);
@@ -299,6 +301,13 @@ function App({ apis }: AppProps) {
       if (!isRuntimeEndpointIdentityChange(detail)) {
         return;
       }
+      // Same-device LAN⇄relay swap keeps the runtimeKey stable: rebind SDK and
+      // event-pipeline in place without wiping stores or flashing the full switch overlay.
+      if (Boolean(detail.runtimeKey) && !isRuntimeInstanceChange(detail)) {
+        reconnectAppForTransportSwitch();
+        setTransportSwitchEpoch((epoch) => epoch + 1);
+        return;
+      }
       if (isDesktopRuntime) {
         setDesktopRuntimeTransition((current) => ({ epoch: current.epoch + 1, startedAt: Date.now() }));
       }
@@ -313,6 +322,13 @@ function App({ apis }: AppProps) {
       transitions.cancel();
     };
   }, [isDesktopRuntime]);
+
+  React.useEffect(() => {
+    if (!isDesktopRuntime || embeddedSessionChat) {
+      return;
+    }
+    return startDesktopTransportRecovery();
+  }, [isDesktopRuntime, embeddedSessionChat]);
 
   React.useEffect(() => {
     document.documentElement.classList.toggle('wide-chat-layout', wideChatLayoutEnabled);

@@ -132,6 +132,35 @@ describe('external OpenCode inference bridge', () => {
     expect(generate).toHaveBeenCalledTimes(1);
     expect(evict).not.toHaveBeenCalled();
   });
+
+  it('logs sanitized diagnostic metadata without prompts or credentials on generation failure', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const error = { type: 'model_not_found', message: 'Model p/m could not be resolved', data: { providerID: 'p', modelID: 'm' } };
+      const client = {
+        plugin: { list: async () => [] },
+        rpc: () => ({
+          ready: async () => ({ version: LLM_BRIDGE_VERSION }),
+          generate: async () => { throw error; },
+        }),
+      };
+      await expect(generateCleanCompletion({
+        providerID: 'p',
+        modelID: 'm',
+        messages: [{ role: 'user', content: 'TOP_SECRET_PROMPT' }],
+        clientFactory: () => client,
+        ensureBridgeDirectory: async () => '/isolated',
+      })).rejects.toBe(error);
+      expect(warn).toHaveBeenCalledWith('[yuri.llm] clean inference failed', {
+        providerID: 'p',
+        modelID: 'm',
+        errorType: 'model_not_found',
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('TOP_SECRET_PROMPT');
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('bridge directory lifecycle', () => {

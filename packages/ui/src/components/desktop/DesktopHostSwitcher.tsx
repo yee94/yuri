@@ -572,19 +572,26 @@ export function DesktopHostSwitcherDialog({
 
       // Keep preparation progress in this dialog until the endpoint changes.
       // Local needs the live client token; remote hosts pass the cached open-probe.
+      const forceReconnect = host.id === current.id && !runtimeIsConnected;
       setActionPending(host.id);
       try {
         const clientToken = host.id === LOCAL_HOST_ID ? await getLocalClientToken() : null;
         const result = await switchDesktopHostInstance({
           host,
           inlineProgress: true,
+          forceReconnect,
           cachedProbe: statusById[host.id] || null,
           ...(host.id === LOCAL_HOST_ID
             ? { localApiOrigin: apiOrigin, localClientToken: clientToken }
             : {}),
         });
         setStatusById((prev) => ({ ...prev, [host.id]: result.status }));
-        if (result.ok) onHostSwitched?.();
+        if (result.ok) {
+          if (forceReconnect && typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('yuri:system-resume'));
+          }
+          onHostSwitched?.();
+        }
       } finally {
         setActionPending(null);
       }
@@ -1024,6 +1031,23 @@ export function DesktopHostSwitcherDialog({
                     </button>
 
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      {isActive && !runtimeIsConnected && !isLocal && isElectronShell() && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 text-muted-foreground hover:text-foreground"
+                          disabled={switchingHostId === host.id}
+                          aria-label={t('desktopHostSwitcher.actions.retry')}
+                          title={t('desktopHostSwitcher.actions.retry')}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleSwitch(host);
+                          }}
+                        >
+                          <Icon name="refresh" className={cn('size-3.5', switchingHostId === host.id && 'animate-spin')} />
+                        </Button>
+                      )}
                       {embedded && isActive && <Icon name="check" className="size-4 text-foreground" aria-label={t('desktopHostSwitcher.header.current')} />}
                       {canManageSsh && !isLocal && (
                         (sshStatus?.phase === 'idle' || !sshStatus?.phase) ? (

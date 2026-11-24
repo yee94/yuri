@@ -232,4 +232,17 @@ describe('desktopHostSwitchMutation', () => {
     expect(error.host.id).toBe('host-a');
     expect(error.result.reason).toBe('unreachable');
   });
+
+  test('forceReconnect re-runs switchDesktopHost even when host is already active', async () => {
+    isDesktopHostActiveImpl = () => true;
+    switchDesktopHostImpl = async () => ({
+      ok: true,
+      via: 'relay',
+      status: { status: 'ok', latencyMs: 25, via: 'relay' },
+    });
+    const result = await switchDesktopHostInstance({ host, forceReconnect: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.via).toBe('relay');
+    expect(switchDesktopHostCalls).toHaveLength(1);
+  });
 });

@@ -23,7 +23,12 @@ const flatRequest = (request, model) => {
   const { headers, timeout, headerTimeout, chunkTimeout, ...wire } = http ?? {};
   return { ...rest, ...generation, model, headers, http: wire, timeout: { total: timeout, headers: headerTimeout, chunk: chunkTimeout } };
 };
-const unavailable = () => Object.assign(new Error('External OpenCode clean inference runtime is unavailable or incompatible'), { code: 'unavailable' });
+const MODEL_RESOLVE_INITIAL_DELAY_MS = 50;
+const MODEL_RESOLVE_MAX_DELAY_MS = 400;
+const MODEL_RESOLVE_MAX_WAIT_MS = 1500;
+const runtimeIncompatible = () => Object.assign(new Error('External OpenCode clean inference runtime is unavailable or incompatible'), { code: 'runtime_incompatible' });
+const modelNotFound = (providerID, modelID) => Object.assign(new Error(`Model ${providerID}/${modelID} could not be resolved in the external OpenCode runtime`), { code: 'model_not_found' });
+const invalidModelOptions = () => Object.assign(new Error('Model configuration overrides reserved inference request fields'), { code: 'invalid_model_options' });
 const providerFailureData = error => {
   const reason = error?.reason;
   const known = new Set(['Authentication', 'RateLimit', 'QuotaExceeded', 'InvalidRequest', 'ProviderConfiguration', 'UnsupportedOperation', 'NoRoute', 'ContentPolicy', 'ProviderInternal', 'Transport', 'Timeout', 'InvalidProviderOutput', 'UnknownProvider']);
@@ -59,17 +64,40 @@ const hostRuntime = Effect.context().pipe(Effect.flatMap(context => {
   return resolver._tag === 'Some' && typeof resolver.value.resolve === 'function'
     && hooks._tag === 'Some' && typeof hooks.value.trigger === 'function'
     ? Effect.succeed({ resolver: resolver.value, hooks: hooks.value })
-    : Effect.fail(unavailable());
+    : Effect.fail(runtimeIncompatible());
 }));
 
+// Cold-started Locations load their provider/model catalog asynchronously after
+// plugin registration. Bound a pre-inference wait on resolver.resolve returning
+// undefined; upstream failures and caller interrupts short-circuit immediately.
+const resolveHostModel = (resolver, ref, retryOptions = {}) => Effect.gen(function* () {
+  const initialDelayMs = Math.max(1, Number.isFinite(retryOptions.initialDelayMs) ? retryOptions.initialDelayMs : MODEL_RESOLVE_INITIAL_DELAY_MS);
+  const maxWaitMs = Math.max(0, Number.isFinite(retryOptions.maxWaitMs) ? retryOptions.maxWaitMs : MODEL_RESOLVE_MAX_WAIT_MS);
+  let delayMs = initialDelayMs;
+  let waitedMs = 0;
+  for (;;) {
+    const resolved = yield* resolver.resolve(ref);
+    if (resolved) return resolved;
+    if (waitedMs >= maxWaitMs) return undefined;
+    const stepMs = Math.min(delayMs, maxWaitMs - waitedMs);
+    yield* Effect.sleep(stepMs);
+    waitedMs += stepMs;
+    delayMs = Math.min(delayMs * 2, MODEL_RESOLVE_MAX_DELAY_MS);
+  }
+});
+
 // No Session creation, context builder, instruction hooks or tool executors belong here.
-export const generateBridgeResponse = input => Effect.gen(function* () {
+export const generateBridgeResponse = (input, options = {}) => Effect.gen(function* () {
   const { resolver, hooks } = yield* hostRuntime;
-  const model = yield* resolver.resolve({ providerID: input.providerID, id: input.modelID, ...(input.variant ? { variant: input.variant } : {}) });
-  if (!model) return yield* Effect.fail(unavailable());
+  const model = yield* resolveHostModel(
+    resolver,
+    { providerID: input.providerID, id: input.modelID, ...(input.variant ? { variant: input.variant } : {}) },
+    options.resolveRetry,
+  );
+  if (!model) return yield* Effect.fail(modelNotFound(input.providerID, input.modelID));
   if ([model.model.defaults?.http?.body, model.model.route.defaults?.http?.body,
     model.model.options?.http?.body, model.model.route.options?.http?.body].some(body => sensitiveBodyKeys.some(key => Object.hasOwn(body ?? {}, key)))) {
-    return yield* Effect.fail(unavailable());
+    return yield* Effect.fail(invalidModelOptions());
   }
   const flatOptions = model.model.route.defaults === undefined;
   // This ID is cache affinity only; it does not create a durable OpenCode Session.
@@ -146,9 +174,22 @@ export default {
       if (Cause.hasInterrupts(cause)) return Effect.failCause(cause);
       // Upstream failures and defects can contain credentials or private prompts. Never forward or log them.
       const error = Cause.squash(cause);
-      return Effect.fail(call.error(error?.code === 'unavailable' ? 'unavailable' : 'generation_failed',
-        error?.code === 'unavailable' ? unavailable().message : 'LLM provider generation failed',
-        error?.code === 'unavailable' ? {} : providerFailureData(error)));
+      if (error?.code === 'runtime_incompatible') {
+        return Effect.fail(call.error('runtime_incompatible', runtimeIncompatible().message, {}));
+      }
+      if (error?.code === 'model_not_found') {
+        return Effect.fail(call.error('model_not_found', error.message || modelNotFound(input.providerID, input.modelID).message, {
+          providerID: input.providerID,
+          modelID: input.modelID,
+        }));
+      }
+      if (error?.code === 'invalid_model_options') {
+        return Effect.fail(call.error('invalid_model_options', invalidModelOptions().message, {
+          providerID: input.providerID,
+          modelID: input.modelID,
+        }));
+      }
+      return Effect.fail(call.error('generation_failed', 'LLM provider generation failed', providerFailureData(error)));
     })),
   }),
 };

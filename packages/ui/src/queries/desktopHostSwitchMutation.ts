@@ -21,6 +21,8 @@ export type SwitchDesktopHostInstanceVariables = {
   host: DesktopHost;
   cachedProbe?: DesktopHostProbeSnapshot | null;
   inlineProgress?: boolean;
+  /** Re-probe and reselect transport even when this host is already the active runtime. */
+  forceReconnect?: boolean;
   /**
    * Local host only: API origin + client token. Remote hosts use the host record.
    * When omitted for local, the call is a no-op failure.
@@ -128,7 +130,7 @@ const getSwitchObserver = (): SwitchObserver => {
 export const switchDesktopHostInstance = async (
   variables: SwitchDesktopHostInstanceVariables,
 ): Promise<SwitchDesktopHostResult> => {
-  if (isDesktopHostActive(variables.host)) {
+  if (isDesktopHostActive(variables.host) && !variables.forceReconnect) {
     return {
       ok: true,
       via: 'direct',

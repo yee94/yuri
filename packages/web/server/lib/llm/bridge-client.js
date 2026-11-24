@@ -125,9 +125,24 @@ export async function generateCleanCompletion({ buildOpenCodeUrl, getOpenCodeAut
   }
   signal?.throwIfAborted();
   if (ready.version !== LLM_BRIDGE_VERSION) throw new Error('Incompatible Yuri LLM bridge');
-  const result = await rpc.generate({ providerID, modelID, ...(variant ? { variant } : {}), messages,
-    ...(tools ? { tools } : {}), cacheKey, ...(maxOutputTokens ? { maxOutputTokens } : {}),
-  }, options);
-  signal?.throwIfAborted();
-  return { ...result, source: 'opencode.llm.bridge' };
+  try {
+    const result = await rpc.generate({ providerID, modelID, ...(variant ? { variant } : {}), messages,
+      ...(tools ? { tools } : {}), cacheKey, ...(maxOutputTokens ? { maxOutputTokens } : {}),
+    }, options);
+    signal?.throwIfAborted();
+    return { ...result, source: 'opencode.llm.bridge' };
+  } catch (error) {
+    if (!signal?.aborted) {
+      const data = error?.data && typeof error.data === 'object' ? error.data : null;
+      console.warn('[yuri.llm] clean inference failed', {
+        providerID,
+        modelID,
+        errorType: typeof error?.type === 'string' ? error.type : 'unknown',
+        ...(typeof data?.reason === 'string' ? { reason: data.reason } : {}),
+        ...(Number.isInteger(data?.status) ? { status: data.status } : {}),
+        ...(typeof data?.diagnostic === 'string' ? { diagnostic: data.diagnostic } : {}),
+      });
+    }
+    throw error;
+  }
 }

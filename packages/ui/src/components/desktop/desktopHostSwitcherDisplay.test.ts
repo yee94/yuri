@@ -34,6 +34,42 @@ describe('resolveHostRowDisplay', () => {
     expect(display.latencyMs).toBeNull();
   });
 
+  test('active + reconnecting surfaces confirmed unreachable/auth probe instead of infinite checking', () => {
+    const unreachable = resolveHostRowDisplay({
+      isActive: true,
+      isSsh: false,
+      runtimeIsConnected: false,
+      runtimeConnectionPhase: 'reconnecting',
+      currentTransportIsRelay: false,
+      probe: { status: 'unreachable', latencyMs: 0 },
+      sshPhase: undefined,
+    });
+    expect(unreachable.statusKind).toBe('unreachable');
+    expect(unreachable.latencyMs).toBeNull();
+
+    const auth = resolveHostRowDisplay({
+      isActive: true,
+      isSsh: false,
+      runtimeIsConnected: false,
+      runtimeConnectionPhase: 'reconnecting',
+      currentTransportIsRelay: false,
+      probe: { status: 'auth', latencyMs: 10 },
+      sshPhase: undefined,
+    });
+    expect(auth.statusKind).toBe('auth');
+
+    const okProbeStillChecking = resolveHostRowDisplay({
+      isActive: true,
+      isSsh: false,
+      runtimeIsConnected: false,
+      runtimeConnectionPhase: 'reconnecting',
+      currentTransportIsRelay: false,
+      probe: { status: 'ok', latencyMs: 18, via: 'relay' },
+      sshPhase: undefined,
+    });
+    expect(okProbeStillChecking.statusKind).toBe('checking');
+  });
+
   test('inactive keeps probe status', () => {
     const display = resolveHostRowDisplay({
       isActive: false,

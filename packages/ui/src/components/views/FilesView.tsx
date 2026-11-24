@@ -37,6 +37,13 @@ import { CodeMirrorEditor } from '@/components/ui/CodeMirrorEditor';
 import { PreviewToggleButton } from './PreviewToggleButton';
 import { BinaryFileFallback } from './BinaryFileFallback';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import {
+  applyMarkdownScrollAnchorToCodeMirror,
+  applyMarkdownScrollAnchorToPreview,
+  captureCodeMirrorScrollAnchor,
+  captureMarkdownPreviewScrollAnchor,
+  type MarkdownScrollAnchor,
+} from '@/lib/markdownScrollSync';
 import { stripLeadingFrontmatter } from '@/lib/markdown/frontmatter';
 import type { ToolPopupContent } from '@/components/chat/message/types';
 import { attachmentCitationDisplay } from '@/composer/inline-visual';
@@ -943,6 +950,11 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const [fileContent, setFileContent] = React.useState<string>('');
   const [markdownScrollContainer, setMarkdownScrollContainer] = React.useState<HTMLElement | null>(null);
   const [fullscreenMarkdownScrollContainer, setFullscreenMarkdownScrollContainer] = React.useState<HTMLElement | null>(null);
+  const pendingMdScrollRestoreRef = React.useRef<{
+    path: string;
+    targetMode: PreviewViewMode;
+    anchor: MarkdownScrollAnchor;
+  } | null>(null);
   const [fileLoading, setFileLoading] = React.useState(false);
   const [fileError, setFileError] = React.useState<string | null>(null);
   const [desktopImageSrc, setDesktopImageSrc] = React.useState<string>('');
@@ -2661,9 +2673,24 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     setTextViewMode(mode);
   }, [selectedFile?.path]);
 
-  const saveMdViewMode = React.useCallback((mode: PreviewViewMode) => {
+  const saveMdViewMode = useEvent((mode: PreviewViewMode) => {
     const selectedPath = selectedFile?.path;
     if (selectedPath) {
+      if (mode !== mdViewMode) {
+        if (mdViewMode === 'preview' && mode === 'edit' && activeMarkdownScrollContainer) {
+          pendingMdScrollRestoreRef.current = {
+            path: selectedPath,
+            targetMode: 'edit',
+            anchor: captureMarkdownPreviewScrollAnchor(activeMarkdownScrollContainer),
+          };
+        } else if (mdViewMode === 'edit' && mode === 'preview' && editorViewRef.current) {
+          pendingMdScrollRestoreRef.current = {
+            path: selectedPath,
+            targetMode: 'preview',
+            anchor: captureCodeMirrorScrollAnchor(editorViewRef.current, draftContent),
+          };
+        }
+      }
       mdViewModeByPathRef.current[selectedPath] = mode;
     }
     setMdViewMode(mode);
@@ -2672,7 +2699,66 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     } catch {
       // Ignore localStorage errors
     }
-  }, [selectedFile?.path]);
+  });
+
+  React.useEffect(() => {
+    const pending = pendingMdScrollRestoreRef.current;
+    if (!pending) return;
+
+    const currentPath = selectedFile?.path;
+    if (!currentPath || currentPath !== pending.path) {
+      pendingMdScrollRestoreRef.current = null;
+      return;
+    }
+
+    if (shouldMaskEditorForPendingNavigation || pendingFileNavigation) {
+      pendingMdScrollRestoreRef.current = null;
+      return;
+    }
+
+    if (pending.targetMode === 'preview' && mdViewMode === 'preview') {
+      const container = activeMarkdownScrollContainer;
+      if (!container) return;
+      pendingMdScrollRestoreRef.current = null;
+      let innerRafId: number | null = null;
+      const outerRafId = window.requestAnimationFrame(() => {
+        innerRafId = window.requestAnimationFrame(() => {
+          applyMarkdownScrollAnchorToPreview(container, pending.anchor);
+        });
+      });
+      return () => {
+        window.cancelAnimationFrame(outerRafId);
+        if (innerRafId !== null) window.cancelAnimationFrame(innerRafId);
+      };
+    }
+
+    if (pending.targetMode === 'edit' && mdViewMode === 'edit') {
+      const view = editorViewRef.current;
+      if (!view) return;
+      pendingMdScrollRestoreRef.current = null;
+      const contentSnapshot = draftContent;
+      let innerRafId: number | null = null;
+      const outerRafId = window.requestAnimationFrame(() => {
+        innerRafId = window.requestAnimationFrame(() => {
+          const liveView = editorViewRef.current;
+          if (!liveView) return;
+          applyMarkdownScrollAnchorToCodeMirror(liveView, contentSnapshot, pending.anchor);
+        });
+      });
+      return () => {
+        window.cancelAnimationFrame(outerRafId);
+        if (innerRafId !== null) window.cancelAnimationFrame(innerRafId);
+      };
+    }
+  }, [
+    activeMarkdownScrollContainer,
+    draftContent,
+    editorViewReadyNonce,
+    mdViewMode,
+    pendingFileNavigation,
+    selectedFile?.path,
+    shouldMaskEditorForPendingNavigation,
+  ]);
 
   const getMdViewMode = React.useCallback((): PreviewViewMode => {
     return mdViewMode;
@@ -4506,6 +4592,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
                 onViewReady={(view) => {
                   editorViewRef.current = view;
                   syncEditorSelection(view);
+                  setEditorViewReadyNonce((value) => value + 1);
                   window.requestAnimationFrame(() => {
                     nudgeEditorSelectionAboveKeyboard(view);
                   });
@@ -4516,6 +4603,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
                   }
                   setHasEditorSelection(false);
                   setEditorSelectionPosition(null);
+                  setEditorViewReadyNonce((value) => value + 1);
                 }}
               />
               </div>

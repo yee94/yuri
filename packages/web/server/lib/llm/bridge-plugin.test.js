@@ -85,7 +85,7 @@ describe.each(['source', 'prebundled'])('external runtime provider bridge (%s)',
   it('rejects model overrides that could inject context', async () => {
     const { input, model, requests, run } = await fixture({ role: 'assistant', content: 'unused' });
     model.body = { messages: [{ role: 'system', content: 'foreign' }] };
-    await expect(run(input)).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(run(input)).rejects.toMatchObject({ code: 'invalid_model_options' });
     expect(requests).toHaveLength(0);
   });
 
@@ -148,7 +148,51 @@ describe.each(['source', 'prebundled'])('external runtime provider bridge (%s)',
   });
 
   it('fails explicitly when the external runtime services are unavailable', async () => {
-    await expect(Effect.runPromise(generateBridgeResponse({}))).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(Effect.runPromise(generateBridgeResponse({}))).rejects.toMatchObject({ code: 'runtime_incompatible' });
+  });
+
+  it('waits boundedly when a cold-started Location has not yet populated its model catalog', async () => {
+    const { input, resolve, requests, runEffect } = await fixture({ role: 'assistant', content: 'cold-start-ok' });
+    const original = resolve.getMockImplementation();
+    let calls = 0;
+    resolve.mockImplementation(ref => {
+      calls += 1;
+      if (calls < 3) return Effect.succeed(undefined);
+      return original(ref);
+    });
+    const result = await runEffect(generateBridgeResponse(input, { resolveRetry: { initialDelayMs: 5, maxWaitMs: 100 } }));
+    expect(result).toMatchObject({ text: 'cold-start-ok' });
+    expect(calls).toBe(3);
+    expect(requests).toHaveLength(1);
+  });
+
+  it('reports model_not_found distinctly after bounded cold-start wait expires', async () => {
+    const { input, resolve, runEffect } = await fixture({ role: 'assistant', content: 'unused' });
+    resolve.mockImplementation(() => Effect.succeed(undefined));
+    await expect(runEffect(generateBridgeResponse(input, { resolveRetry: { initialDelayMs: 5, maxWaitMs: 20 } }))).rejects.toMatchObject({
+      code: 'model_not_found',
+      message: expect.stringContaining('fixture/fixture'),
+    });
+  });
+
+  it('maps runtime_incompatible, model_not_found, and invalid_model_options to distinct RPC errors', async () => {
+    let handlers;
+    await Effect.runPromise(bridge.effect({ rpc: { register: (_definition, value) => { handlers = value; return Effect.void; } } }));
+    const error = (type, message, data) => ({ type, message, data });
+    const { input, model, runEffect } = await fixture({ role: 'assistant', content: 'unused' });
+
+    await expect(Effect.runPromise(handlers.generate(input, { error }))).rejects.toEqual({
+      type: 'runtime_incompatible',
+      message: 'External OpenCode clean inference runtime is unavailable or incompatible',
+      data: {},
+    });
+
+    model.body = { messages: [{ role: 'system', content: 'foreign' }] };
+    await expect(runEffect(handlers.generate(input, { error }))).rejects.toEqual({
+      type: 'invalid_model_options',
+      message: 'Model configuration overrides reserved inference request fields',
+      data: { providerID: 'fixture', modelID: 'fixture' },
+    });
   });
 
   it('normalizes a model wrapper from a separately bundled host SDK', async () => {
@@ -212,7 +256,7 @@ describe.each(['source', 'prebundled'])('external runtime provider bridge (%s)',
       (owner === 'model' ? host : host.route).options = { http: { body: { messages: [] } } };
       return { ...value, model: host };
     })));
-    await expect(run(input)).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(run(input)).rejects.toMatchObject({ code: 'invalid_model_options' });
   });
 
   it('preserves interruption instead of converting cancellation into a provider error', async () => {

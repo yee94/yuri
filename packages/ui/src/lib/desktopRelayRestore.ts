@@ -11,10 +11,17 @@ import {
   probeRelayDesktopHost,
   type DesktopHost,
 } from '@/lib/desktopHosts';
-import { adoptRelayTunnel } from '@/lib/relay/runtime-tunnel';
+import { adoptRelayTunnel, isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 import { runtimeKeyForDesktopHost } from '@/lib/desktopHostSwitch';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { getRuntimeApiBaseUrl, getRuntimeGeneration, getRuntimeKey, switchRuntimeEndpoint } from '@/lib/runtime-switch';
+import {
+  getRuntimeApiBaseUrl,
+  getRuntimeGeneration,
+  getRuntimeKey,
+  subscribeRuntimeEndpointChanged,
+  switchRuntimeEndpoint,
+} from '@/lib/runtime-switch';
+import { useConfigStore } from '@/stores/useConfigStore';
 
 // Let the post-switch bootstrap traffic settle before the background refresh.
 const CANDIDATE_REFRESH_DELAY_MS = 5_000;
@@ -23,6 +30,13 @@ const CANDIDATE_REFRESH_DELAY_MS = 5_000;
 // takes over. A live LAN probe answers well inside this window; a dead one no
 // longer stalls startup for the probe's full timeout.
 const DIRECT_PROBE_HEADSTART_MS = 1_500;
+const DIRECT_RESELECT_TIMEOUT_MS = 3_000;
+const RESELECT_ONLINE_DEBOUNCE_MS = 1_500;
+const RESELECT_RESUME_DEBOUNCE_MS = 500;
+const RESELECT_GRACE_RETRY_MS = 4_000;
+const RESELECT_VISIBILITY_THROTTLE_MS = 5_000;
+const DISCONNECT_RESELECT_INITIAL_MS = 3_000;
+const DISCONNECT_RESELECT_MAX_MS = 30_000;
 
 /**
  * A probe status that proves the direct transport is USABLE, not merely
@@ -255,4 +269,330 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
     }
     throw error;
   }
+};
+
+type DesktopTransportReselectResult =
+  | { outcome: 'switched'; transport: 'direct' | 'relay' }
+  | { outcome: 'unchanged'; transport: 'direct' | 'relay' }
+  | { outcome: 'unreachable' | 'skipped' | 'stale' };
+
+let reselectSeq = 0;
+
+const parseRemoteRuntimeHostId = (runtimeKey: string): string | null => {
+  if (!runtimeKey.startsWith('host:')) return null;
+  const hostId = runtimeKey.slice('host:'.length).trim();
+  return hostId || null;
+};
+
+const probeDirectBounded = async (
+  url: string,
+  host: DesktopHost,
+  timeoutMs: number,
+) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    desktopHostProbe(url, {
+      clientToken: host.clientToken || null,
+      requestHeaders: host.requestHeaders || null,
+      expectedServerId: host.relay?.serverId,
+    }).catch(() => null),
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+};
+
+/**
+ * Runtime bidirectional transport reselection for a relay-capable desktop host:
+ * - On direct: verifies the direct leg; when unreachable/unusable (e.g. moved
+ *   from office LAN to home Wi-Fi or VPN changed), probes the Relay leg and
+ *   hot-switches in place while preserving the stable `host:<id>` runtimeKey.
+ * - On Relay: checks whether the stored direct address (or refreshed LAN
+ *   candidates) is usable again and hot-switches Relay → direct.
+ */
+export const reselectDesktopHostTransport = async (options?: {
+  hostId?: string;
+}): Promise<DesktopTransportReselectResult> => {
+  if (!isElectronShell()) return { outcome: 'skipped' };
+  const runtimeKey = getRuntimeKey();
+  const activeHostId = parseRemoteRuntimeHostId(runtimeKey);
+  if (!activeHostId) return { outcome: 'skipped' };
+  const hostId = options?.hostId?.trim() || activeHostId;
+  if (hostId !== activeHostId) return { outcome: 'skipped' };
+
+  const seq = ++reselectSeq;
+  const generation = getRuntimeGeneration();
+  const isCurrent = () => (
+    seq === reselectSeq
+    && getRuntimeKey() === runtimeKey
+    && getRuntimeGeneration() === generation
+  );
+
+  const config = await desktopHostsGet().catch(() => null);
+  if (!isCurrent()) return { outcome: 'stale' };
+  const host = config?.hosts.find((entry) => entry.id === hostId);
+  if (!host?.relay) return { outcome: 'skipped' };
+
+  const directUrl = host.apiUrl ? normalizeHostUrl(getDesktopHostApiUrl(host)) : null;
+
+  if (isRelayModeActive()) {
+    if (directUrl) {
+      const probe = await probeDirectBounded(directUrl, host, DIRECT_PROBE_HEADSTART_MS);
+      if (!isCurrent()) return { outcome: 'stale' };
+      if (probe && isDirectTransportUsable(probe.status)) {
+        switchRuntimeEndpoint({
+          apiBaseUrl: directUrl,
+          clientToken: host.clientToken || null,
+          requestHeaders: host.requestHeaders || null,
+          runtimeKey,
+        });
+        return { outcome: 'switched', transport: 'direct' };
+      }
+    }
+    await refreshDesktopHostCandidates(hostId).catch(() => undefined);
+    if (getRuntimeKey() !== runtimeKey) return { outcome: 'stale' };
+    if (getRuntimeGeneration() !== generation && !isRelayModeActive()) {
+      return { outcome: 'switched', transport: 'direct' };
+    }
+    return { outcome: 'unchanged', transport: 'relay' };
+  }
+
+  if (directUrl) {
+    const probe = await probeDirectBounded(directUrl, host, DIRECT_RESELECT_TIMEOUT_MS);
+    if (!isCurrent()) return { outcome: 'stale' };
+    if (probe && isDirectTransportUsable(probe.status)) {
+      return { outcome: 'unchanged', transport: 'direct' };
+    }
+  }
+
+  const relayProbe = await probeRelayDesktopHost(host.relay, {
+    keepTunnel: true,
+    clientToken: host.clientToken || null,
+  }).catch(() => ({ status: 'unreachable' as const, latencyMs: 0 }));
+
+  if (!isCurrent()) {
+    if ('tunnel' in relayProbe) relayProbe.tunnel?.close();
+    return { outcome: 'stale' };
+  }
+
+  if (relayProbe.status !== 'ok' || !('tunnel' in relayProbe) || !relayProbe.tunnel) {
+    return { outcome: 'unreachable' };
+  }
+
+  adoptRelayTunnel(host.relay, relayProbe.tunnel);
+  switchRuntimeEndpoint({
+    apiBaseUrl: desktopRelayApiBaseUrl(),
+    clientToken: host.clientToken || null,
+    runtimeKey,
+    relay: host.relay,
+  });
+  scheduleDesktopHostCandidateRefresh(host.id);
+  return { outcome: 'switched', transport: 'relay' };
+};
+
+type DesktopTransportRecoveryOptions = {
+  reselect?: (options?: { hostId?: string }) => Promise<DesktopTransportReselectResult>;
+  onlineDebounceMs?: number;
+  resumeDebounceMs?: number;
+  graceRetryMs?: number;
+  visibilityThrottleMs?: number;
+  disconnectInitialMs?: number;
+  disconnectMaxMs?: number;
+};
+
+/**
+ * Runtime monitor for desktop remote hosts: triggers bidirectional transport
+ * reselection on `online`, `yuri:system-resume`, foreground visibility return,
+ * and sustained stream disconnect with bounded exponential backoff.
+ */
+export const startDesktopTransportRecovery = (
+  options: DesktopTransportRecoveryOptions = {},
+): (() => void) => {
+  if (!isElectronShell() || typeof window === 'undefined') {
+    return () => {};
+  }
+
+  const reselect = options.reselect ?? reselectDesktopHostTransport;
+  const onlineDebounceMs = options.onlineDebounceMs ?? RESELECT_ONLINE_DEBOUNCE_MS;
+  const resumeDebounceMs = options.resumeDebounceMs ?? RESELECT_RESUME_DEBOUNCE_MS;
+  const graceRetryMs = options.graceRetryMs ?? RESELECT_GRACE_RETRY_MS;
+  const visibilityThrottleMs = options.visibilityThrottleMs ?? RESELECT_VISIBILITY_THROTTLE_MS;
+  const disconnectInitialMs = options.disconnectInitialMs ?? DISCONNECT_RESELECT_INITIAL_MS;
+  const disconnectMaxMs = options.disconnectMaxMs ?? DISCONNECT_RESELECT_MAX_MS;
+
+  let disposed = false;
+  let triggerTimer: ReturnType<typeof setTimeout> | null = null;
+  let graceTimer: ReturnType<typeof setTimeout> | null = null;
+  let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let disconnectAttempt = 0;
+  let lastVisibilityCheckAt = 0;
+  let runSeq = 0;
+
+  const clearTriggerTimers = () => {
+    if (triggerTimer !== null) {
+      clearTimeout(triggerTimer);
+      triggerTimer = null;
+    }
+    if (graceTimer !== null) {
+      clearTimeout(graceTimer);
+      graceTimer = null;
+    }
+  };
+
+  const clearDisconnectTimer = () => {
+    if (disconnectTimer !== null) {
+      clearTimeout(disconnectTimer);
+      disconnectTimer = null;
+    }
+  };
+
+  const isForegroundOnline = (): boolean => {
+    const visible = typeof document === 'undefined' || document.visibilityState !== 'hidden';
+    const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+    return visible && online;
+  };
+
+  const isRemoteHostDisconnected = (): boolean => {
+    if (!parseRemoteRuntimeHostId(getRuntimeKey())) return false;
+    const { isConnected, connectionPhase } = useConfigStore.getState();
+    return !isConnected && (connectionPhase === 'reconnecting' || connectionPhase === 'connecting');
+  };
+
+  const scheduleDisconnectCheck = () => {
+    if (disposed) return;
+    clearDisconnectTimer();
+    if (!isRemoteHostDisconnected() || !isForegroundOnline()) return;
+    const delayMs = Math.min(disconnectInitialMs * (2 ** Math.min(disconnectAttempt, 4)), disconnectMaxMs);
+    disconnectTimer = setTimeout(() => {
+      disconnectTimer = null;
+      if (disposed || !isRemoteHostDisconnected() || !isForegroundOnline()) return;
+      const mySeq = ++runSeq;
+      void reselect().then((result) => {
+        if (disposed || mySeq !== runSeq) return;
+        if (result.outcome === 'switched') {
+          disconnectAttempt = 0;
+          return;
+        }
+        if (result.outcome === 'skipped') return;
+        disconnectAttempt += 1;
+        scheduleDisconnectCheck();
+      }).catch(() => {
+        if (disposed || mySeq !== runSeq) return;
+        disconnectAttempt += 1;
+        scheduleDisconnectCheck();
+      });
+    }, delayMs);
+  };
+
+  const triggerReselect = (debounceMs: number, allowGraceRetry: boolean) => {
+    if (disposed || !parseRemoteRuntimeHostId(getRuntimeKey())) return;
+    clearTriggerTimers();
+    const mySeq = ++runSeq;
+    triggerTimer = setTimeout(() => {
+      triggerTimer = null;
+      if (disposed || mySeq !== runSeq || !parseRemoteRuntimeHostId(getRuntimeKey())) return;
+      void reselect().then((result) => {
+        if (disposed || mySeq !== runSeq) return;
+        if (result.outcome === 'switched') {
+          disconnectAttempt = 0;
+          clearDisconnectTimer();
+          return;
+        }
+        if (result.outcome === 'unreachable' && allowGraceRetry && isForegroundOnline()) {
+          graceTimer = setTimeout(() => {
+            graceTimer = null;
+            if (disposed || mySeq !== runSeq || !parseRemoteRuntimeHostId(getRuntimeKey())) return;
+            void reselect().then((retryResult) => {
+              if (disposed || mySeq !== runSeq) return;
+              if (retryResult.outcome === 'switched') {
+                disconnectAttempt = 0;
+                clearDisconnectTimer();
+              } else if (isRemoteHostDisconnected()) {
+                scheduleDisconnectCheck();
+              }
+            }).catch(() => undefined);
+          }, graceRetryMs);
+          return;
+        }
+        if (isRemoteHostDisconnected()) {
+          scheduleDisconnectCheck();
+        }
+      }).catch(() => undefined);
+    }, debounceMs);
+  };
+
+  const onOnline = () => {
+    disconnectAttempt = 0;
+    triggerReselect(onlineDebounceMs, true);
+  };
+
+  const onSystemResume = () => {
+    disconnectAttempt = 0;
+    triggerReselect(resumeDebounceMs, true);
+  };
+
+  const onVisibilityChange = () => {
+    if (typeof document === 'undefined') return;
+    if (document.visibilityState === 'hidden') {
+      clearDisconnectTimer();
+      return;
+    }
+    if (document.visibilityState !== 'visible') return;
+    const now = Date.now();
+    if (now - lastVisibilityCheckAt < visibilityThrottleMs) return;
+    if (!isRemoteHostDisconnected() && !isRelayModeActive()) return;
+    lastVisibilityCheckAt = now;
+    disconnectAttempt = 0;
+    triggerReselect(0, false);
+  };
+
+  window.addEventListener('online', onOnline);
+  window.addEventListener('yuri:system-resume', onSystemResume);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
+
+  const unsubscribeConfig = useConfigStore.subscribe((state, prev) => {
+    if (state.isConnected === prev.isConnected && state.connectionPhase === prev.connectionPhase) {
+      return;
+    }
+    if (state.isConnected && state.connectionPhase === 'connected') {
+      disconnectAttempt = 0;
+      clearDisconnectTimer();
+      return;
+    }
+    if (isRemoteHostDisconnected()) {
+      scheduleDisconnectCheck();
+    } else {
+      clearDisconnectTimer();
+    }
+  });
+
+  const unsubscribeEndpoint = subscribeRuntimeEndpointChanged(() => {
+    disconnectAttempt = 0;
+    clearTriggerTimers();
+    clearDisconnectTimer();
+    if (isRemoteHostDisconnected()) {
+      scheduleDisconnectCheck();
+    }
+  });
+
+  if (isRemoteHostDisconnected()) {
+    scheduleDisconnectCheck();
+  }
+
+  return () => {
+    disposed = true;
+    clearTriggerTimers();
+    clearDisconnectTimer();
+    window.removeEventListener('online', onOnline);
+    window.removeEventListener('yuri:system-resume', onSystemResume);
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
+    unsubscribeConfig();
+    unsubscribeEndpoint();
+  };
 };

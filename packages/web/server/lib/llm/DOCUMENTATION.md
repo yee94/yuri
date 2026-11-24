@@ -22,14 +22,22 @@ start or replace OpenCode to provide inference.
   restaged through one shared preparation flight without rereading bundles on
   the normal warm path.
 - Calls use the official authenticated `client.rpc(LlmBridge)` transport, scoped
-  to that directory. `ready` verifies protocol version 2 and runtime service availability; only RPC-not-ready
+  to that directory. `ready` verifies protocol version 3 and runtime service availability; only RPC-not-ready
   startup errors receive a bounded readiness retry. Persistent `rpc.unavailable`
   restages the plugin and evicts/reloads only that isolated Location once, then
   repeats the bounded readiness check. Concurrent callers on one upstream share
   that reload; cancelling one caller does not cancel another caller's repair.
   Other Locations, user sessions and global configuration are untouched.
-  Generation is never replayed by this recovery, including ambiguous transport
-  failures, because a response may already have been produced.
+  Before any upstream inference is issued, `bridge-plugin.js` performs a bounded
+  cold-start wait (50ms exponential backoff up to 1.5s, interruptible on abort)
+  when `ModelResolver.resolve` returns empty while a newly booted Location is
+  still hydrating its provider/model catalog. Bridge pre-inference failures
+  distinguish `runtime_incompatible`, `model_not_found`, and
+  `invalid_model_options` from `generation_failed`, and `bridge-client.js` logs
+  only sanitized failure metadata (`providerID`, `modelID`, error category,
+  allowlisted reason/status/diagnostic) without prompts, credentials, headers,
+  or bodies. Generation is never replayed by this recovery, including ambiguous
+  transport failures, because a response may already have been produced.
 - `bridge-plugin.js` runs **inside external OpenCode**. It reads that Location's
   live `ModelResolver.Service` through the RPC caller's Location context. The
   external service itself resolves the selected model/variant, active integration

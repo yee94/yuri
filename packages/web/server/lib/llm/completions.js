@@ -204,6 +204,9 @@ export async function createChatCompletion({
     if (error?.type === 'generation_failed' && isRecord(error.data)) {
       failure.providerFailure = error.data;
     }
+    if (typeof error?.type === 'string' && error.type.trim()) {
+      failure.bridgeErrorType = error.type.trim();
+    }
     throw failure;
   }
   const text = typeof generated?.text === 'string' ? generated.text.trim() : '';

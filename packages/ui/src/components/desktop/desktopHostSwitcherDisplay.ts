@@ -68,8 +68,18 @@ export function resolveHostRowDisplay(args: ResolveHostRowDisplayArgs): HostRowD
 
   let statusKind: HostRowDisplayStatus;
   if (isActive) {
-    statusKind =
-      runtimeIsConnected && runtimeConnectionPhase === 'connected' ? 'ok' : 'checking';
+    if (runtimeIsConnected && runtimeConnectionPhase === 'connected') {
+      statusKind = 'ok';
+    } else if (
+      runtimeConnectionPhase === 'reconnecting'
+      && probe
+      && probe.status !== 'ok'
+      && probe.status !== 'update-recommended'
+    ) {
+      statusKind = probe.status;
+    } else {
+      statusKind = 'checking';
+    }
   } else if (isSsh) {
     statusKind = sshPhaseToHostDisplayStatus(sshPhase);
   } else {
