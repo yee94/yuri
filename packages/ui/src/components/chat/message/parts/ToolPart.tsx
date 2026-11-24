@@ -1574,7 +1574,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
                 return (
                     <div className="flex flex-col gap-1">
                         <div className="typography-meta font-medium text-muted-foreground">{t('chat.toolPart.error')}</div>
-                        <div className="typography-meta p-2 rounded-xl border" style={{
+                        <div className="typography-meta p-2 rounded-xl border max-h-60 overflow-auto whitespace-pre-wrap break-words min-w-0" style={{
                             backgroundColor: 'var(--status-error-background)',
                             color: 'var(--status-error)',
                             borderColor: 'var(--status-error-border)',
@@ -1688,7 +1688,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
             return (
                 <div className={getToolExpandedContentClassName(isMobile, 'todo-error')}>
                     <div className="typography-meta font-medium text-muted-foreground/80">{t('chat.toolPart.error')}</div>
-                    <div className="typography-meta p-2 rounded-none border" style={{
+                    <div className="typography-meta p-2 rounded-none border max-h-60 overflow-auto whitespace-pre-wrap break-words min-w-0" style={{
                         backgroundColor: 'var(--status-error-background)',
                         color: 'var(--status-error)',
                         borderColor: 'var(--status-error-border)',
@@ -1766,7 +1766,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
                     {state.status === 'error' && 'error' in state && (
                         <div className="flex flex-col gap-1">
                             <div className="typography-meta font-medium text-muted-foreground/80">{t('chat.toolPart.error')}</div>
-                            <div className="typography-meta p-2 rounded-xl border" style={{
+                            <div className="typography-meta p-2 rounded-xl border max-h-60 overflow-auto whitespace-pre-wrap break-words min-w-0" style={{
                                 backgroundColor: 'var(--status-error-background)',
                                 color: 'var(--status-error)',
                                 borderColor: 'var(--status-error-border)',
