@@ -22,6 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Icon } from "@/components/icon/Icon";
 import type { IconName } from "@/components/icon/icons";
 import { ModelPickerList, type ModelPickerEntry, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
+import { DesktopModelPickerContent, DesktopModelVariantPicker } from '@/components/model-picker/DesktopModelPickerContent';
 import { MobileModelPickerPanel } from '@/components/model-picker/MobileModelPickerPanel';
 import { useIsVSCodeRuntime } from '@/hooks/useRuntimeAPIs';
 import { getAgentColor } from '@/lib/agentColors';
@@ -2201,87 +2202,16 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             const selectedVariant = hasPendingVariant
                 ? pendingVariant
                 : (isCurrentModel ? currentVariant : rememberedVariant);
-            const targetModelLabel = getSharedModelDisplayName(
-                desktopVariantTarget.model,
-                desktopVariantTarget.modelID,
-                { maxLength: 40 },
-            );
 
             return (
-                <div
-                    className="flex min-h-0 flex-1 flex-col"
-                    onKeyDownCapture={(event) => {
-                        if (event.key === 'Escape') {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            setDesktopVariantTarget(null);
-                        }
-                    }}
-                >
-                    <div className="flex items-center gap-1.5 border-b border-border/40 px-1.5 py-1.5">
-                        <button
-                            type="button"
-                            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
-                            onClick={() => setDesktopVariantTarget(null)}
-                            aria-label={t('header.actions.backAria')}
-                        >
-                            <Icon name="arrow-left" className="size-3.5" />
-                        </button>
-                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                            <ModelLogo
-                                modelId={desktopVariantTarget.modelID}
-                                providerId={desktopVariantTarget.providerID}
-                                className="size-3.5 shrink-0"
-                            />
-                            <span className="truncate typography-meta font-medium text-foreground">
-                                {targetModelLabel}
-                            </span>
-                            <span aria-hidden="true" className="shrink-0 text-border">·</span>
-                            <span className="inline-flex shrink-0 items-center gap-1 typography-micro text-muted-foreground">
-                                <Icon name="brain-ai-3" className="size-3 opacity-70" />
-                                {t('chat.modelControls.thinking')}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="flex flex-col gap-0.5 p-1" role="listbox" aria-label={t('chat.modelControls.thinking')}>
-                        {[undefined, ...variantOptions].map((option) => {
-                            const selected = option === selectedVariant || (!option && !selectedVariant);
-                            return (
-                                <button
-                                    key={option ?? '__default'}
-                                    type="button"
-                                    role="option"
-                                    aria-selected={selected}
-                                    className={cn(
-                                        'flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left typography-meta transition-colors',
-                                        selected
-                                            ? 'bg-interactive-selection text-interactive-selection-foreground'
-                                            : 'text-foreground hover:bg-interactive-hover/50',
-                                    )}
-                                    onClick={() => handleDesktopVariantSelect(desktopVariantTarget, option)}
-                                >
-                                    <span className={cn(
-                                        'truncate font-medium',
-                                        !option && !selected && 'text-muted-foreground',
-                                    )}>
-                                        {formatVariantLabel(option)}
-                                    </span>
-                                    {selected ? (
-                                        <Icon name="check" className="size-3.5 shrink-0 text-primary" />
-                                    ) : (
-                                        <span className="size-3.5 shrink-0" aria-hidden="true" />
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
-                    <div className="flex items-center gap-1.5 border-t border-border/40 px-2 py-1.5 typography-micro text-muted-foreground">
-                        <Kbd className="h-4 min-w-4 rounded-[3px] px-1 text-[10px] font-medium tracking-tight shadow-none">Esc</Kbd>
-                        <span>{t('header.actions.backAria')}</span>
-                        <span aria-hidden="true" className="text-border">·</span>
-                        <span>{t('chat.modelControls.keyboardHintThinking')}</span>
-                    </div>
-                </div>
+                <DesktopModelVariantPicker
+                    entry={desktopVariantTarget}
+                    variants={variantOptions}
+                    selectedVariant={selectedVariant}
+                    formatLabel={formatVariantLabel}
+                    onSelect={(option) => handleDesktopVariantSelect(desktopVariantTarget, option)}
+                    onBack={() => setDesktopVariantTarget(null)}
+                />
             );
         };
 
@@ -2353,11 +2283,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 </div>
                             </DropdownMenuTrigger>
                         </TooltipTrigger>
-                        <DropdownMenuContent
-                            className={cn(
-                                'yuri-composer-picker yuri-composer-model-picker w-[min(400px,calc(100vw-2rem))] p-0 flex flex-col',
-                                isModelSelectorInstant && INSTANT_DROPDOWN_CLASS,
-                            )}
+                        <DesktopModelPickerContent
+                            className={cn(isModelSelectorInstant && INSTANT_DROPDOWN_CLASS)}
                             align="end"
                             alignOffset={-40}
                             onKeyDownCapture={handleModelShortcutKeyDownCapture}
@@ -2375,8 +2302,6 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                         onSelect={handleSharedModelSelect}
                                         labels={modelPickerLabels}
                                         stickyHeaders
-                                        virtualize
-                                        stairs
                                         recencyOrder={recentModelUsage}
                                         selectedModel={currentProviderId && currentModelId ? { providerID: currentProviderId, modelID: currentModelId } : null}
                                         hiddenModels={hiddenModels}
@@ -2450,7 +2375,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                     />
                                 </>
                             )}
-                        </DropdownMenuContent>
+                        </DesktopModelPickerContent>
                     </DropdownMenu>
                 ) : (
                     <button

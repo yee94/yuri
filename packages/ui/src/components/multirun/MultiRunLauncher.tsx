@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
+import { mobileWindowStack } from '@/components/ui/MobileWindowStack';
 import { cn, formatDirectoryName } from '@/lib/utils';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useMultiRunStore } from '@/stores/useMultiRunStore';
@@ -209,13 +210,12 @@ export const MultiRunLauncher: React.FC<MultiRunLauncherProps> = ({
   });
 
   const handleCancelKeyDown = useEvent((e: KeyboardEvent) => {
-    if (onCancel) {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        onCancel();
-      }
-    }
+    if (!onCancel || e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+    if (mobileWindowStack.getSnapshot()) return;
+    if (e.target instanceof Element && e.target.closest('[data-slot="dropdown-menu-content"], [data-slot="select-content"]')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onCancel();
   });
 
   const canCancel = Boolean(onCancel);

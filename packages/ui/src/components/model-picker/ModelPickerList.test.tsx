@@ -1,10 +1,8 @@
 import { describe, expect, test, vi } from 'vitest';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { renderToStaticMarkup } from 'react-dom/server';
 
-const { persistedCollapsedSections, copyText, copyToast, tooltipRoots } = vi.hoisted(() => ({
-  persistedCollapsedSections: { 'provider:anthropic': true },
+const { copyText, copyToast, tooltipRoots } = vi.hoisted(() => ({
   copyText: vi.fn(async (_text: string): Promise<{ ok: boolean }> => ({ ok: true })),
   copyToast: { success: vi.fn(), error: vi.fn() },
   tooltipRoots: vi.fn(),
@@ -17,16 +15,6 @@ vi.mock('@/lib/i18n', async (importOriginal) => ({
   useI18n: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('@/stores/useModelPickerSectionsStore', () => ({
-  useModelPickerSectionsStore: (selector: (state: {
-    collapsedSections: Record<string, boolean>;
-    toggleSection: (key: string) => void;
-  }) => unknown) => selector({
-    collapsedSections: persistedCollapsedSections,
-    toggleSection: () => {},
-  }),
-}));
-
 vi.mock('@/components/ui/ModelLogo', () => ({
   ModelLogo: () => <span />,
 }));
@@ -36,48 +24,17 @@ vi.mock('@/components/ui/ProviderLogo', () => ({
 }));
 
 vi.mock('@/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => { tooltipRoots(); return <>{children}</>; },
+  Tooltip: ({ children, open }: { children: React.ReactNode; open?: boolean }) => {
+    if (open) tooltipRoots();
+    return <>{children}</>;
+  },
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipContent: ({ children }: { children: React.ReactNode }) => <div role="tooltip">{children}</div>,
+  TooltipContent: ({ children, anchor }: { children: React.ReactNode; anchor?: unknown }) => anchor
+    ? <div role="tooltip">{children}</div>
+    : null,
 }));
 
 const { ModelPickerList } = await import('./ModelPickerList');
-
-const renderPicker = (searchQuery: string) => renderToStaticMarkup(
-  <ModelPickerList
-    providers={[{
-      id: 'anthropic',
-      name: 'Anthropic',
-      models: [{ id: 'claude-sonnet-4', name: 'Claude Sonnet 4' }],
-    }]}
-    favoriteModels={[]}
-    recentModels={[]}
-    searchQuery={searchQuery}
-    onSearchQueryChange={() => {}}
-    onSelect={() => {}}
-    labels={{
-      searchPlaceholder: 'Search models',
-      noResults: 'No models found',
-      favorites: 'Favorites',
-      recent: 'Recent',
-      keyboardHint: 'Navigate',
-    }}
-  />,
-);
-
-describe('ModelPickerList section collapse state', () => {
-  test('expands a persisted-collapsed provider during search', () => {
-    expect(renderPicker('')).not.toContain('Claude Sonnet 4');
-    expect(renderPicker('sonnet')).toContain('Claude Sonnet 4');
-    expect(persistedCollapsedSections['provider:anthropic']).toBe(true);
-  });
-
-  test('marks headers and search for popup-only transparent material', () => {
-    const markup = renderPicker('');
-    expect(markup).toContain('model-picker-section-header');
-    expect(markup).toContain('model-picker-search');
-  });
-});
 
 describe('ModelPickerList model identity', () => {
   test('bounds desktop row work while preserving all 300 entries and offscreen keyboard selection', async () => {
@@ -89,7 +46,7 @@ describe('ModelPickerList model identity', () => {
     const onSelect = vi.fn();
     try {
       await React.act(async () => root.render(<div className="yuri-composer-picker"><ModelPickerList
-        virtualize stickyHeaders={false} autoFocus={false} tooltipsEnabled={false}
+        stickyHeaders={false} autoFocus={false} tooltipsEnabled={false}
         providers={[{ id: 'custom', models: models.slice(0, 299) }, { id: 'other', models: [models[299]] }]}
         favoriteModels={models.slice(0, 2).map((model) => ({ providerID: 'custom', modelID: model.id, model }))} recentModels={[]} getMetadata={getMetadata}
         onReorderFavorite={() => {}} onReorderProvider={() => {}}
@@ -127,7 +84,7 @@ describe('ModelPickerList model identity', () => {
         labels={{ searchPlaceholder: 'Search', noResults: 'Empty', favorites: 'Favorites', recent: 'Recent', keyboardHint: 'Navigate' }}
       />));
       const row = container.querySelector('[role="option"]');
-      expect(container.querySelectorAll('[role="option"]')).toHaveLength(300);
+      expect(row?.getAttribute('aria-setsize')).toBe('300');
       expect(tooltipRoots).not.toHaveBeenCalled();
       await React.act(async () => vi.advanceTimersByTime(450));
       expect(tooltipRoots).toHaveBeenCalledOnce();
@@ -163,11 +120,11 @@ describe('ModelPickerList model identity', () => {
     />);
     try {
       await React.act(async () => render('m'));
-      expect(container.querySelectorAll('[role="option"]')).toHaveLength(300);
+      expect(container.querySelector('[role="option"]')?.getAttribute('aria-setsize')).toBe('300');
       numberFormat.mockClear();
       for (let index = 0; index < 50; index++) await React.act(async () => render(index % 2 ? 'm' : 'mo'));
       expect(numberFormat.mock.calls.length).toBeLessThanOrEqual(1);
-      expect(container.querySelectorAll('[role="option"]')).toHaveLength(300);
+      expect(container.querySelector('[role="option"]')?.getAttribute('aria-setsize')).toBe('300');
     } finally {
       await React.act(async () => root.unmount());
       vi.unstubAllGlobals();
@@ -310,7 +267,7 @@ describe('ModelPickerList stairs layout', () => {
     await React.act(async () => root.render(
       <div className="yuri-composer-picker">
         <ModelPickerList
-          virtualize stairs autoFocus={false} tooltipsEnabled={false}
+          autoFocus={false} tooltipsEnabled={false}
           providers={providers} favoriteModels={[]} recentModels={[]}
           searchQuery={searchQuery} onSearchQueryChange={() => {}} onSelect={onSelect}
           labels={labels} {...extra}
@@ -434,12 +391,25 @@ describe('ModelPickerList stairs layout', () => {
     }
   });
 
-  test('does not enable the stairs layout without virtualization', async () => {
+  test('pins the clear action outside the virtual list and only shows allowed models', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-    const { container, root } = await render('', { virtualize: false });
+    const onSelectNone = vi.fn();
+    const { container, root, onSelect } = await render('', {
+      labels: { ...labels, notSelected: 'None' },
+      includeNotSelected: true,
+      onSelectNone,
+      allowedModelIdsByProvider: { cursor: ['auto'] },
+      favoriteModels: [{ providerID: 'anthropic', modelID: claudeA.id, model: claudeA }],
+    });
     try {
-      expect(container.querySelector('.model-picker-rail')).toBeNull();
-      expect(container.querySelector('.model-picker-section-header[aria-expanded]')).not.toBeNull();
+      const clear = container.querySelector<HTMLButtonElement>('.model-picker-clear-action button')!;
+      expect(clear.textContent).toBe('None');
+      expect(clear.closest('.model-picker-stairs')).toBeNull();
+      expect(Array.from(container.querySelectorAll('.model-picker-rail button'), (button) => button.getAttribute('aria-label'))).toEqual(['All', 'Cursor']);
+      expect(Array.from(container.querySelectorAll('.model-picker-row-name'), (name) => name.textContent)).toEqual(['Auto']);
+      await React.act(async () => clear.click());
+      expect(onSelectNone).toHaveBeenCalledOnce();
+      expect(onSelect).not.toHaveBeenCalled();
     } finally {
       await React.act(async () => root.unmount());
       container.remove();

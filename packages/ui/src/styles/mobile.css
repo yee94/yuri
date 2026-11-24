@@ -535,6 +535,10 @@
   border-bottom: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
 }
 
+.yuri-composer-picker .model-picker-clear-action {
+  border-bottom: var(--yuri-popup-divider-width) solid var(--yuri-popup-divider);
+}
+
 .yuri-composer-picker .model-picker-search-area .model-picker-search {
   height: 1.5rem;
   padding-inline: 1.75rem 0;
@@ -631,6 +635,7 @@
 
 .yuri-composer-picker .model-picker-row[data-model-section="provider"] {
   min-height: 2rem;
+  padding-block: 0.125rem;
 }
 
 .yuri-composer-picker .model-picker-row[data-model-section="provider"] .model-picker-row-labels {

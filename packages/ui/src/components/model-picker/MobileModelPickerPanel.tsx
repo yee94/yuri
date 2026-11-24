@@ -102,6 +102,8 @@ interface MobileModelPickerPanelProps {
     selectedModelID: string;
     resolveSelectedVariant: (providerID: string, modelID: string) => string | undefined;
     onSelect: (providerID: string, modelID: string, variant: string | undefined) => void;
+    clearSelection?: { label: string; onSelect: () => void };
+    selectionCount?: (providerID: string, modelID: string) => number;
     providers: ModelPickerProvider[];
     favoriteModels: ModelPickerEntry[];
     recentModels: ModelPickerEntry[];
@@ -131,6 +133,8 @@ export const MobileModelPickerPanel: React.FC<MobileModelPickerPanelProps> = ({
     selectedModelID,
     resolveSelectedVariant,
     onSelect,
+    clearSelection,
+    selectionCount,
     providers,
     favoriteModels,
     recentModels,
@@ -209,6 +213,8 @@ export const MobileModelPickerPanel: React.FC<MobileModelPickerPanelProps> = ({
                 selectedModelID={selectedModelID}
                 resolveSelectedVariant={resolveSelectedVariant}
                 onSelect={onSelect}
+                clearSelection={clearSelection}
+                selectionCount={selectionCount}
                 providers={providers}
                 favoriteModels={favoriteModels}
                 recentModels={recentModels}
@@ -234,6 +240,7 @@ type MobileModelRowProps = {
     /** Shown above the name in favorites, recents and search results. */
     providerName?: string;
     selected: boolean;
+    selectionCount?: number;
     expanded: boolean;
     favorite: boolean;
     variants: readonly string[];
@@ -255,6 +262,7 @@ const MobileModelRow = React.memo<MobileModelRowProps>(({
     displayName,
     providerName,
     selected,
+    selectionCount = 0,
     expanded,
     favorite,
     variants,
@@ -301,6 +309,7 @@ const MobileModelRow = React.memo<MobileModelRowProps>(({
                         ) : null}
                     </div>
                 </button>
+                {selectionCount > 0 ? <span className="shrink-0 typography-micro text-muted-foreground">x{selectionCount}</span> : null}
                 {variants.length > 0 ? (
                     <button type="button" {...matchingPressProps} onClick={() => onToggleExpanded(rowKey)} className="flex flex-shrink-0 items-center gap-0.5 typography-micro font-medium text-muted-foreground hover:text-foreground" aria-expanded={expanded} aria-label={expanded ? t('chat.modelControls.hideThinkingModes') : t('chat.modelControls.showThinkingModes')}>
                         <span className="whitespace-nowrap">{formatVariantLabel(t, displayVariant)}</span>
@@ -340,6 +349,8 @@ type MobileModelPickerPanelBodyProps = {
     selectedModelID: string;
     resolveSelectedVariant: (providerID: string, modelID: string) => string | undefined;
     onSelect: (providerID: string, modelID: string, variant: string | undefined) => void;
+    clearSelection?: MobileModelPickerPanelProps['clearSelection'];
+    selectionCount?: MobileModelPickerPanelProps['selectionCount'];
     providers: ModelPickerProvider[];
     favoriteModels: ModelPickerEntry[];
     recentModels: ModelPickerEntry[];
@@ -367,6 +378,8 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
     selectedModelID,
     resolveSelectedVariant,
     onSelect,
+    clearSelection,
+    selectionCount,
     providers,
     favoriteModels,
     recentModels,
@@ -642,6 +655,7 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                 displayName={getDisplayName(entry)}
                 providerName={options.showProvider ? (providerByID.get(providerID)?.name || providerID) : undefined}
                 selected={selected}
+                selectionCount={selectionCount?.(providerID, modelID)}
                 expanded={expandedModelKey === rowKey}
                 favorite={isFavorite(providerID, modelID)}
                 variants={variants}
@@ -722,6 +736,13 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                         </button>
                     ) : null}
                 </div>
+            ) : null}
+            {!isVariantView && clearSelection ? (
+                <Button type="button" variant="ghost" size="sm" {...matchingPressProps} onClick={clearSelection.onSelect} className="shrink-0 justify-start text-muted-foreground">
+                    <Icon name="close" className="size-3.5" />
+                    <span className="min-w-0 truncate">{clearSelection.label}</span>
+                    {!selectedProviderID || !selectedModelID ? <Icon name="check" className="ml-auto size-4 shrink-0 text-primary" /> : null}
+                </Button>
             ) : null}
             <div className="flex min-h-0 flex-1 gap-1">
             {!isVariantView ? (

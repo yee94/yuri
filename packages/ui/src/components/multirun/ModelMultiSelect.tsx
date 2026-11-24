@@ -1,5 +1,7 @@
 import React from 'react';
+import { useEvent } from '@reactuses/core';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ModelLogo } from '@/components/ui/ModelLogo';
 import { Icon } from "@/components/icon/Icon";
@@ -8,11 +10,15 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useModelLists } from '@/hooks/useModelLists';
 import { useI18n } from '@/lib/i18n';
+import { useDeviceInfo } from '@/lib/device';
 import { getModelDisplayName } from '@/lib/modelDisplay';
+import { DesktopModelPickerContent } from '@/components/model-picker/DesktopModelPickerContent';
+import { MobileModelPickerPanel } from '@/components/model-picker/MobileModelPickerPanel';
 import { ModelPickerList, type ModelPickerEntry, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
 
 /** Chip height class - shared between chips and add button */
 const CHIP_HEIGHT_CLASS = 'h-7';
+const noSelectedVariant = () => undefined;
 
 /** UI-only type with instanceId for React keys and duplicate tracking */
 export interface ModelSelectionWithId {
@@ -102,20 +108,22 @@ export const ModelMultiSelect: React.FC<ModelMultiSelectProps> = ({
   triggerIcon,
 }) => {
   const { t } = useI18n();
+  const { isMobile: deviceIsMobile } = useDeviceInfo();
+  const isMobileLayout = useUIStore((state) => state.isMobile);
+  const isMobile = isMobileLayout || deviceIsMobile;
   const providers = useConfigStore((state) => state.providers) as ModelPickerProvider[];
   const getModelMetadata = useConfigStore((state) => state.getModelMetadata);
   const toggleFavoriteModel = useUIStore((state) => state.toggleFavoriteModel);
   const isFavoriteModel = useUIStore((state) => state.isFavoriteModel);
   const { favoriteModelsList, recentModelsList } = useModelLists();
+  const recentModelUsage = useUIStore((state) => state.recentModels);
   const hiddenModels = useUIStore((state) => state.hiddenModels);
   const providerOrder = useUIStore((state) => state.providerOrder);
   const [isOpen, setIsOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [availableHeight, setAvailableHeight] = React.useState<number | null>(null);
-  const dropdownRef = React.useRef<HTMLDivElement>(null);
-  const triggerRef = React.useRef<HTMLButtonElement>(null);
   const isSingleSelect = maxModels === 1;
   const canAddModel = maxModels === undefined || selectedModels.length < maxModels || isSingleSelect;
+  const selectedModel = isSingleSelect ? selectedModels[0] : undefined;
 
   // Count occurrences of each model for display purposes
   const modelCounts = React.useMemo(() => {
@@ -128,74 +136,29 @@ export const ModelMultiSelect: React.FC<ModelMultiSelectProps> = ({
   }, [selectedModels]);
 
   // Get instance index for a specific model selection
-  const getInstanceIndex = React.useCallback((model: ModelSelectionWithId): number => {
+  const getInstanceIndex = (model: ModelSelectionWithId): number => {
     const sameModels = selectedModels.filter(
       m => m.providerID === model.providerID && m.modelID === model.modelID
     );
     return sameModels.findIndex(m => m.instanceId === model.instanceId) + 1;
-  }, [selectedModels]);
+  };
 
-  // Calculate available height: multi-run opens upward inside a scroller; fusion opens downward and may extend past the dialog.
-  React.useEffect(() => {
-    if (!isOpen || !triggerRef.current) return;
-
-    const triggerRect = triggerRef.current.getBoundingClientRect();
-
-    if (dropdownSide === 'bottom') {
-      const viewportHeight = window.visualViewport?.height ?? document.documentElement.clientHeight ?? window.innerHeight;
-      const spaceBelow = viewportHeight - triggerRect.bottom - 16;
-      // availableHeight is only the scrollable model list; reserve room for search + keyboard hint chrome.
-      const listSpaceBelow = spaceBelow - 112;
-      setAvailableHeight(Math.max(160, Math.min(320, listSpaceBelow)));
-      return;
-    }
-
-    // Find the nearest dialog or overflow ancestor to constrain within
-    let container: HTMLElement | null = triggerRef.current.parentElement;
-    while (container) {
-      if (container.getAttribute('role') === 'dialog' || container.hasAttribute('data-scroll-shadow')) {
-        break;
-      }
-      const style = getComputedStyle(container);
-      if (style.overflow === 'auto' || style.overflow === 'hidden' || style.overflowY === 'auto' || style.overflowY === 'hidden') {
-        break;
-      }
-      container = container.parentElement;
-    }
-
-    const topBound = container ? container.getBoundingClientRect().top : 0;
-    const spaceAbove = triggerRect.top - topBound - 16;
-    // Cap: min 150, max 300
-    setAvailableHeight(Math.max(150, Math.min(300, spaceAbove)));
-  }, [dropdownSide, isOpen]);
+  const handleOpenChange = useEvent((open: boolean) => {
+    setIsOpen(open);
+    if (!open) setSearchQuery('');
+  });
+  const closePicker = useEvent(() => handleOpenChange(false));
 
   React.useEffect(() => {
-    if (!canAddModel && isOpen) {
-      setIsOpen(false);
-      setSearchQuery('');
-    }
-  }, [canAddModel, isOpen]);
+    if (!canAddModel && isOpen) closePicker();
+  }, [canAddModel, closePicker, isOpen]);
 
-  // Close dropdown when clicking outside
-  React.useEffect(() => {
-    if (!isOpen) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-        setSearchQuery('');
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen]);
-
-  const handleSelectModel = React.useCallback((entry: ModelPickerEntry) => {
+  const handleSelectModel = useEvent((providerID: string, modelID: string, model?: ModelPickerEntry['model']) => {
+    if (!canAddModel) return;
     const nextModel = {
-      providerID: entry.providerID,
-      modelID: entry.modelID,
-      displayName: getModelDisplayName(entry.model as { id?: string; name?: string }, entry.modelID) || entry.modelID,
+      providerID,
+      modelID,
+      displayName: getModelDisplayName(model, modelID) || modelID,
       instanceId: generateInstanceId(),
     };
     if (isSingleSelect && selectedModels.length > 0 && onUpdate) {
@@ -203,18 +166,20 @@ export const ModelMultiSelect: React.FC<ModelMultiSelectProps> = ({
     } else {
       onAdd(nextModel);
     }
-    if (isSingleSelect) {
-      setIsOpen(false);
-      setSearchQuery('');
-    }
-  }, [isSingleSelect, onAdd, onUpdate, selectedModels.length]);
+    if (isSingleSelect) closePicker();
+  });
+  const selectDesktopModel = useEvent((entry: ModelPickerEntry) => handleSelectModel(entry.providerID, entry.modelID, entry.model));
+  const selectMobileModel = useEvent((providerID: string, modelID: string) => {
+    const model = providers.find((provider) => provider.id === providerID)?.models?.find((model) => model.id === modelID);
+    handleSelectModel(providerID, modelID, model);
+  });
+  const getSelectionCount = (providerID: string, modelID: string) => modelCounts.get(`${providerID}:${modelID}`) ?? 0;
 
   const labels = React.useMemo(() => ({
     searchPlaceholder: t('multirun.modelMultiSelect.search.placeholder'),
     noResults: t('multirun.modelMultiSelect.search.noResults'),
     favorites: t('multirun.modelMultiSelect.sections.favorites'),
     recent: t('multirun.modelMultiSelect.sections.recent'),
-    keyboardHint: t('multirun.modelMultiSelect.keyboard.hint'),
     favorite: t('settings.agents.modelSelector.actions.favorite'),
     unfavorite: t('settings.agents.modelSelector.actions.unfavorite'),
     provider: t('chat.modelControls.provider'),
@@ -229,67 +194,79 @@ export const ModelMultiSelect: React.FC<ModelMultiSelectProps> = ({
     costOutput: t('chat.modelControls.costOutput'),
   }), [t]);
 
+  const trigger = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className={cn(
+        CHIP_HEIGHT_CLASS,
+        '!border-border/80 !bg-[var(--surface-subtle)] hover:!bg-[var(--interactive-hover)]/70',
+        addButtonClassName,
+      )}
+      disabled={!canAddModel}
+      onClick={isMobile ? () => handleOpenChange(true) : undefined}
+    >
+      {triggerIcon ?? <Icon name="add" className="h-3.5 w-3.5 mr-1" />}
+      {addButtonLabel ?? t('multirun.modelMultiSelect.actions.addModel')}
+    </Button>
+  );
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5 items-center">
         {/* Add model button (dropdown trigger) */}
-        <div className={cn('relative', containerClassName)} ref={dropdownRef}>
-          <Button
-            ref={triggerRef}
-            type="button"
-            variant="outline"
-            size="sm"
-            className={cn(
-              CHIP_HEIGHT_CLASS,
-              '!border-border/80 !bg-[var(--surface-subtle)] hover:!bg-[var(--interactive-hover)]/70',
-              addButtonClassName,
-            )}
-            disabled={!canAddModel}
-            onClick={() => {
-              setIsOpen(!isOpen);
-            }}
-          >
-            {triggerIcon ?? <Icon name="add" className="h-3.5 w-3.5 mr-1" />}
-            {addButtonLabel ?? t('multirun.modelMultiSelect.actions.addModel')}
-          </Button>
-
-          {isOpen ? (
-            <div
-              className={cn(
-                'absolute left-0 z-50 w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] flex flex-col overflow-hidden rounded-xl border border-border/50 shadow-lg',
-                dropdownSide === 'top' ? 'bottom-full mb-1' : 'top-full mt-1',
-                dropdownClassName,
-              )}
-              style={{
-                background: 'linear-gradient(var(--surface-elevated),var(--surface-elevated)),linear-gradient(var(--surface-background),var(--surface-background))',
-              }}
-            >
-              <ModelPickerList
+        <div className={cn('relative', containerClassName)}>
+          {isMobile ? (
+            <>
+              {trigger}
+              <MobileModelPickerPanel
+                open={isOpen}
+                onClose={closePicker}
+                selectedProviderID={selectedModel?.providerID ?? ''}
+                selectedModelID={selectedModel?.modelID ?? ''}
+                resolveSelectedVariant={noSelectedVariant}
+                onSelect={selectMobileModel}
                 providers={providers}
-                providerOrder={providerOrder}
                 favoriteModels={favoriteModelsList}
                 recentModels={recentModelsList}
+                recencyOrder={recentModelUsage}
+                providerOrder={providerOrder}
                 getMetadata={getModelMetadata}
                 hiddenModels={hiddenModels}
-                searchQuery={searchQuery}
-                onSearchQueryChange={setSearchQuery}
-                onSelect={handleSelectModel}
-                labels={labels}
-                selectionCount={(entry) => modelCounts.get(`${entry.providerID}:${entry.modelID}`) || 0}
-                disabled={!canAddModel}
-                maxHeightClassName="flex-1"
-                maxHeightStyle={{ maxHeight: availableHeight ? `${availableHeight}px` : '300px' }}
-                stickyHeaders
-                tooltipsEnabled={isOpen}
-                isFavorite={(entry) => isFavoriteModel(entry.providerID, entry.modelID)}
-                onToggleFavorite={(entry) => toggleFavoriteModel(entry.providerID, entry.modelID)}
-                onEscape={() => {
-                  setIsOpen(false);
-                  setSearchQuery('');
-                }}
+                selectionCount={getSelectionCount}
+                variantSelectionEnabled={false}
+                isFavorite={isFavoriteModel}
+                onToggleFavorite={toggleFavoriteModel}
               />
-            </div>
-          ) : null}
+            </>
+          ) : (
+            <DropdownMenu modal={false} open={isOpen} onOpenChange={handleOpenChange}>
+              <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+              <DesktopModelPickerContent side={dropdownSide} align="start" className={dropdownClassName}>
+                <ModelPickerList
+                  providers={providers}
+                  providerOrder={providerOrder}
+                  favoriteModels={favoriteModelsList}
+                  recentModels={recentModelsList}
+                  recencyOrder={recentModelUsage}
+                  getMetadata={getModelMetadata}
+                  hiddenModels={hiddenModels}
+                  searchQuery={searchQuery}
+                  onSearchQueryChange={setSearchQuery}
+                  onSelect={selectDesktopModel}
+                  labels={labels}
+                  selectedModel={selectedModel}
+                  selectionCount={(entry) => getSelectionCount(entry.providerID, entry.modelID)}
+                  disabled={!canAddModel}
+                  tooltipsEnabled={isOpen}
+                  isFavorite={(entry) => isFavoriteModel(entry.providerID, entry.modelID)}
+                  onToggleFavorite={(entry) => toggleFavoriteModel(entry.providerID, entry.modelID)}
+                  onEscape={closePicker}
+                />
+              </DesktopModelPickerContent>
+            </DropdownMenu>
+          )}
         </div>
 
         {/* Selected models */}

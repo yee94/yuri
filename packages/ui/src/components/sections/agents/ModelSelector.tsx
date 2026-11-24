@@ -2,19 +2,19 @@ import React from 'react';
 import { useEvent } from '@reactuses/core';
 import {
     DropdownMenu,
-    DropdownMenuContent,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ModelLogo } from '@/components/ui/ModelLogo';
 import { Icon } from '@/components/icon/Icon';
-import { useModelLists } from '@/hooks/useModelLists';
+import { useModelLists, type ModelListProvider } from '@/hooks/useModelLists';
 import { useOpenCodeReadiness } from '@/hooks/useOpenCodeReadiness';
 import { useDeviceInfo } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { ModelPickerList, type ModelPickerEntry, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
+import { DesktopModelPickerContent, DesktopModelVariantPicker } from '@/components/model-picker/DesktopModelPickerContent';
+import { ModelPickerList, type ModelPickerEntry } from '@/components/model-picker/ModelPickerList';
 import { MobileModelPickerPanel } from '@/components/model-picker/MobileModelPickerPanel';
 
 interface ModelSelectorProps {
@@ -29,7 +29,12 @@ interface ModelSelectorProps {
     tooltipsEnabled?: boolean;
     dropdownPortalToBody?: boolean;
     showIcon?: boolean;
-    providers?: ModelPickerProvider[];
+    providers?: ModelListProvider[];
+}
+
+function getVariantOptions(entry: ModelPickerEntry): string[] {
+    const variants = (entry.model as { variants?: Record<string, unknown> }).variants;
+    return variants ? Object.keys(variants) : [];
 }
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -48,7 +53,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 }) => {
     const { t } = useI18n();
     const { isReady, isUnavailable } = useOpenCodeReadiness();
-    const storedProviders = useConfigStore((state) => state.providers) as ModelPickerProvider[];
+    const storedProviders = useConfigStore((state) => state.providers);
     const providers = catalogProviders ?? storedProviders;
     const getModelMetadata = useConfigStore((state) => state.getModelMetadata);
     const isMobile = useUIStore((state) => state.isMobile);
@@ -56,44 +61,39 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     const toggleFavoriteModel = useUIStore((state) => state.toggleFavoriteModel);
     const isFavoriteModel = useUIStore((state) => state.isFavoriteModel);
     const addRecentModel = useUIStore((state) => state.addRecentModel);
+    const recentModelUsage = useUIStore((state) => state.recentModels);
     const providerOrder = useUIStore((state) => state.providerOrder);
     const { favoriteModelsList, recentModelsList } = useModelLists({
         currentProviderID: providerId,
         currentModelID: modelId,
+        providers: catalogProviders,
     });
     const { isMobile: deviceIsMobile } = useDeviceInfo();
     const isActuallyMobile = isMobile || deviceIsMobile;
 
     const [isMobilePanelOpen, setIsMobilePanelOpen] = React.useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = React.useState(false);
+    const [searchQuery, setSearchQuery] = React.useState('');
+    const [variantTarget, setVariantTarget] = React.useState<ModelPickerEntry | null>(null);
+    const variantSelectionEnabled = variant !== undefined;
+
+    const closePicker = useEvent(() => {
+        setIsMobilePanelOpen(false);
+        setIsDropdownOpen(false);
+        setSearchQuery('');
+        setVariantTarget(null);
+    });
     const openMobilePanel = useEvent(() => {
         setIsMobilePanelOpen(true);
         void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelSelector:mobilePanel' });
     });
     const handleDropdownOpenChange = useEvent((open: boolean) => {
-        setIsDropdownOpen(open);
-        if (open) {
-            void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelSelector:desktopMenu' });
-        }
+        if (!open) return closePicker();
+        setIsDropdownOpen(true);
+        void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'modelSelector:desktopMenu' });
     });
-    const [searchQuery, setSearchQuery] = React.useState('');
-    const [variantTarget, setVariantTarget] = React.useState<ModelPickerEntry | null>(null);
-    const variantSelectionEnabled = variant !== undefined;
 
-    const closePicker = React.useCallback(() => {
-        setIsMobilePanelOpen(false);
-        setIsDropdownOpen(false);
-        setSearchQuery('');
-        setVariantTarget(null);
-    }, []);
-
-    const getVariantOptions = React.useCallback((entry: ModelPickerEntry): string[] => {
-        const provider = providers.find((item) => item.id === entry.providerID);
-        const model = provider?.models?.find((item) => item.id === entry.modelID) as { variants?: Record<string, unknown> } | undefined;
-        return model?.variants ? Object.keys(model.variants) : [];
-    }, [providers]);
-
-    const handleSelect = React.useCallback((entry: ModelPickerEntry) => {
+    const handleSelect = useEvent((entry: ModelPickerEntry) => {
         const variantOptions = getVariantOptions(entry);
         const sameModel = entry.providerID === providerId && entry.modelID === modelId;
         const rememberedVariant = entry.variant !== undefined && variantOptions.includes(entry.variant)
@@ -111,26 +111,25 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             variantSelectionEnabled ? (nextVariant || undefined) : undefined,
         );
         closePicker();
-    }, [addRecentModel, closePicker, getVariantOptions, modelId, onChange, providerId, variant, variantSelectionEnabled]);
+    });
 
-    const handleSelectNone = React.useCallback(() => {
+    const handleSelectNone = useEvent(() => {
         onChange('', '', variantSelectionEnabled ? '' : undefined);
         closePicker();
-    }, [closePicker, onChange, variantSelectionEnabled]);
+    });
 
-    const handleVariantSelect = React.useCallback((nextVariant: string) => {
+    const handleVariantSelect = useEvent((nextVariant: string | undefined) => {
         if (!variantTarget) return;
-        onChange(variantTarget.providerID, variantTarget.modelID, nextVariant);
-        addRecentModel(variantTarget.providerID, variantTarget.modelID, nextVariant || undefined);
+        onChange(variantTarget.providerID, variantTarget.modelID, nextVariant ?? '');
+        addRecentModel(variantTarget.providerID, variantTarget.modelID, nextVariant);
         closePicker();
-    }, [addRecentModel, closePicker, onChange, variantTarget]);
+    });
 
     const labels = React.useMemo(() => ({
         searchPlaceholder: t('settings.agents.modelSelector.searchPlaceholder'),
         noResults: t('settings.agents.modelSelector.state.noModelsFound'),
         favorites: t('settings.agents.modelSelector.section.favorites'),
         recent: t('settings.agents.modelSelector.section.recent'),
-        keyboardHint: t('settings.agents.modelSelector.keyboardHints'),
         notSelected: placeholder || t('settings.agents.modelSelector.notSelected'),
         favorite: t('settings.agents.modelSelector.actions.favorite'),
         unfavorite: t('settings.agents.modelSelector.actions.unfavorite'),
@@ -146,14 +145,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         costOutput: t('chat.modelControls.costOutput'),
     }), [placeholder, t]);
 
-    const selectedModel = providerId && modelId ? { providerID: providerId, modelID: modelId } : null;
+    const selectedModel = React.useMemo(() => providerId && modelId ? { providerID: providerId, modelID: modelId } : null, [providerId, modelId]);
     const triggerLabel = providerId && modelId ? `${providerId}/${modelId}` : (placeholder || t('settings.agents.modelSelector.notSelected'));
     const variantLabel = variantSelectionEnabled ? (variant || t('chat.modelControls.default')) : null;
-    const resolveMobileVariant = React.useCallback((entryProviderId: string, entryModelId: string) => {
-        if (!variantSelectionEnabled || entryProviderId !== providerId || entryModelId !== modelId) return undefined;
-        return variant || undefined;
-    }, [modelId, providerId, variant, variantSelectionEnabled]);
-    const handleMobileSelect = React.useCallback((nextProviderId: string, nextModelId: string, nextVariant: string | undefined) => {
+    const resolveMobileVariant = React.useMemo(() => (entryProviderId: string, entryModelId: string) => (
+        entryProviderId === providerId && entryModelId === modelId ? variant || undefined : undefined
+    ), [modelId, providerId, variant]);
+    const handleMobileSelect = useEvent((nextProviderId: string, nextModelId: string, nextVariant: string | undefined) => {
         onChange(nextProviderId, nextModelId, variantSelectionEnabled ? (nextVariant ?? '') : undefined);
         addRecentModel(
             nextProviderId,
@@ -161,11 +159,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             variantSelectionEnabled ? (nextVariant || undefined) : undefined,
         );
         closePicker();
-    }, [addRecentModel, closePicker, onChange, variantSelectionEnabled]);
+    });
 
-    const renderVariantControl = React.useCallback((entry: ModelPickerEntry, state: { isSelected: boolean }) => {
+    const renderVariantControl = (entry: ModelPickerEntry, state: { isSelected: boolean }) => {
+        if (!variantSelectionEnabled) return null;
         const variantOptions = getVariantOptions(entry);
-        if (!variantSelectionEnabled || variantOptions.length === 0) return null;
+        if (variantOptions.length === 0) return null;
         const rememberedVariant = entry.variant !== undefined && variantOptions.includes(entry.variant)
             ? entry.variant
             : undefined;
@@ -173,7 +172,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         return (
             <button
                 type="button"
-                className="flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 typography-micro font-medium text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
+                className="model-picker-thinking flex shrink-0 items-center rounded-md px-1.5 py-0.5 typography-micro font-medium text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
                 onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -185,7 +184,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 <Icon name="arrow-right-s" className="size-3.5" />
             </button>
         );
-    }, [getVariantOptions, t, variant, variantSelectionEnabled]);
+    };
 
     const modelPicker = (
         <ModelPickerList
@@ -193,6 +192,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             providerOrder={providerOrder}
             favoriteModels={favoriteModelsList}
             recentModels={recentModelsList}
+            recencyOrder={recentModelUsage}
             getMetadata={getModelMetadata}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
@@ -205,8 +205,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             includeNotSelected
             onSelectNone={handleSelectNone}
             onEscape={closePicker}
-            maxHeightClassName={isActuallyMobile ? 'max-h-none flex-1' : undefined}
-            tooltipsEnabled={tooltipsEnabled && (isActuallyMobile ? isMobilePanelOpen : isDropdownOpen)}
+            tooltipsEnabled={tooltipsEnabled && isDropdownOpen}
             isFavorite={(entry) => isFavoriteModel(entry.providerID, entry.modelID)}
             onToggleFavorite={(entry) => toggleFavoriteModel(
                 entry.providerID,
@@ -230,38 +229,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             : '';
     })();
     const variantPicker = variantTarget ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-            <button
-                type="button"
-                className="flex min-h-11 items-center gap-2 border-b border-border/40 px-3 text-left typography-ui-label font-medium text-foreground hover:bg-interactive-hover"
-                onClick={() => setVariantTarget(null)}
-                aria-label={t('header.actions.backAria')}
-            >
-                <Icon name="arrow-left" className="size-4" />
-                <span className="min-w-0 flex-1 truncate">{variantTarget.modelID}</span>
-            </button>
-            <div className="space-y-1 p-2" role="listbox" aria-label={t('chat.modelControls.thinking')}>
-                {['', ...variantTargetOptions].map((option) => {
-                    const selected = variantTargetHighlighted === option;
-                    return (
-                        <button
-                            key={option || '__default'}
-                            type="button"
-                            role="option"
-                            aria-selected={selected}
-                            className={cn(
-                                'flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left typography-ui-label transition-colors',
-                                selected ? 'bg-interactive-selection text-interactive-selection-foreground' : 'hover:bg-interactive-hover',
-                            )}
-                            onClick={() => handleVariantSelect(option)}
-                        >
-                            <span className="truncate">{option || t('chat.modelControls.default')}</span>
-                            {selected ? <Icon name="check" className="size-4 shrink-0" /> : null}
-                        </button>
-                    );
-                })}
-            </div>
-        </div>
+        <DesktopModelVariantPicker
+            entry={variantTarget}
+            variants={variantTargetOptions}
+            selectedVariant={variantTargetHighlighted}
+            formatLabel={(option) => option || t('chat.modelControls.default')}
+            onSelect={handleVariantSelect}
+            onBack={() => setVariantTarget(null)}
+        />
     ) : null;
     const picker = variantPicker || modelPicker;
 
@@ -304,6 +279,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     providers={providers}
                     favoriteModels={favoriteModelsList}
                     recentModels={recentModelsList}
+                    recencyOrder={recentModelUsage}
+                    clearSelection={{ label: labels.notSelected, onSelect: handleSelectNone }}
                     getMetadata={getModelMetadata}
                     hiddenModels={hiddenModels}
                     allowedProviderIds={allowedProviderIds}
@@ -353,9 +330,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     <Icon name="arrow-down-s" className="h-4 w-4 flex-shrink-0 text-muted-foreground/50" />
                 </div>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-[min(380px,calc(100vw-2rem))] p-0 flex flex-col" align="start" portalToBody={dropdownPortalToBody}>
+            <DesktopModelPickerContent align="start" portalToBody={dropdownPortalToBody}>
                 {picker}
-            </DropdownMenuContent>
+            </DesktopModelPickerContent>
         </DropdownMenu>
     );
 };

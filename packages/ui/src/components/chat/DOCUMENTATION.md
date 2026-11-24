@@ -185,29 +185,32 @@ catalog. Add-provider is a labeled icon-only button at the footer's lower right,
 alongside keyboard hints, not a separate action row. Favorites/recent rows separate the model name from provider/context
 metadata; provider-group rows omit the repeated provider and keep context beside
 the name. Aligned trailing slots reserve thinking, selection and favorites. Compact
-group headings and shared hairlines separate sections; desktop headers scroll with their group rather than
-painting another sticky material. Agent names use the same label scale, with
+group headings and shared hairlines separate sections. Agent names use the same label scale, with
 two-line descriptions (full text in the title) and a current-selection check.
-Only the outer shared popup owns glass, edge and shadow. Mobile sheets and other
-`ModelPickerList` consumers retain their existing geometry and behavior.
+Only the outer shared popup owns glass, edge and shadow. All desktop model
+selectors use `DesktopModelPickerContent` and `ModelPickerList`: the Session
+composer, the single-model settings fields (including Assistant and scheduled
+tasks), and the multi-run/Agent Manager/fusion pickers. The same model picker
+opens as `MobileModelPickerPanel` on mobile. Each caller still owns its
+selection and save behavior. Session and single-model settings share the
+desktop thinking-variant view; multi-run retains its per-instance variant controls.
 Model context/cost formatting reuses `lib/intlFormatters`' bounded locale-aware
 formatter slots rather than constructing formatters for every row on each search.
 Row tooltips mount only after the active row's 450ms delay, anchored to the existing
 row without wrapping/remounting it. Catalog opening must not initialize a floating
 root/trigger for every model. Keyboard and pointer highlight retain the same
 metadata/copy action; leaving the active row or closing the picker cancels its hint.
-The desktop composer opts into `ModelPickerList.virtualize`: TanStack Virtual
+`ModelPickerList` always virtualizes model rows: TanStack Virtual
 selects visible model rows plus overscan; offscreen rows reserve their exact
 compact desktop height (40px mixed-source, 32px provider-group at 16px root).
 Headers and sortable section containers remain mounted, preserving whole-section
 drag geometry. The full filtered catalog still owns search, ordering and keyboard
 selection. Keyboard scrolling uses the reserved row element even before hydration;
 dragged favorites remain mounted. Row indices are derived from that catalog, never
-a mutable counter inside deferred sortable render callbacks. Mobile and other
-picker consumers do not opt into the compact desktop geometry.
+a mutable counter inside deferred sortable render callbacks. Settings' optional
+clear action is pinned outside the virtual list and does not affect rail offsets.
 
-The desktop composer model picker also opts into `ModelPickerList.stairs`
-(effective only together with `virtualize`): a 44px provider rail (first entry
+The desktop model picker has a 44px provider rail (first entry
 "All", then one icon per selectable provider in `providerOrder`, hover shows the
 name) jumps to each provider group and follows scrolling. Offsets come from the
 virtual layout, never DOM measurement; a clicked entry stays active until the
@@ -219,7 +222,7 @@ the rail is inert and results form one flat list ranked by
 prefix 65, substring 50, provider/loose 20) plus a recency boost (+40 for the most
 recent, −8 per step, from `recencyOrder`, the raw usage history including
 favorites) and +8 for favorites. Remembered thinking variants survive ranking.
-Other consumers keep the collapsible, section-filtered list.
+Existing provider and model allowlists still apply to the rail and search.
 
 Favorites follow the surface that owns the composer. Local surfaces use
 `useUIStore.favoriteModels`; a Remote Project surface supplies

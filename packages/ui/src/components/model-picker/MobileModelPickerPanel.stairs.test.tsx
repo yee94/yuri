@@ -96,6 +96,26 @@ describe('MobileModelPickerPanel stairs layout', () => {
       .toEqual(['all', 'magpie-remote-magpie%2Fvps-us%2Fclaude', 'anthropic']);
   });
 
+  test('keeps the optional clear action pinned and the multi-run counts independent from selection', async () => {
+    const clear = vi.fn();
+    const onSelect = vi.fn();
+    await renderPanel({
+      clearSelection: { label: 'Clear model', onSelect: clear },
+      selectionCount: (_, modelID) => modelID === claudeOpus.id ? 2 : 0,
+      onSelect,
+    });
+    const buttons = Array.from(container.querySelectorAll('button'));
+    const clearButton = buttons.find((button) => button.textContent === 'Clear model')!;
+    const opus = buttons.find((button) => button.textContent?.includes(claudeOpus.name))!;
+    expect(clearButton.closest('[data-testid="scroller"]')).toBeNull();
+    expect(opus.parentElement?.textContent).toContain('x2');
+    await act(async () => clearButton.click());
+    expect(clear).toHaveBeenCalledOnce();
+    expect(onSelect).not.toHaveBeenCalled();
+    await act(async () => opus.click());
+    expect(onSelect).toHaveBeenCalledWith('anthropic', claudeOpus.id, undefined);
+  });
+
   test('ranks search results by recent usage and matches provider ID plus model name', async () => {
     const recent: ModelPickerEntry[] = [{ providerID: 'magpie-remote-magpie%2Fvps-us%2Fclaude', modelID: claudeSonnet.id, model: claudeSonnet }];
     await renderPanel({ recentModels: recent, recencyOrder: recent });
