@@ -1,10 +1,11 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { vi } from 'vitest';
+import { mock } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import express from 'express';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import request from 'supertest';
+import { parse } from 'jsonc-parser';
 
 import { registerPluginRoutes } from './plugin-routes.js';
 
@@ -32,6 +33,7 @@ function createApp(overrides = {}) {
     listPluginEntries: plugins.listPluginEntries,
     getPluginEntry: plugins.getPluginEntry,
     createPluginEntry: plugins.createPluginEntry,
+    ensureUserPluginEntries: plugins.ensureUserPluginEntries,
     updatePluginEntry: plugins.updatePluginEntry,
     deletePluginEntry: plugins.deletePluginEntry,
     listPluginDirFiles: plugins.listPluginDirFiles,
@@ -100,6 +102,57 @@ describe('opencode plugin routes', () => {
     const response = await request(app).get('/api/config/plugins').expect(200);
 
     expect(response.body).toEqual({ entries: [], files: [] });
+  });
+
+  test('PUT /api/config/plugins saves user config without loading project inventory, packages or registry data', async () => {
+    const unavailable = vi.fn(() => { throw new Error('Unavailable'); });
+    app = createApp({
+      resolveOptionalProjectDirectory: unavailable,
+      listPluginEntries: unavailable,
+      listPluginDirFiles: unavailable,
+      getNpmInfo: unavailable,
+    });
+    fs.writeFileSync(path.join(projectDir, 'opencode.json'), '{broken project config');
+    const pinned = { package: '@eficy/opencode2-plugin@1.2.3', options: { mode: 'custom' } };
+    fs.writeFileSync(userConfigPath, `{\n  // Keep this comment\n  "lsp": false,\n  "plugins": [${JSON.stringify(pinned)}]\n}\n`);
+    const selection = { specs: ['@eficy/opencode2-plugin', '@yee94/opencode-profile', '@yee94/opencode-profile'] };
+    const save = () => request(app).put('/api/config/plugins').send(selection).expect(204);
+    await save();
+    const saved = fs.readFileSync(userConfigPath, 'utf8');
+    expect(parse(saved)).toMatchObject({ lsp: false, plugins: [pinned, '@yee94/opencode-profile'] });
+    expect(saved).toContain('// Keep this comment');
+    await save();
+    expect(fs.readFileSync(userConfigPath, 'utf8')).toBe(saved);
+    expect(unavailable).not.toHaveBeenCalled();
+    expect(refreshOpenCodeAfterConfigChange).not.toHaveBeenCalled();
+  });
+
+  test('PUT /api/config/plugins does not change config if the selection or existing config is invalid', async () => {
+    const original = '{"plugins":["existing"]}';
+    fs.writeFileSync(userConfigPath, original);
+    await request(app).put('/api/config/plugins').send({ specs: ['new-plugin', './local'] }).expect(400);
+    expect(fs.readFileSync(userConfigPath, 'utf8')).toBe(original);
+
+    fs.writeFileSync(userConfigPath, '{"plugins":false}');
+    await request(app).put('/api/config/plugins').send({ specs: ['new-plugin'] }).expect(400);
+    expect(fs.readFileSync(userConfigPath, 'utf8')).toBe('{"plugins":false}');
+  });
+
+  test('PUT /api/config/plugins leaves every selection unapplied when the atomic write fails', async () => {
+    const original = '{"plugins":["existing"]}';
+    fs.writeFileSync(userConfigPath, original);
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw new Error('Write failed'); });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const save = () => request(app).put('/api/config/plugins').send({ specs: ['first', 'second'] });
+    try {
+      await save().expect(500);
+      expect(fs.readFileSync(userConfigPath, 'utf8')).toBe(original);
+    } finally {
+      rename.mockRestore();
+      log.mockRestore();
+    }
+    await save().expect(204);
+    expect(readJson(userConfigPath).plugins).toEqual(['existing', 'first', 'second']);
   });
 
   test('GET /registry with empty specs returns empty results', async () => {

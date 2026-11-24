@@ -32,8 +32,10 @@ Mini Chat and embedded conversation roots do not mount it.
 ## Real configuration owners
 
 1. **Models:** Magpie is `opencode-magpie-plugin`, applied once in this step.
-   Plugin entry writes reuse `usePluginsStore.createEntry` with user scope and
-   retain existing pins/options. OpenCode owns package installation and activation.
+   The tour submits one `PUT /api/config/plugins` to the connected Host for each
+   non-empty plugin selection. It merges missing package names into user config
+   in one atomic write and retains existing pins/options. OpenCode owns package
+   installation and activation.
    Host user-scope plugin creation fills missing `$schema` with
    `https://opencode.ai/config.json` and missing `lsp` with `true`, alongside the
    selected `plugins` entries. Existing explicit values and JSONC comments survive.
@@ -43,14 +45,13 @@ Mini Chat and embedded conversation roots do not mount it.
    Other providers reuse `ProvidersPage`, including its native OAuth, credential,
    custom-provider and discovery flows, inside the same dialog. These direct-provider
    flows retain their authoritative model-catalog check before advancing.
-2. **Tools:** Only Eficy and yee-profile are offered. Exact package identity detects
-   existing versioned entries; existing configuration is not overwritten. Batch
-   failures preserve successful independent writes and retries do not duplicate
-   those entries. “Save and continue” writes the selected entries to OpenCode config
-   and advances after successful saves. It does not install packages, poll activation,
-   or gate progress on background loading; OpenCode's config watcher owns that work.
-   Saving is not a claim that a plugin or model is already usable. Failed saves keep
-   the step open for retry; runtime changes or closing stop subsequent writes.
+2. **Tools:** Only Eficy and yee-profile are offered. The Host deduplicates by exact
+   npm package name across user config layers without reading the project or plugin
+   inventory. “Save and continue” advances once the write is confirmed; an empty
+   selection advances without a write. Neither rendering nor saving fetches plugin
+   metadata or invokes installation, activation, or a post-save refresh. Saving is
+   not a claim that a plugin or model is already usable. Failed writes preserve the
+   selection for retry; a stale response after a runtime switch cannot advance the tour.
 3. **Import:** `HistoryImportStep` owns source selection, read-only examples and the
    explicit “Next” import action. Host-owned `/api/yuri/history-import/*` routes read Claude
     Code, Codex, Cursor editor/CLI, DeepSeek Harness and current-instance OpenCode
@@ -146,9 +147,8 @@ Mini Chat and embedded conversation roots do not mount it.
 ## Metadata and presentation
 
 Magpie and tool cards expose a full-card pressed button with a prominent corner
-check and selected border. Configured tools retain that toggle; their configured
-label describes existing state independently of the current selection. Deselection
-only excludes a plugin from this tour's apply batch and never removes configuration.
+check and selected border. Deselection only excludes a plugin from this tour's
+apply batch and never removes configuration.
 README/setup links remain separate controls and do not toggle the card.
 
 The model step uses bundled brand icons and localized product copy for Magpie,
@@ -156,12 +156,8 @@ marked recommended, plus common OpenCode providers and official setup links.
 Provider shortcuts prepare an existing connection or seed `ProvidersPage` with
 an initial connection choice. Missing native integrations fall back to its chooser.
 Magpie does not use registry description/version/README as its introductory card.
-The tools step's runtime-scoped plugin registry batch query opts into `details=true`
-for the latest developer description and README; `PluginIcon` displays the
-sanitized top-level package icon. The details query has a distinct key from the
-ordinary version-only query. README uses `SimpleMarkdownRenderer` with local
-file-reference interactions disabled. Missing/read-failed metadata is explicit and
-retryable. Tool descriptions and artwork remain developer-provided.
+The tools step uses bundled package names and links to their documentation without
+querying npm or plugin status.
 
 The shared Dialog, Button, Checkbox and Settings primitives own material, focus,
 Escape and form layout. CSS only sizes the frame, scroll region and entity cards;
@@ -172,7 +168,7 @@ Persisted tour version 0 voice progress (`step: 2`) migrates to `step: 3`, retai
 dismissal. Version 1 stores the new import step at `2` without remapping it again.
 
 Desktop uses a vertical four-step navigation rail beside the content viewport.
-Provider/voice editors and README occupy that same right-hand viewport without
+Provider/voice editors occupy that same right-hand viewport without
 resizing the dialog. Narrow screens stack navigation above content, with four
 equal columns and numbers above wrapping labels so steps cannot overlap. Embedded
 Provider content drops its standalone page insets; its own scroller owns the form
@@ -183,8 +179,8 @@ behavior, not explanatory copy in the onboarding cards.
 
 Tests cover authoritative startup gating, existing workspace suppression,
 postponement/manual reopening, runtime partitioning, unchanged pins/options,
-partial config saves/retry, absence of activation/model waits for Magpie, late
-completions, README/icon metadata, the real speech
+config-only atomic saves/retry, absence of inventory/registry and activation/model
+waits for recommended plugins, late completions, the real speech
 save adapter and absence of automatic work while dismissed. Browser/platform tests
 must use isolated configuration or mock mutation routes rather than installing
 plugins or altering speech credentials on a developer's active Host.

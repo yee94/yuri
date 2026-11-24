@@ -8,9 +8,10 @@ import {
   getConfigForPath,
   writeConfig,
 } from './shared.js';
-import { isPathSpec } from './plugin-spec.js';
+import { isPathSpec, parseNpmSpec } from './plugin-spec.js';
 
 const PLUGIN_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-_.]*\.(js|ts|mjs|cjs)$/;
+const NPM_PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 
 /**
  * @typedef {'user' | 'project'} PluginScope
@@ -235,6 +236,45 @@ function getPluginEntry(id, workingDirectory) {
   return listPluginEntries(workingDirectory).find((entry) => entry.id === id) || null;
 }
 
+function getUserPluginWriteTarget(layers) {
+  const targetPath = layers.paths.customPath || layers.paths.userPath;
+  const config = { $schema: 'https://opencode.ai/config.json', lsp: true, ...getConfigForPath(layers, targetPath) };
+  return { targetPath, config };
+}
+
+function ensureUserPluginEntries(specs) {
+  if (!Array.isArray(specs) || specs.length > 100) {
+    throw codedError('Expected up to 100 plugin package names', 'INVALID_SPEC');
+  }
+  const wanted = new Set(specs.map((value) => {
+    const name = validatePluginSpec(value);
+    if (name.length > 214 || !NPM_PACKAGE_NAME_PATTERN.test(name)) {
+      throw codedError('Expected an unversioned npm package name', 'INVALID_SPEC');
+    }
+    return name;
+  }));
+  if (!wanted.size) return;
+
+  const layers = readPluginConfigLayers();
+  for (const { config } of layers.documents) {
+    const key = Object.hasOwn(config, 'plugins') ? 'plugins' : 'plugin';
+    if (Object.hasOwn(config, key) && !Array.isArray(config[key])) {
+      throw codedError('Expected an array of configured plugins', 'INVALID_SPEC');
+    }
+    for (const raw of readPluginArray(config)) {
+      const { spec } = parsePluginRaw(raw);
+      if (!isPathSpec(spec)) {
+        const parsed = parseNpmSpec(spec);
+        if ('name' in parsed) wanted.delete(parsed.name);
+      }
+    }
+  }
+
+  if (!wanted.size) return;
+  const { targetPath, config } = getUserPluginWriteTarget(layers);
+  writePluginArray(config, [...readPluginArray(config), ...wanted], targetPath);
+}
+
 function createPluginEntry(entry, workingDirectory) {
   const spec = validatePluginSpec(entry?.spec);
   const scope = entry?.scope || AGENT_SCOPE.USER;
@@ -255,8 +295,7 @@ function createPluginEntry(entry, workingDirectory) {
     targetPath = ensureProjectConfigPath(workingDirectory);
     config = fs.existsSync(targetPath) ? readConfigFile(targetPath) : {};
   } else {
-    targetPath = layers.paths.customPath || layers.paths.userPath;
-    config = { $schema: 'https://opencode.ai/config.json', lsp: true, ...getConfigForPath(layers, targetPath) };
+    ({ targetPath, config } = getUserPluginWriteTarget(layers));
   }
 
   writePluginArray(config, [...readPluginArray(config), serializePluginEntry({ spec, options: entry.options })], targetPath);
@@ -342,6 +381,7 @@ export {
   listPluginEntries,
   getPluginEntry,
   createPluginEntry,
+  ensureUserPluginEntries,
   updatePluginEntry,
   deletePluginEntry,
   listPluginDirFiles,

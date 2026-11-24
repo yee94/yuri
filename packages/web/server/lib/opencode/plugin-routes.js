@@ -16,6 +16,7 @@ export const registerPluginRoutes = (app, dependencies) => {
     listPluginEntries,
     getPluginEntry,
     createPluginEntry,
+    ensureUserPluginEntries,
     updatePluginEntry,
     deletePluginEntry,
     listPluginDirFiles,
@@ -105,6 +106,15 @@ export const registerPluginRoutes = (app, dependencies) => {
     } catch (error) {
       console.error('[API:GET /api/config/plugins] Failed:', error);
       res.status(500).json({ error: 'Failed to list plugins' });
+    }
+  });
+
+  app.put('/api/config/plugins', (req, res) => {
+    try {
+      ensureUserPluginEntries(req.body?.specs);
+      return res.status(204).end();
+    } catch (error) {
+      return handlePluginError(res, error, 'Failed to save plugin configuration', '[API:PUT /api/config/plugins] Failed:');
     }
   });
 

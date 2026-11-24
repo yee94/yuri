@@ -4,14 +4,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { dict as en } from '@/lib/i18n/messages/en';
 import { speechDefaults } from '@/lib/voice/speechSettings';
-import type { PluginEntry } from '@/stores/usePluginsStore';
 import { useSetupTourStore } from '@/stores/useSetupTourStore';
 import { SetupTourDialog } from './SetupTourDialog';
 import type { useSpeechSettingsForm } from '@/components/sections/yuri/useSpeechSettingsForm';
 
 const fixture = vi.hoisted(() => ({
   runtime: 'tour-host', generation: 1, client: null as QueryClient | null,
-  entries: [] as PluginEntry[], metadata: {} as Record<string, unknown>,
+  listPlugins: vi.fn(), registry: vi.fn(),
   savePlugins: vi.fn(), catalog: vi.fn(), save: vi.fn(), close: vi.fn(),
 }));
 vi.mock('@/lib/runtime-switch', () => ({
@@ -31,8 +30,8 @@ vi.mock('@/queries/pluginQueries', async () => {
   const { useQuery } = await import('@tanstack/react-query');
   return {
     usePluginConfigDirectory: () => '/workspace',
-    usePluginsQuery: () => useQuery({ queryKey: ['plugins'], queryFn: async () => ({ entries: fixture.entries, files: [] }) }),
-    pluginRegistryQueryOptions: () => ({ queryKey: ['metadata'], queryFn: async () => fixture.metadata }),
+    usePluginsQuery: () => useQuery({ queryKey: ['plugins'], queryFn: () => fixture.listPlugins() }),
+    pluginRegistryQueryOptions: () => ({ queryKey: ['metadata'], queryFn: () => fixture.registry() }),
   };
 });
 vi.mock('@/queries/configCatalogQueries', () => ({ providerCatalogQueryOptions: () => ({ queryKey: ['catalog'], queryFn: () => fixture.catalog() }) }));
@@ -48,15 +47,13 @@ vi.mock('./HistoryImportStep', () => ({ HistoryImportStep: ({ onPrimaryChange, o
   React.useEffect(() => onPrimaryChange({ disabled: false }), [onPrimaryChange]);
   return <form id="yuri-tour-import" onSubmit={(event) => { event.preventDefault(); onComplete(); }}><p>History import editor</p></form>;
 } }));
-vi.mock('@/components/chat/MarkdownRenderer', () => ({ SimpleMarkdownRenderer: ({ content }: { content: string }) => <article>{content}</article> }));
 vi.mock('@/components/sections/yuri/VolcengineSpeechSettings', () => ({
   VolcengineSpeechSettings: ({ mode, form, showCredentials = true }: { mode: string; form: ReturnType<typeof useSpeechSettingsForm>; showCredentials?: boolean }) => <div data-speech-mode={mode}>
     {showCredentials && <input aria-label="Speech API key" value={form.draft.apiKey ?? ''} onChange={(event) => form.edit({ apiKey: event.target.value })} />}
   </div>,
 }));
-vi.mock('./tourPlugins', () => ({
-  tourPlugins: [{ name: 'Magpie', spec: 'opencode-magpie-plugin' }, { name: 'Eficy', spec: '@eficy/opencode2-plugin' }, { name: 'yee-profile', spec: '@yee94/opencode-profile' }],
-  hasTourPlugin: (entries: PluginEntry[], spec: string) => entries.some((entry) => entry.spec === spec),
+vi.mock('./tourPlugins', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./tourPlugins')>(),
   saveRecommendedPlugins: (...args: unknown[]) => fixture.savePlugins(...args),
 }));
 
@@ -74,21 +71,19 @@ const render = async () => {
 };
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); vi.useFakeTimers();
-  fixture.generation = 1; fixture.entries = []; fixture.close.mockReset();
-  fixture.savePlugins.mockReset().mockResolvedValue({ failed: [] });
+  fixture.generation = 1; fixture.close.mockReset();
+  fixture.listPlugins.mockReset().mockResolvedValue({ entries: [], files: [] });
+  fixture.registry.mockReset().mockResolvedValue({});
+  fixture.savePlugins.mockReset().mockResolvedValue(true);
   fixture.catalog.mockReset().mockResolvedValue({ providers: [{ id: 'gateway', models: { model: { id: 'model' } } }], partial: false });
   fixture.save.mockReset().mockResolvedValue({ ...speechDefaults, configured: true });
-  fixture.metadata = Object.fromEntries(['opencode-magpie-plugin', '@eficy/opencode2-plugin', '@yee94/opencode-profile'].map((spec) => [spec, {
-    kind: 'npm-ok', spec, name: spec, latestVersion: '1.2.3', description: `Developer description for ${spec}`,
-    readme: `# Original README for ${spec}`, icon: 'data:image/svg+xml,%3Csvg/%3E',
-  }]));
   fixture.client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   useSetupTourStore.setState({ progress: { [fixture.runtime]: { step: 0, dismissed: false } }, openedRuntime: fixture.runtime });
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); fixture.client!.clear(); container.remove(); vi.useRealTimers(); });
 
-test('renders built-in Magpie guidance and developer metadata for tools; Magpie is applied only in step one', async () => {
+test('renders built-in Magpie guidance and tool choices; Magpie is applied only in step one', async () => {
   await render();
   expect(document.body.textContent).toContain(en['tour.magpieDescription']);
   expect(document.body.textContent).toContain(en['tour.recommended']);
@@ -97,11 +92,7 @@ test('renders built-in Magpie guidance and developer metadata for tools; Magpie 
   await click('Save and continue');
   expect(fixture.savePlugins.mock.calls[0][0]).toEqual(['opencode-magpie-plugin']);
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(1);
-  expect(document.body.textContent).toContain('Developer description for @eficy/opencode2-plugin');
-  expect(document.querySelector('[data-plugin-icon-mask]')).not.toBeNull();
-  await click('README');
-  expect(document.body.textContent).toContain('# Original README for @eficy/opencode2-plugin');
-  await click('Back');
+  expect(document.querySelector('a[href="https://www.npmjs.com/package/@eficy/opencode2-plugin"]')).not.toBeNull();
   expect(document.querySelector('[aria-label="Magpie"]')).toBeNull();
   await click('Save and continue');
   expect(fixture.savePlugins.mock.calls[1][0]).toEqual(['@eficy/opencode2-plugin', '@yee94/opencode-profile']);
@@ -109,12 +100,29 @@ test('renders built-in Magpie guidance and developer metadata for tools; Magpie 
 });
 
 test('failed plugin config saves preserve the step and can be retried', async () => {
-  fixture.savePlugins.mockResolvedValueOnce({ failed: ['opencode-magpie-plugin'] });
+  fixture.savePlugins.mockResolvedValueOnce(false);
+  useSetupTourStore.getState().move(fixture.runtime, 1);
   await render(); await click('Save and continue');
-  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(0);
+  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(1);
+  expect(document.querySelector('[aria-label="Eficy"]')?.getAttribute('aria-pressed')).toBe('true');
   expect(document.querySelector('[role="alert"]')?.textContent).toContain('Could not save');
   await click('Save and continue');
-  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(1);
+  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(2);
+});
+
+test('plugin selection saves and advances without requesting plugin lists or registry metadata', async () => {
+  fixture.listPlugins.mockRejectedValue(new Error('offline'));
+  fixture.registry.mockRejectedValue(new Error('offline'));
+  useSetupTourStore.getState().move(fixture.runtime, 1);
+  await render();
+  expect(fixture.savePlugins).not.toHaveBeenCalled();
+  expect(document.body.textContent).not.toContain(en['common.loading']);
+  await click('Save and continue');
+  expect(fixture.savePlugins.mock.calls[0]?.[0]).toEqual(['@eficy/opencode2-plugin', '@yee94/opencode-profile']);
+  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(2);
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(fixture.listPlugins).not.toHaveBeenCalled();
+  expect(fixture.registry).not.toHaveBeenCalled();
 });
 
 test('Magpie config saves advance without waiting for any available models', async () => {
@@ -152,20 +160,27 @@ test('Set up later closes the entire tour immediately from any step without savi
   expect(fixture.save).not.toHaveBeenCalled();
 });
 
-test('configured tools keep whole-card toggles and README does not change selection', async () => {
-  fixture.entries = [{ id: 'eficy', spec: '@eficy/opencode2-plugin', scope: 'user', kind: 'config', parsedKind: 'npm' }];
+test('tool cards only save the selected packages', async () => {
   useSetupTourStore.getState().move(fixture.runtime, 1);
   await render();
   const toggle = () => document.querySelector<HTMLButtonElement>('button[aria-label="Eficy"]')!;
   expect(toggle().getAttribute('aria-pressed')).toBe('true');
   await act(async () => toggle().click());
   expect(toggle().getAttribute('aria-pressed')).toBe('false');
-  expect(document.body.textContent).toContain('Configured');
-  await click('README');
-  await click('Back');
-  expect(toggle().getAttribute('aria-pressed')).toBe('false');
   await click('Save and continue');
   expect(fixture.savePlugins.mock.calls[0][0]).toEqual(['@yee94/opencode-profile']);
+});
+
+test('no tools selected advances without writing configuration', async () => {
+  useSetupTourStore.getState().move(fixture.runtime, 1);
+  await render();
+  await act(async () => {
+    document.querySelector<HTMLButtonElement>('button[aria-label="Eficy"]')!.click();
+    document.querySelector<HTMLButtonElement>('button[aria-label="yee-profile"]')!.click();
+  });
+  await click('Save and continue');
+  expect(fixture.savePlugins).not.toHaveBeenCalled();
+  expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(2);
 });
 
 test('Magpie whole-card selection can be toggled off and back on', async () => {
@@ -207,7 +222,7 @@ test('late completion after a runtime switch cannot advance the new runtime', as
   fixture.savePlugins.mockImplementation(() => new Promise((resolve) => { release = resolve; }));
   await render(); await click('Save and continue');
   fixture.generation++;
-  await act(async () => release({ failed: [] }));
+  await act(async () => release(true));
   await tick();
   expect(useSetupTourStore.getState().progress[fixture.runtime].step).toBe(0);
   expect(fixture.catalog).not.toHaveBeenCalled();

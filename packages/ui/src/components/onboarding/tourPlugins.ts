@@ -1,8 +1,6 @@
-import { queryClient } from '@/lib/queryRuntime';
+import { queryClient, queryKeys } from '@/lib/queryRuntime';
+import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
-import { pluginsListQueryOptions } from '@/queries/pluginQueries';
-import { usePluginsStore, type PluginEntry } from '@/stores/usePluginsStore';
-import { splitPluginSpec } from '@/components/sections/plugins/pluginPresentation';
 
 export const tourPlugins = [
   { name: 'Magpie', spec: 'opencode-magpie-plugin' },
@@ -10,43 +8,21 @@ export const tourPlugins = [
   { name: 'yee-profile', spec: '@yee94/opencode-profile' },
 ] as const;
 
-export function hasTourPlugin(entries: readonly PluginEntry[], spec: string): boolean {
-  return entries.some((entry) => entry.parsedKind === 'npm' && splitPluginSpec(entry.spec).name === spec);
-}
-
-type SaveDependencies = {
-  list: () => Promise<PluginEntry[]>;
-  create: (spec: string) => Promise<{ ok: boolean }>;
-  current: () => boolean;
-};
-
-/** Configuration writes are idempotent across partial batches; OpenCode owns activation. */
-export async function saveTourPlugins(specs: readonly string[], dependencies: SaveDependencies) {
-  const failed: string[] = [];
-  for (const spec of new Set(specs)) {
-    if (!dependencies.current()) throw new Error('Runtime changed');
-    try {
-      const entries = await dependencies.list();
-      if (!dependencies.current()) throw new Error('Runtime changed');
-      if (!hasTourPlugin(entries, spec)) {
-        const result = await dependencies.create(spec);
-        if (!result.ok) failed.push(spec);
-      }
-    } catch {
-      failed.push(spec);
-    }
-  }
-  if (!dependencies.current()) throw new Error('Runtime changed');
-  return { failed };
-}
-
-export function saveRecommendedPlugins(specs: readonly string[], directory: string | null, signal: AbortSignal) {
+/** Configuration writes are idempotent; OpenCode owns activation. */
+export async function saveRecommendedPlugins(specs: readonly string[], signal: AbortSignal) {
+  if (!specs.length) return true;
+  signal.throwIfAborted();
   const transport = getRuntimeTransportIdentity();
   const generation = getRuntimeGeneration();
-  const current = () => !signal.aborted && generation === getRuntimeGeneration() && transport === getRuntimeTransportIdentity();
-  return saveTourPlugins(specs, {
-    current,
-    list: async () => (await queryClient.fetchQuery({ ...pluginsListQueryOptions(directory, transport), staleTime: 0 })).entries,
-    create: (spec) => usePluginsStore.getState().createEntry({ spec, scope: 'user' }),
+  const response = await runtimeFetch('/api/config/plugins', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ specs }),
+    signal,
   });
+  if (response.status !== 204) return false;
+  if (generation === getRuntimeGeneration() && transport === getRuntimeTransportIdentity()) {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.plugins.list(null, transport).slice(0, 3), refetchType: 'none' });
+  }
+  return true;
 }

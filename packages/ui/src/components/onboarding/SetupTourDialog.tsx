@@ -4,7 +4,6 @@ import { useEvent } from '@reactuses/core';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
-import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { PluginIcon } from '@/components/sections/plugins/PluginIcon';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import doubaoLogo from '@/assets/model-icons/doubao.svg';
@@ -16,21 +15,20 @@ import { VolcengineSpeechSettings } from '@/components/sections/yuri/VolcengineS
 import { VoiceSettings } from '@/components/sections/yuri/VoiceSettings';
 import { useSpeechSettingsForm } from '@/components/sections/yuri/useSpeechSettingsForm';
 import { speechSettingsQueryOptions } from '@/queries/speechSettingsQueries';
-import { pluginRegistryQueryOptions, usePluginConfigDirectory, usePluginsQuery } from '@/queries/pluginQueries';
+import { usePluginConfigDirectory } from '@/queries/pluginQueries';
 import { providerCatalogQueryOptions } from '@/queries/configCatalogQueries';
 import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useSetupTourStore, type SetupTourStep } from '@/stores/useSetupTourStore';
-import type { RegistryResult } from '@/stores/usePluginsStore';
 import type { SpeechSettings } from '@/lib/voice/speechSettings';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { tourPlugins, hasTourPlugin, saveRecommendedPlugins } from './tourPlugins';
+import { tourPlugins, saveRecommendedPlugins } from './tourPlugins';
 import { HistoryImportStep } from './HistoryImportStep';
 import './setup-tour.css';
 
-const specs = tourPlugins.map((plugin) => plugin.spec);
+const [magpiePlugin, ...toolPlugins] = tourPlugins;
 const stepKeys = ['tour.models', 'tour.plugins', 'tour.import', 'tour.voice'] as const;
 const providerChoices = [
   { id: 'openai', name: 'OpenAI' },
@@ -41,29 +39,22 @@ const providerChoices = [
   { id: 'openrouter', name: 'OpenRouter' },
 ] as const;
 
-function TourPluginCard({ index, info, installed, selected, onSelect, onReadme }: {
-  index: number; info?: RegistryResult; installed: boolean; selected: boolean;
-  onSelect: () => void; onReadme: () => void;
+function TourPluginCard({ plugin, selected, onSelect }: {
+  plugin: (typeof toolPlugins)[number];
+  selected: boolean; onSelect: () => void;
 }) {
   const { t } = useI18n();
-  const plugin = tourPlugins[index];
-  const metadata = info?.kind === 'npm-ok' ? info : undefined;
   return <section className={cn('yuri-tour-plugin yuri-tour-select-card', selected && 'yuri-tour-card-selected')}>
     <Button variant="ghost" className="yuri-tour-card-toggle" aria-label={plugin.name} aria-pressed={selected} onClick={onSelect}>
       <span className="yuri-tour-card-check" aria-hidden="true">{selected && <Icon name="check" className="size-5" />}</span>
     </Button>
     <div className="flex items-start gap-3 pr-10">
-      <PluginIcon name={plugin.name} src={metadata?.icon} size={30} />
+      <PluginIcon name={plugin.name} size={30} />
       <div className="min-w-0 flex-1"><h3 className="typography-ui-label font-medium">{plugin.name}</h3>
         <p className="break-all typography-micro text-muted-foreground">{plugin.spec}</p>
       </div>
-      {metadata?.latestVersion && <span className="typography-micro text-muted-foreground">{metadata.latestVersion}</span>}
     </div>
-    <p className="flex-1 typography-meta text-muted-foreground">{metadata?.description || (info ? t('tour.metadataUnavailable') : t('common.loading'))}</p>
-    <div className="flex items-center justify-between gap-2">
-      <Button size="xs" variant="ghost" className="yuri-tour-card-link" disabled={!metadata} onClick={onReadme}>README</Button>
-      {installed && <span className="typography-meta text-muted-foreground">{t('tour.saved')}</span>}
-    </div>
+    <a className="yuri-tour-card-link self-start typography-meta text-muted-foreground underline" href={`https://www.npmjs.com/package/${plugin.spec}`} target="_blank" rel="noreferrer">{t('tour.docs')} ↗</a>
   </section>;
 }
 
@@ -95,9 +86,8 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
   const step = useSetupTourStore((state) => state.progress[runtime]?.step ?? 0);
   const [provider, setProvider] = React.useState<'magpie' | 'other'>('magpie');
   const [connectionId, setConnectionId] = React.useState<string | undefined>();
-  const [selected, setSelected] = React.useState<string[]>(specs.slice(1));
+  const [selected, setSelected] = React.useState<string[]>(() => toolPlugins.map((plugin) => plugin.spec));
   const [page, setPage] = React.useState<'tour' | 'providers' | 'voice' | 'asr' | 'tts'>('tour');
-  const [readme, setReadme] = React.useState<number | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [importAction, setImportAction] = React.useState<{ disabled: boolean; background?: boolean }>({ disabled: true });
   const [error, setError] = React.useState<string | null>(null);
@@ -109,10 +99,7 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
     const controller = new AbortController(); lifetime.current = controller;
     return () => controller.abort();
   }, []);
-  const plugins = usePluginsQuery();
-  const metadata = useQuery({ ...pluginRegistryQueryOptions(directory, specs.slice(1), false, transport, true), enabled: step === 1 });
   const speech = useQuery({ ...speechSettingsQueryOptions(transport), enabled: step === 3 });
-  const entries = plugins.data?.entries ?? [];
   const openProvider = (id?: string) => {
     const config = useConfigStore.getState();
     const connected = id && config.providers.some((item) => item.id === id);
@@ -130,11 +117,11 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
     if (submitting.current || busy || !lifetime.current) return;
     submitting.current = true; setBusy(true); setError(null);
     try {
-      const wanted = step === 0 ? provider === 'magpie' ? [specs[0]] : [] : selected;
+      const wanted = step === 0 ? provider === 'magpie' ? [magpiePlugin.spec] : [] : selected;
       if (wanted.length) {
-        const result = await saveRecommendedPlugins(wanted, directory, lifetime.current.signal);
+        const saved = await saveRecommendedPlugins(wanted, lifetime.current.signal);
         if (!current()) return;
-        if (result.failed.length) { setError(t('tour.saveFailed', { names: result.failed.join(', ') })); return; }
+        if (!saved) { setError(t('tour.saveFailed', { names: wanted.join(', ') })); return; }
       }
       if (step === 0 && provider === 'other') {
         const catalog = await queryClient.fetchQuery({ ...providerCatalogQueryOptions(directory, transport), staleTime: 0 });
@@ -152,10 +139,8 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
       if (current()) setBusy(false);
     }
   };
-  const back = () => { if (readme !== null) setReadme(null); else if (page !== 'tour') setPage('tour'); else if (step > 0) move((step - 1) as SetupTourStep); };
-  const readmeInfo = readme === null ? undefined : metadata.data?.[specs[readme]];
-  const readmeContent = readmeInfo?.kind === 'npm-ok' ? readmeInfo.readme : undefined;
-  return <Dialog open onOpenChange={(open) => { if (!open && !busy) { if (readme !== null || page !== 'tour') back(); else finish(); } }}>
+  const back = () => setPage('tour');
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) { if (page !== 'tour') back(); else finish(); } }}>
     <DialogContent className="yuri-setup-tour yuri-settings-workspace" showCloseButton={false} aria-describedby={undefined}>
       <div className="yuri-tour-watermark" aria-hidden="true"><YuriLogo width={440} height={440} /></div>
       <DialogHeader>
@@ -163,17 +148,15 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
       </DialogHeader>
       <div className="yuri-tour-body">
       <nav className="yuri-tour-progress" aria-label={t('tour.title')}>
-        {stepKeys.map((key, index) => <Button key={key} variant="ghost" size="lg" disabled={busy} aria-current={step === index ? 'step' : undefined} onClick={() => { setReadme(null); move(index as SetupTourStep); }}>
+        {stepKeys.map((key, index) => <Button key={key} variant="ghost" size="lg" disabled={busy} aria-current={step === index ? 'step' : undefined} onClick={() => move(index as SetupTourStep)}>
           <span className="yuri-tour-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><span>{t(key)}</span>
         </Button>)}
       </nav>
-      <div className={cn('yuri-tour-content', page === 'providers' && readme === null && 'yuri-tour-provider-content')}><fieldset disabled={busy} className="contents">
-        {readme !== null ? <><h3 className="typography-ui-label mb-4">{tourPlugins[readme].name} · README</h3>{readmeContent ? <SimpleMarkdownRenderer content={readmeContent} enableFileReferences={false} /> : <p className="typography-meta text-muted-foreground">{t('tour.metadataUnavailable')}</p>}</>
-          : page === 'providers' ? <ProvidersPage initialConnectionId={connectionId} />
+      <div className={cn('yuri-tour-content', page === 'providers' && 'yuri-tour-provider-content')}><fieldset disabled={busy} className="contents">
+        {page === 'providers' ? <ProvidersPage initialConnectionId={connectionId} />
           : page === 'voice' && speech.data ? <TourVoiceForm settings={speech.data} onComplete={finish} onBusy={setBusy} />
           : page === 'asr' || page === 'tts' ? <VoiceSettings section={page} />
           : <>
-            {step < 2 && ((step === 1 && metadata.isError) || plugins.isError) && <div role="alert" className="yuri-tour-feedback"><p>{t('tour.metadataUnavailable')}</p><Button size="xs" onClick={() => { if (step === 1) void metadata.refetch(); void plugins.refetch(); }}>{t('settings.plugins.status.retry')}</Button></div>}
             {step === 0 && <>
               <section className={cn('yuri-tour-magpie yuri-tour-select-card', provider === 'magpie' && 'yuri-tour-card-selected')}>
                 <Button variant="ghost" className="yuri-tour-card-toggle" aria-label="Magpie" aria-pressed={provider === 'magpie'} onClick={() => setProvider(provider === 'magpie' ? 'other' : 'magpie')}>
@@ -196,7 +179,7 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
               <Button className="mt-3" size="sm" variant="ghost" onClick={() => openProvider()}>{t('tour.otherProvider')}<Icon name="arrow-right-s" className="size-4" /></Button>
             </>}
             {step === 1 && <>
-              <div className="yuri-tour-plugins">{[1, 2].map((index) => <TourPluginCard key={index} index={index} info={metadata.data?.[specs[index]]} installed={hasTourPlugin(entries, specs[index])} selected={selected.includes(specs[index])} onSelect={() => setSelected((items) => items.includes(specs[index]) ? items.filter((spec) => spec !== specs[index]) : [...items, specs[index]])} onReadme={() => setReadme(index)} />)}</div>
+              <div className="yuri-tour-plugins">{toolPlugins.map((plugin) => <TourPluginCard key={plugin.spec} plugin={plugin} selected={selected.includes(plugin.spec)} onSelect={() => setSelected((items) => items.includes(plugin.spec) ? items.filter((spec) => spec !== plugin.spec) : [...items, plugin.spec])} />)}</div>
               <a className="mt-4 inline-block typography-meta text-muted-foreground underline underline-offset-4 hover:text-foreground" href="https://opencode.ai/docs/ecosystem/#plugins" target="_blank" rel="noopener noreferrer">{t('tour.morePlugins')} ↗</a>
             </>}
             {step === 2 && <HistoryImportStep onBusy={setBusy} directory={directory} onPrimaryChange={setImportAction} onComplete={() => move(3)} />}
@@ -229,17 +212,17 @@ export function SetupTourDialog({ runtime, onClose }: { runtime: string; onClose
               {speech.isError && <div role="alert" className="yuri-tour-feedback"><p>{t('settings.voice.volcengine.loadFailed')}</p><Button size="xs" onClick={() => void speech.refetch()}>{t('settings.voice.volcengine.retry')}</Button></div>}
             </>}
           </>}
-        {error && readme === null && <p role="alert" className="yuri-tour-feedback">{error}</p>}
+        {error && <p role="alert" className="yuri-tour-feedback">{error}</p>}
       </fieldset></div>
       </div>
       <footer className="yuri-tour-footer">
-        {(page !== 'tour' || readme !== null) && <Button variant="ghost" size="sm" disabled={busy} onClick={back}>{t('onboarding.common.actions.back')}</Button>}
-        {readme === null && <div className="ml-auto flex flex-wrap justify-end gap-2">
+        {page !== 'tour' && <Button variant="ghost" size="sm" disabled={busy} onClick={back}>{t('onboarding.common.actions.back')}</Button>}
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
           <Button variant="ghost" size="sm" disabled={busy} onClick={finish}>{t('tour.later')}</Button>
           {step === 2 ? <Button size="sm" type="submit" form="yuri-tour-import" disabled={busy || importAction.disabled} aria-busy={busy}>{busy && <Icon name="loader-4" className="size-3 animate-spin" />}{t(importAction.background ? 'historyImport.background' : 'historyImport.next')}</Button>
             : step === 3 ? <Button size="sm" disabled={busy} type={page === 'voice' ? 'submit' : 'button'} form={page === 'voice' ? 'yuri-tour-voice' : undefined} onClick={page === 'voice' ? undefined : finish}>{t(page === 'voice' ? 'settings.common.actions.saveChanges' : 'tour.finish')}</Button>
-            : <Button size="sm" disabled={busy || step < 2 && (!plugins.data || plugins.isError)} aria-busy={busy} onClick={() => void proceed()}>{busy && <Icon name="loader-4" className="size-3 animate-spin" />}{t('tour.continue')}</Button>}
-        </div>}
+            : <Button size="sm" disabled={busy} aria-busy={busy} onClick={() => void proceed()}>{busy && <Icon name="loader-4" className="size-3 animate-spin" />}{t('tour.continue')}</Button>}
+        </div>
       </footer>
     </DialogContent>
   </Dialog>;
