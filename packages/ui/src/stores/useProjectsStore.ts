@@ -7,6 +7,7 @@ import type { ProjectEntry } from '@/lib/api/types';
 import type { DesktopSettings } from '@/lib/desktop';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { createProjectIdFromPath } from '@/lib/projectId';
+import { isWorkspaceId } from '@/lib/workspacePaths';
 import { getDeferredSafeStorage } from './utils/safeStorage';
 import { useDirectoryStore } from './useDirectoryStore';
 import { streamDebugEnabled } from '@/stores/utils/streamDebug';
@@ -44,6 +45,19 @@ interface ProjectsStore {
   hubProjectLayout: HubProjectLayout | null;
 
   addProject: (path: string, options?: { label?: string; id?: string }) => ProjectEntry | null;
+  createWorkspace: (input: {
+    paths: string[];
+    label?: string;
+    primaryPath?: string;
+    activate?: boolean;
+  }) => Promise<{ ok: boolean; project?: ProjectEntry; error?: string }>;
+  updateWorkspacePaths: (id: string, input: {
+    label?: string | null;
+    paths?: string[];
+    addPath?: string;
+    removePath?: string;
+    primaryPath?: string;
+  }) => Promise<{ ok: boolean; project?: ProjectEntry; error?: string }>;
   upsertRemoteProject: (project: RemoteProject, hubId: string) => void;
   reconcileRemoteProjects: (projects: RemoteProject[], hubId: string) => void;
   setProjectCollapsed: (id: string, collapsed: boolean) => void;
@@ -227,21 +241,47 @@ const sanitizeProjects = (value: unknown): ProjectEntry[] => {
     }
 
     const rawPath = typeof candidate.path === 'string' ? candidate.path.trim() : '';
-    if (!rawPath) continue;
+    const rawId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
 
-    const normalizedPath = normalizeProjectPath(rawPath);
+    let normalizedPaths: string[] | undefined;
+    if (Array.isArray(candidate.paths)) {
+      const seenMember = new Set<string>();
+      normalizedPaths = [];
+      for (const member of candidate.paths) {
+        if (typeof member !== 'string') continue;
+        const normalizedMember = normalizeProjectPath(member);
+        if (!normalizedMember || seenMember.has(normalizedMember)) continue;
+        seenMember.add(normalizedMember);
+        normalizedPaths.push(normalizedMember);
+      }
+    }
+
+    let normalizedPath = rawPath ? normalizeProjectPath(rawPath) : '';
+    if (normalizedPaths && normalizedPaths.length > 0) {
+      if (normalizedPath && normalizedPaths.includes(normalizedPath)) {
+        normalizedPaths = [normalizedPath, ...normalizedPaths.filter((entry) => entry !== normalizedPath)];
+      } else {
+        normalizedPath = normalizedPaths[0];
+      }
+    }
     if (!normalizedPath) continue;
 
-    const id = createProjectIdFromPath(normalizedPath);
+    const isExplicitWorkspace = isWorkspaceId(rawId) || (Array.isArray(normalizedPaths) && normalizedPaths.length !== 1);
+    const id = isExplicitWorkspace && rawId
+      ? rawId
+      : createProjectIdFromPath(normalizedPath);
     if (!id) continue;
 
-    if (seenIds.has(id) || seenPaths.has(normalizedPath)) continue;
+    if (seenIds.has(id) || (!isExplicitWorkspace && seenPaths.has(normalizedPath))) continue;
     seenIds.add(id);
-    seenPaths.add(normalizedPath);
+    if (!isExplicitWorkspace) {
+      seenPaths.add(normalizedPath);
+    }
 
     const project: ProjectEntry = {
       id,
       path: normalizedPath,
+      ...(Array.isArray(normalizedPaths) ? { paths: normalizedPaths } : {}),
     };
 
     if (typeof candidate.label === 'string' && candidate.label.trim().length > 0) {
@@ -667,7 +707,12 @@ export const useProjectsStore = create<ProjectsStore>()(
       }
 
       const normalizedPath = validation.normalizedPath;
-      const existing = get().projects.find((project) => !project.hostId && project.path === normalizedPath);
+      const existing = get().projects.find((project) => (
+        !project.hostId
+        && !isWorkspaceId(project.id)
+        && (!Array.isArray(project.paths) || project.paths.length === 1)
+        && project.path === normalizedPath
+      ));
       if (existing) {
         get().setActiveProject(existing.id);
         return existing;
@@ -696,6 +741,88 @@ export const useProjectsStore = create<ProjectsStore>()(
       get().setActiveProject(entry.id);
       void get().discoverProjectIcon(entry.id);
       return entry;
+    },
+
+    createWorkspace: async (input) => {
+      if (isVSCodeProjectsRuntime) {
+        return { ok: false, error: 'Workspaces are not supported in VS Code runtime' };
+      }
+      const assertCurrent = captureProjectRuntime();
+      try {
+        const normalizedPaths = (Array.isArray(input.paths) ? input.paths : [])
+          .map((value) => normalizeProjectPath(value))
+          .filter(Boolean);
+        const normalizedPrimary = input.primaryPath ? normalizeProjectPath(input.primaryPath) : undefined;
+        const response = await runtimeFetch('/api/yuri/workspaces', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            paths: normalizedPaths,
+            ...(input.label?.trim() ? { label: input.label.trim() } : {}),
+            ...(normalizedPrimary ? { primaryPath: normalizedPrimary } : {}),
+            activate: input.activate !== false,
+            prepend: true,
+            createWorkspace: true,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          project?: ProjectEntry;
+          settings?: DesktopSettings;
+          error?: string;
+        } | null;
+        assertCurrent();
+        if (!response.ok || !payload?.project) {
+          return { ok: false, error: payload?.error || 'Failed to create workspace' };
+        }
+        if (payload.settings) {
+          get().synchronizeFromSettings(payload.settings);
+        }
+        if (input.activate !== false) {
+          get().setActiveProject(payload.project.id);
+        }
+        return { ok: true, project: payload.project };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+
+    updateWorkspacePaths: async (id, input) => {
+      if (isVSCodeProjectsRuntime) {
+        return { ok: false, error: 'Workspaces are not supported in VS Code runtime' };
+      }
+      const assertCurrent = captureProjectRuntime();
+      try {
+        const response = await runtimeFetch(`/api/yuri/workspaces/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            ...(input.label !== undefined ? { label: input.label } : {}),
+            ...(input.paths !== undefined ? { paths: input.paths.map((value) => normalizeProjectPath(value)).filter(Boolean) } : {}),
+            ...(input.addPath !== undefined ? { addPath: normalizeProjectPath(input.addPath) } : {}),
+            ...(input.removePath !== undefined ? { removePath: normalizeProjectPath(input.removePath) } : {}),
+            ...(input.primaryPath !== undefined ? { primaryPath: normalizeProjectPath(input.primaryPath) } : {}),
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          project?: ProjectEntry;
+          settings?: DesktopSettings;
+          error?: string;
+        } | null;
+        assertCurrent();
+        if (!response.ok || !payload?.project) {
+          return { ok: false, error: payload?.error || 'Failed to update workspace' };
+        }
+        if (payload.settings) {
+          get().synchronizeFromSettings(payload.settings);
+        }
+        if (get().activeProjectId === id && payload.project.path) {
+          opencodeClient.setDirectory(payload.project.path);
+          useDirectoryStore.getState().setDirectory(payload.project.path, { showOverlay: false });
+        }
+        return { ok: true, project: payload.project };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     },
 
     upsertRemoteProject: (project, hubId) => {

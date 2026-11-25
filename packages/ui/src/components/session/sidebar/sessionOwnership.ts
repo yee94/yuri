@@ -1,10 +1,12 @@
 import type { Session } from '@/lib/opencode/v2-types';
 import { normalizePath } from '@/lib/pathNormalization';
 import { readSessionWorktreeMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
+import { getWorkspacePaths, isWorkspaceId, readSessionWorkspaceId } from '@/lib/workspacePaths';
 
 type Project = {
   id: string;
   normalizedPath: string;
+  paths?: string[];
 };
 
 type Worktree = {
@@ -76,17 +78,50 @@ export const createSessionOwnershipIndex = (
   for (const project of projects) {
     const projectRoot = normalizePath(project.normalizedPath);
     if (!projectRoot) continue;
-    projectById.set(project.id, { ...project, normalizedPath: projectRoot });
+    const normalizedProject: Project = { ...project, normalizedPath: projectRoot };
+    projectById.set(project.id, normalizedProject);
+    const isMultiOrBlank = isWorkspaceId(project.id) || (Array.isArray(project.paths) && project.paths.length !== 1);
     const existingProject = projectByRoot.get(projectRoot);
-    if (!existingProject || project.id.localeCompare(existingProject.id) < 0) {
-      projectByRoot.set(projectRoot, project);
+    const existingIsMultiOrBlank = existingProject
+      ? (isWorkspaceId(existingProject.id) || (Array.isArray(existingProject.paths) && existingProject.paths.length !== 1))
+      : false;
+    // Prefer a dedicated single-path project over a multi-path workspace for legacy directory-only sessions.
+    if (
+      !existingProject
+      || (!isMultiOrBlank && existingIsMultiOrBlank)
+      || (isMultiOrBlank === existingIsMultiOrBlank && project.id.localeCompare(existingProject.id) < 0)
+    ) {
+      projectByRoot.set(projectRoot, normalizedProject);
     }
-    setOwner(ownerByDirectory, projectRoot, {
-      projectId: project.id,
-      projectRoot,
-      scopeDirectory: projectRoot,
-      kind: 'project',
-    });
+    if (!isMultiOrBlank) {
+      setOwner(ownerByDirectory, projectRoot, {
+        projectId: project.id,
+        projectRoot,
+        scopeDirectory: projectRoot,
+        kind: 'project',
+      });
+    }
+  }
+
+  // Register multi-path / blank workspace roots as fallback directory owners so
+  // legacy sessions without metadata.yuri.workspaceId still resolve when no
+  // dedicated single-path project claims that directory.
+  for (const project of projects) {
+    const projectRoot = normalizePath(project.normalizedPath);
+    if (!projectRoot) continue;
+    const isMultiOrBlank = isWorkspaceId(project.id) || (Array.isArray(project.paths) && project.paths.length !== 1);
+    if (!isMultiOrBlank) continue;
+    const candidateDirs = [projectRoot, ...getWorkspacePaths({ path: projectRoot, paths: project.paths })];
+    for (const dir of candidateDirs) {
+      const normalizedDir = normalizePath(dir);
+      if (!normalizedDir || ownerByDirectory.has(normalizedDir)) continue;
+      ownerByDirectory.set(normalizedDir, {
+        projectId: project.id,
+        projectRoot,
+        scopeDirectory: normalizedDir,
+        kind: 'project',
+      });
+    }
   }
 
   if (!isVSCode) {
@@ -144,6 +179,24 @@ export const createSessionOwnershipIndex = (
     return owner;
   };
 
+  const resolveExplicitWorkspaceOwner = (session: Session): DirectoryOwner | null => {
+    const workspaceId = readSessionWorkspaceId(session);
+    if (!workspaceId) return null;
+    const project = projectById.get(workspaceId);
+    if (!project) return null;
+    const projectRoot = normalizePath(project.normalizedPath);
+    if (!projectRoot) return null;
+    const sessionDir = resolveSessionDirectory(session);
+    const attached = getWorkspacePaths({ path: projectRoot, paths: project.paths });
+    const isMemberDir = Boolean(sessionDir && (sessionDir === projectRoot || attached.includes(sessionDir)));
+    return {
+      projectId: project.id,
+      projectRoot,
+      scopeDirectory: sessionDir ?? projectRoot,
+      kind: isMemberDir || !sessionDir ? 'project' : 'worktree',
+    };
+  };
+
   const resolveExplicitWorktreeOwner = (session: Session): DirectoryOwner | null => {
     if (isVSCode) return null;
     const worktreeMeta = readSessionWorktreeMetadata(session);
@@ -168,7 +221,9 @@ export const createSessionOwnershipIndex = (
     scopeTarget?: Map<string, Set<string>>,
   ): void => {
     for (const session of input) {
-      const owner = resolveExplicitWorktreeOwner(session) ?? resolveOwner(resolveSessionDirectory(session));
+      const owner = resolveExplicitWorkspaceOwner(session)
+        ?? resolveExplicitWorktreeOwner(session)
+        ?? resolveOwner(resolveSessionDirectory(session));
       if (!owner) continue;
       bySessionId.set(session.id, owner);
       const projectSessions = target.get(owner.projectId);

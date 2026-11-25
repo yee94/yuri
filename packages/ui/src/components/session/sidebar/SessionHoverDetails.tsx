@@ -7,18 +7,23 @@ import { useI18n } from '@/lib/i18n';
 import type { Session } from '@/lib/opencode/v2-types';
 import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeApiBaseUrl, getRuntimeKey, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { getWorkspaceDisplayLabel, getWorkspacePaths, isWorkspaceId, normalizeWorkspacePath, readSessionWorkspaceId } from '@/lib/workspacePaths';
 import { formatWorktreeFooterLabel } from '@/lib/worktrees/sessionWorktreeMetadata';
 import { getConfigDirectoryKey, useConfigStore } from '@/stores/useConfigStore';
 import { useGitStore } from '@/stores/useGitStore';
+import { useProjectsStore } from '@/stores/useProjectsStore';
 import type { WorktreeMetadata } from '@/types/worktree';
 import { TaskProjectBadge, type TaskProjectMark } from './TaskCardParts';
+import { WorkspaceProjectPaths } from './WorkspaceProjectPresentation';
 
 /** Mounted only for the open hover card. Reads metadata, never fetches a transcript or probes git/hosts. */
-export function SessionHoverDetails({ session, title, projectLabel, project, branch, worktree, directory, time, remote }: {
+export function SessionHoverDetails({ session, title, projectLabel, project, projectId, indexedWorkspaceId, branch, worktree, directory, time, remote }: {
   session: Session;
   title: string;
   projectLabel?: string | null;
   project?: TaskProjectMark | null;
+  projectId?: string | null;
+  indexedWorkspaceId?: string | null;
   branch?: string | null;
   worktree?: Pick<WorktreeMetadata, 'branch' | 'name' | 'label' | 'path' | 'worktreeRoot'> | null;
   directory?: string | null;
@@ -26,6 +31,30 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
   remote?: { hostLabel: string; projectBadge: ReactNode };
 }) {
   const { t } = useI18n();
+  const rowProjectId = projectId ?? project?.id;
+  const liveWorkspaceId = readSessionWorkspaceId(session);
+  const workspace = useProjectsStore((state) => {
+    if (remote) return undefined;
+    const findLocalProject = (id?: string | null) => id
+      ? state.projects.find((candidate) => candidate.id === id && !candidate.hostId)
+      : undefined;
+    const rowProject = findLocalProject(rowProjectId);
+    // The tree's workspace owns the row even when its live session snapshot only names the executing project.
+    if (rowProject && (isWorkspaceId(rowProject.id) || (rowProject.paths?.length ?? 0) > 1)) {
+      return rowProject;
+    }
+    return findLocalProject(indexedWorkspaceId) ?? findLocalProject(liveWorkspaceId) ?? rowProject;
+  });
+  const attachedPaths = getWorkspacePaths(workspace);
+  const workspacePaths = attachedPaths.length > 1 ? attachedPaths : null;
+  const projectMark = workspacePaths && workspace ? {
+    id: workspace.id,
+    icon: workspace.icon ?? undefined,
+    color: workspace.color ?? undefined,
+    iconImage: workspace.iconImage ?? undefined,
+    isMultiPath: true,
+  } : project;
+  const displayProjectLabel = workspace ? getWorkspaceDisplayLabel(workspace) : projectLabel;
   const currentBranch = useGitStore((state) => !remote && directory ? state.directories.get(directory)?.status?.current : undefined);
   const modelLabel = useConfigStore((state) => {
     const model = session.model;
@@ -46,6 +75,7 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
   const worktreeLabel = formatWorktreeFooterLabel(worktree);
   const branchDisplay = worktreeLabel || branch || null;
   const absolutePath = worktree?.path?.trim() || directory?.trim() || null;
+  const showExecutionPath = absolutePath && !workspacePaths?.includes(normalizeWorkspacePath(absolutePath));
   const mismatchedBranch = Boolean(branch && currentBranch && currentBranch !== 'HEAD' && currentBranch !== branch);
 
   return (
@@ -54,10 +84,15 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
         <div className="min-w-0 flex-1 break-words typography-ui-label font-medium text-foreground">{title}</div>
         <span className="shrink-0 text-xs leading-4 text-muted-foreground">{time}</span>
       </div>
-      {projectLabel ? (
+      {displayProjectLabel ? (
         <div className="flex min-w-0 items-center gap-2 text-xs leading-4 text-muted-foreground">
-          {remote?.projectBadge ?? <TaskProjectBadge project={project} />}
-          <span className="min-w-0 break-words">{projectLabel}</span>
+          {remote?.projectBadge ?? <TaskProjectBadge project={projectMark} />}
+          <span className="min-w-0 break-words">{displayProjectLabel}</span>
+        </div>
+      ) : null}
+      {workspacePaths ? (
+        <div className="min-w-0 pl-[1.375rem] text-xs leading-4 text-muted-foreground">
+          <WorkspaceProjectPaths paths={workspacePaths} />
         </div>
       ) : null}
       {branchDisplay ? (
@@ -66,7 +101,7 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
           <span className="min-w-0 break-words">{branchDisplay}</span>
         </div>
       ) : null}
-      {absolutePath ? (
+      {showExecutionPath ? (
         <div
           data-session-hover-path
           className="flex min-w-0 items-start gap-2 text-xs leading-4 text-muted-foreground"

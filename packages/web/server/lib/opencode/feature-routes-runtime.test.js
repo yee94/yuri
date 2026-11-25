@@ -29,6 +29,12 @@ describe('feature routes runtime composition', () => {
     expect(routes).toMatch(/registerOpenCodeRoutes\(app, \{[^}]*getIsSharedOpenCodeService,/);
   });
 
+  it('does not treat the shared local OpenCode service as an unmanaged external server for workspace admission', async () => {
+    const routes = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');
+    expect(routes).toMatch(/const installManagedWorkspaceInstruction = [^\n]+\n\s*if \(getIsExternalOpenCode\(\) && !getIsSharedOpenCodeService\(\)\)/);
+    expect(routes).toMatch(/registerScheduledTaskSessionSkill\(app, \{[^}]*installWorkspaceInstruction: installManagedWorkspaceInstruction/);
+  });
+
   it('wires Host isolation persist into scheduled-task runtime from the composition root', async () => {
     const source = await fs.readFile(new URL('../../index.js', import.meta.url), 'utf8');
     expect(source).toMatch(/createScheduledTasksRuntime\(\{[\s\S]*persistSessionMetadata: persistSessionMetadataToStore/);

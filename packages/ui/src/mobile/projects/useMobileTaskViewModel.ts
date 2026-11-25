@@ -103,7 +103,7 @@ export function useMobileTaskViewModel(
   const { git } = useRuntimeAPIs();
   const ensureStatus = useGitStore((state) => state.ensureStatus);
   const projectPaths = React.useMemo(
-    () => (enabled ? [...model.projectMetaById.values()].map((meta) => meta.path) : EMPTY_PATHS),
+    () => (enabled ? Array.from(new Set([...model.projectMetaById.values()].map((meta) => meta.path))) : EMPTY_PATHS),
     [enabled, model.projectMetaById],
   );
   const gitStatus = useGitRepoStatusMap(projectPaths);

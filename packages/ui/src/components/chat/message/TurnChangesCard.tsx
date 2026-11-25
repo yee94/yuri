@@ -67,15 +67,15 @@ const TurnChangesCardFileButton = React.memo(({
                 'flex w-full min-w-0 items-center justify-between gap-3 rounded-[var(--radius-md)] text-left transition-colors',
                 'hover:bg-interactive-hover focus-visible:bg-interactive-hover active:bg-interactive-active',
                 'focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
-                isMobile ? 'px-2.5 py-1.5 text-xs' : 'px-2.5 py-1.5 text-[13px]',
+                isMobile ? 'typography-meta px-2 py-1' : 'px-2.5 py-1.5 text-[13px]',
             )}
         >
-            <span className="min-w-0 flex-1 truncate leading-snug">
-                {dirPrefix ? <span className="text-[var(--surface-muted-foreground)]">{dirPrefix}</span> : null}
-                <span className="text-foreground">{fileName}</span>
+            <span className="flex min-w-0 flex-1 items-baseline leading-snug">
+                {dirPrefix ? <span className="min-w-0 truncate text-[var(--surface-muted-foreground)]">{dirPrefix}</span> : null}
+                <span className="min-w-0 shrink-[0.001] truncate text-foreground">{fileName}</span>
             </span>
             {hasCounts ? (
-                <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium leading-none tabular-nums">
+                <span className={cn('inline-flex shrink-0 items-center gap-1.5 font-medium leading-none tabular-nums', isMobile ? 'typography-meta' : 'text-xs')}>
                     <span style={{ color: 'var(--status-success)' }}>+{file.additions}</span>
                     <span style={{ color: 'var(--status-error)' }}>-{file.deletions}</span>
                 </span>
@@ -321,7 +321,7 @@ export const TurnChangesCard = React.memo(({
         <section
             className={cn(
                 'flex min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] bg-[color-mix(in_srgb,var(--surface-foreground)_5.5%,var(--surface-background))] text-foreground',
-                isMobile ? 'mt-2.5' : 'mt-3',
+                isMobile ? 'mt-2' : 'mt-3',
             )}
             data-turn-changes-preview="true"
             data-message-action-group="true"
@@ -329,31 +329,31 @@ export const TurnChangesCard = React.memo(({
         >
             <div
                 className={cn(
-                    'flex min-w-0 items-center justify-between gap-2.5',
-                    isMobile ? 'px-3 py-2' : 'px-3.5 py-2.5',
+                    'flex min-w-0 items-center justify-between',
+                    isMobile ? 'gap-2 px-2.5 py-1.5' : 'gap-2.5 px-3.5 py-2.5',
                 )}
             >
-                <div className="flex min-w-0 items-center gap-2.5">
+                <div className={cn('flex min-w-0 items-center', isMobile ? 'gap-2' : 'gap-2.5')}>
                     <div
                         aria-hidden="true"
                         className={cn(
                             'flex shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-interactive-hover text-foreground/85',
-                            isMobile ? 'size-7' : 'size-8',
+                            isMobile ? 'size-6' : 'size-8',
                         )}
                     >
                         <Icon name="file-edit" className={isMobile ? 'size-3.5' : 'size-4'} />
                     </div>
-                    <div className="flex min-w-0 flex-col gap-0.5">
+                    <div className={cn('flex min-w-0 flex-col', !isMobile && 'gap-0.5')}>
                         <span
                             id={`turn-changes-${turnId}`}
                             className={cn(
                                 'truncate font-medium leading-snug text-foreground',
-                                isMobile ? 'text-xs' : 'text-[13px]',
+                                isMobile ? 'typography-meta' : 'text-[13px]',
                             )}
                         >
                             {editedTitle}
                         </span>
-                        <div className="flex min-h-[14px] items-center gap-1.5 text-xs font-medium leading-none tabular-nums">
+                        <div className={cn('flex items-center gap-1.5 font-medium leading-none tabular-nums', isMobile ? 'typography-meta min-h-4' : 'min-h-[14px] text-xs')}>
                             {totals ? (
                                 <>
                                     <span style={{ color: 'var(--status-success)' }}>+{totals.additions}</span>
@@ -387,7 +387,10 @@ export const TurnChangesCard = React.memo(({
                             onClick={() => {
                                 void handleRevert();
                             }}
-                            className="h-7 gap-1 px-2.5 text-xs text-[var(--surface-muted-foreground)] hover:text-foreground"
+                            className={cn(
+                                'gap-1 text-[var(--surface-muted-foreground)] hover:text-foreground',
+                                isMobile ? 'typography-meta h-6 px-2' : 'h-7 px-2.5 text-xs',
+                            )}
                         >
                             <span>{t('chat.changedFiles.actions.revert')}</span>
                             <Icon
@@ -403,7 +406,7 @@ export const TurnChangesCard = React.memo(({
                         disabled={!canOpen}
                         data-turn-changes-view="true"
                         onClick={openCompleteTurnDiff}
-                        className="h-7 px-3 text-xs"
+                        className={isMobile ? 'typography-meta h-6 px-2.5' : 'h-7 px-3 text-xs'}
                     >
                         {t('chat.changedFiles.actions.viewChanges')}
                     </Button>
@@ -413,8 +416,9 @@ export const TurnChangesCard = React.memo(({
             {visibleFiles.length > 0 ? (
                 <div
                     className={cn(
-                        'mx-1.5 flex min-w-0 flex-col gap-0.5 rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--surface-background))] p-1',
-                        hiddenCount === 0 && 'mb-1.5',
+                        'flex min-w-0 flex-col rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--surface-background))]',
+                        isMobile ? 'mx-1 gap-0 p-0.5' : 'mx-1.5 gap-0.5 p-1',
+                        hiddenCount === 0 && (isMobile ? 'mb-1' : 'mb-1.5'),
                     )}
                 >
                     {visibleFiles.map((file) => (
@@ -430,13 +434,16 @@ export const TurnChangesCard = React.memo(({
             ) : null}
 
             {hiddenCount > 0 ? (
-                <div className="px-1.5 py-1">
+                <div className={isMobile ? 'px-1 py-0.5' : 'px-1.5 py-1'}>
                     <button
                         type="button"
                         data-turn-changes-toggle="true"
                         aria-expanded={isExpanded}
                         onClick={handleToggleExpanded}
-                        className="flex w-full items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1.5 text-left text-xs font-medium text-[var(--surface-muted-foreground)] transition-colors hover:bg-interactive-hover hover:text-foreground active:bg-interactive-active focus-visible:bg-interactive-hover focus-visible:outline-none"
+                        className={cn(
+                            'flex w-full items-center gap-1.5 rounded-[var(--radius-md)] text-left font-medium text-[var(--surface-muted-foreground)] transition-colors hover:bg-interactive-hover hover:text-foreground active:bg-interactive-active focus-visible:bg-interactive-hover focus-visible:outline-none',
+                            isMobile ? 'typography-meta px-2 py-1' : 'px-2.5 py-1.5 text-xs',
+                        )}
                     >
                         <span>{isExpanded ? t('chat.changedFiles.actions.showLess') : showMoreLabel}</span>
                         <Icon name={isExpanded ? 'arrow-up-s' : 'arrow-down-s'} className="size-3.5" />

@@ -10,21 +10,27 @@ import { cn } from '@/lib/utils';
 import type { RemoteHost } from '@/lib/remote-projects/types';
 
 /** One presentation owner for machine, local-directory and remote-directory steps. */
-export function DirectoryExplorerSurface({ open, onOpenChange, mobile, origin, children, footer, trailing, hints, initialFocus, error }: {
+export function DirectoryExplorerSurface({ open, onOpenChange, mobile, origin, children, footer, trailing, hints, initialFocus, error, title: titleOverride }: {
   open: boolean; onOpenChange(open: boolean): void; mobile: boolean;
   origin?: { x: number; y: number };
   children: React.ReactNode; footer: React.ReactNode; trailing?: React.ReactNode;
   hints?: React.ReactNode; initialFocus?: false;
   error?: string;
+  title?: string;
 }) {
   const { t } = useI18n();
-  const title = t('directoryExplorerDialog.title');
-  const headerActions = <div className="flex shrink-0 items-center gap-2">{trailing}<DirectoryErrorIndicator message={error} /></div>;
+  const title = titleOverride ?? t('directoryExplorerDialog.title');
+  const headerActions = (trailing || error) ? (
+    <div className="flex shrink-0 items-center gap-2">
+      {trailing}
+      {error ? <DirectoryErrorIndicator message={error} /> : null}
+    </div>
+  ) : null;
   if (mobile) return <MobileResizableSheet id="mobile-directory-explorer-sheet" open={open} onOpenChange={onOpenChange}
     title={<h2 className="yuri-directory-title truncate text-foreground">{title}</h2>} trailing={headerActions}
     ariaLabel={title} closeAriaLabel={t('mobile.surface.closeAria')} resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
     initiallyExpanded className="yuri-directory-mobile">
-    {children}<div className="yuri-directory-footer">{footer}</div>
+    {children}<div className="yuri-directory-footer">{hints}{footer}</div>
   </MobileResizableSheet>;
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent presentation="picker" className="yuri-directory-dialog" initialFocus={initialFocus}

@@ -121,10 +121,13 @@ import { ensureRemoteComposerSessions, readRemoteComposerSessionTitle } from '@/
 import { useQueryClient } from '@tanstack/react-query';
 import { useCommandsQuery } from '@/queries/commandQueries';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useEffectiveDirectory, useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
+import { isBlankWorkspace, isMultiPathWorkspace, getWorkspacePaths } from '@/lib/workspacePaths';
+import { useWorkspaceGitSummary } from '@/stores/useGitStore';
 import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 import { buildSessionTargetOptions } from '@/sync/session-worktree-contract';
 import { DraftSessionBranchSelector } from './DraftSessionBranchSelector';
+import { DraftWorkspaceBranches } from './DraftWorkspaceBranches';
 import { resolveDraftSessionBranchLabel } from './draftSessionBranchLabel';
 import { hasExtractableGitChangedFiles } from './changedFiles';
 import { useI18n } from '@/lib/i18n';
@@ -408,7 +411,7 @@ const normalizePath = (value?: string | null): string | null => {
 };
 
 const getProjectDisplayLabel = (project: { label?: string; path: string }): string => {
-    return formatDirectoryName(project.path);
+    return project.label?.trim() || formatDirectoryName(project.path);
 };
 
 const renderDraftTitle = (title: string, projectLabel: string | null): React.ReactNode => {
@@ -519,6 +522,7 @@ const collectDroppedFiles = (dataTransfer: DataTransfer | null | undefined): Fil
 const renderProjectLabelWithIcon = (project: {
     id: string;
     path: string;
+    paths?: string[];
     label?: string;
     icon?: string | null;
     color?: string | null;
@@ -527,7 +531,8 @@ const renderProjectLabelWithIcon = (project: {
 }) => {
     const iconName = project.icon ? PROJECT_ICON_MAP[project.icon] : null;
     const iconColor = project.color ? PROJECT_COLOR_MAP[project.color] : undefined;
-    const fallback = <Icon name={iconName ?? 'folder'} className="h-3.5 w-3.5" style={iconColor ? { color: iconColor } : undefined} />;
+    const defaultIcon = isMultiPathWorkspace(project) ? 'folders' : 'folder';
+    const fallback = <Icon name={iconName ?? defaultIcon} className="h-3.5 w-3.5" style={iconColor ? { color: iconColor } : undefined} />;
     return (
         <span className="inline-flex min-w-0 items-center gap-1.5">
             <span
@@ -6222,6 +6227,9 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     );
     const draftProjectLabel = selectedDraftProject ? getProjectDisplayLabel(selectedDraftProject)
         : hostRuntime?.entry.location.hostId ? formatDirectoryName(hostRuntime.entry.location.directory, null) : null;
+    const selectedDraftWorkspacePaths = React.useMemo(() => getWorkspacePaths(selectedDraftProject), [selectedDraftProject]);
+    const isDraftBlankWorkspace = isBlankWorkspace(selectedDraftProject);
+    const isDraftMultiPathWorkspace = selectedDraftWorkspacePaths.length > 1;
 
     const selectedDraftProjectBranches = useGitBranches(selectedDraftProjectPath);
     const selectedDraftProjectBranchesFetchedAt = useGitStore(
@@ -6233,15 +6241,15 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const [isDiscoveringDraftBranches, setIsDiscoveringDraftBranches] = React.useState(false);
 
     React.useEffect(() => {
-        if (!showDraftTargetSelectors || !selectedDraftProjectPath || !runtimeGit || selectedDraftProjectIsGitRepo !== null) {
+        if (!showDraftTargetSelectors || isDraftMultiPathWorkspace || !selectedDraftProjectPath || !runtimeGit || selectedDraftProjectIsGitRepo !== null) {
             return;
         }
 
         void fetchGitStatus(selectedDraftProjectPath, runtimeGit, { silent: true });
-    }, [fetchGitStatus, runtimeGit, selectedDraftProjectIsGitRepo, selectedDraftProjectPath, showDraftTargetSelectors]);
+    }, [fetchGitStatus, isDraftMultiPathWorkspace, runtimeGit, selectedDraftProjectIsGitRepo, selectedDraftProjectPath, showDraftTargetSelectors]);
 
     React.useEffect(() => {
-        if (!showDraftTargetSelectors || !selectedDraftProjectPath || !selectedDraftProject || !runtimeGit || selectedDraftProjectIsGitRepo !== true) {
+        if (!showDraftTargetSelectors || isDraftMultiPathWorkspace || !selectedDraftProjectPath || !selectedDraftProject || !runtimeGit || selectedDraftProjectIsGitRepo !== true) {
             setIsDiscoveringDraftBranches(false);
             return;
         }
@@ -6273,7 +6281,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [fetchBranches, runtimeGit, selectedDraftProject, selectedDraftProjectBranchesFetchedAt, hasDraftBranchList, selectedDraftProjectIsGitRepo, selectedDraftProjectPath, showDraftTargetSelectors]);
+    }, [fetchBranches, isDraftMultiPathWorkspace, runtimeGit, selectedDraftProject, selectedDraftProjectBranchesFetchedAt, hasDraftBranchList, selectedDraftProjectIsGitRepo, selectedDraftProjectPath, showDraftTargetSelectors]);
 
     // Prefer the branches Query current, then fall back to status.current from
     // fetchGitStatus (often available sooner on mobile cold start).
@@ -6376,17 +6384,25 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
     const chatSurfaceMode = useChatSurfaceMode();
     const isMiniChatSurface = chatSurfaceMode === 'mini-chat';
+    const workspaceDirectoriesForChanges = useEffectiveWorkspaceDirectories();
+    const isMultiPathForChanges = workspaceDirectoriesForChanges.length > 1;
+    const workspaceGitSummaryForChanges = useWorkspaceGitSummary(
+        !isMiniChatSurface && isMultiPathForChanges ? workspaceDirectoriesForChanges : [],
+    );
 
     const hasPendingChanges = React.useMemo(() => {
         if (isMiniChatSurface) {
             return false;
+        }
+        if (isMultiPathForChanges) {
+            return workspaceGitSummaryForChanges.isAnyGitRepo && workspaceGitSummaryForChanges.hasChanges;
         }
         if (isGitRepo !== true || !currentGitStatus || currentGitStatus.isClean) {
             return false;
         }
         // 短路谓词：超大变更集下避免为布尔值构造全量 GitChangedFile 数组。
         return hasExtractableGitChangedFiles(currentGitStatus.files);
-    }, [currentGitStatus, isGitRepo, isMiniChatSurface]);
+    }, [currentGitStatus, isGitRepo, isMiniChatSurface, isMultiPathForChanges, workspaceGitSummaryForChanges.hasChanges, workspaceGitSummaryForChanges.isAnyGitRepo]);
 
     const selectedDraftBranchIsKnown = React.useMemo(() => {
         if (!selectedDraftDirectory) {
@@ -6427,6 +6443,9 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     ]);
 
     const shouldShowDraftBranchSelector = React.useMemo(() => {
+        if (isDraftBlankWorkspace || isDraftMultiPathWorkspace) {
+            return false;
+        }
         if (selectedDraftProjectIsGitRepo !== true) {
             return false;
         }
@@ -6437,7 +6456,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             return true;
         }
         return worktreeBranchOptions.length > 0;
-    }, [isDiscoveringDraftBranches, projectRootBranchOption, selectedDraftProjectIsGitRepo, worktreeBranchOptions.length]);
+    }, [isDiscoveringDraftBranches, isDraftBlankWorkspace, isDraftMultiPathWorkspace, projectRootBranchOption, selectedDraftProjectIsGitRepo, worktreeBranchOptions.length]);
 
     const handleDraftProjectChange = useEvent((projectId: string) => {
         const draft = useSessionUIStore.getState().newSessionDraft;
@@ -6594,6 +6613,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     });
 
     const handleDraftDirectoryChange = useEvent((directory: string) => {
+        if (isDraftMultiPathWorkspace) return;
         const draft = useSessionUIStore.getState().newSessionDraft;
         // Only block while worktree creation is still in-flight. bootstrap /
         // preserve locks protect against automatic resets, not explicit picks.
@@ -6610,7 +6630,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     });
 
     React.useEffect(() => {
-        if (!showDraftTargetSelectors || !selectedDraftProject || !selectedDraftDirectory) {
+        if (!showDraftTargetSelectors || isDraftMultiPathWorkspace || !selectedDraftProject || !selectedDraftDirectory) {
             return;
         }
         if (newSessionDraft?.pendingWorktreeRequestId || newSessionDraft?.bootstrapPendingDirectory || newSessionDraft?.preserveDirectoryOverride) {
@@ -6624,7 +6644,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             projectId: selectedDraftProject.id,
             directoryOverride: selectedDraftProject.path,
         });
-    }, [draftBranchItems, newSessionDraft?.bootstrapPendingDirectory, newSessionDraft?.pendingWorktreeRequestId, newSessionDraft?.preserveDirectoryOverride, selectedDraftDirectory, selectedDraftProject, setNewSessionDraftTarget, showDraftTargetSelectors]);
+    }, [draftBranchItems, isDraftMultiPathWorkspace, newSessionDraft?.bootstrapPendingDirectory, newSessionDraft?.pendingWorktreeRequestId, newSessionDraft?.preserveDirectoryOverride, selectedDraftDirectory, selectedDraftProject, setNewSessionDraftTarget, showDraftTargetSelectors]);
 
     const openMobileAttachSheet = useEvent(() => {
         // Mark the sheet open BEFORE blur so overlay-busy is true when the
@@ -7904,7 +7924,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                 onNavigatePrevPicker={openDraftProjectPickerFromBranch}
                                 finalFocus={resolveDraftPickerFinalFocus}
                             />
-                        ) : null}
+                        ) : isDraftMultiPathWorkspace ? <DraftWorkspaceBranches directories={selectedDraftWorkspacePaths} /> : null}
                     </div>
                 ) : null}
                 {isMobile && showDraftTargetSelectors ? (
@@ -7944,7 +7964,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                 maxWidthClassName="max-w-[50%]"
                                 presentation="mobile-sheet"
                             />
-                        ) : null}
+                        ) : isDraftMultiPathWorkspace ? <DraftWorkspaceBranches directories={selectedDraftWorkspacePaths} /> : null}
                     </div>
                 ) : null}
                 {surface.active && currentSessionId && sessionRecoveryDirectory ? (

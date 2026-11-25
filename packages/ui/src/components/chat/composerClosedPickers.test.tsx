@@ -27,9 +27,13 @@ describe('closed composer picker work', () => {
         const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'ChatInput.tsx'), 'utf8');
         const ast = ts.createSourceFile('ChatInput.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
         let declaration = '';
+        let displayLabel = '';
         const visit = (node: ts.Node) => {
             if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'renderProjectLabelWithIcon') {
                 declaration = node.getText(ast);
+            }
+            if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'getProjectDisplayLabel') {
+                displayLabel = node.getText(ast);
             }
             ts.forEachChild(node, visit);
         };
@@ -37,17 +41,19 @@ describe('closed composer picker work', () => {
         expect(declaration).not.toBe('');
         const scope = {
             React, PROJECT_ICON_MAP: {}, PROJECT_COLOR_MAP: {}, Icon: 'svg', ProjectIconImage: 'img',
-            getProjectDisplayLabel: () => 'project',
+            formatDirectoryName: () => 'folder-name',
+            isMultiPathWorkspace: () => false,
         };
-        const compiled = ts.transpileModule(`const ${declaration};`, {
+        const compiled = ts.transpileModule(`const ${displayLabel}; const ${declaration};`, {
             compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
         }).outputText;
         const renderLabel = new Function(...Object.keys(scope), `${compiled}\nreturn renderProjectLabelWithIcon;`)(...Object.values(scope));
         for (const iconImage of [null, { mime: 'image/png', updatedAt: 1, source: 'auto' }]) {
-            const label = renderLabel({ id: 'project', path: '/project', iconImage });
+            const label = renderLabel({ id: 'project', path: '/project', label: 'Workspace name', iconImage });
             const iconWrapper = label.props.children[0];
             expect(iconWrapper.props.className.split(/\s+/)).toEqual(expect.arrayContaining(['relative', 'top-px']));
             expect(label.props.children[1].props.className).not.toContain('top-px');
+            expect(label.props.children[1].props.children).toBe('Workspace name');
         }
     });
 

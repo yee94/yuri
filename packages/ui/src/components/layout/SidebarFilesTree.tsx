@@ -30,7 +30,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useEffectiveDirectory, useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
+import { isBlankWorkspace } from '@/lib/workspacePaths';
+import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useFileSearchStore } from '@/stores/useFileSearchStore';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -423,7 +425,20 @@ export const SidebarFilesTree: React.FC = () => {
   const { files } = useProjectRuntimeAPIs();
   const host = useHostRuntime();
   const hostEntry = host?.entry;
-  const currentDirectory = useEffectiveDirectory() ?? '';
+  const effectiveDirectory = useEffectiveDirectory() ?? '';
+  const workspaceDirectories = useEffectiveWorkspaceDirectories();
+  const activeWorkspace = useProjectsStore((state) => state.projects.find((item) => item.id === state.activeProjectId) ?? null);
+  const isBlankActiveWorkspace = !host?.entry.location.hostId && isBlankWorkspace(activeWorkspace);
+  const isMultiPathWorkspace = !host?.entry.location.hostId && workspaceDirectories.length > 1;
+  const [selectedWorkspaceRoot, setSelectedWorkspaceRoot] = React.useState<string | null>(null);
+  const currentDirectory = React.useMemo(() => {
+    if (isBlankActiveWorkspace) return '';
+    if (!isMultiPathWorkspace) return effectiveDirectory;
+    if (selectedWorkspaceRoot && workspaceDirectories.includes(selectedWorkspaceRoot)) {
+      return selectedWorkspaceRoot;
+    }
+    return workspaceDirectories[0] ?? effectiveDirectory;
+  }, [effectiveDirectory, isBlankActiveWorkspace, isMultiPathWorkspace, selectedWorkspaceRoot, workspaceDirectories]);
   const root = normalizePath(currentDirectory.trim());
   const stateKey = hostEntry?.key ?? root;
   const cacheKey = host?.entry.location.hostId ? JSON.stringify([host.entry.queryScope, root]) : root;
@@ -1125,6 +1140,30 @@ export const SidebarFilesTree: React.FC = () => {
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
+      {isMultiPathWorkspace ? (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/40 px-2 py-1.5"
+          data-testid="workspace-files-root-strip"
+        >
+          {workspaceDirectories.map((memberDir) => {
+            const selected = memberDir === currentDirectory;
+            const folderName = memberDir.split('/').filter(Boolean).at(-1) || memberDir;
+            return (
+              <Button
+                key={memberDir}
+                variant="chip"
+                size="xs"
+                aria-pressed={selected}
+                onClick={() => setSelectedWorkspaceRoot(memberDir)}
+                title={memberDir}
+                className="max-w-full px-2"
+              >
+                <span className="truncate">{folderName}</span>
+              </Button>
+            );
+          })}
+        </div>
+      ) : null}
       <div className="flex items-center gap-1 border-b border-border/40 px-2 py-1.5" data-sidebar-file-search>
         <div className="relative min-w-0 flex-1">
           <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />

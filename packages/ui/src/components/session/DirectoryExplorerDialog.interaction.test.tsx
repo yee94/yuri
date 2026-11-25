@@ -41,6 +41,8 @@ const fixture = vi.hoisted(() => {
   clone: vi.fn(),
   create: vi.fn(),
   add: vi.fn(),
+  createWorkspace: vi.fn(),
+  updateWorkspacePaths: vi.fn(),
   openDraft: vi.fn(),
   openMobileDraft: vi.fn(),
   setDraftTarget: vi.fn(),
@@ -57,7 +59,10 @@ vi.mock('@/stores/useDirectoryStore', () => ({
   useDirectoryStore: (selector: (state: { homeDirectory: string }) => unknown) => selector({ homeDirectory: fixture.home }),
 }));
 vi.mock('@/stores/useProjectsStore', () => ({
-  useProjectsStore: (selector: (state: { projects: typeof fixture.projects; addProject: typeof fixture.add }) => unknown) => selector({ projects: fixture.projects, addProject: fixture.add }),
+  useProjectsStore: (selector: (state: {
+    projects: typeof fixture.projects; addProject: typeof fixture.add; createWorkspace: typeof fixture.createWorkspace;
+    updateWorkspacePaths: typeof fixture.updateWorkspacePaths;
+  }) => unknown) => selector({ projects: fixture.projects, addProject: fixture.add, createWorkspace: fixture.createWorkspace, updateWorkspacePaths: fixture.updateWorkspacePaths }),
 }));
 vi.mock('@/stores/useUIStore', () => ({ useUIStore: { getState: () => ({
   setSettingsPage: fixture.setSettingsPage,
@@ -85,7 +90,7 @@ vi.mock('@/hooks/useFileSystemAccess', () => ({
   useFileSystemAccess: () => ({ isDesktop: !fixture.mobile, requestAccess: fixture.requestAccess, startAccessing: fixture.startAccessing }),
 }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: fixture.mobile }) }));
-vi.mock('@/lib/desktop', () => ({ canManageDesktopHosts: () => fixture.canManageDesktopHosts }));
+vi.mock('@/lib/desktop', () => ({ canManageDesktopHosts: () => fixture.canManageDesktopHosts, isDesktopLocalOriginActive: () => !fixture.mobile }));
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: async () => new Response(JSON.stringify({ home: fixture.home })) }));
 vi.mock('@/lib/opencode/client', () => ({ opencodeClient: {
   listLocalDirectory: fixture.list, cloneRepository: fixture.clone, createDirectory: fixture.create,
@@ -117,11 +122,11 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
   let open: boolean;
   let setOpen!: React.Dispatch<React.SetStateAction<boolean>>;
 
-  const Host = () => {
+  const Host = ({ editProject }: { editProject?: { id: string; path: string; paths: string[] } }) => {
     const [value, setValue] = React.useState(true);
     open = value;
     setOpen = setValue;
-    return <DirectoryExplorerDialog open={value} onOpenChange={setValue} />;
+    return <DirectoryExplorerDialog open={value} onOpenChange={setValue} editProject={editProject} />;
   };
   const mount = async () => { await act(async () => { root.render(<Host />); }); };
   const flushMutation = async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); }); };
@@ -157,6 +162,11 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
       { name: 'file.txt', path: '/workspace/file.txt', isDirectory: false },
     ] : []);
     fixture.add.mockImplementation((path: string) => ({ id: 'added', path }));
+    fixture.createWorkspace.mockImplementation(async (input: { paths?: string[]; label?: string }) => ({
+      ok: true,
+      project: { id: 'ws_new', path: input.paths?.[0] ?? '/workspace/.blank', paths: input.paths ?? [], label: input.label },
+    }));
+    fixture.updateWorkspacePaths.mockReset().mockResolvedValue({ ok: true });
     fixture.clone.mockResolvedValue({ path: '/workspace/cloned' });
     fixture.create.mockResolvedValue(undefined);
     fixture.requestAccess.mockResolvedValue({ success: true, path: '/selected' });
@@ -188,6 +198,48 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
       mkdirSync(process.env.YURI_TEST_EVIDENCE_DIR, { recursive: true });
       writeFileSync(join(process.env.YURI_TEST_EVIDENCE_DIR, `directory-${mobile ? 'mobile' : 'desktop'}.html`), container.innerHTML);
     }
+  });
+
+  test('edits existing directory grants in the same picker and saves their order without opening a draft', async () => {
+    fixture.remoteSupported = true;
+    fixture.catalogPending = true;
+    fixture.catalogKnown = false;
+    const editProject = { id: 'ws_edit', path: '/workspace/Existing', paths: ['/workspace/Existing', '/workspace/Code'] };
+    await act(async () => root.render(<Host editProject={editProject} />));
+    expect(container.querySelectorAll('.yuri-directory-chip')).toHaveLength(2);
+    expect(container.textContent).not.toContain('workspace.create.namePlaceholder');
+    expect(button('directoryExplorerDialog.toggle.multipleProjects')).toBeUndefined();
+    expect(pathInput()).not.toBeNull();
+    await act(async () => button('workspace.paths.setPrimary').click());
+    if (!mobile) {
+      await act(async () => button('directoryExplorerDialog.actions.openInFinder').click());
+      expect(fixture.startAccessing).toHaveBeenCalledWith('/selected');
+    }
+    expect(fixture.updateWorkspacePaths).not.toHaveBeenCalled();
+    const paths = ['/workspace/Code', '/workspace/Existing', ...(!mobile ? ['/selected'] : [])];
+    fixture.updateWorkspacePaths.mockResolvedValueOnce({ ok: false, error: 'Cannot edit directories' });
+    await act(async () => button('projectEditDialog.actions.save').click());
+    expect(fixture.toastError).toHaveBeenCalledWith('Cannot edit directories');
+    expect(open).toBe(true);
+    expect(container.querySelectorAll('.yuri-directory-chip')).toHaveLength(paths.length);
+    await act(async () => button('projectEditDialog.actions.save').click());
+    expect(fixture.updateWorkspacePaths).toHaveBeenLastCalledWith('ws_edit', { paths });
+    expect(open).toBe(false);
+    expect(fixture.createWorkspace).not.toHaveBeenCalled();
+    expect(fixture.openDraft).not.toHaveBeenCalled();
+    expect(fixture.openMobileDraft).not.toHaveBeenCalled();
+  });
+
+  test('discarding staged changes leaves the existing directory selection intact', async () => {
+    const editProject = { id: 'ws_edit', path: '/workspace/Code', paths: ['/workspace/Code'] };
+    await act(async () => root.render(<Host editProject={editProject} />));
+    await act(async () => container.querySelector<HTMLButtonElement>('.yuri-directory-chip-remove')!.click());
+    expect(container.querySelector('.yuri-directory-chip')).toBeNull();
+    await act(async () => button('projectEditDialog.actions.cancel').click());
+    expect(open).toBe(false);
+    await act(async () => setOpen(true));
+    expect(container.querySelector('.yuri-directory-chip')?.getAttribute('title')).toBe('/workspace/Code');
+    expect(fixture.updateWorkspacePaths).not.toHaveBeenCalled();
   });
 
   test('uses the design machine step before directory IO and reuses local browsing when returning', async () => {
@@ -617,5 +669,61 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     expect(fixture.startAccessing).toHaveBeenCalledWith('/selected');
     expect(fixture.add).toHaveBeenCalledWith('/selected');
     expect(open).toBe(false);
+  });
+
+  test('top-right multiple projects checkbox requires a workspace name with clear feedback and preserves path case', async () => {
+    await mount();
+    const toggle = container.querySelector<HTMLButtonElement>('header button[role="checkbox"]')!;
+    expect(toggle.textContent).toBe('directoryExplorerDialog.toggle.multipleProjects');
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    await act(async () => { toggle.click(); });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+
+    const label = container.querySelector<HTMLLabelElement>('.yuri-directory-inputs label')!;
+    const nameInput = label.control as HTMLInputElement;
+    expect(label.textContent).toBe('workspace.create.namePlaceholder');
+    expect(nameInput.required).toBe(true);
+    expect(Boolean(nameInput.compareDocumentPosition(pathInput()) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(document.activeElement === nameInput).toBe(!mobile);
+    expect(nameInput.hasAttribute('aria-invalid')).toBe(false);
+
+    const codeRow = [...container.querySelectorAll('[data-directory-row]')].find(node => node.textContent?.startsWith('Code'))!;
+    const existingRow = [...container.querySelectorAll('[data-directory-row]')].find(node => node.textContent?.startsWith('Existing'))!;
+    await act(async () => { codeRow.querySelector<HTMLButtonElement>('button[role="checkbox"]')!.click(); });
+    await act(async () => { existingRow.querySelector<HTMLButtonElement>('button[role="checkbox"]')!.click(); });
+
+    // Selecting folders is not an error; an attempted submission explains what is missing.
+    expect(nameInput.hasAttribute('aria-invalid')).toBe(false);
+    await act(async () => { button('workspace.create.submit').click(); });
+    expect(fixture.createWorkspace).not.toHaveBeenCalled();
+    expect(nameInput.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(nameInput.getAttribute('aria-describedby')!)?.textContent).toBe('workspace.create.nameRequired');
+    expect(document.activeElement).toBe(nameInput);
+
+    await fill(nameInput, 'Web + API');
+    expect(button('workspace.create.submit').disabled).toBe(false);
+    expect(nameInput.hasAttribute('aria-invalid')).toBe(false);
+
+    await act(async () => { button('workspace.create.submit').click(); });
+    expect(fixture.createWorkspace).toHaveBeenCalledWith({
+      paths: ['/workspace/Code', '/workspace/Existing'],
+      label: 'Web + API',
+      activate: true,
+    });
+    expect(open).toBe(false);
+  });
+
+  test('creates a workspace with no folders from the name field without submitting during IME composition', async () => {
+    await mount();
+    await act(async () => { button('directoryExplorerDialog.toggle.multipleProjects').click(); });
+    const nameInput = container.querySelector<HTMLInputElement>('.yuri-directory-workspace-name input')!;
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+    await act(async () => { pathInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: isMac, ctrlKey: !isMac, bubbles: true })); });
+    expect(nameInput.getAttribute('aria-invalid')).toBe('true');
+    await fill(nameInput, 'Scratch');
+    await act(async () => { nameInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true })); });
+    expect(fixture.createWorkspace).not.toHaveBeenCalled();
+    await act(async () => { nameInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+    expect(fixture.createWorkspace).toHaveBeenCalledWith({ paths: [], label: 'Scratch', activate: true });
   });
 });

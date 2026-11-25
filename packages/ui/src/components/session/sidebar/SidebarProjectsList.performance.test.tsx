@@ -7,7 +7,7 @@ import * as focusedRowScroll from './scrollFocusedSessionRow';
 
 const counters = vi.hoisted(() => ({ project: 0 }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
-vi.mock('@/components/icon/Icon', () => ({ Icon: () => null }));
+vi.mock('@/components/icon/Icon', () => ({ Icon: ({ name }: { name: string }) => <span data-icon={name} /> }));
 vi.mock('@/lib/projectMeta', () => ({ PROJECT_COLOR_MAP: {}, PROJECT_ICON_MAP: {}, ProjectIconImage: () => null }));
 vi.mock('@/components/ui/ScrollableOverlay', () => ({
   ScrollableOverlay: React.forwardRef<HTMLElement, { children: React.ReactNode }>(function Overlay({ children }, ref) {
@@ -51,11 +51,11 @@ afterEach(async () => {
   host.remove(); vi.unstubAllGlobals();
 });
 
-it('skips project hook and body work across 50 unrelated parent commits, and invokes current actions', async () => {
+it.each([false, true])('skips project hook and body work across 50 unrelated parent commits, and invokes current actions (multi-path: %s)', async (multiPath) => {
   const noop = () => {};
   const renderGroupSessions = vi.fn(() => <span data-session>Session</span>);
   const section = {
-    project: { id: 'project', normalizedPath: '/project' },
+    project: { id: 'project', normalizedPath: '/project', paths: multiPath ? ['/project', '/two', '/three', '/four'] : undefined },
     groups: [{ id: 'root', label: 'Root', branch: null, description: null, isMain: true, worktree: null, directory: '/project', sessions: [] }],
   };
   const onNewSession = vi.fn();
@@ -72,6 +72,9 @@ it('skips project hook and body work across 50 unrelated parent commits, and inv
     setOpenSidebarMenuKey: noop, isInlineEditing: false,
   };
   await act(async () => root.render(<SidebarProjectsList {...props} topContent={<span>0</span>} />));
+  const projectHeader = host.querySelector('[data-sidebar-project-header="project"]')!;
+  expect(projectHeader.querySelectorAll(`[data-icon="${multiPath ? 'folders' : 'folder-open'}"]`)).toHaveLength(1);
+  expect(projectHeader.querySelector(`[data-icon="${multiPath ? 'folder-open' : 'folders'}"]`)).toBeNull();
   const initial = counters.project;
   for (let index = 1; index <= 50; index += 1) {
     await act(async () => root.render(<SidebarProjectsList {...props} topContent={<span>{index}</span>} />));

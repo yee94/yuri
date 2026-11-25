@@ -1127,23 +1127,11 @@ class OpencodeService {
     const created = await this.client.session.create({
       ...(requestDirectory ? { location: { directory: requestDirectory } } : {}),
       title: params?.title,
+      ...(params?.metadata && Object.keys(params.metadata).length > 0
+        ? { metadata: JSON.parse(JSON.stringify(params.metadata)) }
+        : {}),
     });
-    const projected = projectSession(created);
-    if (params?.metadata && Object.keys(params.metadata).length > 0) {
-      try {
-        return await this.updateSession(projected.id, { metadata: params.metadata }, requestDirectory);
-      } catch (error) {
-        console.warn('[opencodeClient] Failed to persist initial session metadata:', error);
-        return {
-          ...projected,
-          metadata: {
-            ...(projected.metadata ?? {}),
-            ...params.metadata,
-          } as Session['metadata'],
-        };
-      }
-    }
-    return projected;
+    return projectSession(created);
   }
 
   async getSession(id: string, directory?: string | null): Promise<Session> {

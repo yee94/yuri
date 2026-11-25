@@ -6,6 +6,9 @@ import { useFireworksCelebration } from '@/contexts/FireworksContext';
 import type { CommitFileEntry, GitStatus } from '@/lib/api/types';
 import { useShallow } from 'zustand/react/shallow';
 import { useProjectDirectory as useEffectiveDirectory } from '@/lib/api/useProjectRuntimeAPIs';
+import { useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
+import { useWorkspaceGitSummary } from '@/stores/useGitStore';
+import { Button } from '@/components/ui/button';
 import { useGitmojiList } from '@/hooks/useGitmojiList';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import {
@@ -210,7 +213,33 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
   const { t } = useI18n();
   const { git, projectScope } = useRuntimeAPIs();
   const { generateCommitMessage: generateSessionCommitMessage, getGitWorktreeBootstrapStatus } = useProjectGitActions();
-  const currentDirectory = useEffectiveDirectory();
+  const effectiveDirectory = useEffectiveDirectory();
+  const workspaceDirectories = useEffectiveWorkspaceDirectories();
+  const isMultiPathWorkspace = !projectScope && workspaceDirectories.length > 1;
+  const workspaceGitSummary = useWorkspaceGitSummary(isMultiPathWorkspace ? workspaceDirectories : []);
+  const multiRepoGitDirectories = React.useMemo(
+    () => (isMultiPathWorkspace ? workspaceGitSummary.gitEntries.map((entry) => entry.directory) : []),
+    [isMultiPathWorkspace, workspaceGitSummary.gitEntries],
+  );
+  const isMultiRepoWorkspace = multiRepoGitDirectories.length > 1;
+  const [selectedWorkspaceRepoDir, setSelectedWorkspaceRepoDir] = React.useState<string | null>(null);
+  const currentDirectory = React.useMemo(() => {
+    if (!isMultiPathWorkspace) return effectiveDirectory;
+    if (selectedWorkspaceRepoDir && workspaceDirectories.includes(selectedWorkspaceRepoDir)) {
+      return selectedWorkspaceRepoDir;
+    }
+    if (multiRepoGitDirectories.length > 0) {
+      return multiRepoGitDirectories[0];
+    }
+    return workspaceDirectories[0] ?? effectiveDirectory;
+  }, [effectiveDirectory, isMultiPathWorkspace, multiRepoGitDirectories, selectedWorkspaceRepoDir, workspaceDirectories]);
+  const ensureWorkspaceGitStatus = useGitStore((s) => s.ensureStatus);
+  React.useEffect(() => {
+    if (!isMultiPathWorkspace || !git) return;
+    for (const dir of workspaceDirectories) {
+      void ensureWorkspaceGitStatus(dir, git);
+    }
+  }, [ensureWorkspaceGitStatus, git, isMultiPathWorkspace, workspaceDirectories]);
   const [worktreeBootstrapStatus, setWorktreeBootstrapStatus] = React.useState<'pending' | 'ready' | 'failed' | null>(null);
   const [isWaitingForGitRefreshAfterBootstrap, setIsWaitingForGitRefreshAfterBootstrap] = React.useState(false);
   const localSessionId = useSessionUIStore((s) => s.currentSessionId);
@@ -1883,10 +1912,10 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
   }
 
   const headerLeadingActions = status ? (
-    worktreeMetadata ? (
+    worktreeMetadata || isMultiRepoWorkspace ? (
       <WorktreeBranchDisplay
         currentBranch={status.current}
-        onRename={handleRenameBranch}
+        onRename={isMultiRepoWorkspace ? undefined : handleRenameBranch}
         iconOnly
       />
     ) : (
@@ -1976,7 +2005,37 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
 
       <div className="flex-1 min-h-0 overflow-hidden">
         <div className="h-full min-h-0 flex flex-col">
-          <div className={cn('min-w-0 min-h-0 h-full flex flex-col')}>
+          {isMultiRepoWorkspace ? (
+            <div
+              className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/50 px-2 py-1.5"
+              data-testid="workspace-git-repo-strip"
+            >
+              {workspaceGitSummary.gitEntries.map((entry) => {
+                const selected = entry.directory === currentDirectory;
+                const repoName = entry.directory.split('/').filter(Boolean).at(-1) || entry.directory;
+                return (
+                  <Button
+                    key={entry.directory}
+                    variant="chip"
+                    size="xs"
+                    aria-pressed={selected}
+                    onClick={() => setSelectedWorkspaceRepoDir(entry.directory)}
+                    className="max-w-full gap-1 px-2"
+                    title={`${entry.directory}${entry.branch ? ` (${entry.branch})` : ''}`}
+                  >
+                    <span className="truncate font-medium">{repoName}</span>
+                    {entry.branch ? (
+                      <span className="truncate text-muted-foreground">· {entry.branch}</span>
+                    ) : null}
+                    {entry.fileCount > 0 ? (
+                      <span className="tabular-nums text-[var(--status-info)]">({entry.fileCount})</span>
+                    ) : null}
+                  </Button>
+                );
+              })}
+            </div>
+          ) : null}
+          <div className={cn('min-w-0 min-h-0 flex-1 flex flex-col')}>
             <ScrollableOverlay
               as={ScrollShadow}
               ref={actionPanelScrollRef}

@@ -24,7 +24,8 @@ describe('built-in customization instructions', () => {
     const file = JSON.parse(entry.value.match(/read (".*?") first/)[1]);
     expect(await fs.readFile(file, 'utf8')).toContain('name: yuri-customization');
     for (const name of ['projects', 'history-import', 'appearance', 'ui-surfaces', 'plugin-styles', 'gui-api', 'workflow', 'global-pages', 'work-status', 'icons', 'file-previews', 'preview-exports', 'remote-connections', 'deep-links']) expect((await fs.readFile(path.join(path.dirname(file), 'references', `${name}.md`), 'utf8')).length).toBeGreaterThan(500);
-    expect(entry.value).toContain('project management, task and session lifecycle');
+    expect(entry.value).toContain('project management (including workspace directories)');
+    expect(entry.value).toContain('task and session lifecycle');
     expect(entry.value).toContain('session import');
     expect(await fs.readFile(file, 'utf8')).toContain('(references/projects.md)');
     expect(await fs.readFile(file, 'utf8')).toContain('(references/history-import.md)');
@@ -48,6 +49,8 @@ describe('built-in customization instructions', () => {
     expect(deepLinks).not.toContain('yuri://session/<sessionID>?instanceId=');
     expect(projects).toContain('POST /api/yuri/session-skills/projects');
     expect(projects).toContain('commands.add');
+    expect(projects).toContain('commands.update');
+    expect(projects).toContain('`addPath`');
     expect(projects).not.toContain('open \'yuri://');
     expect(entry.value).toContain('No bound project helper is provided');
     await expect(fs.stat(path.join(path.dirname(file), 'projects.mjs'))).rejects.toMatchObject({ code: 'ENOENT' });

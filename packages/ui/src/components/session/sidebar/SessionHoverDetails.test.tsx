@@ -2,9 +2,11 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterAll, afterEach, expect, test, vi } from 'vitest';
 import type { Session } from '@/lib/opencode/v2-types';
+import type { ProjectEntry } from '@/lib/api/types';
 
 const fixture = vi.hoisted(() => ({
   current: 'other-branch' as string | undefined,
+  projects: [] as ProjectEntry[],
   fetch: vi.fn(async () => Response.json({ home: '/workspace', data: [] })),
 }));
 vi.hoisted(() => {
@@ -14,6 +16,9 @@ vi.mock('@/stores/useGitStore', () => ({
   useGitStore: (select: (state: unknown) => unknown) => select({
     directories: new Map([['/repo', { status: { current: fixture.current } }]]),
   }),
+}));
+vi.mock('@/stores/useProjectsStore', () => ({
+  useProjectsStore: (select: (state: { projects: ProjectEntry[] }) => unknown) => select({ projects: fixture.projects }),
 }));
 vi.mock('@/stores/useConfigStore', () => ({
   getConfigDirectoryKey: (directory: string) => directory,
@@ -48,6 +53,7 @@ afterEach(async () => {
   await act(async () => root.render(null));
   queryClient.clear();
   fixture.current = 'other-branch';
+  fixture.projects = [];
 });
 
 test('a different directory never borrows another project model catalog', async () => {
@@ -105,4 +111,54 @@ test.each(['task-branch', undefined])('matching or unknown checkout branch (%s) 
   expect(host.textContent).not.toContain('differentBranch');
   expect(host.textContent).not.toContain('Model display name');
   expect(host.querySelector('use[href="#yuri-computer"]')).toBeNull();
+});
+
+test('shows one workspace icon and lists every attached path without member icons', async () => {
+  fixture.projects = [
+    { id: 'ws_multi', label: 'Multi project', path: '/repo', paths: ['/repo', '/repo/packages/web', '/unregistered'] },
+    { id: 'root', path: '/repo', icon: 'code' },
+    { id: 'web', path: '/repo/packages/web', icon: 'globe' },
+  ];
+  const scopedSession = { ...session, metadata: { yuri: { workspaceId: 'ws_multi' } } };
+  await act(async () => root.render(
+    <SessionHoverDetails session={scopedSession} title="Session" projectId="web" projectLabel="web" directory="/repo/packages/web" time="1h" />,
+  ));
+  expect(host.textContent).toContain('Multi project');
+  const rows = Array.from(host.querySelectorAll('[data-workspace-project-path]'));
+  expect(rows.map((row) => row.textContent)).toEqual(['/repo', '/repo/packages/web', '/unregistered']);
+  expect(rows.every((row) => !row.querySelector('svg'))).toBe(true);
+  const projectRow = host.querySelector('[data-session-hover-details]')?.children[1];
+  expect(Array.from(projectRow?.querySelectorAll('use') ?? [], (icon) => icon.getAttribute('href'))).toEqual(['#yuri-folders']);
+  expect(host.querySelector('[data-session-hover-path]')).toBeNull();
+
+  await act(async () => root.render(
+    <SessionHoverDetails session={session} title="Session" projectId="ws_multi" directory="/repo/packages/web/src" time="1h" />,
+  ));
+  expect(host.querySelectorAll('[data-workspace-project-path]')).toHaveLength(3);
+  expect(host.querySelector('[data-session-hover-path]')?.textContent).toBe('/repo/packages/web/src');
+});
+
+test.each([
+  { projectId: 'ws_multi', indexedWorkspaceId: null, liveWorkspaceId: 'web' },
+  { projectId: 'web', indexedWorkspaceId: 'ws_multi', liveWorkspaceId: 'web' },
+  { projectId: 'ws_multi', indexedWorkspaceId: null, liveWorkspaceId: 'missing' },
+])('keeps workspace name and every pwd ahead of branch details for row $projectId / live $liveWorkspaceId', async ({
+  projectId, indexedWorkspaceId, liveWorkspaceId,
+}) => {
+  fixture.projects = [
+    { id: 'ws_multi', label: 'Workspace name', path: '/repo/packages/web', paths: ['/repo/packages/web', '/repo/packages/ui'] },
+    { id: 'web', path: '/repo/packages/web' },
+  ];
+  const live = { ...session, metadata: { yuri: { workspaceId: liveWorkspaceId } } };
+  await act(async () => root.render(
+    <SessionHoverDetails session={live} title="Session" projectId={projectId} indexedWorkspaceId={indexedWorkspaceId}
+      projectLabel="web" branch="main" directory="/repo/packages/web" time="1h" />,
+  ));
+  const card = host.querySelector('[data-session-hover-details]')!;
+  const paths = Array.from(card.querySelectorAll('[data-workspace-project-path]'));
+  expect(card.children[1]?.textContent).toBe('Workspace name');
+  expect(card.children[2]?.contains(paths[0])).toBe(true);
+  expect(paths.map((row) => row.textContent)).toEqual(['/repo/packages/web', '/repo/packages/ui']);
+  expect(card.children[3]?.textContent).toBe('main');
+  expect(card.querySelector('[data-session-hover-path]')).toBeNull();
 });

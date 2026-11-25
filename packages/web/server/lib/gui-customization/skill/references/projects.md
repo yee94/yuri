@@ -36,26 +36,47 @@ When ownership is unknown or ambiguous, report what is missing and use authorize
    needed. If the pointer has no bound project command, report unavailable.
 3. Run the returned `add` command unchanged, supplying JSON on stdin:
 
-   ```json
-   {"path":"/workspace/my-project","label":"My project"}
-   ```
+   - **Single-path project (idempotent)**:
+     ```json
+     {"path":"/workspace/my-project","label":"My project"}
+     ```
+   - **Multi-path workspace (`paths` with 2+ directories, optional `primaryPath`)**:
+     ```json
+     {"paths":["/workspace/yuri","/workspace/agent-tracker"],"primaryPath":"/workspace/yuri","label":"yuri-runmark"}
+     ```
+   - **Blank 0-path workspace (`paths: []`, `label` required)**:
+     ```json
+     {"paths":[],"label":"Scratchpad"}
+     ```
 
-   `path` is required; `label` is optional (up to 80 characters). The Host validates
-   the existing directory and canonicalizes its path, then registers it through
-   Yuri's shared project registry and serialized settings writer. Repeat calls
-   for the same canonical directory reuse the existing project and preserve its
-   name, order and metadata.
-4. A successful result is `{"project":{"id":"…","path":"…","label":"…"},"created":true}`.
-   `created:false` means it was already registered. Both confirm the saved project;
-   use the returned canonical `project.path` and report the result briefly. The
-   `label` field can be absent. No browser check is required to prove registration.
+   The Host validates every existing directory and canonicalizes its path, then registers it through Yuri's shared project registry and serialized settings writer. Repeat single-path calls reuse the existing project; multi-path and 0-path workspaces receive stable `ws_*` IDs and allow overlapping directories with other projects.
+4. A successful result is `{"project":{"id":"…","path":"…","paths":["…"],"label":"…"},"created":true}`.
+   `created:false` means a single-path project was already registered. `project.paths` lists the user-attached directories (`[]` for a 0-path workspace, where `project.path` is the Host-managed backing directory). No browser check is required to prove registration.
 
-`list` returns `{"projects":[{"id":"…","path":"…","label":"…"}]}` from the
+`list` returns `{"projects":[{"id":"…","path":"…","paths":["…"],"label":"…"}]}` from the
 authoritative settings store. After an interrupted response, list or retry add
-with the same path: registration is idempotent. A failure is unconfirmed, never an
+with the same path: single-path registration is idempotent. A failure is unconfirmed, never an
 empty-success result. Missing paths, files and inaccessible directories fail
 without implicit filesystem creation. A `terminal:true` helper error stops this
 workflow until a new supported session's bound describe succeeds.
+
+## Editing an existing project's workspace directories
+
+1. Run the bound `describe` command. Continue only if it returns `commands.update`. Otherwise report that this session cannot edit workspace directories through the skill.
+2. Use `commands.list` to resolve the exact local `projectId`. This works for ordinary single-directory projects as well as multi-directory and blank workspaces.
+3. To attach an existing directory without changing the primary directory or replacing the other paths, run `commands.update` with JSON on stdin:
+
+   ```json
+   {"projectId":"<exact project ID>","addPath":"/workspace/extra-repo"}
+   ```
+
+   Supported fields alongside `projectId`:
+   - `addPath`: attach one existing absolute directory.
+   - `removePath`: detach one attached directory (detaching the last directory converts it cleanly into a 0-path workspace while preserving `projectId` and existing sessions).
+   - `paths`: replace the entire attached directory list (`0..24` absolute directories).
+   - `primaryPath`: move an attached directory to index 0 (becomes the default OpenCode `cwd`).
+   - `label`: update display name (or `null` to clear).
+4. Confirm `updated:true`, the same `project.id`, and the requested directory in `project.paths`. Updating preserves the project ID and existing session bindings. If the response is interrupted, re-list that project before retrying.
 
 ## Local project removal
 

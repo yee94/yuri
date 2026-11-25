@@ -9,7 +9,7 @@ async function main() {
     const [encoded, operation] = process.argv.slice(2);
     const binding = JSON.parse(Buffer.from(encoded, 'base64url').toString());
     const lifecycle = ['task-sessions', 'session-state', 'settle-session', 'unsettle-session', 'archive-session', 'unarchive-session'];
-    const operations = ['list', 'add', 'remove', 'import-session', 'task-view', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session', 'archive-remote-session', 'unarchive-remote-session'];
+    const operations = ['list', 'add', 'update', 'remove', 'import-session', 'task-view', ...lifecycle, 'remote-hosts', 'add-remote', 'remote-projects', 'sessions', 'read-session', 'create-session', 'prompt-session', 'archive-remote-session', 'unarchive-remote-session'];
     if (!['describe', ...operations].includes(operation)) throw new Error();
     const origin = new URL(binding.hostOrigin);
     if (origin.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(origin.hostname) || origin.username || origin.password) throw new Error();
@@ -43,6 +43,7 @@ async function main() {
       return;
     }
     if (['add', 'add-remote'].includes(operation) && (typeof result.project?.id !== 'string' || typeof result.project?.path !== 'string' || typeof result.created !== 'boolean')) throw new Error();
+    if (operation === 'update' && (typeof result.project?.id !== 'string' || typeof result.project?.path !== 'string' || result.updated !== true)) throw new Error();
     if (operation === 'import-session' && (typeof result.session?.id !== 'string' || typeof result.imported !== 'boolean')) throw new Error();
     if (operation === 'remove' && (result.projectId !== input.projectId || result.removed !== true)) throw new Error();
     if (operation === 'remote-hosts' && (!Array.isArray(result.hosts) || !Array.isArray(result.failed) || typeof result.complete !== 'boolean')) throw new Error();
@@ -65,6 +66,7 @@ async function main() {
     if (operation === 'describe' && result.supported !== true) throw new Error();
     console.log(JSON.stringify(operation === 'describe' ? { ...result,
       commands: Object.fromEntries(operations.filter((op) => (op === 'remove' ? typeof result.inputs?.remove === 'string'
+        : op === 'update' ? typeof result.inputs?.update === 'string'
         : op === 'import-session' ? result.importSupported === true
         : op === 'task-view' ? result.lifecycleSupported || result.remoteSupported : lifecycle.includes(op) ? result.lifecycleSupported : result.remoteSupported || ['list', 'add'].includes(op))).map((op) => [op, sessionSkillCommand(process.execPath, process.argv[1], encoded, op)])),
     } : result));

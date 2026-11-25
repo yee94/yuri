@@ -292,7 +292,11 @@ export const createSettingsRuntime = (deps) => {
     const nextProjects = [];
 
     for (const project of projects) {
-      const canonicalId = createProjectIdFromPath(project.path);
+      const keepExplicitWorkspaceId = typeof project.id === 'string' && (
+        project.id.startsWith('ws_')
+        || (Array.isArray(project.paths) && project.paths.length !== 1)
+      );
+      const canonicalId = keepExplicitWorkspaceId ? project.id : createProjectIdFromPath(project.path);
       const nextId = canonicalId || project.id;
       projectIdMap.set(project.id, nextId);
       if (nextId !== project.id) {
@@ -347,7 +351,7 @@ export const createSettingsRuntime = (deps) => {
     const orphanFiles = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
       .map((entry) => entry.name.replace(/\.json$/, ''))
-      .filter((id) => id && !id.startsWith('path_') && !canonicalIds.has(id));
+      .filter((id) => id && !id.startsWith('path_') && !id.startsWith('ws_') && !canonicalIds.has(id));
 
     if (orphanFiles.length === 0) return;
 

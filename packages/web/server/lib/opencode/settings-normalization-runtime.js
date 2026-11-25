@@ -145,7 +145,33 @@ export const createSettingsNormalizationRuntime = (dependencies) => {
       const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
       const rawPath = typeof candidate.path === 'string' ? candidate.path.trim() : '';
       const resolvedPath = rawPath ? safeRealpathSync(path.resolve(normalizeDirectoryPath(rawPath))) : '';
-      const normalizedPath = resolvedPath ? normalizePathForPersistence(resolvedPath, { resolveRealpath: false }) : '';
+      let normalizedPath = resolvedPath ? normalizePathForPersistence(resolvedPath, { resolveRealpath: false }) : '';
+
+      let normalizedPaths;
+      if (Array.isArray(candidate.paths)) {
+        const seenMemberPaths = new Set();
+        normalizedPaths = [];
+        for (const member of candidate.paths) {
+          if (typeof member !== 'string') continue;
+          const trimmedMember = member.trim();
+          if (!trimmedMember) continue;
+          const resolvedMember = safeRealpathSync(path.resolve(normalizeDirectoryPath(trimmedMember)));
+          const normalizedMember = resolvedMember
+            ? normalizePathForPersistence(resolvedMember, { resolveRealpath: false })
+            : '';
+          if (!normalizedMember || seenMemberPaths.has(normalizedMember)) continue;
+          seenMemberPaths.add(normalizedMember);
+          normalizedPaths.push(normalizedMember);
+        }
+        if (normalizedPaths.length > 0) {
+          if (normalizedPath && normalizedPaths.includes(normalizedPath)) {
+            normalizedPaths = [normalizedPath, ...normalizedPaths.filter((p) => p !== normalizedPath)];
+          } else {
+            normalizedPath = normalizedPaths[0];
+          }
+        }
+      }
+
       const label = typeof candidate.label === 'string' ? candidate.label.trim() : '';
       const icon = typeof candidate.icon === 'string' ? candidate.icon.trim() : '';
       const iconImage = candidate.iconImage && typeof candidate.iconImage === 'object'
@@ -161,14 +187,19 @@ export const createSettingsNormalizationRuntime = (dependencies) => {
 
       if (!id || !normalizedPath) continue;
       if (seenIds.has(id)) continue;
-      if (seenPaths.has(normalizedPath)) continue;
+
+      const isExplicitWorkspace = id.startsWith('ws_') || (Array.isArray(normalizedPaths) && normalizedPaths.length !== 1);
+      if (!isExplicitWorkspace && seenPaths.has(normalizedPath)) continue;
 
       seenIds.add(id);
-      seenPaths.add(normalizedPath);
+      if (!isExplicitWorkspace) {
+        seenPaths.add(normalizedPath);
+      }
 
       const project = {
         id,
         path: normalizedPath,
+        ...(Array.isArray(normalizedPaths) ? { paths: normalizedPaths } : {}),
         ...(label ? { label } : {}),
         ...(icon ? { icon } : {}),
         ...(iconBackground ? { iconBackground } : {}),

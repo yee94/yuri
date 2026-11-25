@@ -1975,14 +1975,32 @@ export async function setLocalIdentity(directory, profile) {
 // of this threshold.
 const GIT_STATUS_DIFF_STATS_MAX_FILES = 2000;
 
+const resolveRepositorySubpath = (repoRoot, directoryPath) => {
+  if (!repoRoot || !directoryPath) return '';
+  const canonicalize = (target) => {
+    try {
+      return fs.realpathSync(target);
+    } catch {
+      return path.resolve(target);
+    }
+  };
+  const raw = path.relative(canonicalize(repoRoot), canonicalize(directoryPath));
+  if (!raw || raw === '.' || raw.startsWith('..') || path.isAbsolute(raw)) return '';
+  return raw.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+};
+
 export async function getStatus(directory, options = {}) {
   const lightMode = options.mode === 'light';
 
   try {
     const { directoryPath, repoRoot, git } = await createRepositoryGitContext(directory);
+    const scopedSubpath = options.scope === 'repo' ? '' : resolveRepositorySubpath(repoRoot, directoryPath);
+    const pathspecArgs = scopedSubpath ? ['--', scopedSubpath] : [];
 
-    // Use -uall to show all untracked files individually, not just directories
-    const status = await git.status(['-uall']);
+    // Use -uall to show all untracked files individually, not just directories.
+    // When directory is a subdirectory inside a monorepo, pathspec scopes status
+    // and diffStats to that subdirectory so unrelated sibling packages stay isolated.
+    const status = await git.status(['-uall', ...pathspecArgs]);
 
     // Oversized change sets: skip numstat + new-file stats the same way light
     // mode does. Two full-tree `git diff --numstat` passes over a huge working
@@ -1997,8 +2015,8 @@ export async function getStatus(directory, options = {}) {
     const [stagedStatsRaw, workingStatsRaw] = skipDiffStats
       ? ['', '']
       : await Promise.all([
-          git.raw(['diff', '--cached', '--numstat']).catch(() => ''),
-          git.raw(['diff', '--numstat']).catch(() => ''),
+          git.raw(['diff', '--cached', '--numstat', ...pathspecArgs]).catch(() => ''),
+          git.raw(['diff', '--numstat', ...pathspecArgs]).catch(() => ''),
         ]);
 
     const diffStatsMap = new Map();
@@ -2267,6 +2285,11 @@ export async function getDiff(directory, { path: filePath, staged = false, conte
 
     if (fileContext) {
       args.push('--', fileContext.repoPath);
+    } else {
+      const scopedSubpath = resolveRepositorySubpath(repoRoot, directoryPath);
+      if (scopedSubpath) {
+        args.push('--', scopedSubpath);
+      }
     }
 
     const diff = await git.raw(args);

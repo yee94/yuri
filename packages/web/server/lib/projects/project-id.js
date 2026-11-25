@@ -1,3 +1,7 @@
+import { createWorkspaceId, isWorkspaceId } from './workspace.js';
+
+export { createWorkspaceId, isWorkspaceId };
+
 const normalizeProjectPathForId = (value) => {
   if (typeof value !== 'string') return '';
   return value.replace(/\\/g, '/').replace(/\/+$/g, '') || value;

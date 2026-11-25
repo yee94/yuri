@@ -1,5 +1,12 @@
 # Chat components
 
+In a new draft, the project chip uses the selected workspace's configured name.
+A multi-directory workspace exposes a read-only branch popover even if its
+directories belong to the same Git repository. The popover lists branches by
+attached directory, marks each current branch, and does not switch branches or
+change the draft's working directory. Branch queries and rows mount only when
+the popover opens; ordinary single-directory projects retain their branch picker.
+
 ## BTW user messages
 
 `BtwPanel` renders questions through the same `UserMessageBubble` and `UserTextPart` as primary session messages, including `--chat-user-message-bg`, radius, Markdown, references and long-message disclosure. `formatSessionBtwUserTurn` supplies the canonical quote prefix for both display and prompt replay, so BTW questions beginning with `/` retain their quotes without gaining primary-command semantics. Remote BTW wraps this shared renderer in its existing `HostRuntimeProvider`, keeping Skill lookups and file actions on the owning Host.

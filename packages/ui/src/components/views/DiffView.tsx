@@ -1206,7 +1206,10 @@ export const DiffView: React.FC<DiffViewProps> = ({
 
         // Collect OpenCode v2 assistant snapshot metadata for this execution cycle
         // so the Turn DiffView query shares the exact same key and cache as TurnChangesCard.
-        const hasIdleMarkers = sessionMessages.some((msg) => Boolean((msg as { turnIdle?: unknown }).turnIdle));
+        const hasIdleMarkers = sessionMessages.some((msg) => {
+            const record = msg as { turnIdle?: unknown; precededByTurnIdle?: unknown };
+            return Boolean(record.turnIdle || record.precededByTurnIdle);
+        });
         const snapshotFilesSet = new Set<string>();
         const snapshotTokens: string[] = [];
         let idleTag: string | undefined;
@@ -1215,7 +1218,12 @@ export const DiffView: React.FC<DiffViewProps> = ({
                 role?: string;
                 snapshot?: { start?: string; end?: string; files?: string[] };
                 turnIdle?: { id?: string; outcome?: string };
+                precededByTurnIdle?: { id?: string; outcome?: string };
             };
+            if (msg.precededByTurnIdle) {
+                idleTag = msg.precededByTurnIdle.id ?? msg.precededByTurnIdle.outcome;
+                break;
+            }
             if (msg.role === 'user' && !hasIdleMarkers) break;
             if (msg.role === 'assistant' && msg.snapshot) {
                 if (msg.snapshot.start) snapshotTokens.push(`s:${msg.snapshot.start}`);

@@ -586,12 +586,6 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['icon', 'favicon', 'upload', 'project metadata'],
   },
   {
-    id: 'projects.worktree',
-    page: 'projects',
-    titleKey: 'settings.projects.page.section.worktree',
-    keywords: ['worktree', 'branch', 'repository'],
-  },
-  {
     id: 'remote-instances.client-auth',
     page: 'remote-instances',
     titleKey: 'settings.remoteInstances.clientAuth.title',

@@ -14,6 +14,7 @@ import { Icon } from "@/components/icon/Icon";
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP, ProjectIconImage } from '@/lib/projectMeta';
+import { WorkspaceProjectPaths } from './WorkspaceProjectPresentation';
 import { SIDEBAR_ROW_HOVER_CLASS } from './utils';
 import { RemoteHostIndicator } from '../RemoteHostIndicator';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
@@ -33,6 +34,8 @@ export interface SortableProjectItemProps {
   projectColor?: string;
   projectIconImage?: { mime: string; updatedAt: number; source: 'custom' | 'auto' };
   projectIconSlot?: React.ReactNode;
+  workspacePaths?: readonly string[];
+  homeDirectory?: string | null;
   isCollapsed: boolean;
   isActiveProject: boolean;
   /** True while this project's session directories are still fetching. */
@@ -74,6 +77,8 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
   projectColor,
   projectIconImage,
   projectIconSlot,
+  workspacePaths,
+  homeDirectory,
   isCollapsed,
   isActiveProject,
   isSessionsLoading = false,
@@ -110,7 +115,8 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
   const [isContextMenuOpen, setIsContextMenuOpen] = React.useState(false);
   const projectIconName = projectIcon ? PROJECT_ICON_MAP[projectIcon] : null;
   const projectIconColor = projectColor ? PROJECT_COLOR_MAP[projectColor] : undefined;
-  const projectIconFallback = <Icon name={projectIconName ?? 'folder-open'} className="h-4 w-4" style={projectIconColor ? { color: projectIconColor } : undefined} />;
+  const projectIconFallback = <Icon name={projectIconName ?? (workspacePaths ? 'folders' : 'folder-open')} className="h-4 w-4" style={projectIconColor ? { color: projectIconColor } : undefined} />;
+  const showPersistentChevron = alwaysShowActions && !workspacePaths;
 
   const handleMenuOpenChange = React.useCallback((open: boolean) => {
     if (open) setIsContextMenuOpen(false);
@@ -200,6 +206,7 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
             <div data-sidebar-project-header={id} className={cn('relative flex items-center gap-1.5 rounded-lg px-2 py-1.5', SIDEBAR_ROW_HOVER_CLASS)} {...attributes}>
                     <button
                       type="button"
+                      aria-expanded={!isCollapsed}
                       onMouseDown={handleToggleMouseDown}
                       onClick={handleToggleClick}
                        {...(reorderEnabled ? listeners : {})}
@@ -235,11 +242,11 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                         <>
                           <span className={cn(
                             'h-4 w-4 items-center justify-center',
-                            alwaysShowActions ? 'inline-flex' : 'hidden group-hover/project:inline-flex group-has-[:focus-visible]/project:inline-flex',
+                            showPersistentChevron ? 'inline-flex' : 'hidden group-hover/project:inline-flex group-has-[:focus-visible]/project:inline-flex',
                           )}>
                             {isCollapsed ? <Icon name="arrow-right-s" className="h-3.5 w-3.5" /> : <Icon name="arrow-down-s" className="h-3.5 w-3.5" />}
                           </span>
-                          <span className={cn(isRemote ? 'inline-flex items-center' : 'relative top-px', alwaysShowActions ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden')}>
+                           <span className={cn(isRemote || workspacePaths ? 'inline-flex items-center' : 'relative top-px', showPersistentChevron ? 'hidden' : 'group-hover/project:hidden group-has-[:focus-visible]/project:hidden')}>
                             {projectIconSlot ?? (projectIconImage ? (
                               <ProjectIconImage
                                 project={{ id, iconImage: projectIconImage }}
@@ -247,11 +254,11 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                                 fallback={projectIconFallback}
                               />
                             ) : projectIconFallback)}
-                          </span>
+                           </span>
                         </>
                       )}
                     </span>
-                    <span className={cn(
+                     <span className={cn(
                       'text-[14px] font-normal truncate lowercase',
                       isRemote && 'leading-5',
                       isActiveProject ? 'text-foreground' : 'text-foreground group-hover/project:text-foreground',
@@ -260,8 +267,10 @@ export const SortableProjectItem = React.memo(function SortableProjectItem({
                     </span>
                     </span>
                 </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8}>
-                  {projectDescription}
+                 <TooltipContent side="right" sideOffset={8} className={workspacePaths ? 'max-w-[min(24rem,calc(100vw-2rem))] text-left text-wrap' : undefined}>
+                   {workspacePaths
+                     ? <WorkspaceProjectPaths paths={workspacePaths} homeDirectory={homeDirectory} />
+                     : projectDescription}
                 </TooltipContent>
               </Tooltip>
                     {remoteHostTag}

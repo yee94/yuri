@@ -11,13 +11,14 @@ export type TaskProjectMark = {
   icon?: string;
   color?: string;
   iconImage?: { mime: string; updatedAt: number; source: 'custom' | 'auto' };
+  isMultiPath?: boolean;
 };
 
 export function TaskProjectBadge({ project }: { project: TaskProjectMark | null | undefined }): React.ReactNode {
   const iconName = project?.icon ? PROJECT_ICON_MAP[project.icon] : null;
   const color = project?.color ? PROJECT_COLOR_MAP[project.color] : undefined;
   const fallback = (
-    <Icon name={iconName ?? 'folder-open'} className="size-3.5" style={color ? { color } : undefined} />
+    <Icon name={iconName ?? (project?.isMultiPath ? 'folders' : 'folder-open')} className="size-3.5" style={color ? { color } : undefined} />
   );
   return (
     <span className="inline-flex size-3.5 shrink-0 items-center justify-center">

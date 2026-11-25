@@ -211,7 +211,7 @@ const resolveWorkspacePathFromWorktrees = async ({ targetPath, baseDirectory, pa
   return { ok: false, error: 'Path is outside of active workspace' };
 };
 
-const resolveWorkspacePathFromContext = async ({ req, targetPath, resolveProjectDirectory, path, os, normalizeDirectoryPath, yuriUserConfigRoot }) => {
+const baseResolveWorkspacePathFromContext = async ({ req, targetPath, resolveProjectDirectory, resolveWorkspaceRoots, path, os, normalizeDirectoryPath, yuriUserConfigRoot }) => {
   const resolvedProject = await resolveProjectDirectory(req);
   if (!resolvedProject.directory) {
     return { ok: false, error: resolvedProject.error || 'Active workspace is required' };
@@ -227,6 +227,30 @@ const resolveWorkspacePathFromContext = async ({ req, targetPath, resolveProject
   });
   if (resolved.ok || resolved.error !== 'Path is outside of active workspace') {
     return resolved;
+  }
+
+  if (typeof resolveWorkspaceRoots === 'function') {
+    try {
+      const extraRoots = await resolveWorkspaceRoots(resolvedProject.directory);
+      if (Array.isArray(extraRoots)) {
+        for (const root of extraRoots) {
+          if (typeof root !== 'string' || !root.trim()) continue;
+          const candidate = resolveWorkspacePath({
+            targetPath,
+            baseDirectory: root,
+            path,
+            os,
+            normalizeDirectoryPath,
+            yuriUserConfigRoot,
+          });
+          if (candidate.ok) {
+            return candidate;
+          }
+        }
+      }
+    } catch {
+      // Fall through to worktree lookup if workspace root lookup fails.
+    }
   }
 
   return resolveWorkspacePathFromWorktrees({
@@ -373,11 +397,16 @@ export const registerFsRoutes = (app, dependencies) => {
     crypto,
     normalizeDirectoryPath,
     resolveProjectDirectory,
+    resolveWorkspaceRoots = null,
     buildAugmentedPath,
     resolveGitBinaryForSpawn,
     yuriUserConfigRoot,
     yuriDataDir,
   } = dependencies;
+  const resolveWorkspacePathFromContext = (args) => baseResolveWorkspacePathFromContext({
+    ...args,
+    resolveWorkspaceRoots,
+  });
   const realpathCache = createRealpathCache({
     realpath: fsPromises.realpath.bind(fsPromises),
   });

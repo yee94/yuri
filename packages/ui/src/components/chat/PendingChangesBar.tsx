@@ -1,11 +1,12 @@
 import React from 'react';
 import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
-import { useGitStore, useIsGitRepo } from '@/lib/api/useProjectGitStore';
+import { useGitStore } from '@/lib/api/useProjectGitStore';
+import { useWorkspaceGitSummary } from '@/stores/useGitStore';
 import { createProjectGitAPI } from '@/lib/gitApiProject';
 import { useUIStore } from '@/stores/useUIStore';
 import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useEffectiveDirectory, useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
 import { Icon } from "@/components/icon/Icon";
 import { cn } from '@/lib/utils';
 import {
@@ -35,34 +36,86 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
     const { t } = useI18n();
     const isMobile = useUIStore((state) => state.isMobile);
     const currentDirectory = useEffectiveDirectory() ?? null;
+    const workspaceDirectories = useEffectiveWorkspaceDirectories();
     const runtime = React.useContext(RuntimeAPIContext);
     const hostRuntime = useHostRuntime();
     const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const projectGit = React.useMemo(() => hostScope ? createProjectGitAPI(hostScope) : runtime?.git, [hostScope, runtime?.git]);
-    const isGitRepo = useIsGitRepo(currentDirectory);
-    const gitStatus = useGitStore((s) =>
-        currentDirectory ? s.directories.get(currentDirectory)?.status ?? null : null,
+    const isMultiPath = !hostScope && workspaceDirectories.length > 1;
+    const singleDirStatus = useGitStore((s) =>
+        !isMultiPath && currentDirectory ? s.directories.get(currentDirectory)?.status ?? null : null,
     );
+    const singleDirIsRepo = useGitStore((s) =>
+        !isMultiPath && currentDirectory ? s.directories.get(currentDirectory)?.isGitRepo ?? null : null,
+    );
+    const workspaceSummary = useWorkspaceGitSummary(isMultiPath ? workspaceDirectories : []);
     const fetchStatus = useGitStore((s) => s.fetchStatus);
+    const ensureStatus = useGitStore((s) => s.ensureStatus);
     const mobileActions = useMobileAppActions();
 
-    const hasChanges = Boolean(currentDirectory && isGitRepo === true && gitStatus && !gitStatus.isClean);
+    React.useEffect(() => {
+        if (!isMultiPath || !projectGit) return;
+        for (const dir of workspaceDirectories) {
+            void ensureStatus(dir, projectGit);
+        }
+    }, [ensureStatus, isMultiPath, projectGit, workspaceDirectories]);
+
+    const hasChanges = isMultiPath
+        ? workspaceSummary.isAnyGitRepo && workspaceSummary.hasChanges
+        : Boolean(currentDirectory && singleDirIsRepo === true && singleDirStatus && !singleDirStatus.isClean);
 
     // 折叠态只做单趟计数；逐文件列表（含绝对路径）仅在展开时构造。
     const summary = React.useMemo(() => {
-        if (!hasChanges || !gitStatus) return { count: 0, insertions: 0, deletions: 0 };
-        return summarizeGitChangedFiles(gitStatus.files, gitStatus.diffStats);
-    }, [hasChanges, gitStatus]);
+        if (!hasChanges) return { count: 0, insertions: 0, deletions: 0 };
+        if (isMultiPath) {
+            let count = 0;
+            let insertions = 0;
+            let deletions = 0;
+            for (const entry of workspaceSummary.gitEntries) {
+                if (!entry.status || entry.status.isClean) continue;
+                const item = summarizeGitChangedFiles(entry.status.files, entry.status.diffStats);
+                count += item.count;
+                insertions += item.insertions;
+                deletions += item.deletions;
+            }
+            return { count, insertions, deletions };
+        }
+        if (!singleDirStatus) return { count: 0, insertions: 0, deletions: 0 };
+        return summarizeGitChangedFiles(singleDirStatus.files, singleDirStatus.diffStats);
+    }, [hasChanges, isMultiPath, singleDirStatus, workspaceSummary.gitEntries]);
 
-    const gitChangedFiles = React.useMemo<GitChangedFile[]>(() => {
-        if (!isExpanded || !hasChanges || !gitStatus || !currentDirectory) return [];
-        return extractGitChangedFiles(gitStatus.files, gitStatus.diffStats, currentDirectory);
-    }, [isExpanded, hasChanges, gitStatus, currentDirectory]);
+    const { gitChangedFiles, fileRootDirectoryMap } = React.useMemo(() => {
+        const rootMap = new Map<string, string>();
+        if (!isExpanded || !hasChanges) return { gitChangedFiles: [] as GitChangedFile[], fileRootDirectoryMap: rootMap };
+        if (isMultiPath) {
+            const merged: GitChangedFile[] = [];
+            for (const entry of workspaceSummary.gitEntries) {
+                if (!entry.status || entry.status.isClean) continue;
+                const baseName = entry.directory.split('/').filter(Boolean).at(-1) || entry.directory;
+                const files = extractGitChangedFiles(entry.status.files, entry.status.diffStats, entry.directory);
+                for (const file of files) {
+                    const prefixed = {
+                        ...file,
+                        relativePath: `${baseName}/${file.relativePath}`,
+                    };
+                    rootMap.set(prefixed.path, entry.directory);
+                    merged.push(prefixed);
+                }
+            }
+            return { gitChangedFiles: merged, fileRootDirectoryMap: rootMap };
+        }
+        if (!singleDirStatus || !currentDirectory) return { gitChangedFiles: [] as GitChangedFile[], fileRootDirectoryMap: rootMap };
+        return {
+            gitChangedFiles: extractGitChangedFiles(singleDirStatus.files, singleDirStatus.diffStats, currentDirectory),
+            fileRootDirectoryMap: rootMap,
+        };
+    }, [isExpanded, hasChanges, isMultiPath, singleDirStatus, currentDirectory, workspaceSummary.gitEntries]);
 
     const totalAdded = summary.insertions;
     const totalRemoved = summary.deletions;
 
-    if (!currentDirectory || isGitRepo !== true) return null;
+    if (!isMultiPath && (!currentDirectory || singleDirIsRepo !== true)) return null;
+    if (isMultiPath && !workspaceSummary.isAnyGitRepo) return null;
     if (summary.count === 0) return null;
 
     const handleOpenFile = (file: ChangedFileEntry) => {
@@ -72,11 +125,15 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
         onExpandedChange(false);
 
         const absolutePath = file.path;
+        const targetDirectory = fileRootDirectoryMap.get(absolutePath) ?? currentDirectory;
+        const targetRelativePath = targetDirectory !== currentDirectory && file.relativePath.includes('/')
+            ? file.relativePath.slice(file.relativePath.indexOf('/') + 1)
+            : file.relativePath;
 
         // Dedicated mobile root: open the per-file diff inside the mobile Changes surface.
         if (mobileActions) {
             mobileActions.openChanges({
-                diffPath: file.relativePath,
+                diffPath: targetRelativePath,
                 staged: file.hasStagedChanges && !file.hasWorkingChanges,
             });
             return;
@@ -91,10 +148,10 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
         const store = useUIStore.getState();
         const openStagedDiff = file.hasStagedChanges && !file.hasWorkingChanges;
         if (!store.isMobile) {
-            store.openContextDiff(hostScope?.key ?? currentDirectory, file.relativePath, openStagedDiff);
+            store.openContextDiff(hostScope?.key ?? targetDirectory, targetRelativePath, openStagedDiff);
             return;
         }
-        store.navigateToDiff(file.relativePath, openStagedDiff);
+        store.navigateToDiff(targetRelativePath, openStagedDiff);
         store.setRightSidebarOpen(false);
     };
 
@@ -109,7 +166,14 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
     const handleToggleExpanded = () => {
         const nextExpanded = !isExpanded;
         onExpandedChange(nextExpanded);
-        if (!nextExpanded || !currentDirectory || !projectGit) return;
+        if (!nextExpanded || !projectGit) return;
+        if (isMultiPath) {
+            for (const dir of workspaceDirectories) {
+                void fetchStatus(dir, projectGit, { silent: true });
+            }
+            return;
+        }
+        if (!currentDirectory) return;
         void fetchStatus(currentDirectory, projectGit, { silent: true });
     };
 
@@ -148,7 +212,7 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
                 >
                     <ChangedFilesList
                         files={gitChangedFiles}
-                        currentDirectory={currentDirectory}
+                        currentDirectory={currentDirectory ?? workspaceDirectories[0] ?? ''}
                         onOpenFile={handleOpenFile}
                     />
                 </div>

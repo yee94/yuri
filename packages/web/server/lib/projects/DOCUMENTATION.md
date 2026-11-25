@@ -32,6 +32,15 @@ writes, persistence, offline-project retention, corrupt
 reads and failed-write preservation. Assistant HTTP integration is covered in
 `../assistants/yuri-project.http.test.js`.
 
+New sessions created from a workspace send `metadata.yuri.workspaceId` in the
+OpenCode create request. Host admission installs workspace directory instructions
+before the first message for both shared and private local OpenCode, but not for
+an unmanaged external server. A later metadata update does not replay admission,
+and the working directory alone cannot
+disambiguate workspaces that share it.
+Settings hydration preserves explicit workspace IDs and ordered member paths,
+including empty member lists, alongside ordinary projects at the same path.
+
 The Remote Host Gateway mounts authenticated `POST /api/projects` and `PATCH
 /api/projects/:id` local-authority operations using the same registry/settings
 lock. `GET /api/projects` excludes remote references. Remote-first registration,

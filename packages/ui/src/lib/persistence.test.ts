@@ -4,6 +4,7 @@ import type { RuntimeAPIs, SettingsPayload } from '@/lib/api/types';
 import { registerRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
 import { queryClient } from '@/lib/queryRuntime';
+import { createProjectIdFromPath } from '@/lib/projectId';
 import { patchSettingsBootstrapSnapshot, readSettingsBootstrapSnapshot } from '@/queries/settingsBootstrapQueries';
 import { useUIStore } from '@/stores/useUIStore';
 import { applyPersistedHomeDirectoryToWindow, invalidateSettingsCache, syncDesktopSettings, updateDesktopSettings, waitForPendingSettingsUpdates } from './persistence';
@@ -130,6 +131,23 @@ describe('updateDesktopSettings', () => {
     invalidateSettingsCache();
     queryClient.clear();
     resetModelPrefsState();
+  });
+
+  test('keeps workspace IDs and member paths in the cache used for settings writes', async () => {
+    const projects = [
+      { id: 'ws_combined', path: '/primary', paths: ['/primary', '/other'] },
+      { id: createProjectIdFromPath('/primary'), path: '/primary' },
+      { id: 'ws_blank', path: '/managed/blank', paths: [] },
+    ];
+    const writes: Partial<SettingsPayload>[] = [];
+    registerSettingsApi(async (changes) => {
+      writes.push(changes);
+      return { projects, ...changes };
+    }, async () => ({ settings: { projects }, source: 'web' }));
+
+    await syncDesktopSettings();
+    await updateDesktopSettings({ projects });
+    expect(writes).toEqual([]);
   });
 
   test('waits for the debounced settings save to finish before resolving', async () => {

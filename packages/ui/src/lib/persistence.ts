@@ -2,6 +2,7 @@ import '@/lib/brand-storage-bootstrap';
 import type { DesktopSettings } from '@/lib/desktop';
 import { parseHubProjectLayout } from '@/queries/hubProjectLayout';
 import { createProjectIdFromPath } from '@/lib/projectId';
+import { isWorkspaceId, normalizeWorkspacePath } from '@/lib/workspacePaths';
 import { useUIStore } from '@/stores/useUIStore';
 import { isMonoFontOption, isUiFontOption } from '@/lib/fontOptions';
 import { isFollowUpBehavior, normalizeFollowUpBehavior, useMessageQueueStore, type FollowUpBehavior } from '@/stores/messageQueueStore';
@@ -305,19 +306,32 @@ const sanitizeProjects = (value: unknown): DesktopSettings['projects'] | undefin
     const rawPath = typeof candidate.path === 'string' ? candidate.path.trim() : '';
     if (!rawPath) continue;
 
-    const normalizedPath = rawPath === '/' ? rawPath : rawPath.replace(/\\/g, '/').replace(/\/+$/, '');
+    let normalizedPath = normalizeWorkspacePath(rawPath);
+    let paths = Array.isArray(candidate.paths)
+      ? [...new Set(candidate.paths.filter((member): member is string => typeof member === 'string').map(normalizeWorkspacePath).filter(Boolean))]
+      : undefined;
+    if (paths?.length) {
+      if (paths.includes(normalizedPath)) {
+        paths = [normalizedPath, ...paths.filter((member) => member !== normalizedPath)];
+      } else {
+        normalizedPath = paths[0];
+      }
+    }
     if (!normalizedPath) continue;
 
-    const id = createProjectIdFromPath(normalizedPath);
+    const rawId = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+    const explicitWorkspace = isWorkspaceId(rawId) || (paths !== undefined && paths.length !== 1);
+    const id = explicitWorkspace && rawId ? rawId : createProjectIdFromPath(normalizedPath);
     if (!id) continue;
 
-    if (seenIds.has(id) || seenPaths.has(normalizedPath)) continue;
+    if (seenIds.has(id) || (!explicitWorkspace && seenPaths.has(normalizedPath))) continue;
     seenIds.add(id);
-    seenPaths.add(normalizedPath);
+    if (!explicitWorkspace) seenPaths.add(normalizedPath);
 
     const project: NonNullable<DesktopSettings['projects']>[number] = {
       id,
       path: normalizedPath,
+      ...(paths !== undefined ? { paths } : {}),
     };
 
     if (typeof candidate.label === 'string' && candidate.label.trim().length > 0) {

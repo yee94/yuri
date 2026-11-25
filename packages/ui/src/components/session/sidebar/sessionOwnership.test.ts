@@ -185,4 +185,38 @@ describe('createSessionOwnershipIndex', () => {
     expect(ownership.sessionsByProject.get('web-sub')?.map((s) => s.id)).toEqual(['sub-wt-session']);
     expect(ownership.sessionsByProject.get('api-sub')?.map((s) => s.id)).toEqual(['api-wt-session']);
   });
+
+  test('binds explicit metadata.yuri.workspaceId sessions to multi-path workspaces without stealing legacy single-path sessions', () => {
+    const sessions = [
+      {
+        id: 'multi-ws-session',
+        directory: '/code/yuri',
+        metadata: { yuri: { workspaceId: 'ws_combo' } },
+      },
+      {
+        id: 'legacy-yuri-session',
+        directory: '/code/yuri',
+      },
+      {
+        id: 'fallback-extra-session',
+        directory: '/code/agent-tracker',
+      },
+    ] as unknown as Session[];
+
+    const projects = [
+      { id: 'path_yuri', normalizedPath: '/code/yuri' },
+      { id: 'ws_combo', normalizedPath: '/code/yuri', paths: ['/code/yuri', '/code/agent-tracker'] },
+    ];
+
+    const ownership = createSessionOwnershipIndex(sessions, projects, new Map(), false);
+
+    expect(ownership.bySessionId.get('multi-ws-session')?.projectId).toBe('ws_combo');
+    expect(ownership.bySessionId.get('legacy-yuri-session')?.projectId).toBe('path_yuri');
+    expect(ownership.bySessionId.get('fallback-extra-session')?.projectId).toBe('ws_combo');
+    expect(ownership.sessionsByProject.get('ws_combo')?.map((s) => s.id)).toEqual([
+      'multi-ws-session',
+      'fallback-extra-session',
+    ]);
+    expect(ownership.sessionsByProject.get('path_yuri')?.map((s) => s.id)).toEqual(['legacy-yuri-session']);
+  });
 });

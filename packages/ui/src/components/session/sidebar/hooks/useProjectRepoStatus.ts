@@ -3,8 +3,9 @@ import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { mapWithConcurrency } from '@/lib/concurrency';
 import { useGitStore } from '@/stores/useGitStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { isBlankWorkspace } from '@/lib/workspacePaths';
 
-type Project = { id: string; path: string; normalizedPath: string };
+type Project = { id: string; path: string; paths?: string[]; normalizedPath: string };
 
 type Args = {
   normalizedProjects: Project[];
@@ -48,6 +49,7 @@ export const useProjectRepoStatus = (args: Args): void => {
     // Git is visible-demand-driven: cold session hydration must not issue a
     // status request for every project in the sidebar.
     activeProjects.forEach((project) => {
+      if (isBlankWorkspace(project)) return;
       void ensureStatus(project.normalizedPath, git);
     });
   }, [activeProjects, enabled, git, ensureStatus, setProjectRepoStatus]);
@@ -56,7 +58,7 @@ export const useProjectRepoStatus = (args: Args): void => {
   React.useEffect(() => {
     const next = new Map<string, boolean | null>();
     activeProjects.forEach((project) => {
-      next.set(project.id, gitRepoStatus.get(project.normalizedPath)?.isGitRepo ?? null);
+      next.set(project.id, isBlankWorkspace(project) ? false : (gitRepoStatus.get(project.normalizedPath)?.isGitRepo ?? null));
     });
     setProjectRepoStatus((previous) => previous.size === next.size
       && [...next].every(([id, value]) => previous.has(id) && previous.get(id) === value)

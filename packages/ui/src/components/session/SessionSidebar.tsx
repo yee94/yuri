@@ -1403,6 +1403,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       .filter((project) => Boolean(project.normalizedPath)) as Array<{
         id: string;
         path: string;
+        paths?: string[];
         label?: string;
         normalizedPath: string;
         icon?: string;
@@ -1424,7 +1425,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   );
 
   const normalizedProjectPaths = React.useMemo(
-    () => normalizedProjects.map((project) => project.normalizedPath),
+    () => Array.from(new Set(normalizedProjects.map((project) => project.normalizedPath))),
     [normalizedProjects],
   );
 

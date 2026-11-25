@@ -13,6 +13,7 @@ let runtimeBase = '/api';
 let runtimeGeneration = 1;
 const healthFetchCalls: unknown[][] = [];
 const healthFetchResults: Array<Response | Error | Promise<Response>> = [];
+const sessionCreateSdkCalls: unknown[] = [];
 const sessionUpdateSdkCalls: unknown[][] = [];
 const sessionGetSdkCalls: unknown[][] = [];
 const sessionUpdateResults: Array<unknown> = [];
@@ -78,6 +79,10 @@ vi.doMock('@opencode/client', () => ({
           }),
         },
         session: {
+          create: mock(async (input: { location?: { directory: string }; title?: string; metadata?: Record<string, unknown> }) => {
+            sessionCreateSdkCalls.push(input);
+            return { id: 'ses_1', ...input, time: { created: 1, updated: 1 } };
+          }),
           command: mock(async (input: unknown) => { sessionCommandCalls.push(input); }),
           active: sessionActiveMock,
           generate: sessionGenerateMock,
@@ -212,6 +217,7 @@ beforeEach(() => {
   sessionGenerateSdkCalls.length = 0;
   sessionGenerateResults.length = 0;
   sessionDiffSdkCalls.length = 0;
+  sessionCreateSdkCalls.length = 0;
   sessionUpdateSdkCalls.length = 0;
   sessionGetSdkCalls.length = 0;
   sessionUpdateResults.length = 0;
@@ -1016,6 +1022,16 @@ describe('opencodeClient v2 capability unavailable', () => {
       expect((thrown as Error).name).toBe('V2CapabilityUnavailableError');
     }
   });
+});
+
+test('passes workspace identity at session creation before the Host installs instructions', async () => {
+  const metadata = { yuri: { workspaceId: 'ws_combined' } };
+  const session = await opencodeClient.createSession({ title: 'Combined', metadata }, '/primary');
+
+  expect(sessionCreateSdkCalls).toEqual([{ title: 'Combined', location: { directory: '/primary' }, metadata }]);
+  expect(session.metadata).toEqual(metadata);
+  expect(sessionUpdateSdkCalls).toEqual([]);
+  expect(sessionGetSdkCalls).toEqual([]);
 });
 
 describe('opencodeClient updateSession Host archive facade', () => {

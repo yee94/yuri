@@ -15,6 +15,8 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useChatSearchDirectory } from '@/hooks/useChatSearchDirectory';
+import { useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
+import { isBlankWorkspace } from '@/lib/workspacePaths';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Icon } from "@/components/icon/Icon";
 import { useDirectoryShowHidden } from '@/lib/directoryShowHidden';
@@ -84,18 +86,58 @@ export const FileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileM
 
 const LocalFileMentionAutocomplete = React.forwardRef<FileMentionHandle, FileMentionAutocompleteProps>((props, ref) => {
   const currentDirectory = useChatSearchDirectory() ?? '';
+  const workspaceDirectories = useEffectiveWorkspaceDirectories();
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const activeSessions = useGlobalSessionsStore((state) => state.activeSessions);
   const liveSessions = useAllLiveSessions({ enabled: Boolean(props.onSessionSelect) });
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const projects = useProjectsStore((state) => state.projects);
+  const activeProject = React.useMemo(
+    () => projects.find((project) => project.id === activeProjectId) ?? null,
+    [activeProjectId, projects],
+  );
   const projectRoot = React.useMemo(() => {
-    const candidate = projects.find((project) => project.id === activeProjectId)?.path || currentDirectory;
+    const candidate = activeProject?.path || currentDirectory;
     return candidate ? candidate.replace(/\\/g, '/').replace(/\/+$/, '') : null;
-  }, [activeProjectId, projects, currentDirectory]);
+  }, [activeProject?.path, currentDirectory]);
   const projectTabs = useFilesViewTabsStore((state) => projectRoot ? state.byRoot[projectRoot] : undefined);
   const agentCatalog = useConfigStore((state) => state.agents);
-  const searchFiles = useFileSearchStore((state) => state.searchFiles);
+  const storeSearchFiles = useFileSearchStore((state) => state.searchFiles);
+  const searchFiles = useEvent(async (
+    directory: string,
+    query: string,
+    limit = 60,
+    options?: Parameters<ReturnType<typeof useFileSearchStore.getState>['searchFiles']>[3],
+  ) => {
+    if (isBlankWorkspace(activeProject)) {
+      return [];
+    }
+    if (workspaceDirectories.length <= 1) {
+      return storeSearchFiles(directory, query, limit, options);
+    }
+    const perRootLimit = Math.max(20, Math.ceil(limit / workspaceDirectories.length));
+    const settled = await Promise.allSettled(
+      workspaceDirectories.map(async (memberDir) => {
+        const prefix = memberDir.split('/').filter(Boolean).at(-1) || memberDir;
+        const rows = await storeSearchFiles(memberDir, query, perRootLimit, options);
+        return rows.map((row) => ({
+          ...row,
+          relativePath: row.relativePath ? `${prefix}/${row.relativePath}` : prefix,
+        }));
+      }),
+    );
+    const merged: Awaited<ReturnType<typeof storeSearchFiles>> = [];
+    const seen = new Set<string>();
+    for (const outcome of settled) {
+      if (outcome.status !== 'fulfilled') continue;
+      for (const item of outcome.value) {
+        if (seen.has(item.path)) continue;
+        seen.add(item.path);
+        merged.push(item);
+      }
+    }
+    return merged.slice(0, limit);
+  });
   // Sidebar rows overlay live directory titles onto the index/global catalog.
   // Mentions must use the same catalog or @search shows a stale title.
   const sessions = React.useMemo(() => props.onSessionSelect ? mergeLiveSessionCatalog(activeSessions, liveSessions) : [], [activeSessions, liveSessions, props.onSessionSelect]);

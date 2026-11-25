@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui';
 import { IdentityDropdown } from '@/components/views/git/GitHeader';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { canManageDesktopHosts } from '@/lib/desktop';
+import { canManageDesktopHosts, isDesktopLocalOriginActive } from '@/lib/desktop';
 import { useDeviceInfo } from '@/lib/device';
 import { DirectoryExplorerSurface, DirectoryMachineActions, DirectoryMachineList } from './DirectoryExplorerViews';
 import { Icon } from "@/components/icon/Icon";
@@ -28,6 +28,8 @@ import { RemoteDirectoryExplorerDialog } from './RemoteDirectoryExplorerDialog';
 import { useDirectoryMachineModel } from './useDirectoryMachineModel';
 import type { RemoteProject } from '@/lib/remote-projects/types';
 import type { HostLocation } from '@/lib/remote-projects/location';
+import type { ProjectEntry } from '@/lib/api/types';
+import { getWorkspacePaths, normalizeWorkspacePath } from '@/lib/workspacePaths';
 import './directory-explorer-dialog.css';
 
 interface DirectoryExplorerDialogProps {
@@ -37,6 +39,7 @@ interface DirectoryExplorerDialogProps {
   /** Force mobile layout regardless of device detection */
   forceMobile?: boolean;
   onRemoteProjectAdded?: (project: RemoteProject, location: HostLocation) => void | Promise<void>;
+  editProject?: Pick<ProjectEntry, 'id' | 'path' | 'paths'>;
 }
 
 type BrowseEntry = {
@@ -145,7 +148,11 @@ const resolveFreshFilesystemHome = async (): Promise<string | null> => {
   return opencodeClient.getFilesystemHome().catch(() => null);
 };
 
-export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (props) => {
+export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (props) => props.editProject
+  ? <LocalDirectoryExplorerDialog key={props.editProject.id} {...props} machinePicker={null} />
+  : <AddDirectoryExplorerDialog {...props} />;
+
+const AddDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (props) => {
   const { t } = useI18n();
   const device = useDeviceInfo();
   const isMobile = resolveDirectoryExplorerMobileLayout(props.forceMobile, device.isMobile);
@@ -210,11 +217,14 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   machinePicker,
   discoveryError,
   onAddSsh,
+  editProject,
 }) => {
   const { t } = useI18n();
   const homeDirectory = useDirectoryStore((s) => s.homeDirectory);
   const projects = useProjectsStore((s) => s.projects);
   const addProject = useProjectsStore((s) => s.addProject);
+  const createWorkspace = useProjectsStore((s) => s.createWorkspace);
+  const updateWorkspacePaths = useProjectsStore((s) => s.updateWorkspacePaths);
   const gitIdentityProfiles = useGitIdentitiesStore((s) => s.profiles);
   const globalGitIdentity = useGitIdentitiesStore((s) => s.globalIdentity);
   const defaultGitIdentityId = useGitIdentitiesStore((s) => s.defaultGitIdentityId);
@@ -222,9 +232,12 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   const loadGlobalGitIdentity = useGitIdentitiesStore((s) => s.loadGlobalIdentity);
   const loadDefaultGitIdentityId = useGitIdentitiesStore((s) => s.loadDefaultGitIdentityId);
   const { isDesktop, requestAccess, startAccessing } = useFileSystemAccess();
+  const isEditingWorkspace = Boolean(editProject);
   const deviceInfo = useDeviceInfo();
   const isMobile = resolveDirectoryExplorerMobileLayout(forceMobile, deviceInfo.isMobile);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const workspaceNameInputRef = React.useRef<HTMLInputElement>(null);
+  const workspaceNameId = React.useId();
   const rowRefs = React.useRef(new Map<string, HTMLButtonElement>());
   const [dialogHomeDirectory, setDialogHomeDirectory] = React.useState('');
   const [query, setQuery] = React.useState('~/');
@@ -235,9 +248,15 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   const [isConfirming, setIsConfirming] = React.useState(false);
   const [isOpeningFinder, setIsOpeningFinder] = React.useState(false);
   const [isCloneMode, setIsCloneMode] = React.useState(false);
+  const [addingMultipleProjects, setAddingMultipleProjects] = React.useState(false);
+  const isWorkspaceMode = isEditingWorkspace || addingMultipleProjects;
+  const [workspaceName, setWorkspaceName] = React.useState('');
+  const [workspaceNameError, setWorkspaceNameError] = React.useState(false);
+  const [stagedWorkspacePaths, setStagedWorkspacePaths] = React.useState<string[]>([]);
   const [cloneRemoteUrl, setCloneRemoteUrl] = React.useState('');
   const [selectedGitIdentityId, setSelectedGitIdentityId] = React.useState<string | null>(null);
   const [showHidden, setShowHidden] = React.useState(false);
+  const isSavingWorkspace = React.useRef(false);
 
   const explorerRootDirectory = dialogHomeDirectory || homeDirectory;
 
@@ -256,30 +275,47 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
     setIsConfirming(false);
     setIsOpeningFinder(false);
     setIsCloneMode(false);
+    setAddingMultipleProjects(false);
+    setWorkspaceName('');
+    setWorkspaceNameError(false);
+    setStagedWorkspacePaths(editProject ? getWorkspacePaths(editProject) : []);
     setCloneRemoteUrl('');
     setSelectedGitIdentityId(null);
     setShowHidden(false);
-    requestAnimationFrame(() => focusPathInput(inputRef.current));
-
     let cancelled = false;
+    const focusDirectory = () => {
+      if (!cancelled && workspaceNameInputRef.current !== document.activeElement) {
+        focusPathInput(inputRef.current);
+      }
+    };
+
+    requestAnimationFrame(focusDirectory);
     const resolveHome = async () => {
       const resolved = await resolveFreshFilesystemHome();
       if (cancelled) return;
       setDialogHomeDirectory(resolved || homeDirectory || '');
-      requestAnimationFrame(() => focusPathInput(inputRef.current));
+      requestAnimationFrame(focusDirectory);
     };
     void resolveHome();
     return () => {
       cancelled = true;
     };
-  }, [homeDirectory, open]);
+  // Seed staged changes only when opening the picker, not on settings refresh.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   React.useEffect(() => {
-    if (!open) return;
+    if (open && isWorkspaceMode && !isMobile) {
+      workspaceNameInputRef.current?.focus({ preventScroll: true });
+    }
+  }, [open, isWorkspaceMode, isMobile]);
+
+  React.useEffect(() => {
+    if (!open || isEditingWorkspace) return;
     void loadGitIdentityProfiles();
     void loadGlobalGitIdentity();
     void loadDefaultGitIdentityId();
-  }, [loadDefaultGitIdentityId, loadGitIdentityProfiles, loadGlobalGitIdentity, open]);
+  }, [isEditingWorkspace, loadDefaultGitIdentityId, loadGitIdentityProfiles, loadGlobalGitIdentity, open]);
 
   const availableGitIdentities = React.useMemo(() => {
     const unique = new Map<string, NonNullable<typeof globalGitIdentity>>();
@@ -405,6 +441,60 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   );
   const canAddProject = !isConfirming && !isOpeningFinder && !isAlreadyAdded && Boolean(targetPath);
   const canSubmitClone = canAddProject && cloneRemoteUrl.trim().length > 0;
+  const stagedWorkspacePathKeys = React.useMemo(
+    () => new Set(
+      stagedWorkspacePaths
+        .map(normalizeWorkspacePath)
+        .filter(Boolean),
+    ),
+    [stagedWorkspacePaths],
+  );
+  const toggleStagedWorkspacePath = useEvent((candidatePath: string) => {
+    const cleaned = normalizeWorkspacePath(candidatePath);
+    if (!cleaned) return;
+    setStagedWorkspacePaths((prev) => (
+      prev.includes(cleaned)
+        ? prev.filter((item) => item !== cleaned)
+        : [...prev, cleaned]
+    ));
+  });
+  const handleSaveWorkspace = useEvent(async () => {
+    if (isConfirming || isOpeningFinder || isSavingWorkspace.current) return;
+    const label = workspaceName.trim();
+    if (!editProject && !label) {
+      setWorkspaceNameError(true);
+      workspaceNameInputRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    setWorkspaceNameError(false);
+    isSavingWorkspace.current = true;
+    setIsConfirming(true);
+    try {
+      if (editProject) {
+        const result = await updateWorkspacePaths(editProject.id, { paths: stagedWorkspacePaths });
+        if (!result.ok) {
+          toast.error(result.error || t('workspace.paths.toast.updateFailed'));
+          return;
+        }
+        onOpenChange(false);
+        return;
+      }
+      const result = await createWorkspace({
+        paths: stagedWorkspacePaths,
+        label,
+        activate: true,
+      });
+      if (!result.ok || !result.project) {
+        toast.error(result.error || t('directoryExplorerDialog.toast.failedToAddProject'));
+        return;
+      }
+      openNewSessionForAddedProject(result.project);
+      handleClose();
+    } finally {
+      isSavingWorkspace.current = false;
+      setIsConfirming(false);
+    }
+  });
   const highlightedRow = rows[highlightedIndex] ?? null;
   const hasHighlightedBrowseItem = Boolean(
     highlightedRow
@@ -533,7 +623,7 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   });
 
   const handleOpenInFinder = useEvent(async () => {
-    if (!isDesktop || isOpeningFinder) return;
+    if (!isDesktop || isOpeningFinder || isSavingWorkspace.current) return;
     setIsOpeningFinder(true);
     try {
       const result = await requestAccess(targetPath);
@@ -554,7 +644,12 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
         return;
       }
 
-      await finalizeSelection(result.path);
+      if (editProject) {
+        const path = normalizeWorkspacePath(result.path);
+        if (path) setStagedWorkspacePaths((previous) => previous.includes(path) ? previous : [...previous, path]);
+      } else {
+        await finalizeSelection(result.path);
+      }
     } catch (error) {
       toast.error(t('directoryExplorerDialog.toast.failedToSelectDirectory'), {
         description: error instanceof Error ? error.message : t('directoryExplorerDialog.toast.unknownError'),
@@ -578,7 +673,11 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
     if (event.key === 'Enter') {
       event.preventDefault();
       if (isPrimaryModifierPressed(event)) {
-        void finalizeSelection(targetPath);
+        if (isWorkspaceMode) {
+          void handleSaveWorkspace();
+        } else {
+          void finalizeSelection(targetPath);
+        }
         return;
       }
       if (hasHighlightedBrowseItem) {
@@ -588,9 +687,32 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
     }
     if (event.key === 'Backspace' && query === '') {
       event.preventDefault();
-      handleClose();
+      if (!isSavingWorkspace.current && !isOpeningFinder) handleClose();
     }
   });
+
+  const multipleProjectsToggle = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      role="checkbox"
+      aria-checked={isWorkspaceMode}
+      disabled={isConfirming || isOpeningFinder}
+      onClick={() => {
+        if (!isWorkspaceMode) setIsCloneMode(false);
+        setWorkspaceNameError(false);
+        setAddingMultipleProjects(!isWorkspaceMode);
+      }}
+      className={cn(
+        'yuri-directory-hidden-toggle shrink-0',
+        isWorkspaceMode ? 'text-foreground' : 'text-muted-foreground',
+      )}
+    >
+      <Icon name={isWorkspaceMode ? 'checkbox' : 'checkbox-blank'} className="size-3.5" />
+      {t('directoryExplorerDialog.toggle.multipleProjects')}
+    </Button>
+  );
 
   const showHiddenToggle = (
     <Button
@@ -609,6 +731,38 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
   const inputSection = (
     <div className="yuri-directory-inputs">
       <fieldset disabled={isConfirming} className="min-w-0">{machinePicker}</fieldset>
+      {isWorkspaceMode && !editProject ? (
+        <div className="yuri-directory-workspace-name">
+          <label htmlFor={workspaceNameId}>{t('workspace.create.namePlaceholder')}</label>
+          <Input
+            id={workspaceNameId}
+            ref={workspaceNameInputRef}
+            type="text"
+            value={workspaceName}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setWorkspaceName(nextValue);
+              if (nextValue.trim()) setWorkspaceNameError(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                 void handleSaveWorkspace();
+              }
+            }}
+            required
+            disabled={isConfirming}
+            aria-invalid={workspaceNameError || undefined}
+            aria-describedby={workspaceNameError ? `${workspaceNameId}-error` : undefined}
+            maxLength={80}
+          />
+          {workspaceNameError ? (
+            <p id={`${workspaceNameId}-error`} role="alert">
+              {t('workspace.create.nameRequired')}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {isCloneMode ? (
         <div className="yuri-directory-field">
           <Input
@@ -648,6 +802,36 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
         />
         {!isMobile ? showHiddenToggle : null}
       </div>
+      {isWorkspaceMode && stagedWorkspacePaths.length > 0 ? (
+        <div className="yuri-directory-chips">
+          {stagedWorkspacePaths.map((stagedPath, index) => {
+            const name = stagedPath.split('/').filter(Boolean).at(-1) || stagedPath;
+            return (
+              <span key={stagedPath} className="yuri-directory-chip" title={stagedPath}>
+                <span className="truncate">{name}</span>
+                {index === 0 && stagedWorkspacePaths.length > 1 ? (
+                  <span className="shrink-0 text-muted-foreground">· {t('workspace.paths.primaryBadge')}</span>
+                ) : editProject && index > 0 ? (
+                  <Button type="button" variant="ghost" size="xs" disabled={isConfirming || isOpeningFinder}
+                    onClick={() => setStagedWorkspacePaths((paths) => [stagedPath, ...paths.filter((path) => path !== stagedPath)])}
+                  >
+                    {t('workspace.paths.setPrimary')}
+                  </Button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={isConfirming || isOpeningFinder}
+                  onClick={() => toggleStagedWorkspacePath(stagedPath)}
+                  aria-label={t('workspace.paths.removeAria', { path: stagedPath })}
+                  className="yuri-directory-chip-remove"
+                >
+                  <Icon name="close" className="size-2.5" />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -706,7 +890,37 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
                       <span className="yuri-directory-name truncate text-foreground">{row.name}</span>
                     </span>
                   </button>
-                  {row.type === 'directory' && row.alreadyAdded ? (
+                  {row.type === 'directory' && isWorkspaceMode ? (
+                    (() => {
+                       const isStaged = stagedWorkspacePathKeys.has(normalizeWorkspacePath(row.path));
+                      return (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          role="checkbox"
+                          aria-checked={isStaged}
+                          disabled={isConfirming || isOpeningFinder}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleStagedWorkspacePath(row.path);
+                          }}
+                          className={cn(
+                            'shrink-0',
+                            isStaged ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+                          )}
+                          title={t('workspace.create.stageDirAria', { name: row.name })}
+                          aria-label={t('workspace.create.stageDirAria', { name: row.name })}
+                        >
+                          <Icon
+                            name={isStaged ? 'checkbox' : 'checkbox-blank'}
+                            className="h-3.5 w-3.5"
+                          />
+                        </Button>
+                      );
+                    })()
+                  ) : row.type === 'directory' && row.alreadyAdded ? (
                     <span className="yuri-directory-added shrink-0 text-muted-foreground">
                       {t('directoryExplorerDialog.browse.addedBadge')}
                     </span>
@@ -766,24 +980,49 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
 
   const renderFooter = () => (
     <div className="yuri-directory-actions">
-      {isDesktop ? (
+      {isDesktop && (!isWorkspaceMode || (editProject && isDesktopLocalOriginActive())) ? (
         <Button variant="ghost" size="xs" onClick={handleOpenInFinder} disabled={isConfirming || isOpeningFinder || isCloneMode}>
           {isOpeningFinder ? t('directoryExplorerDialog.actions.openingFinder') : t('directoryExplorerDialog.actions.openInFinder')}
         </Button>
       ) : null}
-      {onAddSsh ? <Button variant="ghost" size="xs" onClick={onAddSsh} disabled={isConfirming || isOpeningFinder}>
+      {!isWorkspaceMode && onAddSsh ? <Button variant="ghost" size="xs" onClick={onAddSsh} disabled={isConfirming || isOpeningFinder}>
         {t('directoryExplorerDialog.actions.addSshInstance')}
-      </Button> : <Button variant="ghost" size="xs" onClick={() => setIsCloneMode((value) => !value)} disabled={isConfirming || isOpeningFinder}>
+      </Button> : !isWorkspaceMode ? <Button variant="ghost" size="xs" onClick={() => setIsCloneMode((value) => !value)} disabled={isConfirming || isOpeningFinder}>
         {isCloneMode ? t('directoryExplorerDialog.actions.addLocalProject') : t('directoryExplorerDialog.actions.cloneRepository')}
-      </Button>}
-      <Button size="xs" onClick={() => void finalizeSelection(targetPath)} disabled={isCloneMode ? !canSubmitClone : !canAddProject}>
-        {submitActionLabel}
-      </Button>
+      </Button> : null}
+      {editProject ? (
+        <Button variant="ghost" size="xs" onClick={handleClose} disabled={isConfirming || isOpeningFinder}>
+          {t('projectEditDialog.actions.cancel')}
+        </Button>
+      ) : null}
+      {isWorkspaceMode ? (
+        <Button
+          size="xs"
+          onClick={() => void handleSaveWorkspace()}
+          disabled={isConfirming || isOpeningFinder}
+          aria-busy={isConfirming}
+        >
+          {editProject ? t('projectEditDialog.actions.save') : isConfirming ? t('directoryExplorerDialog.actions.adding') : t('workspace.create.submit')}
+        </Button>
+      ) : (
+        <Button size="xs" onClick={() => void finalizeSelection(targetPath)} disabled={isCloneMode ? !canSubmitClone : !canAddProject}>
+          {submitActionLabel}
+        </Button>
+      )}
     </div>
   );
 
-  return <DirectoryExplorerSurface open={open} onOpenChange={onOpenChange} origin={origin} mobile={isMobile}
-    trailing={isMobile ? showHiddenToggle : undefined} hints={shortcutHints} footer={renderFooter()} initialFocus={false} error={discoveryError}>
+  const headerTrailing = isMobile ? (
+    <>
+      {!editProject ? multipleProjectsToggle : null}
+      {showHiddenToggle}
+    </>
+  ) : !editProject ? multipleProjectsToggle : null;
+
+  return <DirectoryExplorerSurface open={open} onOpenChange={(next) => {
+    if (next || (!isSavingWorkspace.current && !isOpeningFinder)) onOpenChange(next);
+  }} origin={origin} mobile={isMobile} title={editProject ? t('workspace.paths.sectionTitle') : undefined}
+    trailing={headerTrailing} hints={isWorkspaceMode ? null : shortcutHints} footer={renderFooter()} initialFocus={false} error={discoveryError}>
     {content}
   </DirectoryExplorerSurface>;
 };

@@ -8,6 +8,8 @@ import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
 import { useGitStore, useGitStatus, useGitLoadingStatus, useIsGitRepo } from '@/lib/api/useProjectGitStore';
+import { useWorkspaceGitSummary } from '@/stores/useGitStore';
+import { getWorkspacePaths, isBlankWorkspace } from '@/lib/workspacePaths';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { normalizePath } from '@/lib/pathNormalization';
@@ -108,6 +110,13 @@ const WorkStatusCompactContent: React.FC<Props & {
   const gitStatus = useGitStatus(directory);
   const gitLoading = useGitLoadingStatus(directory);
   const isGitRepo = useIsGitRepo(directory);
+  const attachedWorkspacePaths = React.useMemo(
+    () => (scope ? [] : getWorkspacePaths(project)),
+    [project, scope],
+  );
+  const isMultiPathWorkspace = !scope && attachedWorkspacePaths.length > 1;
+  const isBlankProjectWorkspace = !scope && isBlankWorkspace(project);
+  const workspaceGitSummary = useWorkspaceGitSummary(isMultiPathWorkspace ? attachedWorkspacePaths : []);
   const projectPath = project?.path || worktree?.projectDirectory || directory;
   const projectLabel = project?.label?.trim() || (projectPath ? basename(projectPath) : null);
   const worktreeLabel = worktree && normalizePath(worktree.path) !== normalizePath(projectPath)
@@ -148,14 +157,30 @@ const WorkStatusCompactContent: React.FC<Props & {
   });
 
   React.useEffect(() => {
-    if (!directory || !git) return undefined;
+    if (!git) return undefined;
+    if (isMultiPathWorkspace) {
+      for (const memberDir of attachedWorkspacePaths) {
+        void ensureStatus(memberDir, git);
+      }
+      return undefined;
+    }
+    if (!directory || isBlankProjectWorkspace) return undefined;
     void ensureStatus(directory, git);
     return undefined;
-  }, [directory, ensureStatus, git]);
+  }, [attachedWorkspacePaths, directory, ensureStatus, git, isBlankProjectWorkspace, isMultiPathWorkspace]);
 
-  const branch = gitStatus?.current || null;
-  const changed = worktree?.worktreeStatus === 'pending' ? 0 : gitStatus?.files.length ?? 0;
+  const branch = isMultiPathWorkspace
+    ? (workspaceGitSummary.gitEntries[0]?.branch ?? null)
+    : (gitStatus?.current || null);
+  const changed = worktree?.worktreeStatus === 'pending'
+    ? 0
+    : isMultiPathWorkspace
+      ? workspaceGitSummary.totalFiles
+      : (gitStatus?.files.length ?? 0);
   const { additions, deletions } = React.useMemo(() => {
+    if (isMultiPathWorkspace) {
+      return { additions: workspaceGitSummary.insertions, deletions: workspaceGitSummary.deletions };
+    }
     let additions = 0;
     let deletions = 0;
     for (const entry of Object.values(gitStatus?.diffStats ?? {})) {
@@ -163,11 +188,21 @@ const WorkStatusCompactContent: React.FC<Props & {
       deletions += entry?.deletions ?? 0;
     }
     return { additions, deletions };
-  }, [gitStatus?.diffStats]);
+  }, [gitStatus?.diffStats, isMultiPathWorkspace, workspaceGitSummary.deletions, workspaceGitSummary.insertions]);
   const pendingWorktree = worktree?.worktreeStatus === 'pending';
-  const hasGitSnapshot = !pendingWorktree && Boolean(gitStatus) && isGitRepo !== false;
-  const gitState = pendingWorktree ? 'unknown' : isGitRepo === false ? 'not-repository' : hasGitSnapshot ? 'ready' : 'unknown';
-  const hasDiffStats = hasGitSnapshot && Boolean(gitStatus?.diffStats);
+  const hasGitSnapshot = isBlankProjectWorkspace
+    ? false
+    : isMultiPathWorkspace
+      ? (!pendingWorktree && workspaceGitSummary.isAnyGitRepo)
+      : (!pendingWorktree && Boolean(gitStatus) && isGitRepo !== false);
+  const gitState = isBlankProjectWorkspace
+    ? 'not-repository'
+    : pendingWorktree
+      ? 'unknown'
+      : isMultiPathWorkspace
+        ? (workspaceGitSummary.isAnyGitRepo ? 'ready' : workspaceGitSummary.allKnownNonRepo ? 'not-repository' : 'unknown')
+        : isGitRepo === false ? 'not-repository' : hasGitSnapshot ? 'ready' : 'unknown';
+  const hasDiffStats = hasGitSnapshot && (isMultiPathWorkspace ? workspaceGitSummary.hasDiffStats : Boolean(gitStatus?.diffStats));
   const gitSummary = React.useMemo<GuiWorkStatusInput['git']>(() => {
     return {
       state: gitState,

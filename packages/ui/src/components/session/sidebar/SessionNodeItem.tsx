@@ -48,6 +48,7 @@ import { useDelayedModKeyHeld } from '@/hooks/useDelayedModKeyHeld';
 import { getRuntimeBearerTokenSync } from '@/lib/runtime-auth';
 import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
 import { getSessionActivityUpdatedAt } from '@/lib/sessionActivity';
+import { readSessionWorkspaceId } from '@/lib/workspacePaths';
 import { requestSessionSmartTitle } from '@/sync/session-actions';
 import { parseMultiRunSessionTitle } from '@/lib/multirun/title';
 import { MultiRunFusionDialog } from '@/components/multirun/MultiRunFusionDialog';
@@ -1552,6 +1553,8 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       time={sessionCompactUpdatedLabel}
                       projectLabel={secondaryMeta?.projectLabel}
                       project={secondaryMeta?.project}
+                      projectId={projectId}
+                      indexedWorkspaceId={readSessionWorkspaceId(session)}
                       branch={node.worktree?.branch ?? secondaryMeta?.branchLabel}
                       worktree={node.worktree}
                       directory={sessionDirectory}

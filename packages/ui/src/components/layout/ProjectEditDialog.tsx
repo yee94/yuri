@@ -31,7 +31,7 @@ export const ProjectEditDialog: React.FC<ProjectEditDialogProps> = ({
         <ScrollableOverlay outerClassName="max-h-[min(85dvh,44rem)]" disableHorizontal>
           <div className="w-full p-4 sm:p-6">
             {open && project ? (
-              <ProjectSettingsPanel project={project} onIdentitySave={onSave} compact storedIconPreview={storedIconPreview} readOnly={readOnly} />
+              <ProjectSettingsPanel project={project} onIdentitySave={onSave} storedIconPreview={storedIconPreview} readOnly={readOnly} />
             ) : null}
           </div>
         </ScrollableOverlay>

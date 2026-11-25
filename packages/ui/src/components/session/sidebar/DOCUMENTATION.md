@@ -18,8 +18,13 @@ Sessions created inside a linked worktree persist `metadata.yuri.worktree`
 (`projectId`, `projectDirectory`, `worktreeRoot`, `path`, `branch`, `name`,
 `relativePath`) through the Host metadata store and SQLite session index.
 `createSessionOwnershipIndex` binds sessions using explicit
-`metadata.yuri.worktree` ownership first (isolating monorepo subdirectory
-projects without polling sibling checkouts), then directory/worktree fallbacks.
+`metadata.yuri.workspaceId` first, then `metadata.yuri.worktree` ownership
+(isolating monorepo subdirectory projects without polling sibling checkouts),
+then directory/worktree fallbacks (preferring dedicated single-path projects
+over multi-path workspaces for legacy directory-only sessions).
+Multi-path workspaces (`paths.length > 1`) default to the stacked `folders`
+icon when no custom icon/image is set; blank 0-path workspaces (`paths: []`)
+use a Host-managed backing directory for OpenCode while hiding Git/Worktree UI.
 Linked-worktree rows render a compact footer (`[data-session-worktree-footer]`)
 showing the branch icon, branch name, and distinct worktree name.
 
@@ -127,6 +132,14 @@ The checkout warning requires both an expected branch and a different known
 current branch for that exact directory. Hover never fetches a transcript,
 probes a Host or requests git status. The shared Tooltip owns anchoring,
 collision handling and material.
+
+For a multi-path workspace, the project header and session hover card use one
+project icon slot. The default is the double-folder glyph; a customized project
+icon takes precedence. The session hover card shows the workspace name followed
+by all attached paths in configured order, without separate icons for paths.
+The project tooltip lists the same paths. The row's workspace or indexed
+workspace binding is not replaced by the live session's executing project;
+a distinct session checkout is shown separately.
 
 ## Error presentation
 
@@ -306,6 +319,15 @@ into the project store and opens its scoped draft before the optional caller
 callback. Remote registration refreshes the catalog; it must not
 be inserted through the local-only `addProject` fallback. Browser/VS Code clients
 show an explicit unsupported explanation and retain local project selection.
+
+Project Settings and the desktop/mobile project editors show the workspace
+directories as read-only paths, not inline add/remove controls or a worktree
+list, including for ordinary single-directory projects.
+Editing reopens the local multi-directory picker on the existing workspace,
+without machine discovery or new-session navigation. Removal, addition and
+primary-directory order are staged until one workspace update is confirmed.
+The local desktop picker can grant access through Finder; canceling the editor
+does not write the workspace's directory list.
 
 The remote navigation bridge can carry draft title, parent, folder, permission,
 pending-worktree/bootstrap and worktree metadata separately from the Hub draft.

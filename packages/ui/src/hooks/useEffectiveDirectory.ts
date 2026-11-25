@@ -1,3 +1,4 @@
+import React from 'react';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionWorktreeStore } from '@/sync/session-worktree-store';
 import { getAttachedSessionDirectory } from '@/sync/session-worktree-contract';
@@ -7,6 +8,8 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import { locationKey } from '@/lib/remote-projects/location';
+import { getWorkspacePaths, isBlankWorkspace, normalizeWorkspacePath } from '@/lib/workspacePaths';
+import type { ProjectEntry } from '@/lib/api/types';
 
 /**
  * Resolve the effective working directory for tabs (Git, Diff, Files, Terminal).
@@ -127,4 +130,37 @@ export const useEffectiveLocationKey = (): string => {
         return locationKey({ hubId: project.hubId, hostId: project.hostId, directory: directory ?? project.path });
     }
     return directory ?? '';
+};
+
+export const useActiveWorkspace = (): ProjectEntry | null => {
+    return useProjectsStore((state) => state.projects.find((item) => item.id === state.activeProjectId) ?? null);
+};
+
+/**
+ * Returns all user-attached directories for the active workspace:
+ * - `[]` for 0-path blank workspaces
+ * - `[effectiveDirectory, ...additionalPaths]` for multi-path workspaces
+ * - `[effectiveDirectory]` for ordinary single-path projects
+ */
+export const useEffectiveWorkspaceDirectories = (): string[] => {
+    const effectiveDirectory = useEffectiveDirectory();
+    const activeWorkspace = useActiveWorkspace();
+    const host = useHostRuntime();
+    return React.useMemo(() => {
+        if (host?.entry.location.hostId || activeWorkspace?.hostId) {
+            return effectiveDirectory ? [effectiveDirectory] : [];
+        }
+        if (activeWorkspace && isBlankWorkspace(activeWorkspace)) {
+            return [];
+        }
+        const attached = getWorkspacePaths(activeWorkspace);
+        if (attached.length > 1) {
+            const normalizedEffective = normalizeWorkspacePath(effectiveDirectory);
+            if (normalizedEffective && !attached.includes(normalizedEffective)) {
+                return [normalizedEffective, ...attached.slice(1)];
+            }
+            return attached;
+        }
+        return effectiveDirectory ? [effectiveDirectory] : [];
+    }, [activeWorkspace, effectiveDirectory, host?.entry.location.hostId]);
 };

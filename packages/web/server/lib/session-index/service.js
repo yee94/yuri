@@ -111,6 +111,12 @@ const runtimeKeyFor = (runtimeConfig) => {
   return crypto.createHash('sha256').update(source).digest('hex');
 };
 
+const normalizeWorkspaceId = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= 256 ? trimmed : null;
+};
+
 const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirectory) => {
   if (!session || !isVisibleSession(session) || typeof session.id !== 'string' || !session.id) return null;
   const directory = resolveDirectory(session.location?.directory ?? session.directory ?? session.project?.worktree ?? fallbackDirectory);
@@ -120,6 +126,7 @@ const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirec
   const hideAssistantMarker = isContactAssignedSession(yuri);
   const model = normalizeModel(session.model);
   const worktree = normalizeWorktree(yuri?.worktree, resolveDirectory);
+  const workspaceId = normalizeWorkspaceId(yuri?.workspaceId);
   return {
     id: session.id,
     directory,
@@ -135,6 +142,7 @@ const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirec
     modelJson: model ? JSON.stringify(model) : null,
     modelUpdatedAt: model ? toTimestamp(session.time?.updated) : 0,
     worktreeJson: worktree ? JSON.stringify(worktree) : null,
+    workspaceId,
   };
 };
 
@@ -247,7 +255,7 @@ export const createSessionIndexService = ({
     db.exec('ALTER TABLE session_summary ADD COLUMN pinned_at INTEGER');
   }
   db.transaction(() => {
-    for (const [column, type] of [['model_json', 'TEXT'], ['model_updated_at', 'INTEGER NOT NULL DEFAULT 0'], ['model_sequence', 'INTEGER'], ['worktree_json', 'TEXT']]) {
+    for (const [column, type] of [['model_json', 'TEXT'], ['model_updated_at', 'INTEGER NOT NULL DEFAULT 0'], ['model_sequence', 'INTEGER'], ['worktree_json', 'TEXT'], ['workspace_id', 'TEXT']]) {
       if (!sessionSummaryColumns.has(column)) db.exec(`ALTER TABLE session_summary ADD COLUMN ${column} ${type}`);
     }
   })();
@@ -302,6 +310,7 @@ export const createSessionIndexService = ({
           pinned_at: row.pinned_at ?? previous.pinned_at,
           model_json: model.model_json, model_updated_at: model.model_updated_at, model_sequence: model.model_sequence,
           worktree_json: newest.worktree_json ?? row.worktree_json ?? previous.worktree_json,
+          workspace_id: newest.workspace_id ?? row.workspace_id ?? previous.workspace_id,
         });
       }
       db.prepare('DELETE FROM session_summary WHERE runtime_key = ? AND directory IN (?, ?)').run(key, source.directory, target);
@@ -350,7 +359,7 @@ export const createSessionIndexService = ({
     SELECT session_id, has_children AS hasChildren, activity_updated_at AS activityUpdatedAt,
       status, status_changed_at AS statusChangedAt, pinned_at AS pinnedAt,
       model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence,
-      worktree_json AS worktreeJson
+      worktree_json AS worktreeJson, workspace_id AS workspaceId
     FROM session_summary WHERE runtime_key = ? AND directory = ?
   `);
   const readSummary = db.prepare(`
@@ -358,7 +367,7 @@ export const createSessionIndexService = ({
       activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
       parent_id AS parentID, has_children AS hasChildren,
       model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence,
-      worktree_json AS worktreeJson
+      worktree_json AS worktreeJson, workspace_id AS workspaceId
     FROM session_summary
     WHERE runtime_key = ? AND directory = ? AND session_id = ?
   `);
@@ -370,12 +379,12 @@ export const createSessionIndexService = ({
     LIMIT 1 OFFSET ?
   `);
   const insertSummary = db.prepare(`
-    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, pinned_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json)
-    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, @pinnedAt, @status, @statusChangedAt, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson)
+    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, pinned_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json, workspace_id)
+    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, @pinnedAt, @status, @statusChangedAt, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson, @workspaceId)
   `);
   const upsertSummary = db.prepare(`
-    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json)
-    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, NULL, 0, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson)
+    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json, workspace_id)
+    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, NULL, 0, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson, @workspaceId)
     ON CONFLICT(runtime_key, directory, session_id) DO UPDATE SET
       title = excluded.title,
       created_at = excluded.created_at,
@@ -389,7 +398,8 @@ export const createSessionIndexService = ({
       model_json = excluded.model_json,
       model_updated_at = excluded.model_updated_at,
       model_sequence = excluded.model_sequence,
-      worktree_json = COALESCE(excluded.worktree_json, session_summary.worktree_json)
+      worktree_json = COALESCE(excluded.worktree_json, session_summary.worktree_json),
+      workspace_id = COALESCE(excluded.workspace_id, session_summary.workspace_id)
   `);
   const writeModel = db.prepare(`UPDATE session_summary
     SET model_json = @modelJson, model_updated_at = @modelUpdatedAt, model_sequence = @modelSequence
@@ -520,6 +530,7 @@ export const createSessionIndexService = ({
         ...summary,
         ...mergeModel(summary, previous),
         worktreeJson: summary.worktreeJson ?? previous?.worktreeJson ?? null,
+        workspaceId: summary.workspaceId ?? previous?.workspaceId ?? null,
         activityUpdatedAt: Math.max(summary.activityUpdatedAt, toTimestamp(previous?.activityUpdatedAt)),
         pinnedAt: previous?.pinnedAt != null ? toTimestamp(previous.pinnedAt) : null,
         status: typeof previous?.status === 'string' ? previous.status : null,
@@ -580,6 +591,7 @@ export const createSessionIndexService = ({
       : Math.max(toTimestamp(existing?.activityUpdatedAt), summary.activityUpdatedAt);
     const hasChildren = toBooleanInt(summary.hasChildren ?? Boolean(existing?.hasChildren));
     const worktreeJson = summary.worktreeJson ?? existing?.worktreeJson ?? null;
+    const workspaceId = summary.workspaceId ?? existing?.workspaceId ?? null;
     if (existing) {
       const unchanged = existing.title === summary.title
         && toTimestamp(existing.createdAt) === summary.createdAt
@@ -589,7 +601,8 @@ export const createSessionIndexService = ({
         && (existing.parentID ?? null) === summary.parentID
         && toBooleanInt(existing.hasChildren) === hasChildren
         && existing.modelJson === model.modelJson
-        && (existing.worktreeJson ?? null) === worktreeJson;
+        && (existing.worktreeJson ?? null) === worktreeJson
+        && (existing.workspaceId ?? null) === workspaceId;
       if (unchanged) {
         if (existing.modelUpdatedAt !== model.modelUpdatedAt || existing.modelSequence !== model.modelSequence) {
           writeModel.run({ ...model, runtimeKey: key, id: summary.id });
@@ -612,6 +625,7 @@ export const createSessionIndexService = ({
       ...summary,
       ...model,
       worktreeJson,
+      workspaceId,
       activityUpdatedAt,
       hasChildren,
       runtimeKey: key,
@@ -661,12 +675,13 @@ export const createSessionIndexService = ({
           pinned_at AS pinnedAt,
           status, status_changed_at AS statusChangedAt, parent_id AS parentID,
           has_children AS hasChildren, assistant_id AS assistantID, assistant_name AS assistantName,
-          model_json AS modelJson, worktree_json AS worktreeJson
+          model_json AS modelJson, worktree_json AS worktreeJson, workspace_id AS workspaceId
         FROM session_summary WHERE runtime_key = ? AND directory = ?
         ORDER BY activity_updated_at DESC, id DESC
       `).all(key, directory.directory)
         .map((session) => {
           const worktree = session.worktreeJson ? worktreeFromJson(session.worktreeJson) : null;
+          const workspaceId = normalizeWorkspaceId(session.workspaceId);
           return ({
             id: session.id,
             title: session.title,
@@ -689,6 +704,7 @@ export const createSessionIndexService = ({
                 sessionStatus: { type: session.status ?? 'idle', changedAt: session.statusChangedAt },
                 ...(session.assistantID ? { assistant: { assistantID: session.assistantID, ...(session.assistantName ? { name: session.assistantName } : {}) } } : {}),
                 ...(worktree ? { worktree } : {}),
+                ...(workspaceId ? { workspaceId } : {}),
               },
             },
             ...(session.parentID ? { parentID: session.parentID } : {}),
@@ -735,7 +751,7 @@ export const createSessionIndexService = ({
         activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
         parent_id AS parentID, has_children AS hasChildren,
         assistant_id AS assistantID, assistant_name AS assistantName, model_json AS modelJson,
-        worktree_json AS worktreeJson
+        worktree_json AS worktreeJson, workspace_id AS workspaceId
       FROM session_summary
       WHERE runtime_key = ? AND session_id = ?
       ORDER BY activity_updated_at DESC, updated_at DESC
@@ -743,12 +759,17 @@ export const createSessionIndexService = ({
     `).get(key, sessionID);
     if (!row || typeof row.directory !== 'string' || !row.directory) return null;
     const worktree = row.worktreeJson ? worktreeFromJson(row.worktreeJson) : null;
+    const workspaceId = normalizeWorkspaceId(row.workspaceId);
+    const yuriMeta = {
+      ...(worktree ? { worktree } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+    };
     return {
       id: row.id,
       directory: normalizeDirectory(row.directory),
       title: typeof row.title === 'string' ? row.title : '',
       ...(row.modelJson ? { model: modelFromJson(row.modelJson) } : {}),
-      ...(worktree ? { metadata: { yuri: { worktree } } } : {}),
+      ...(Object.keys(yuriMeta).length > 0 ? { metadata: { yuri: yuriMeta } } : {}),
       createdAt: toTimestamp(row.createdAt),
       updatedAt: toTimestamp(row.updatedAt),
       activityUpdatedAt: toTimestamp(row.activityUpdatedAt),

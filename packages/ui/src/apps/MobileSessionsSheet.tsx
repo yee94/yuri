@@ -1910,7 +1910,6 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
           open={editingProjectId !== null}
           project={projectsMeta.find((entry) => entry.id === editingProjectId) ?? null}
           onClose={() => setEditingProjectId(null)}
-          onWorktreesChanged={() => setWorktreeRefreshKey((value) => value + 1)}
         />
       </div>
   );

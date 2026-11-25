@@ -30,6 +30,8 @@ import { registerHistoryImportRoutes } from '../history-import/routes.js';
 import { registerSessionTurnPageRoutes } from '../session-turn-pages/routes.js';
 import { registerAssistantRoutes } from '../assistants/routes.js';
 import { createProjectRegistry } from '../projects/registry.js';
+import { registerWorkspaceRoutes } from '../projects/routes.js';
+import { getWorkspacePaths, installWorkspaceSessionInstruction } from '../projects/workspace.js';
 import { registerLlmRoutes } from '../llm/routes.js';
 import { registerMessageQueueRoutes } from '../message-queue/routes.js';
 import { getBrowserProviderHost } from '../browser-provider/host.js';
@@ -260,12 +262,25 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenCodeAuthHeaders,
     });
 
+    const installManagedWorkspaceInstruction = ({ client, sessionID, workspaceId, directory }) => {
+      if (getIsExternalOpenCode() && !getIsSharedOpenCodeService()) return Promise.resolve(false);
+      return installWorkspaceSessionInstruction({
+        client,
+        sessionID,
+        workspaceId,
+        directory,
+        readSettings: readSettingsFromDiskMigrated,
+        sanitizeProjects,
+      });
+    };
+
     registerScheduledTaskSessionSkill(app, {
       express, yuriDataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders,
       getIsSharedOpenCodeService, waitForOpenCodeReady, getRuntimeContract,
       readSettingsFromDiskMigrated, sanitizeProjects, validateDirectoryPath,
       scheduledTaskRouter,
       remoteConnectionsAdapter,
+      installWorkspaceInstruction: installManagedWorkspaceInstruction,
     });
     const hasAssistant = (assistantID) => assistantRoutesRuntime?.service?.hasAssistant(assistantID) ?? false;
     // Contacts run on this Host, so they get the same staged helpers as admitted Sessions, bound to their own ID.
@@ -288,6 +303,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     registerCustomizationSessionSkill(app, {
       express, yuriDataDir, getIsSharedOpenCodeService, getIsExternalOpenCode, waitForOpenCodeReady,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
+      installWorkspaceInstruction: installManagedWorkspaceInstruction,
     });
     app.use(scheduledTaskRouter);
 
@@ -308,6 +324,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenCodeAuthHeaders,
       markUserMessageSent,
       waitForOpenCodeReady,
+      installWorkspaceInstruction: installManagedWorkspaceInstruction,
     });
 
     // Yuri-owned turn-window messages API — must register before generic proxy.
@@ -318,18 +335,40 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
     const assistantAllowedRoots = [];
     const updateAssistantAllowedRoots = (settings) => {
-      assistantAllowedRoots.splice(0, assistantAllowedRoots.length, ...sanitizeProjects(settings?.projects ?? [])
-        .map((project) => project.path)
-        .filter((value) => typeof value === 'string'));
+      const roots = [];
+      const seen = new Set();
+      for (const project of sanitizeProjects(settings?.projects ?? [])) {
+        for (const root of [project.path, ...getWorkspacePaths(project)]) {
+          if (typeof root !== 'string' || !root || seen.has(root)) continue;
+          seen.add(root);
+          roots.push(root);
+        }
+      }
+      assistantAllowedRoots.splice(0, assistantAllowedRoots.length, ...roots);
     };
     const refreshAssistantAllowedRoots = async () => updateAssistantAllowedRoots(await readSettingsFromDiskMigrated());
     await refreshAssistantAllowedRoots();
-    const projectRegistry = createProjectRegistry({ persistSettings, validateDirectoryPath });
+    const projectRegistry = createProjectRegistry({ persistSettings, validateDirectoryPath, yuriDataDir });
+    registerWorkspaceRoutes(app, {
+      express,
+      projectRegistry,
+      onProjectsMutated: (settings) => updateAssistantAllowedRoots(settings),
+    });
     registerProjectsSkill(app, {
       remoteHostGateway: routeDependencies.remoteHostGateway,
       express, getIsSharedOpenCodeService, getOpenCodeAuthHeaders, hasAssistant,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
-      registerProject: (input) => projectRegistry.register(input), readSettingsFromDiskStrict, sanitizeProjects,
+      registerProject: async (input) => {
+        const result = await projectRegistry.register(input);
+        updateAssistantAllowedRoots(result.settings);
+        return result;
+      },
+      updateProject: async (input) => {
+        const result = await projectRegistry.update(input);
+        updateAssistantAllowedRoots(result.settings);
+        return result;
+      },
+      readSettingsFromDiskStrict, sanitizeProjects,
       removeProject: async (input) => {
         const { settings } = await projectRegistry.remove(input);
         updateAssistantAllowedRoots(settings);
@@ -595,6 +634,22 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       yuriDataDir,
       broadcastYuriEvent,
     });
+    const resolveWorkspaceRoots = async (baseDirectory) => {
+      if (typeof baseDirectory !== 'string' || !baseDirectory.trim()) return [];
+      const normalizedBase = normalizeDirectoryPath(baseDirectory).replace(/\\/g, '/').replace(/\/+$/, '');
+      const settings = await readSettingsFromDiskMigrated();
+      const projects = sanitizeProjects(settings?.projects ?? []) || [];
+      const roots = new Set();
+      const normalize = (value) => (typeof value === 'string' ? normalizeDirectoryPath(value).replace(/\\/g, '/').replace(/\/+$/, '') : '');
+      for (const project of projects) {
+        const members = getWorkspacePaths(project);
+        const candidates = [project.path, ...members].map(normalize).filter(Boolean);
+        if (candidates.some((entry) => entry === normalizedBase || normalizedBase.startsWith(`${entry}/`))) {
+          for (const member of members) roots.add(member);
+        }
+      }
+      return Array.from(roots);
+    };
     registerFsRoutes(app, {
       os,
       path,
@@ -603,6 +658,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       crypto,
       normalizeDirectoryPath,
       resolveProjectDirectory,
+      resolveWorkspaceRoots,
       buildAugmentedPath,
       resolveGitBinaryForSpawn,
       yuriUserConfigRoot,

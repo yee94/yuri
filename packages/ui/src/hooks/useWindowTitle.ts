@@ -6,6 +6,7 @@ import { desktopHostsGet, getDesktopHostApiUrl, locationMatchesHost, redactSensi
 import { setDesktopWindowTitle } from '@/lib/desktopNative';
 import { getRuntimeApiBaseUrl, getRuntimeKey, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { useI18n } from '@/lib/i18n';
+import { getWorkspaceDisplayLabel, isBlankWorkspace, isMultiPathWorkspace } from '@/lib/workspacePaths';
 
 const APP_TITLE = 'Yuri';
 
@@ -38,7 +39,11 @@ export const useWindowTitle = () => {
       return null;
     }
     const project = state.projects.find((entry) => entry.id === state.activeProjectId);
-    return project ? getProjectNameFromPath(project.path) || null : null;
+    if (!project) return null;
+    if (isMultiPathWorkspace(project) || isBlankWorkspace(project)) {
+      return getWorkspaceDisplayLabel(project) || null;
+    }
+    return getProjectNameFromPath(project.path) || null;
   });
 
   const identity = React.useSyncExternalStore(subscribeRuntimeEndpointChanged, getWindowRuntimeIdentity, getWindowRuntimeIdentity);

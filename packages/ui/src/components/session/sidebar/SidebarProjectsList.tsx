@@ -21,6 +21,7 @@ import type { SortableDragHandleProps } from './sortableItems';
 import { SortableProjectItem, SortableGroupItem } from './sortableItems';
 import { SIDEBAR_MUTED_HINT_CLASS, getSidebarRowPaddingLeft } from './utils';
 import { useI18n } from '@/lib/i18n';
+import { getWorkspacePaths, isBlankWorkspace } from '@/lib/workspacePaths';
 import type { MainTab } from '@/stores/useUIStore';
 import { SidebarSectionHeader } from './SidebarSectionHeader';
 import type { ProjectSortOrder } from '@/stores/useSessionDisplayStore';
@@ -58,6 +59,8 @@ type ProjectSection = {
     hostId?: string;
     remoteState?: RemoteProject['remoteState'];
     label?: string;
+    path?: string;
+    paths?: string[];
     normalizedPath: string;
     icon?: string;
     color?: string;
@@ -457,15 +460,25 @@ const SidebarProjectSection = React.memo(function SidebarProjectSection(props: P
       <DragOverlay dropAnimation={null} />
     </DndContext>
   ), [groupSensors, onGroupDragEnd, rootGroup, renderGroupSessions, projectKey, scrollContainerRef, nestedGroups, isInlineEditing]);
+  const attachedPaths = React.useMemo(() => getWorkspacePaths(project), [project]);
+  const isMultiPath = attachedPaths.length > 1;
+  const isBlank = isBlankWorkspace(project);
+  const projectLabel = project.label?.trim() || formatDirectoryName(project.normalizedPath) || project.normalizedPath;
+  const projectDescription = isBlank
+    ? projectLabel
+    : formatPathForDisplay(project.normalizedPath, props.homeDirectory);
   return (
     <SortableProjectItem
       id={projectKey} disabled={props.projectSortOrder !== 'manual'}
       hostId={project.hostId} remoteState={project.remoteState} hostRegistry={props.hostRegistry}
-      projectLabel={formatDirectoryName(project.normalizedPath) || project.normalizedPath}
-      projectDescription={formatPathForDisplay(project.normalizedPath, props.homeDirectory)}
+      projectLabel={projectLabel}
+      projectDescription={projectDescription}
       projectIcon={project.icon} projectColor={project.color} projectIconImage={project.iconImage}
+      workspacePaths={isMultiPath ? attachedPaths : undefined}
+      homeDirectory={isMultiPath ? props.homeDirectory : undefined}
       isCollapsed={isCollapsed} isActiveProject={props.isActiveProject} isSessionsLoading={isSessionsLoading || isSessionsRefreshing}
       isRepo={props.isRepo}
+      worktreeActionAvailable={props.isRepo && !isMultiPath && !isBlank}
       hideDirectoryControls={props.hideDirectoryControls} mobileVariant={props.mobileVariant} alwaysShowActions={props.alwaysShowActions}
       onToggle={onToggle} onNewSession={onNewSession} onNewWorktreeSession={onNewWorktreeSession}
       onSyncSessions={onSyncSessions} onRenameStart={onRenameStart} onClose={onClose}

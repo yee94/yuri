@@ -991,4 +991,30 @@ describe('Electron session index', () => {
     expect(hit?.metadata?.yuri?.worktree).toEqual(worktree);
     service.close();
   });
+
+  it('persists metadata.yuri.workspaceId across light directory refreshes and findBySessionId', () => {
+    const runtimeRef = { value: 'http://runtime-ws.test' };
+    const service = createService(runtimeRef);
+
+    expect(service.upsert({
+      id: 'ses_ws',
+      directory: '/code/yuri',
+      title: 'Workspace session',
+      time: { created: 100, updated: 200 },
+      metadata: { yuri: { workspaceId: 'ws_combo' } },
+    })).toBe(true);
+
+    service.replaceDirectory({
+      directory: '/code/yuri',
+      sessions: [{ id: 'ses_ws', title: 'Workspace session updated', time: { created: 100, updated: 300 } }],
+      cursor: null,
+      hasMore: false,
+      now: 1000,
+    });
+
+    const snap = service.snapshot();
+    expect(snap.directories[0].sessions[0].metadata?.yuri?.workspaceId).toBe('ws_combo');
+    expect(service.findBySessionId('ses_ws')?.metadata?.yuri?.workspaceId).toBe('ws_combo');
+    service.close();
+  });
 });

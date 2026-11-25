@@ -44,6 +44,7 @@ import { resolveProjectForSessionDirectory } from "@/lib/projectResolution"
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
 import { scopeProjectWorktrees } from "@/lib/worktrees/projectWorktreeScope"
 import { buildSessionWorktreeMetadataPatch } from "@/lib/worktrees/sessionWorktreeMetadata"
+import { isBlankWorkspace, isMultiPathWorkspace, isWorkspaceId } from "@/lib/workspacePaths"
 import { validateWorktreeDirectory } from "@/lib/gitApi"
 import { useWorktreeOrderStore } from "@/stores/useWorktreeOrderStore"
 import { createUuid } from "@/lib/uuid"
@@ -1216,11 +1217,28 @@ async function materializeClaimedDraftSession(selection: {
     const worktreeMetadataPatch = matchedWorktree
       ? buildSessionWorktreeMetadataPatch(matchedWorktree, worktreeProject)
       : undefined
+    const explicitWorkspaceId = targetProject && (
+      isWorkspaceId(targetProject.id) || isMultiPathWorkspace(targetProject) || isBlankWorkspace(targetProject)
+    )
+      ? targetProject.id
+      : undefined
+    const sessionMetadataPatch = (() => {
+      const worktreeYuri = (worktreeMetadataPatch?.yuri && typeof worktreeMetadataPatch.yuri === "object")
+        ? worktreeMetadataPatch.yuri as Record<string, unknown>
+        : undefined
+      if (!worktreeYuri && !explicitWorkspaceId) return undefined
+      return {
+        yuri: {
+          ...(worktreeYuri ?? {}),
+          ...(explicitWorkspaceId ? { workspaceId: explicitWorkspaceId } : {}),
+        },
+      }
+    })()
     // Draft finalization owns selection; the general create action closes the draft too early.
     const created = await opencodeClient.createSession({
       title: draft.title,
       parentID: draft.parentID ?? undefined,
-      ...(worktreeMetadataPatch ? { metadata: worktreeMetadataPatch } : {}),
+      ...(sessionMetadataPatch ? { metadata: sessionMetadataPatch } : {}),
     }, dir)
     if (!created?.id) throw new Error("Failed to create session")
     if (matchedWorktree) {
@@ -1334,11 +1352,24 @@ async function handleCombinedDraftSend(params: {
     const preCreateStore = dirStoreForDirectory(resolvedDir, { bootstrap: false })
     const claimRuntimeCurrent = () =>
       sameRuntimeCapture(useInputStore.getState().captureDraftRuntime(), claimed.runtime)
+    const { projects: allProjects, activeProjectId: currentActiveProjectId } = useProjectsStore.getState()
+    const draftWorkspaceProject = (draft.selectedProjectId
+      ? allProjects.find((entry) => entry.id === draft.selectedProjectId)
+      : null)
+      ?? (currentActiveProjectId ? allProjects.find((entry) => entry.id === currentActiveProjectId) : null)
+      ?? null
+    const draftWorkspaceMetadata = draftWorkspaceProject && (
+      isWorkspaceId(draftWorkspaceProject.id)
+      || isMultiPathWorkspace(draftWorkspaceProject)
+      || isBlankWorkspace(draftWorkspaceProject)
+    )
+      ? { yuri: { workspaceId: draftWorkspaceProject.id } }
+      : undefined
     let result: ConversationCreateWithPromptResult | undefined
     for (let attempt = 0; attempt <= COMBINED_RETRY_MAX; attempt++) {
       if (attempt > 0) await new Promise<void>((resolve) => setTimeout(resolve, COMBINED_RETRY_DELAY_MS))
       try {
-        result = await api.createWithPrompt({ input: { type: 'prompt' }, directory: resolvedDir, ...(draft.title ? { title: draft.title } : {}), ...(draft.parentID ? { parentID: draft.parentID } : {}), messageID, model: { providerID, modelID }, ...(effectiveAgent ? { agent: effectiveAgent } : {}), ...(variant ? { variant } : {}), ...(skills.length ? { skills } : {}), parts: parts as ConversationCreateWithPromptInput['parts'] })
+        result = await api.createWithPrompt({ input: { type: 'prompt' }, directory: resolvedDir, ...(draft.title ? { title: draft.title } : {}), ...(draft.parentID ? { parentID: draft.parentID } : {}), ...(draftWorkspaceMetadata ? { metadata: draftWorkspaceMetadata } : {}), messageID, model: { providerID, modelID }, ...(effectiveAgent ? { agent: effectiveAgent } : {}), ...(variant ? { variant } : {}), ...(skills.length ? { skills } : {}), parts: parts as ConversationCreateWithPromptInput['parts'] })
         // Only `unavailable` (server busy) is retryable amongst structured failures
         if (!result || result.ok || (result as { phase?: string }).phase !== 'unavailable') break
         result = undefined

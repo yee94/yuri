@@ -2,7 +2,7 @@ import React from 'react';
 
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useTerminalStore } from '@/stores/useTerminalStore';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useEffectiveDirectory, useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
 import { type TerminalStreamEvent } from '@/lib/api/types';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useFontPreferences } from '@/hooks/useFontPreferences';
@@ -109,7 +109,17 @@ export const TerminalView: React.FC = () => {
     const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
     const hasActiveContext = Boolean(projectScope) || currentSessionId !== null || newSessionDraft?.open === true;
 
-    const localDirectory = useEffectiveDirectory() ?? null;
+    const baseLocalDirectory = useEffectiveDirectory() ?? null;
+    const workspaceDirectories = useEffectiveWorkspaceDirectories();
+    const isMultiPathWorkspace = !projectScope && workspaceDirectories.length > 1;
+    const [selectedTerminalWorkspaceDir, setSelectedTerminalWorkspaceDir] = React.useState<string | null>(null);
+    const localDirectory = React.useMemo(() => {
+        if (!isMultiPathWorkspace) return baseLocalDirectory;
+        if (selectedTerminalWorkspaceDir && workspaceDirectories.includes(selectedTerminalWorkspaceDir)) {
+            return selectedTerminalWorkspaceDir;
+        }
+        return workspaceDirectories[0] ?? baseLocalDirectory;
+    }, [baseLocalDirectory, isMultiPathWorkspace, selectedTerminalWorkspaceDir, workspaceDirectories]);
     const physicalDirectory = localDirectory ?? projectScope?.location.directory ?? null;
     const effectiveDirectory = projectScope ? locationKey({ ...projectScope.location, directory: physicalDirectory ?? projectScope.location.directory }) : physicalDirectory;
     const terminalSessions = useTerminalStore((s) => s.sessions);
@@ -1208,6 +1218,30 @@ export const TerminalView: React.FC = () => {
             data-terminal-view="true"
             className="flex h-full flex-col overflow-hidden bg-[var(--surface-background)]"
         >
+            {isMultiPathWorkspace ? (
+                <div
+                    className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/40 px-3 py-1"
+                    data-testid="workspace-terminal-root-strip"
+                >
+                    {workspaceDirectories.map((memberDir) => {
+                        const selected = memberDir === localDirectory;
+                        const folderName = memberDir.split('/').filter(Boolean).at(-1) || memberDir;
+                        return (
+                            <Button
+                                key={memberDir}
+                                variant="chip"
+                                size="xs"
+                                aria-pressed={selected}
+                                onClick={() => setSelectedTerminalWorkspaceDir(memberDir)}
+                                title={memberDir}
+                                className="max-w-full px-2"
+                            >
+                                <span className="truncate">{folderName}</span>
+                            </Button>
+                        );
+                    })}
+                </div>
+            ) : null}
             <div className={cn('app-region-no-drag sticky top-0 z-20 shrink-0 bg-[var(--surface-background)] text-xs', isTouchTerminal ? 'px-3 py-1.5' : 'pl-3 pr-1.5 py-1')}>
                 {enableTabs && directoryTerminalState ? (
                     <div className="flex items-center gap-2 pl-1 pr-1">

@@ -117,6 +117,7 @@ export const createConversationsService = (deps) => {
     getOpenCodeAuthHeaders,
     markUserMessageSent,
     waitForOpenCodeReady,
+    installWorkspaceInstruction = null,
     logger = console,
   } = deps;
 
@@ -157,6 +158,7 @@ export const createConversationsService = (deps) => {
         location: { directory: sanitizedInput.directory },
         ...(sanitizedInput.title ? { title: sanitizedInput.title } : {}),
         ...(sanitizedInput.agent ? { agent: sanitizedInput.agent } : {}),
+        ...(sanitizedInput.metadata ? { metadata: sanitizedInput.metadata } : {}),
         ...(sanitizedInput.model ? {
           model: {
             id: sanitizedInput.model.modelID,
@@ -196,6 +198,15 @@ export const createConversationsService = (deps) => {
         phase: 'create',
         error: safeErrorMessage('create'),
       };
+    }
+
+    if (typeof installWorkspaceInstruction === 'function') {
+      await installWorkspaceInstruction({
+        client,
+        sessionID,
+        workspaceId: sanitizedInput.metadata?.yuri?.workspaceId ?? null,
+        directory: sanitizedInput.directory,
+      }).catch(() => undefined);
     }
 
     // Phase 2: v2 prompt + delivery=steer (45s timeout). Host only orchestrates

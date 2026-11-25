@@ -43,6 +43,7 @@ import { createSessionOwnershipIndex } from '@/components/session/sidebar/sessio
 import { selectVisibleSessions } from '@/components/session/sidebar/sessionNavigationModel';
 import { buildSessionTree } from '@/components/session/sidebar/sessionTree';
 import { formatWorktreeFooterLabel, sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
+import { isBlankWorkspace, isMultiPathWorkspace } from '@/lib/workspacePaths';
 import type { WorktreeMetadata } from '@/types/worktree';
 
 import type {
@@ -137,6 +138,7 @@ type ProjectMeta = {
   id: string;
   label: string;
   path: string;
+  paths?: string[];
   icon?: string | null;
   iconImage?: ProjectEntry['iconImage'];
   worktrees: WorktreeMetadata[];
@@ -249,6 +251,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
           id: project.id,
           label: getProjectLabel(path, project.label),
           path,
+          paths: project.paths,
           icon: project.icon,
           iconImage: project.iconImage,
           worktrees: orderWorktrees(
@@ -280,7 +283,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
   const ownership = React.useMemo(
     () => createSessionOwnershipIndex(
       sessions,
-      projectsMeta.map((project) => ({ id: project.id, normalizedPath: project.path })),
+      projectsMeta.map((project) => ({ id: project.id, normalizedPath: project.path, paths: project.paths })),
       worktreesByProject,
       false,
     ),
@@ -462,7 +465,9 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
       const defaultVisible = getMobileSessionDefaultVisibleCount();
       const iconName: IconName | undefined = node.project.icon
         ? PROJECT_ICON_MAP[node.project.icon]
-        : undefined;
+        : isMultiPathWorkspace(node.project)
+          ? 'folders'
+          : undefined;
 
       const worktrees: MobileWorktreeGroup[] = node.buckets.map((bucket) => {
         const expandKey = `${node.project.id}::${bucket.key}`;

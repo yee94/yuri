@@ -630,6 +630,12 @@ export interface FilesAPI {
 export interface ProjectEntry {
   id: string;
   path: string;
+  /**
+   * User-attached directories for a Workspace (0..N, primary first).
+   * Omitted on legacy single-path projects (treated as `[path]`).
+   * `[]` represents a 0-path blank workspace whose `path` is a Host-managed backing dir.
+   */
+  paths?: string[];
   hostId?: string;
   hubId?: string;
   instanceId?: string;

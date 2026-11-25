@@ -28,6 +28,9 @@ vi.mock('@/components/sections/agents/ModelSelector', () => ({
   ),
 }));
 vi.mock('@/components/ui', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock('@/components/session/DirectoryExplorerDialog', () => ({
+  DirectoryExplorerDialog: ({ editProject }: { editProject: { id: string } }) => <div data-directory-edit={editProject.id} />,
+}));
 vi.mock('@/stores/useProjectsStore', () => ({
   useProjectsStore: (selector: (state: unknown) => unknown) => selector({
     projects: [fixture.project], getActiveProject: () => fixture.project,
@@ -70,12 +73,18 @@ afterEach(async () => {
 });
 
 describe('project settings presentation', () => {
-  test.each([false, true])('omits project actions and setup on the shared settings panel (dialog: %s)', async (compact) => {
-    await act(async () => root.render(<ProjectSettingsPanel project={fixture.project} onIdentitySave={fixture.save} compact={compact} />));
+  test('opens directory editing through the shared picker without inline fields or worktrees', async () => {
+    await act(async () => root.render(<ProjectSettingsPanel project={fixture.project} onIdentitySave={fixture.save} />));
     expect(host.querySelector('[data-settings-item="projects.name"]')).not.toBeNull();
-    expect(host.querySelector('[data-settings-item="projects.worktree"]')).not.toBeNull();
+    expect(host.querySelector('[data-settings-item="projects.worktree"]')).toBeNull();
     expect(host.textContent).not.toContain('settings.projects.actions');
     expect(host.textContent).not.toContain('settings.yuri.worktrees.setup');
+    const row = host.querySelector('[data-settings-item="projects.workspace-paths"]')!;
+    expect(row.textContent).toContain(fixture.project.path);
+    expect(row.querySelector('input')).toBeNull();
+    expect(host.querySelector('[data-directory-edit]')).toBeNull();
+    await act(async () => row.querySelector('button')!.click());
+    expect(host.querySelector('[data-directory-edit]')?.getAttribute('data-directory-edit')).toBe(fixture.project.id);
   });
 
   test('groups identity fields and preserves selection auto-save without the explanatory paragraph', async () => {
@@ -131,6 +140,6 @@ describe('project settings presentation', () => {
       getPageTitle: (slug) => slug,
     });
     expect(projectItems.some((item) => item.id === 'projects.default-model')).toBe(true);
-    expect(projectItems.some((item) => item.id.includes('setup') || item.id === 'projects.actions')).toBe(false);
+    expect(projectItems.some((item) => item.id.includes('setup') || item.id === 'projects.actions' || item.id === 'projects.worktree')).toBe(false);
   });
 });

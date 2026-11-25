@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { exec } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,17 @@ import { createSettingsRuntime } from '../opencode/settings-runtime.js';
 import { createSettingsNormalizationRuntime } from '../opencode/settings-normalization-runtime.js';
 import { createProjectDirectoryRuntime } from '../opencode/project-directory-runtime.js';
 import { registerProjectsSkill, PROJECTS_SKILL_PATH } from './projects.js';
+import { createCustomizationSkillInstaller } from './session-skill.js';
+
+function callHelper(command, input) {
+  return new Promise((resolve, reject) => {
+    const child = exec(command, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(stdout);
+    });
+    child.stdin.end(input === undefined ? undefined : JSON.stringify(input));
+  }).then(JSON.parse);
+}
 
 describe('bound project registry API', () => {
   let root, workspace, settingsPath, runtime, server, origin, getSession, binding, registerProject, shared, failWrites, tips, gateway, hasAssistant;
@@ -27,14 +39,14 @@ describe('bound project registry API', () => {
       formatSettingsResponse: (value) => value, resolveDirectoryCandidate: (value) => value, onProjectOrderChanged: tips,
     });
     const { validateDirectoryPath } = createProjectDirectoryRuntime({ fsPromises: fs, path, normalizeDirectoryPath: normalization.normalizeDirectoryPath });
-    const registry = createProjectRegistry({ persistSettings: runtime.persistSettings, validateDirectoryPath });
+    const registry = createProjectRegistry({ persistSettings: runtime.persistSettings, validateDirectoryPath, yuriDataDir: root });
     registerProject = vi.fn((input) => registry.register(input));
     getSession = vi.fn(async () => ({ metadata: { yuri: { scheduledTaskSkill: { hostOrigin: binding } } } }));
     hasAssistant = vi.fn(async (id) => id === 'ast_live');
     const app = express();
     gateway = { supported: true, acquireTask: vi.fn(), registerProject: vi.fn(), list: vi.fn(async () => ({ supported: true, hubId: 'hub', hosts: [], projects: [] })) };
     registerProjectsSkill(app, { express, getIsSharedOpenCodeService: () => shared, getOpenCodeAuthHeaders: () => auth,
-      createClient: () => ({ session: { get: getSession } }), registerProject, removeProject: registry.remove, readSettingsFromDiskStrict: runtime.readSettingsFromDiskStrict,
+      createClient: () => ({ session: { get: getSession } }), registerProject, updateProject: registry.update, removeProject: registry.remove, readSettingsFromDiskStrict: runtime.readSettingsFromDiskStrict,
       sanitizeProjects: normalization.sanitizeProjects,
       remoteHostGateway: gateway, hasAssistant,
     });
@@ -217,5 +229,81 @@ describe('bound project registry API', () => {
     await pending;
     await stopped;
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('creates 0-path and multi-path workspaces and updates paths/primary while preserving projectId', async () => {
+    const secondDir = path.join(root, 'second-repo');
+    await fs.mkdir(secondDir);
+    const realWorkspace = await fs.realpath(workspace);
+    const realSecond = await fs.realpath(secondDir);
+
+    const described = await (await request('describe')).json();
+    expect(described.inputs.update).toContain('projectId');
+
+    // 0-path blank workspace
+    const blankRes = await request('add', { paths: [], label: 'Scratch' });
+    expect(blankRes.status).toBe(200);
+    const blankBody = await blankRes.json();
+    expect(blankBody.created).toBe(true);
+    expect(blankBody.project.id).toMatch(/^ws_/);
+    expect(blankBody.project.paths).toEqual([]);
+    expect(blankBody.project.label).toBe('Scratch');
+
+    // Multi-path workspace
+    const multiRes = await request('add', { paths: [workspace, secondDir], primaryPath: secondDir, label: 'yuri-runmark' });
+    expect(multiRes.status).toBe(200);
+    const multiBody = await multiRes.json();
+    expect(multiBody.created).toBe(true);
+    expect(multiBody.project.id).toMatch(/^ws_/);
+    expect(multiBody.project.path).toBe(realSecond);
+    expect(multiBody.project.paths).toEqual([realSecond, realWorkspace]);
+
+    // Update: switch primary, remove path, rename while preserving ID
+    const updateRes = await request('update', {
+      projectId: multiBody.project.id,
+      primaryPath: workspace,
+      label: 'renamed-ws',
+    });
+    expect(updateRes.status).toBe(200);
+    const updateBody = await updateRes.json();
+    expect(updateBody.updated).toBe(true);
+    expect(updateBody.project.id).toBe(multiBody.project.id);
+    expect(updateBody.project.path).toBe(realWorkspace);
+    expect(updateBody.project.paths).toEqual([realWorkspace, realSecond]);
+    expect(updateBody.project.label).toBe('renamed-ws');
+
+    // Attach directory to blank workspace
+    const attachRes = await request('update', {
+      projectId: blankBody.project.id,
+      addPath: workspace,
+    });
+    expect(attachRes.status).toBe(200);
+    const attachBody = await attachRes.json();
+    expect(attachBody.project.id).toBe(blankBody.project.id);
+    expect(attachBody.project.paths).toEqual([realWorkspace]);
+  });
+
+  it('discovers and uses the staged skill command to attach a directory to an ordinary project', async () => {
+    const secondDir = path.join(root, 'additional directory');
+    await fs.mkdir(secondDir);
+    const registrationFile = path.join(root, 'test-registration.json');
+    await fs.writeFile(registrationFile, JSON.stringify({ url: origin, password: 'fixture' }), { mode: 0o600 });
+    const { projectsCommand } = await createCustomizationSkillInstaller({ yuriDataDir: root }).resolve(
+      { sessionID: 'ses_one' },
+      { projectBinding: { hostOrigin: origin, upstreamOrigin: origin, registrationFile } },
+    );
+    const describe = await callHelper(projectsCommand);
+    expect(describe.commands.update).toEqual(expect.any(String));
+
+    const { project } = await callHelper(describe.commands.add, { path: workspace, label: 'Existing project' });
+    const expected = { ...project, paths: [project.path, await fs.realpath(secondDir)] };
+    const input = { projectId: project.id, addPath: secondDir };
+    expect(await callHelper(describe.commands.update, input)).toEqual({ project: expected, updated: true });
+    expect(await callHelper(describe.commands.update, input)).toEqual({ project: expected, updated: true });
+    expect(await callHelper(describe.commands.list)).toEqual({ projects: [expected] });
+    expect(await runtime.readSettingsFromDiskStrict()).toMatchObject({
+      activeProjectId: project.id,
+      projects: [expected],
+    });
   });
 });

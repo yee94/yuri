@@ -44,7 +44,7 @@ export function createCustomizationSkillInstaller({ yuriDataDir }) {
     const projects = projectsCommand ? `\nBound project helper: ${projectsCommand}\n` : ' No bound project helper is provided.';
     const remote = remoteCommand ? ` Bound local desktop helper: ${remoteCommand}` : ' No bound SSH/Relay command is provided.';
     await client.session.instructions.entry.put({ sessionID, key: 'yuri.customization',
-      value: `Yuri customization covers project management, task and session lifecycle (archive, settled; local and remote sessions), session import, remote hosts and sessions, resource identity and yuri:// deep links, SSH, configuration sync, Relay pairing and GUI customization. For these capabilities, read ${JSON.stringify(file)} first, then load only the matching reference.${projects}${remote}`,
+      value: `Yuri customization covers project management (including workspace directories), task and session lifecycle (archive, settled; local and remote sessions), session import, remote hosts and sessions, resource identity and yuri:// deep links, SSH, configuration sync, Relay pairing and GUI customization. For these capabilities, read ${JSON.stringify(file)} first, then load only the matching reference.${projects}${remote}`,
     });
   };
   install.resolve = resolve;
@@ -52,7 +52,7 @@ export function createCustomizationSkillInstaller({ yuriDataDir }) {
 }
 
 /** Managed local servers share the resource filesystem; external servers do not. */
-export function registerCustomizationSessionSkill(app, { express, yuriDataDir, getIsSharedOpenCodeService, getIsExternalOpenCode, waitForOpenCodeReady, createClient }) {
+export function registerCustomizationSessionSkill(app, { express, yuriDataDir, getIsSharedOpenCodeService, getIsExternalOpenCode, waitForOpenCodeReady, createClient, installWorkspaceInstruction = null }) {
   const install = createCustomizationSkillInstaller({ yuriDataDir });
   app.post('/api/session', express.json({ limit: '1mb' }), async (req, res, next) => {
     if (getIsSharedOpenCodeService() || getIsExternalOpenCode()) return next();
@@ -65,6 +65,14 @@ export function registerCustomizationSessionSkill(app, { express, yuriDataDir, g
       created = await client.session.create(body);
       if (!created?.id) throw new Error('Session creation was not confirmed');
       await install(client, created.id);
+      if (typeof installWorkspaceInstruction === 'function') {
+        await installWorkspaceInstruction({
+          client,
+          sessionID: created.id,
+          workspaceId: body?.metadata?.yuri?.workspaceId ?? null,
+          directory: body?.location?.directory ?? created?.location?.directory ?? null,
+        }).catch(() => undefined);
+      }
       return res.json({ data: created });
     } catch {
       let retainedSessionID = created?.id;
