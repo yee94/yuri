@@ -41,6 +41,8 @@ export type DraftSessionBranchSelectorProps = {
   projectRootOption: BranchSelectorWorktreeOption | null;
   worktreeOptions: BranchSelectorWorktreeOption[];
   onSelectDirectory: (directory: string) => void;
+  onNavigatePrevPicker?: () => void;
+  finalFocus?: React.ComponentProps<typeof BranchSelector>['finalFocus'];
   className?: string;
   maxWidthClassName?: string;
   presentation?: 'dropdown' | 'mobile-sheet';
@@ -59,6 +61,8 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
   projectRootOption,
   worktreeOptions,
   onSelectDirectory,
+  onNavigatePrevPicker,
+  finalFocus,
   className,
   maxWidthClassName = 'max-w-[48vw] sm:max-w-[20rem]',
   presentation = 'dropdown',
@@ -304,6 +308,7 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
     try {
       const path = await createWorktreeDraftForBranch({
         branch: pendingBranch,
+        projectId: worktreeDialogProjectId ?? undefined,
         projectDirectory: projectDirectory ?? undefined,
       });
       if (path) {
@@ -469,6 +474,8 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
         onCheckout={handleBranchSelected}
         keepOpenOnCheckout
         followUpStep={followUpStep}
+        onNavigatePrevPicker={onNavigatePrevPicker}
+        finalFocus={finalFocus}
         onCreate={handleCreate}
         remotes={remotes}
         trigger={chipTrigger}

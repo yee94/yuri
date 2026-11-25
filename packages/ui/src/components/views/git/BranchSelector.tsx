@@ -6,18 +6,13 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Command,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from '@/components/ui/command';
+import { Input } from '@/components/ui/input';
+import { Kbd } from '@/components/ui/kbd';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
-import { Icon } from "@/components/icon/Icon";
-import type { IconName } from "@/components/icon/icons";
+import { Icon } from '@/components/icon/Icon';
+import type { IconName } from '@/components/icon/icons';
 import { cn } from '@/lib/utils';
 import type { GitRemote } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
@@ -67,6 +62,10 @@ interface BranchSelectorProps {
   keepOpenOnCheckout?: boolean;
   /** Optional inline second-level step rendered inside the same dropdown/sheet. */
   followUpStep?: BranchSelectorFollowUpStep | null;
+  /** Optional left-arrow handoff to an adjacent picker (e.g. draft project picker). */
+  onNavigatePrevPicker?: () => void;
+  /** Optional finalFocus target when closing the desktop dropdown. */
+  finalFocus?: React.ComponentProps<typeof DropdownMenuContent>['finalFocus'];
   onCreate: (name: string, remote?: GitRemote) => Promise<void>;
   remotes?: GitRemote[];
   disabled?: boolean;
@@ -98,122 +97,6 @@ interface BranchSelectorProps {
   presentation?: 'dropdown' | 'mobile-sheet';
 }
 
-function BranchList({ branches, local, currentBranch, branchInfo, existingWorktreeBranches, onCheckout }: {
-  branches: string[];
-  local?: boolean;
-  currentBranch?: string | null;
-  branchInfo?: Record<string, BranchInfo>;
-  existingWorktreeBranches?: ReadonlySet<string>;
-  onCheckout: (branch: string) => void;
-}) {
-  const { t } = useI18n();
-  const visible = branches.length > DEFAULT_BRANCH_RENDER_LIMIT
-    ? branches.slice(0, DEFAULT_BRANCH_RENDER_LIMIT)
-    : branches;
-  return (
-    <CommandGroup heading={t(local ? 'gitView.branch.localBranches' : 'gitView.branch.remoteBranches')}>
-      {visible.map((branch) => {
-        const isCurrent = Boolean(local && currentBranch === branch);
-        const hasExistingWorktree = Boolean(local && !isCurrent && existingWorktreeBranches?.has(branch));
-        return (
-          <CommandItem
-            key={`${local ? 'local' : 'remote'}-${branch}`}
-            value={`${local ? 'local' : 'remote'}:${branch}`}
-            onSelect={() => onCheckout(branch)}
-          >
-            {local ? (
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate typography-ui-label text-foreground">{branch}</span>
-                {(branchInfo?.[branch]?.ahead || branchInfo?.[branch]?.behind) && (
-                  <span className="typography-micro text-muted-foreground">
-                    {branchInfo[branch].ahead || 0} ahead ·{' '}
-                    {branchInfo[branch].behind || 0} behind
-                  </span>
-                )}
-              </span>
-            ) : <span className="min-w-0 flex-1 truncate typography-ui-label text-foreground">{branch}</span>}
-            {isCurrent ? (
-              <span className="shrink-0 text-xs leading-4 text-primary">{t('gitView.branch.currentBadge')}</span>
-            ) : hasExistingWorktree ? (
-              <span className="shrink-0 text-xs leading-4 text-muted-foreground">{t('gitView.branch.worktreeBadge')}</span>
-            ) : null}
-          </CommandItem>
-        );
-      })}
-      {visible.length === 0 && (
-        <CommandItem disabled className="justify-center">
-          <span className="typography-meta text-muted-foreground">
-            {t(local ? 'gitView.branch.noLocalBranches' : 'gitView.branch.noRemoteBranches')}
-          </span>
-        </CommandItem>
-      )}
-    </CommandGroup>
-  );
-}
-
-function MatchingBranchList({ items, currentBranch, branchInfo, existingWorktreeBranches, onCheckout }: {
-  items: RankedBranchItem[];
-  currentBranch?: string | null;
-  branchInfo?: Record<string, BranchInfo>;
-  existingWorktreeBranches?: ReadonlySet<string>;
-  onCheckout: (branch: string) => void;
-}) {
-  const { t } = useI18n();
-  const visible = items.length > DEFAULT_BRANCH_RENDER_LIMIT
-    ? items.slice(0, DEFAULT_BRANCH_RENDER_LIMIT)
-    : items;
-  if (visible.length === 0) return null;
-  return (
-    <CommandGroup heading={t('session.newWorktree.matchingBranches')}>
-      {visible.map((item) => {
-        const isLocal = item.source === 'local';
-        const info = isLocal ? branchInfo?.[item.label] : undefined;
-        const isCurrent = Boolean(isLocal && currentBranch === item.label);
-        const hasExistingWorktree = Boolean(isLocal && !isCurrent && existingWorktreeBranches?.has(item.label));
-        return (
-          <CommandItem
-            key={`match-${item.source}-${item.label}`}
-            value={`match:${item.source}:${item.label}`}
-            onSelect={() => onCheckout(item.label)}
-          >
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate typography-ui-label text-foreground">{item.label}</span>
-              {isLocal && (info?.ahead || info?.behind) ? (
-                <span className="typography-micro text-muted-foreground">
-                  {info.ahead || 0} ahead · {info.behind || 0} behind
-                </span>
-              ) : null}
-            </span>
-            {isCurrent ? (
-              <span className="shrink-0 text-xs leading-4 text-primary">{t('gitView.branch.currentBadge')}</span>
-            ) : hasExistingWorktree ? (
-              <span className="shrink-0 text-xs leading-4 text-muted-foreground">{t('gitView.branch.worktreeBadge')}</span>
-            ) : null}
-          </CommandItem>
-        );
-      })}
-    </CommandGroup>
-  );
-}
-
-function WorktreeItems({ options, selectedDirectory, onSelect }: {
-  options: BranchSelectorWorktreeOption[];
-  selectedDirectory: string | null;
-  onSelect: (directory: string) => void;
-}) {
-  const { t } = useI18n();
-  return options.map((option) => (
-    <CommandItem key={`worktree-${option.value}`} onSelect={() => onSelect(option.value)}>
-      <span className="truncate typography-ui-label text-foreground">
-        {option.pending ? '⏳ ' : ''}{option.label}
-      </span>
-      {selectedDirectory === option.value ? (
-        <span className="typography-micro text-primary">{t('gitView.branch.currentBadge')}</span>
-      ) : null}
-    </CommandItem>
-  ));
-}
-
 const sanitizeBranchNameInput = (value: string): string => {
   return value
     .trim()
@@ -227,6 +110,896 @@ const sanitizeBranchNameInput = (value: string): string => {
     .replace(/[-/]+$/, '');
 };
 
+const scrollRowIntoView = (container: HTMLElement | null, item: HTMLElement | null): void => {
+  if (!container || !item) return;
+  const containerRect = container.getBoundingClientRect();
+  const itemRect = item.getBoundingClientRect();
+  if (itemRect.top < containerRect.top) {
+    container.scrollTop += itemRect.top - containerRect.top - 4;
+  } else if (itemRect.bottom > containerRect.bottom) {
+    container.scrollTop += itemRect.bottom - containerRect.bottom + 4;
+  }
+};
+
+type PickerSelectableItem =
+  | { kind: 'branch'; id: string; branch: string; isLocal: boolean }
+  | { kind: 'directory'; id: string; directory: string }
+  | { kind: 'create-branch'; id: string }
+  | { kind: 'create-worktree'; id: string };
+
+const ROW_BASE_CLASS =
+  'min-h-8 w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.8125rem] leading-[1.125rem] text-foreground cursor-pointer outline-none select-none transition-colors';
+
+interface BranchPickerBodyProps {
+  open: boolean;
+  currentBranch: string | null | undefined;
+  localBranches: string[];
+  remoteBranches: string[];
+  branchInfo: Record<string, BranchInfo> | undefined;
+  directory: string | null;
+  selectedDirectory: string | null;
+  projectRootOption: BranchSelectorWorktreeOption | null;
+  worktreeOptions: BranchSelectorWorktreeOption[];
+  existingWorktreeBranches?: ReadonlySet<string>;
+  remotes: GitRemote[];
+  keepOpenOnCheckout: boolean;
+  followUpStep: BranchSelectorFollowUpStep | null;
+  onNavigatePrevPicker?: () => void;
+  onCheckout: (branch: string) => void | Promise<void>;
+  onCreate: (name: string, remote?: GitRemote) => Promise<void>;
+  onSelectDirectory?: (directory: string) => void;
+  onCreateWorktree?: () => void;
+  worktreesLabel?: string;
+  worktreeNewLabel?: string;
+  projectRootLabel?: string;
+  presentation: 'dropdown' | 'mobile-sheet';
+  searchInputRef: React.RefObject<HTMLInputElement | null>;
+  followUpListRef: React.RefObject<HTMLDivElement | null>;
+  onRequestClose: () => void;
+}
+
+/**
+ * Mounted only inside the popup/sheet presence boundary so closed composer
+ * renders never scan, rank, or map large branch or worktree lists.
+ */
+function BranchPickerBody({
+  open,
+  currentBranch,
+  localBranches,
+  remoteBranches,
+  branchInfo,
+  directory,
+  selectedDirectory,
+  projectRootOption,
+  worktreeOptions,
+  existingWorktreeBranches,
+  remotes,
+  keepOpenOnCheckout,
+  followUpStep,
+  onNavigatePrevPicker,
+  onCheckout,
+  onCreate,
+  onSelectDirectory,
+  onCreateWorktree,
+  worktreesLabel,
+  worktreeNewLabel,
+  projectRootLabel,
+  presentation,
+  searchInputRef,
+  followUpListRef,
+  onRequestClose,
+}: BranchPickerBodyProps) {
+  const { t } = useI18n();
+  const [search, setSearch] = React.useState('');
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const [showCreate, setShowCreate] = React.useState(false);
+  const [showRemoteSelect, setShowRemoteSelect] = React.useState(false);
+  const [newBranchName, setNewBranchName] = React.useState('');
+  const [isCreating, setIsCreating] = React.useState(false);
+  const [followUpIndex, setFollowUpIndex] = React.useState(0);
+  const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const itemRefs = React.useRef<Array<HTMLElement | null>>([]);
+  const createInputRef = React.useRef<HTMLInputElement>(null);
+
+  const hasMultipleRemotes = remotes.length > 1;
+  const showWorktreeSection = Boolean(onSelectDirectory || onCreateWorktree);
+  const recencyDirectory = directory ?? selectedDirectory;
+
+  const branchRecency = React.useMemo(
+    () => resolveBranchRecencyMap({ directory: recencyDirectory, branchInfo }),
+    [branchInfo, recencyDirectory],
+  );
+
+  const rankedBranches = React.useMemo(
+    () => rankBranchesForQuery({
+      localBranches,
+      remoteBranches,
+      query: search,
+      currentBranch,
+      branchRecency,
+    }),
+    [branchRecency, currentBranch, localBranches, remoteBranches, search],
+  );
+  const hasSearchTerm = search.trim().length > 0;
+
+  const sanitizedNewBranch = React.useMemo(
+    () => sanitizeBranchNameInput(newBranchName),
+    [newBranchName],
+  );
+
+  const filteredWorktrees = React.useMemo(() => {
+    const term = search.trim();
+    if (!term) return worktreeOptions;
+    return scoreByFuzzyQuery(worktreeOptions, term, (option) => option.label).map((entry) => entry.item);
+  }, [search, worktreeOptions]);
+
+  const projectRootMatches = React.useMemo(() => {
+    if (!projectRootOption) return false;
+    const term = search.trim();
+    if (!term) return true;
+    return scoreByFuzzyQuery(
+      [projectRootOption],
+      term,
+      (option) => [option.label, projectRootLabel ?? ''],
+    ).length > 0;
+  }, [projectRootLabel, projectRootOption, search]);
+
+  const visibleMatching = React.useMemo<RankedBranchItem[]>(
+    () => (rankedBranches.matching.length > DEFAULT_BRANCH_RENDER_LIMIT
+      ? rankedBranches.matching.slice(0, DEFAULT_BRANCH_RENDER_LIMIT)
+      : rankedBranches.matching),
+    [rankedBranches.matching],
+  );
+  const visibleLocal = React.useMemo(
+    () => (rankedBranches.otherLocal.length > DEFAULT_BRANCH_RENDER_LIMIT
+      ? rankedBranches.otherLocal.slice(0, DEFAULT_BRANCH_RENDER_LIMIT)
+      : rankedBranches.otherLocal),
+    [rankedBranches.otherLocal],
+  );
+  const visibleRemote = React.useMemo(
+    () => (rankedBranches.otherRemote.length > DEFAULT_BRANCH_RENDER_LIMIT
+      ? rankedBranches.otherRemote.slice(0, DEFAULT_BRANCH_RENDER_LIMIT)
+      : rankedBranches.otherRemote),
+    [rankedBranches.otherRemote],
+  );
+
+  const { flatItems, indexById } = React.useMemo(() => {
+    const items: PickerSelectableItem[] = [];
+    if (hasSearchTerm) {
+      for (const item of visibleMatching) {
+        items.push({
+          kind: 'branch',
+          id: `match:${item.source}:${item.label}`,
+          branch: item.label,
+          isLocal: item.source === 'local',
+        });
+      }
+    } else {
+      for (const branch of visibleLocal) {
+        items.push({ kind: 'branch', id: `local:${branch}`, branch, isLocal: true });
+      }
+      for (const branch of visibleRemote) {
+        items.push({ kind: 'branch', id: `remote:${branch}`, branch, isLocal: false });
+      }
+    }
+    if (showWorktreeSection) {
+      if (projectRootOption && projectRootMatches) {
+        items.push({ kind: 'directory', id: `root:${projectRootOption.value}`, directory: projectRootOption.value });
+      }
+      for (const option of filteredWorktrees) {
+        items.push({ kind: 'directory', id: `worktree:${option.value}`, directory: option.value });
+      }
+    }
+    if (!showCreate && !showRemoteSelect) {
+      items.push({ kind: 'create-branch', id: 'action:create-branch' });
+      if (onCreateWorktree) {
+        items.push({ kind: 'create-worktree', id: 'action:create-worktree' });
+      }
+    }
+    const map = new Map<string, number>();
+    items.forEach((item, index) => map.set(item.id, index));
+    return { flatItems: items, indexById: map };
+  }, [
+    filteredWorktrees,
+    hasSearchTerm,
+    onCreateWorktree,
+    projectRootMatches,
+    projectRootOption,
+    showCreate,
+    showRemoteSelect,
+    showWorktreeSection,
+    visibleLocal,
+    visibleMatching,
+    visibleRemote,
+  ]);
+
+  React.useEffect(() => {
+    setActiveIndex(0);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [search]);
+
+  React.useEffect(() => {
+    if (flatItems.length === 0) {
+      setActiveIndex(0);
+    } else if (activeIndex >= flatItems.length) {
+      setActiveIndex(flatItems.length - 1);
+    }
+  }, [activeIndex, flatItems.length]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    if (followUpStep) {
+      setFollowUpIndex(0);
+      const frame = window.requestAnimationFrame(() => {
+        followUpListRef.current?.focus();
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    if (showCreate) {
+      const frame = window.requestAnimationFrame(() => {
+        createInputRef.current?.focus();
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    if (!showRemoteSelect) {
+      const frame = window.requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+  }, [followUpListRef, followUpStep, open, searchInputRef, showCreate, showRemoteSelect]);
+
+  const handleCheckout = useEvent((branch: string) => {
+    recordRecentBranchUsage(recencyDirectory, branch);
+    if (branch === currentBranch) {
+      onRequestClose();
+      return;
+    }
+    void onCheckout(branch);
+    if (!keepOpenOnCheckout) {
+      onRequestClose();
+    }
+    setSearch('');
+  });
+
+  const handleSelectDirectory = useEvent((dir: string) => {
+    onSelectDirectory?.(dir);
+    onRequestClose();
+    setSearch('');
+  });
+
+  const handleShowCreate = useEvent(() => {
+    setShowCreate(true);
+  });
+
+  const handleCreate = useEvent(async () => {
+    if (!sanitizedNewBranch || isCreating) return;
+    if (hasMultipleRemotes) {
+      setShowRemoteSelect(true);
+      return;
+    }
+    setIsCreating(true);
+    try {
+      await onCreate(sanitizedNewBranch, remotes[0]);
+      recordRecentBranchUsage(recencyDirectory, sanitizedNewBranch);
+      setNewBranchName('');
+      setShowCreate(false);
+      if (!keepOpenOnCheckout) {
+        onRequestClose();
+      }
+    } finally {
+      setIsCreating(false);
+    }
+  });
+
+  const handleSelectRemote = useEvent(async (remote: GitRemote) => {
+    if (!sanitizedNewBranch || isCreating) return;
+    setIsCreating(true);
+    try {
+      await onCreate(sanitizedNewBranch, remote);
+      recordRecentBranchUsage(recencyDirectory, sanitizedNewBranch);
+      setNewBranchName('');
+      setShowCreate(false);
+      setShowRemoteSelect(false);
+      if (!keepOpenOnCheckout) {
+        onRequestClose();
+      }
+    } finally {
+      setIsCreating(false);
+    }
+  });
+
+  const handleCancelCreate = useEvent(() => {
+    setNewBranchName('');
+    setShowCreate(false);
+    setShowRemoteSelect(false);
+  });
+
+  const activateItem = useEvent((item: PickerSelectableItem | undefined) => {
+    if (!item) return;
+    if (item.kind === 'branch') {
+      handleCheckout(item.branch);
+      return;
+    }
+    if (item.kind === 'directory') {
+      handleSelectDirectory(item.directory);
+      return;
+    }
+    if (item.kind === 'create-branch') {
+      handleShowCreate();
+      return;
+    }
+    if (item.kind === 'create-worktree') {
+      onRequestClose();
+      onCreateWorktree?.();
+    }
+  });
+
+  const moveSelection = useEvent((direction: 1 | -1) => {
+    const total = flatItems.length;
+    if (total === 0) return;
+    const nextIndex = (activeIndex + direction + total) % total;
+    setActiveIndex(nextIndex);
+    window.requestAnimationFrame(() => {
+      scrollRowIntoView(scrollRef.current, itemRefs.current[nextIndex] ?? null);
+    });
+  });
+
+  const handleLevel1KeyDown = useEvent((event: React.KeyboardEvent) => {
+    if (showCreate || showRemoteSelect) return;
+    event.stopPropagation();
+
+    const targetInput = event.target instanceof HTMLInputElement ? event.target : null;
+
+    if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
+      event.preventDefault();
+      moveSelection(1);
+      return;
+    }
+    if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+      event.preventDefault();
+      moveSelection(-1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      activateItem(flatItems[activeIndex]);
+      return;
+    }
+    if (event.key === 'ArrowRight') {
+      const atEnd = !targetInput
+        || targetInput.value.length === 0
+        || (targetInput.selectionStart === targetInput.value.length
+          && targetInput.selectionEnd === targetInput.value.length);
+      if (atEnd) {
+        const active = flatItems[activeIndex];
+        if (active && active.kind === 'branch' && active.branch !== currentBranch) {
+          event.preventDefault();
+          activateItem(active);
+        }
+      }
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      const atStart = !targetInput
+        || targetInput.value.length === 0
+        || (targetInput.selectionStart === 0 && targetInput.selectionEnd === 0);
+      if (atStart && onNavigatePrevPicker) {
+        event.preventDefault();
+        onRequestClose();
+        window.requestAnimationFrame(() => onNavigatePrevPicker());
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onRequestClose();
+    }
+  });
+
+  const runFollowUpAction = useEvent((action: BranchSelectorFollowUpAction) => {
+    if (followUpStep?.pending) return;
+    setPendingActionId(action.id);
+    void Promise.resolve(action.onSelect()).finally(() => {
+      setPendingActionId((current) => (current === action.id ? null : current));
+    });
+  });
+
+  const handleFollowUpKeyDown = useEvent((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!followUpStep) return;
+    event.stopPropagation();
+    const count = followUpStep.actions.length;
+    if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
+      event.preventDefault();
+      if (count > 0) setFollowUpIndex((prev) => (prev + 1) % count);
+      return;
+    }
+    if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+      event.preventDefault();
+      if (count > 0) setFollowUpIndex((prev) => (prev - 1 + count) % count);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      const action = followUpStep.actions[followUpIndex];
+      if (action) runFollowUpAction(action);
+      return;
+    }
+    if (event.key === 'Escape' || event.key === 'ArrowLeft' || event.key === 'Backspace') {
+      event.preventDefault();
+      if (!followUpStep.pending) followUpStep.onBack();
+    }
+  });
+
+  const resolvedWorktreesLabel = worktreesLabel ?? t('chat.chatInput.worktrees');
+  const resolvedWorktreeNewLabel = worktreeNewLabel ?? t('chat.chatInput.branchSwitch.createWorktree');
+  const resolvedProjectRootLabel = projectRootLabel ?? t('chat.chatInput.projectRoot');
+
+  if (followUpStep) {
+    return (
+      <div
+        ref={followUpListRef}
+        tabIndex={-1}
+        role="listbox"
+        data-branch-followup-step
+        onKeyDown={handleFollowUpKeyDown}
+        className="flex min-h-0 flex-1 flex-col outline-none"
+      >
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-[var(--yuri-popup-divider)] px-2 py-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={followUpStep.pending}
+            onClick={followUpStep.onBack}
+            aria-label={t('header.actions.backAria')}
+            className="size-6 shrink-0 text-muted-foreground"
+          >
+            <Icon name="arrow-left" className="size-3.5" />
+          </Button>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+            {followUpStep.title}
+          </span>
+        </div>
+
+        <div className="model-picker-list flex flex-col gap-0.5">
+          {followUpStep.actions.map((action, index) => {
+            const isHighlighted = index === followUpIndex;
+            return (
+              <button
+                key={action.id}
+                type="button"
+                role="option"
+                aria-selected={isHighlighted}
+                data-branch-followup-action={action.id}
+                data-selected={isHighlighted ? 'true' : undefined}
+                disabled={followUpStep.pending}
+                onMouseEnter={() => setFollowUpIndex(index)}
+                onClick={() => runFollowUpAction(action)}
+                className={cn(
+                  ROW_BASE_CLASS,
+                  isHighlighted
+                    ? 'bg-interactive-selection text-interactive-selection-foreground'
+                    : 'hover:bg-interactive-hover/50',
+                  followUpStep.pending && 'pointer-events-none opacity-50',
+                )}
+              >
+                {followUpStep.pending && pendingActionId === action.id ? (
+                  <Icon name="loader-4" className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                ) : (
+                  <Icon name={action.icon} className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span className="min-w-0 flex-1 truncate font-medium">{action.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="model-picker-footer flex shrink-0 items-center gap-3 text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <Kbd variant="hint">
+              <Icon name="arrow-up" className="size-2.5" />
+              <Icon name="arrow-down" className="size-2.5" />
+            </Kbd>
+            {t('directoryExplorerDialog.footer.navigate')}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Kbd variant="hint">
+              <Icon name="corner-down-left" className="size-2.5" />
+            </Kbd>
+            {t('directoryExplorerDialog.footer.select')}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Kbd variant="hint">
+              <Icon name="arrow-left" className="size-2.5" />
+            </Kbd>
+            {t('header.actions.backAria')}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const renderBranchRow = (id: string, branch: string, isLocal: boolean) => {
+    const rowIndex = indexById.get(id) ?? -1;
+    const isHighlighted = rowIndex >= 0 && rowIndex === activeIndex;
+    const isCurrent = Boolean(isLocal && currentBranch === branch);
+    const hasExistingWorktree = Boolean(isLocal && !isCurrent && existingWorktreeBranches?.has(branch));
+    const info = isLocal ? branchInfo?.[branch] : undefined;
+
+    return (
+      <button
+        key={id}
+        ref={(el) => { if (rowIndex >= 0) itemRefs.current[rowIndex] = el; }}
+        type="button"
+        role="option"
+        aria-selected={isCurrent}
+        data-branch-item={id}
+        data-selected={isHighlighted ? 'true' : undefined}
+        onMouseEnter={() => { if (rowIndex >= 0) setActiveIndex(rowIndex); }}
+        onClick={() => handleCheckout(branch)}
+        className={cn(
+          ROW_BASE_CLASS,
+          isHighlighted
+            ? 'bg-interactive-selection text-interactive-selection-foreground'
+            : 'hover:bg-interactive-hover/50',
+        )}
+      >
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate font-medium">{branch}</span>
+          {isLocal && (info?.ahead || info?.behind) ? (
+            <span className="text-[0.6875rem] leading-[0.875rem] text-muted-foreground">
+              {info.ahead || 0} ahead · {info.behind || 0} behind
+            </span>
+          ) : null}
+        </span>
+        {isCurrent ? (
+          <span className="shrink-0 text-[0.6875rem] leading-4 text-primary">
+            {t('gitView.branch.currentBadge')}
+          </span>
+        ) : hasExistingWorktree ? (
+          <span className="shrink-0 text-[0.6875rem] leading-4 text-muted-foreground">
+            {t('gitView.branch.worktreeBadge')}
+          </span>
+        ) : null}
+      </button>
+    );
+  };
+
+  const createBranchRowIndex = indexById.get('action:create-branch') ?? -1;
+  const createWorktreeRowIndex = indexById.get('action:create-worktree') ?? -1;
+  const noSearchResults = hasSearchTerm
+    && visibleMatching.length === 0
+    && filteredWorktrees.length === 0
+    && !projectRootMatches;
+
+  return (
+    <div
+      data-branch-picker-surface
+      onKeyDown={handleLevel1KeyDown}
+      className="flex h-full min-h-0 flex-col outline-none"
+    >
+      <div
+        className="model-picker-search-area"
+        data-mobile-sheet-no-dismiss={presentation === 'mobile-sheet' ? '' : undefined}
+      >
+        <div className="relative">
+          <Icon
+            name="search"
+            className="pointer-events-none absolute left-0 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            ref={searchInputRef}
+            type="text"
+            autoFocus
+            data-branch-search-input
+            placeholder={t('gitView.branch.searchPlaceholder')}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="model-picker-search h-6 pl-7"
+          />
+        </div>
+      </div>
+
+      <ScrollableOverlay
+        ref={scrollRef}
+        outerClassName="max-h-[min(360px,calc(60vh-6rem))] min-h-0 flex-1 overflow-x-hidden"
+        className="overlay-scrollbar-target--no-gutter"
+        scrollbarClassName="overlay-scrollbar--flush overlay-scrollbar--dense overlay-scrollbar--zero"
+        disableHorizontal
+      >
+        <div role="listbox" className="model-picker-list flex flex-col gap-0.5">
+          {noSearchResults ? (
+            <div className="px-2.5 py-5 text-center text-xs text-muted-foreground">
+              {t('gitView.branch.empty')}
+            </div>
+          ) : null}
+
+          {hasSearchTerm ? (
+            visibleMatching.length > 0 ? (
+              <div className="flex flex-col gap-0.5">
+                <div className="model-picker-section-header flex items-center">
+                  <span className="min-w-0 truncate">{t('session.newWorktree.matchingBranches')}</span>
+                </div>
+                {visibleMatching.map((item) =>
+                  renderBranchRow(`match:${item.source}:${item.label}`, item.label, item.source === 'local'),
+                )}
+              </div>
+            ) : null
+          ) : (
+            <>
+              <div className="flex flex-col gap-0.5">
+                <div className="model-picker-section-header flex items-center">
+                  <span className="min-w-0 truncate">{t('gitView.branch.localBranches')}</span>
+                </div>
+                {visibleLocal.length > 0 ? (
+                  visibleLocal.map((branch) => renderBranchRow(`local:${branch}`, branch, true))
+                ) : (
+                  <div className="px-2.5 py-2 text-center text-xs text-muted-foreground">
+                    {t('gitView.branch.noLocalBranches')}
+                  </div>
+                )}
+              </div>
+
+              <div className="model-picker-section-divider" />
+
+              <div className="flex flex-col gap-0.5">
+                <div className="model-picker-section-header flex items-center">
+                  <span className="min-w-0 truncate">{t('gitView.branch.remoteBranches')}</span>
+                </div>
+                {visibleRemote.length > 0 ? (
+                  visibleRemote.map((branch) => renderBranchRow(`remote:${branch}`, branch, false))
+                ) : (
+                  <div className="px-2.5 py-2 text-center text-xs text-muted-foreground">
+                    {t('gitView.branch.noRemoteBranches')}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {showWorktreeSection && ((projectRootOption && projectRootMatches) || filteredWorktrees.length > 0) ? (
+            <>
+              <div className="model-picker-section-divider" />
+              <div className="flex flex-col gap-0.5">
+                <div className="model-picker-section-header flex items-center justify-between">
+                  <span className="min-w-0 truncate">{resolvedWorktreesLabel}</span>
+                </div>
+                {projectRootOption && projectRootMatches ? (() => {
+                  const id = `root:${projectRootOption.value}`;
+                  const rowIndex = indexById.get(id) ?? -1;
+                  const isHighlighted = rowIndex >= 0 && rowIndex === activeIndex;
+                  const isSelected = selectedDirectory === projectRootOption.value;
+                  return (
+                    <button
+                      key={id}
+                      ref={(el) => { if (rowIndex >= 0) itemRefs.current[rowIndex] = el; }}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      data-branch-item={id}
+                      data-selected={isHighlighted ? 'true' : undefined}
+                      onMouseEnter={() => { if (rowIndex >= 0) setActiveIndex(rowIndex); }}
+                      onClick={() => handleSelectDirectory(projectRootOption.value)}
+                      className={cn(
+                        ROW_BASE_CLASS,
+                        isHighlighted
+                          ? 'bg-interactive-selection text-interactive-selection-foreground'
+                          : 'hover:bg-interactive-hover/50',
+                      )}
+                    >
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="text-[0.6875rem] leading-[0.875rem] text-muted-foreground">
+                          {resolvedProjectRootLabel}
+                        </span>
+                        <span className="truncate font-medium">{projectRootOption.label}</span>
+                      </span>
+                      {isSelected ? (
+                        <span className="shrink-0 text-[0.6875rem] leading-4 text-primary">
+                          {t('gitView.branch.currentBadge')}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })() : null}
+                {filteredWorktrees.map((option) => {
+                  const id = `worktree:${option.value}`;
+                  const rowIndex = indexById.get(id) ?? -1;
+                  const isHighlighted = rowIndex >= 0 && rowIndex === activeIndex;
+                  const isSelected = selectedDirectory === option.value;
+                  return (
+                    <button
+                      key={id}
+                      ref={(el) => { if (rowIndex >= 0) itemRefs.current[rowIndex] = el; }}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      data-branch-item={id}
+                      data-selected={isHighlighted ? 'true' : undefined}
+                      onMouseEnter={() => { if (rowIndex >= 0) setActiveIndex(rowIndex); }}
+                      onClick={() => handleSelectDirectory(option.value)}
+                      className={cn(
+                        ROW_BASE_CLASS,
+                        isHighlighted
+                          ? 'bg-interactive-selection text-interactive-selection-foreground'
+                          : 'hover:bg-interactive-hover/50',
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate font-medium">
+                        {option.pending ? '⏳ ' : ''}{option.label}
+                      </span>
+                      {isSelected ? (
+                        <span className="shrink-0 text-[0.6875rem] leading-4 text-primary">
+                          {t('gitView.branch.currentBadge')}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </ScrollableOverlay>
+
+      <div className="composer-picker-actions flex flex-col gap-0.5">
+        {showRemoteSelect ? (
+          <div className="px-1.5 py-1">
+            <div className="mb-1.5 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRemoteSelect(false)}
+                disabled={isCreating}
+                className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                <Icon name="arrow-left" className="size-3.5" />
+              </button>
+              <span className="text-xs text-muted-foreground">
+                {t('gitView.branch.pushToPrefix')}{' '}
+                <span className="font-medium text-foreground">{sanitizedNewBranch}</span>{' '}
+                {t('gitView.branch.pushToSuffix')}
+              </span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              {remotes.map((remote) => (
+                <button
+                  key={remote.name}
+                  type="button"
+                  onClick={() => void handleSelectRemote(remote)}
+                  disabled={isCreating}
+                  className={cn(ROW_BASE_CLASS, 'flex-col items-start gap-0.5 hover:bg-interactive-hover/50')}
+                >
+                  <span className="font-medium text-foreground">
+                    {isCreating ? (
+                      <Icon name="loader-4" className="mr-1.5 inline size-3 animate-spin" />
+                    ) : null}
+                    {remote.name}
+                  </span>
+                  <span className="max-w-full truncate text-[0.6875rem] leading-4 text-muted-foreground">
+                    {remote.pushUrl}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : showCreate ? (
+          <div className="flex items-center gap-2 rounded-lg px-2 py-1">
+            <input
+              ref={createInputRef}
+              placeholder={t('gitView.branch.newBranchPlaceholder')}
+              value={newBranchName}
+              onChange={(event) => setNewBranchName(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void handleCreate();
+                } else if (event.key === 'Escape') {
+                  event.preventDefault();
+                  handleCancelCreate();
+                }
+              }}
+              className="min-w-0 flex-1 bg-transparent text-[0.8125rem] leading-5 outline-none placeholder:text-muted-foreground"
+            />
+            <button
+              type="button"
+              onClick={() => void handleCreate()}
+              disabled={!sanitizedNewBranch || isCreating}
+              className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              {isCreating ? (
+                <Icon name="loader-4" className="size-3.5 animate-spin" />
+              ) : (
+                <Icon name="add" className="size-3.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={handleCancelCreate}
+              disabled={isCreating}
+              className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              <Icon name="close" className="size-3.5" />
+            </button>
+          </div>
+        ) : (
+          <>
+            <button
+              ref={(el) => { if (createBranchRowIndex >= 0) itemRefs.current[createBranchRowIndex] = el; }}
+              type="button"
+              role="menuitem"
+              data-branch-item="action:create-branch"
+              data-selected={createBranchRowIndex >= 0 && activeIndex === createBranchRowIndex ? 'true' : undefined}
+              onMouseEnter={() => { if (createBranchRowIndex >= 0) setActiveIndex(createBranchRowIndex); }}
+              onClick={handleShowCreate}
+              className={cn(
+                'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors',
+                createBranchRowIndex >= 0 && activeIndex === createBranchRowIndex
+                  ? 'bg-interactive-selection text-interactive-selection-foreground'
+                  : 'hover:bg-interactive-hover/50 hover:text-foreground',
+              )}
+            >
+              <Icon name="add" className="size-3.5 shrink-0" />
+              <span className="truncate">{t('gitView.branch.create')}</span>
+            </button>
+            {onCreateWorktree ? (
+              <button
+                ref={(el) => { if (createWorktreeRowIndex >= 0) itemRefs.current[createWorktreeRowIndex] = el; }}
+                type="button"
+                role="menuitem"
+                data-branch-item="action:create-worktree"
+                data-selected={createWorktreeRowIndex >= 0 && activeIndex === createWorktreeRowIndex ? 'true' : undefined}
+                onMouseEnter={() => { if (createWorktreeRowIndex >= 0) setActiveIndex(createWorktreeRowIndex); }}
+                onClick={() => {
+                  onRequestClose();
+                  onCreateWorktree();
+                }}
+                className={cn(
+                  'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors',
+                  createWorktreeRowIndex >= 0 && activeIndex === createWorktreeRowIndex
+                    ? 'bg-interactive-selection text-interactive-selection-foreground'
+                    : 'hover:bg-interactive-hover/50 hover:text-foreground',
+                )}
+              >
+                <Icon name="git-branch" className="size-3.5 shrink-0" />
+                <span className="truncate">{resolvedWorktreeNewLabel}</span>
+              </button>
+            ) : null}
+          </>
+        )}
+      </div>
+
+      {presentation === 'dropdown' ? (
+        <div className="model-picker-footer flex shrink-0 items-center gap-3 text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <Kbd variant="hint">
+              <Icon name="arrow-up" className="size-2.5" />
+              <Icon name="arrow-down" className="size-2.5" />
+            </Kbd>
+            {t('directoryExplorerDialog.footer.navigate')}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <Kbd variant="hint">
+              <Icon name="corner-down-left" className="size-2.5" />
+            </Kbd>
+            {t('directoryExplorerDialog.footer.select')}
+          </span>
+          {onNavigatePrevPicker ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Kbd variant="hint">
+                <Icon name="arrow-left" className="size-2.5" />
+              </Kbd>
+              {t('chat.leaderKey.action.project')}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export const BranchSelector: React.FC<BranchSelectorProps> = ({
   currentBranch,
   localBranches,
@@ -236,6 +1009,8 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
   onCheckout,
   keepOpenOnCheckout = false,
   followUpStep = null,
+  onNavigatePrevPicker,
+  finalFocus,
   onCreate,
   remotes = [],
   disabled = false,
@@ -259,224 +1034,17 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
 }) => {
   const { t } = useI18n();
   const [isOpen, setIsOpen] = React.useState(false);
-  const [search, setSearch] = React.useState('');
-  const [showCreate, setShowCreate] = React.useState(false);
-  const [showRemoteSelect, setShowRemoteSelect] = React.useState(false);
-  const [newBranchName, setNewBranchName] = React.useState('');
-  const [isCreating, setIsCreating] = React.useState(false);
-  const [followUpIndex, setFollowUpIndex] = React.useState(0);
-  const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
-  const commandRef = React.useRef<HTMLDivElement>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
-  const createInputRef = React.useRef<HTMLInputElement>(null);
   const followUpListRef = React.useRef<HTMLDivElement>(null);
   const mobileSheetId = React.useId();
   const open = controlledOpen ?? isOpen;
-  const setOpen = (nextOpen: boolean) => {
+  const setOpen = useEvent((nextOpen: boolean) => {
     if (controlledOpen === undefined) setIsOpen(nextOpen);
     onOpenChange?.(nextOpen);
-  };
-
-  const stopDropdownTypeahead = useEvent((event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Tab') {
-      event.preventDefault();
-      event.stopPropagation();
-      const target = commandRef.current ?? event.currentTarget;
-      target.dispatchEvent(new KeyboardEvent('keydown', {
-        key: event.shiftKey ? 'ArrowUp' : 'ArrowDown',
-        bubbles: true,
-        cancelable: true,
-      }));
-      return;
-    }
-    event.stopPropagation();
   });
-
-  const runFollowUpAction = useEvent((action: BranchSelectorFollowUpAction) => {
-    if (followUpStep?.pending) return;
-    setPendingActionId(action.id);
-    void Promise.resolve(action.onSelect()).finally(() => {
-      setPendingActionId((current) => (current === action.id ? null : current));
-    });
-  });
-
-  const handleFollowUpKeyDown = useEvent((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!followUpStep) return;
-    const count = followUpStep.actions.length;
-    if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (count > 0) setFollowUpIndex((prev) => (prev + 1) % count);
-      return;
-    }
-    if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (count > 0) setFollowUpIndex((prev) => (prev - 1 + count) % count);
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      event.stopPropagation();
-      const action = followUpStep.actions[followUpIndex];
-      if (action) runFollowUpAction(action);
-      return;
-    }
-    if (event.key === 'Escape' || event.key === 'ArrowLeft' || event.key === 'Backspace') {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!followUpStep.pending) followUpStep.onBack();
-    }
-  });
-
-  const hasMultipleRemotes = remotes.length > 1;
-  const showWorktreeSection = Boolean(onSelectDirectory || onCreateWorktree);
-  const recencyDirectory = directory ?? selectedDirectory;
-
-  const branchRecency = React.useMemo(
-    () => (open ? resolveBranchRecencyMap({ directory: recencyDirectory, branchInfo }) : undefined),
-    [branchInfo, open, recencyDirectory],
-  );
-
-  const rankedBranches = React.useMemo(
-    () => rankBranchesForQuery({
-      localBranches,
-      remoteBranches,
-      query: search,
-      currentBranch,
-      branchRecency,
-    }),
-    [branchRecency, currentBranch, localBranches, remoteBranches, search],
-  );
-  const hasSearchTerm = search.trim().length > 0;
-
-  const sanitizedNewBranch = React.useMemo(
-    () => sanitizeBranchNameInput(newBranchName),
-    [newBranchName]
-  );
-
-  const filteredWorktrees = React.useMemo(() => {
-    const term = search.trim();
-    if (!term) return worktreeOptions;
-    return scoreByFuzzyQuery(worktreeOptions, term, (option) => option.label).map((entry) => entry.item);
-  }, [search, worktreeOptions]);
-
-  const projectRootMatches = React.useMemo(() => {
-    if (!projectRootOption) return false;
-    const term = search.trim();
-    if (!term) return true;
-    return scoreByFuzzyQuery(
-      [projectRootOption],
-      term,
-      (option) => [option.label, projectRootLabel ?? ''],
-    ).length > 0;
-  }, [projectRootLabel, projectRootOption, search]);
-
-  const handleCheckout = (branch: string) => {
-    recordRecentBranchUsage(recencyDirectory, branch);
-    if (branch === currentBranch) {
-      setOpen(false);
-      return;
-    }
-    void onCheckout(branch);
-    if (!keepOpenOnCheckout) {
-      setOpen(false);
-    }
-    setSearch('');
-  };
-
-  const handleSelectDirectory = (directory: string) => {
-    onSelectDirectory?.(directory);
-    setOpen(false);
-    setSearch('');
-  };
-
-  const handleShowCreate = () => {
-    setShowCreate(true);
-    setTimeout(() => createInputRef.current?.focus(), 50);
-  };
-
-  const handleCreate = async () => {
-    if (!sanitizedNewBranch || isCreating) return;
-
-    // If multiple remotes, show remote selection first
-    if (hasMultipleRemotes) {
-      setShowRemoteSelect(true);
-      return;
-    }
-
-    // Single or no remote - proceed directly
-    setIsCreating(true);
-    try {
-      await onCreate(sanitizedNewBranch, remotes[0]);
-      recordRecentBranchUsage(recencyDirectory, sanitizedNewBranch);
-      setNewBranchName('');
-      setShowCreate(false);
-      if (!keepOpenOnCheckout) {
-        setOpen(false);
-      }
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  const handleSelectRemote = async (remote: GitRemote) => {
-    if (!sanitizedNewBranch || isCreating) return;
-    setIsCreating(true);
-    try {
-      await onCreate(sanitizedNewBranch, remote);
-      recordRecentBranchUsage(recencyDirectory, sanitizedNewBranch);
-      setNewBranchName('');
-      setShowCreate(false);
-      setShowRemoteSelect(false);
-      if (!keepOpenOnCheckout) {
-        setOpen(false);
-      }
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  const handleBackFromRemoteSelect = () => {
-    setShowRemoteSelect(false);
-  };
-
-  const handleCancelCreate = () => {
-    setNewBranchName('');
-    setShowCreate(false);
-    setShowRemoteSelect(false);
-  };
-
-  React.useEffect(() => {
-    if (!open) {
-      setSearch('');
-      setShowCreate(false);
-      setShowRemoteSelect(false);
-      setNewBranchName('');
-      setFollowUpIndex(0);
-      setPendingActionId(null);
-      return;
-    }
-    if (followUpStep) {
-      setFollowUpIndex(0);
-      const frame = window.requestAnimationFrame(() => {
-        followUpListRef.current?.focus();
-      });
-      return () => window.cancelAnimationFrame(frame);
-    }
-    if (!showCreate && !showRemoteSelect) {
-      const frame = window.requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-      });
-      return () => window.cancelAnimationFrame(frame);
-    }
-  }, [followUpStep, open, showCreate, showRemoteSelect]);
 
   const branchLabel = triggerLabel || currentBranch || t('gitView.branch.detachedHead');
   const resolvedContentAlign = contentAlign ?? (iconOnly ? 'end' : 'start');
-  const resolvedWorktreesLabel = worktreesLabel ?? t('chat.chatInput.worktrees');
-  const resolvedWorktreeNewLabel = worktreeNewLabel ?? t('chat.chatInput.worktreeNew');
-  const resolvedProjectRootLabel = projectRootLabel ?? t('chat.chatInput.projectRoot');
 
   const defaultTrigger = iconOnly ? (
     <button
@@ -509,238 +1077,34 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
     </DropdownMenuTrigger>
   );
 
-  const commandSurface = followUpStep ? (
-    <div
-      ref={followUpListRef}
-      tabIndex={-1}
-      role="menu"
-      data-branch-followup-step
-      onKeyDown={handleFollowUpKeyDown}
-      className="flex flex-col p-1 outline-none"
-    >
-      <div className="mb-1 flex items-center gap-1.5 border-b border-border/60 px-2 py-1.5">
-        <button
-          type="button"
-          disabled={followUpStep.pending}
-          onClick={followUpStep.onBack}
-          aria-label={t('header.actions.backAria')}
-          className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-50"
-        >
-          <Icon name="arrow-left" className="size-3.5" />
-        </button>
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
-          {followUpStep.title}
-        </span>
-      </div>
-      {followUpStep.actions.map((action, index) => {
-        const isHighlighted = index === followUpIndex;
-        return (
-          <button
-            key={action.id}
-            type="button"
-            role="menuitem"
-            data-branch-followup-action={action.id}
-            data-selected={isHighlighted ? 'true' : undefined}
-            disabled={followUpStep.pending}
-            onMouseEnter={() => setFollowUpIndex(index)}
-            onClick={() => runFollowUpAction(action)}
-            className={cn(
-              'relative flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left typography-ui-label text-foreground outline-none select-none disabled:pointer-events-none disabled:opacity-50',
-              isHighlighted
-                ? 'bg-interactive-selection text-interactive-selection-foreground'
-                : 'hover:bg-interactive-hover',
-            )}
-          >
-            {followUpStep.pending && pendingActionId === action.id ? (
-              <Icon name="loader-4" className="size-4 shrink-0 animate-spin text-muted-foreground" />
-            ) : (
-              <Icon name={action.icon} className="size-4 shrink-0 text-muted-foreground" />
-            )}
-            <span className="min-w-0 flex-1 truncate">{action.label}</span>
-          </button>
-        );
-      })}
-    </div>
-  ) : (
-        <Command ref={commandRef} shouldFilter={false} className="h-full min-h-0">
-          <div data-mobile-sheet-no-dismiss={presentation === 'mobile-sheet' ? '' : undefined}>
-            <CommandInput
-              ref={searchInputRef}
-              autoFocus
-              placeholder={t('gitView.branch.searchPlaceholder')}
-              value={search}
-              onValueChange={setSearch}
-              onKeyDown={stopDropdownTypeahead}
-            />
-          </div>
-          <CommandList
-            scrollbarClassName="overlay-scrollbar--flush overlay-scrollbar--dense overlay-scrollbar--zero"
-            disableHorizontal
-          >
-            {hasSearchTerm && rankedBranches.matching.length === 0 && filteredWorktrees.length === 0 && !projectRootMatches ? (
-              <div className="py-6 text-center typography-ui-label text-muted-foreground">
-                {t('gitView.branch.empty')}
-              </div>
-            ) : null}
-
-            <CommandGroup>
-              {showRemoteSelect ? (
-                // Remote selection step
-                <div className="px-2 py-1.5">
-                  <div className="flex items-center gap-2 mb-2">
-                    <button
-                      type="button"
-                      onClick={handleBackFromRemoteSelect}
-                      disabled={isCreating}
-                      className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
-                    >
-                      <Icon name="arrow-left" className="size-4" />
-                    </button>
-                    <span className="typography-meta text-muted-foreground">
-                      {t('gitView.branch.pushToPrefix')} <span className="text-foreground font-medium">{sanitizedNewBranch}</span> {t('gitView.branch.pushToSuffix')}
-                    </span>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    {remotes.map((remote) => (
-                      <button
-                        key={remote.name}
-                        type="button"
-                        onClick={() => handleSelectRemote(remote)}
-                        disabled={isCreating}
-                        className="flex flex-col items-start gap-0.5 px-2 py-1.5 rounded-md text-left hover:bg-accent disabled:opacity-50"
-                      >
-                        <span className="typography-ui-label text-foreground">
-                          {isCreating ? (
-                            <Icon name="loader-4" className="inline size-3 mr-1.5 animate-spin" />
-                          ) : null}
-                          {remote.name}
-                        </span>
-                        <span className="typography-micro text-muted-foreground truncate max-w-full">
-                          {remote.pushUrl}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : !showCreate ? (
-                <CommandItem onSelect={handleShowCreate}>
-                  <Icon name="add" className="size-4" />
-                  <span>{t('gitView.branch.create')}</span>
-                </CommandItem>
-              ) : (
-                <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
-                  <input
-                    ref={createInputRef}
-                    placeholder={t('gitView.branch.newBranchPlaceholder')}
-                    value={newBranchName}
-                    onChange={(e) => setNewBranchName(e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      stopDropdownTypeahead(e);
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleCreate();
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        handleCancelCreate();
-                      }
-                    }}
-                    className="flex-1 min-w-0 bg-transparent typography-meta outline-none placeholder:text-muted-foreground"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCreate}
-                    disabled={!sanitizedNewBranch || isCreating}
-                    className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
-                  >
-                    {isCreating ? (
-                      <Icon name="loader-4" className="size-4 animate-spin" />
-                    ) : (
-                      <Icon name="add" className="size-4" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCancelCreate}
-                    disabled={isCreating}
-                    className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50"
-                  >
-                    <Icon name="close" className="size-4" />
-                  </button>
-                </div>
-              )}
-            </CommandGroup>
-
-            <CommandSeparator />
-
-            {hasSearchTerm ? (
-              <MatchingBranchList
-                items={rankedBranches.matching}
-                currentBranch={currentBranch}
-                branchInfo={branchInfo}
-                existingWorktreeBranches={existingWorktreeBranches}
-                onCheckout={handleCheckout}
-              />
-            ) : (
-              <>
-                <BranchList
-                  branches={rankedBranches.otherLocal}
-                  local
-                  currentBranch={currentBranch}
-                  branchInfo={branchInfo}
-                  existingWorktreeBranches={existingWorktreeBranches}
-                  onCheckout={handleCheckout}
-                />
-
-                <CommandSeparator />
-
-                <BranchList
-                  branches={rankedBranches.otherRemote}
-                  onCheckout={handleCheckout}
-                />
-              </>
-            )}
-
-            {showWorktreeSection ? (
-              <>
-                <CommandSeparator />
-                <CommandGroup>
-                  <div className="flex items-center justify-between px-2 py-1">
-                    <span className="text-muted-foreground text-xs leading-4 font-medium">{resolvedWorktreesLabel}</span>
-                    {onCreateWorktree ? (
-                      <button
-                        type="button"
-                        className="cursor-pointer text-muted-foreground text-xs leading-4 font-medium hover:text-foreground"
-                        onPointerDown={(event) => { event.stopPropagation(); }}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setOpen(false);
-                          onCreateWorktree();
-                        }}
-                      >
-                        {resolvedWorktreeNewLabel}
-                      </button>
-                    ) : null}
-                  </div>
-                  {projectRootOption && projectRootMatches ? (
-                    <CommandItem onSelect={() => handleSelectDirectory(projectRootOption.value)}>
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="typography-micro text-muted-foreground">{resolvedProjectRootLabel}</span>
-                        <span className="truncate typography-ui-label text-foreground">{projectRootOption.label}</span>
-                      </span>
-                      {selectedDirectory === projectRootOption.value ? (
-                        <span className="typography-micro text-primary">{t('gitView.branch.currentBadge')}</span>
-                      ) : null}
-                    </CommandItem>
-                  ) : null}
-                  <WorktreeItems options={filteredWorktrees} selectedDirectory={selectedDirectory} onSelect={handleSelectDirectory} />
-                </CommandGroup>
-              </>
-            ) : null}
-
-          </CommandList>
-        </Command>
+  const pickerBody = (
+    <BranchPickerBody
+      open={open}
+      currentBranch={currentBranch}
+      localBranches={localBranches}
+      remoteBranches={remoteBranches}
+      branchInfo={branchInfo}
+      directory={directory}
+      selectedDirectory={selectedDirectory}
+      projectRootOption={projectRootOption}
+      worktreeOptions={worktreeOptions}
+      existingWorktreeBranches={existingWorktreeBranches}
+      remotes={remotes}
+      keepOpenOnCheckout={keepOpenOnCheckout}
+      followUpStep={followUpStep}
+      onNavigatePrevPicker={onNavigatePrevPicker}
+      onCheckout={onCheckout}
+      onCreate={onCreate}
+      onSelectDirectory={onSelectDirectory}
+      onCreateWorktree={onCreateWorktree}
+      worktreesLabel={worktreesLabel}
+      worktreeNewLabel={worktreeNewLabel}
+      projectRootLabel={projectRootLabel}
+      presentation={presentation}
+      searchInputRef={searchInputRef}
+      followUpListRef={followUpListRef}
+      onRequestClose={() => setOpen(false)}
+    />
   );
 
   if (presentation === 'mobile-sheet') {
@@ -760,7 +1124,9 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
           closeAriaLabel={t('mobile.surface.closeAria')}
           resizeAriaLabel={t('mobile.sessions.sheet.resizeAria')}
         >
-          {commandSurface}
+          <div className="yuri-composer-picker flex h-full min-h-0 flex-col">
+            {pickerBody}
+          </div>
         </MobileResizableSheet>
       </>
     );
@@ -781,8 +1147,12 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
         </Tooltip>
       )}
 
-      <DropdownMenuContent align={resolvedContentAlign} className="w-72 p-0 max-h-[60vh] flex flex-col">
-        {commandSurface}
+      <DropdownMenuContent
+        align={resolvedContentAlign}
+        finalFocus={finalFocus}
+        className="yuri-composer-picker flex max-h-[60vh] w-[min(320px,calc(100vw-2rem))] flex-col p-0"
+      >
+        {pickerBody}
       </DropdownMenuContent>
     </DropdownMenu>
   );

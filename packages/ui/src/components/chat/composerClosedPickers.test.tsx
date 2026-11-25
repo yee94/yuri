@@ -159,7 +159,7 @@ describe('closed composer picker work', () => {
         expect(host.textContent).toContain('local-1');
         expect(host.textContent).toContain('remote-1');
         expect(host.textContent).toContain('tree-299');
-        const row = Array.from(host.querySelectorAll('[cmdk-item]')).find((element) => element.textContent === 'local-1');
+        const row = Array.from(host.querySelectorAll('[data-branch-item]')).find((element) => element.textContent === 'local-1');
         expect(row).toBeDefined();
         await act(async () => (row as HTMLElement).click());
         expect(onCheckout).toHaveBeenCalledWith('local-1');
@@ -177,7 +177,7 @@ describe('closed composer picker work', () => {
         let popup = '';
         let items = '';
         const visit = (node: ts.Node) => {
-            if (ts.isJsxElement(node) && node.openingElement.tagName.getText(ast) === 'SelectContent'
+            if (ts.isJsxElement(node) && node.openingElement.tagName.getText(ast) === 'DropdownMenuContent'
                 && node.getText(ast).includes('desktopDraftProjectQuery') && mode === 'desktop') popup = node.getText(ast);
             if (ts.isJsxElement(node) && node.openingElement.tagName.getText(ast) === 'MobileResizableSheet'
                 && node.getText(ast).includes('mobile-draft-project-picker-sheet') && mode === 'mobile') popup = node.getText(ast);
@@ -191,18 +191,24 @@ describe('closed composer picker work', () => {
         const enumerateProjects = vi.spyOn(projects, 'filter');
         const scope = {
             React, projects, renderProjectLabelWithIcon, desktopDraftProjectQuery: '',
-            SelectContent: ({ children }: React.PropsWithChildren) => presence.visible ? <>{children}</> : null,
+            DropdownMenuContent: ({ children }: React.PropsWithChildren) => presence.visible ? <>{children}</> : null,
             MobileResizableSheet: ({ children }: React.PropsWithChildren) => presence.visible ? <>{children}</> : null,
             ScrollableOverlay: ({ children }: React.PropsWithChildren) => <>{children}</>,
             mobileDraftProjectSheetId: 'test', mobileDraftPicker: null, mobileDraftPickerQuery: '',
             setMobileDraftPicker: vi.fn(), setMobileDraftPickerQuery: vi.fn(),
             handleDraftProjectChange: vi.fn(), selectedDraftProject: projects[0],
-            SelectItem: 'div', SelectSeparator: 'hr', Input: 'input', Icon: 'i',
+            Input: 'input', Icon: 'i', Kbd: 'kbd',
             cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
             desktopDraftProjectInputRef: { current: null },
+            desktopDraftProjectScrollRef: { current: null },
+            desktopDraftProjectItemRefs: { current: [] },
+            desktopDraftPickerHandoffRef: { current: false },
             desktopDraftProjectActiveIndex: 0,
             setDesktopDraftProjectActiveIndex: vi.fn(),
             handleDesktopDraftProjectKeyDown: vi.fn(),
+            handleDesktopDraftProjectSelect: vi.fn(),
+            resolveDraftPickerFinalFocus: vi.fn(),
+            shouldShowDraftBranchSelector: true,
             setDesktopDraftProjectQuery: vi.fn(), setDesktopDraftProjectPickerOpen: vi.fn(),
             t: (key: string) => key, matchesModelSearch: () => true,
             getProjectDisplayLabel: (project: { path: string }) => project.path,

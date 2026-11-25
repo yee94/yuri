@@ -95,7 +95,7 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Kbd } from '@/components/ui/kbd';
 import { COMPOSER_ICON_HOVER_CLASS, SELECTOR_CHIP_HOVER_CLASS } from '@/components/chat/message/parts/toolRowChrome';
 import { Input } from '@/components/ui/input';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
@@ -726,7 +726,17 @@ RevertedMessageDock.displayName = 'RevertedMessageDock';
 const ATTACHMENT_EXPANSION_MENU_ENABLED = false;
 
 // Keep catalog enumeration inside the popup's presence boundary, not on each keystroke.
-function DraftProjectItems({ projects, query, renderLabel, onSelect, selectedId, highlightedIndex, onHighlightIndex }: {
+function DraftProjectItems({
+    projects,
+    query,
+    renderLabel,
+    onSelect,
+    selectedId,
+    highlightedIndex,
+    onHighlightIndex,
+    itemRefs,
+    dense,
+}: {
     projects: ReturnType<typeof useProjectsStore.getState>['projects'];
     query: string;
     renderLabel: (project: ReturnType<typeof useProjectsStore.getState>['projects'][number]) => React.ReactNode;
@@ -734,36 +744,45 @@ function DraftProjectItems({ projects, query, renderLabel, onSelect, selectedId,
     selectedId?: string;
     highlightedIndex?: number;
     onHighlightIndex?: (index: number) => void;
+    itemRefs?: React.MutableRefObject<Array<HTMLElement | null>>;
+    dense?: boolean;
 }) {
     return projects.filter((project) => (
         matchesModelSearch(getProjectDisplayLabel(project), query)
         || matchesModelSearch(project.path, query)
-    )).map((project, index) => onSelect ? (
-        <button
-            key={project.id}
-            type="button"
-            className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-2.5 text-left typography-ui-label hover:bg-[var(--interactive-hover)]"
-            onClick={() => onSelect(project.id)}
-        >
-            <span className="min-w-0 flex-1">{renderLabel(project)}</span>
-            {project.id === selectedId ? (
-                <Icon name="check" className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-            ) : null}
-        </button>
-    ) : (
-        <SelectItem
-            key={project.id}
-            value={project.id}
-            data-draft-project-highlighted={highlightedIndex === index ? 'true' : undefined}
-            onMouseEnter={() => onHighlightIndex?.(index)}
-            className={cn(
-                'max-w-[24rem] truncate',
-                highlightedIndex === index && 'bg-interactive-selection text-interactive-selection-foreground',
-            )}
-        >
-            {renderLabel(project)}
-        </SelectItem>
-    ));
+    )).map((project, index) => {
+        const isHighlighted = highlightedIndex === index;
+        const isSelected = project.id === selectedId;
+        return (
+            <button
+                key={project.id}
+                ref={(el) => { if (itemRefs) itemRefs.current[index] = el; }}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                data-draft-project-item={project.id}
+                data-selected={isHighlighted ? 'true' : undefined}
+                onMouseEnter={() => onHighlightIndex?.(index)}
+                className={cn(
+                    dense
+                        ? 'flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[0.8125rem] leading-[1.125rem] text-foreground outline-none select-none transition-colors'
+                        : 'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-2.5 text-left typography-ui-label hover:bg-[var(--interactive-hover)]',
+                    dense && (isHighlighted
+                        ? 'bg-interactive-selection text-interactive-selection-foreground'
+                        : 'hover:bg-interactive-hover/50'),
+                )}
+                onClick={() => onSelect?.(project.id)}
+            >
+                <span className="min-w-0 flex-1 truncate">{renderLabel(project)}</span>
+                {isSelected ? (
+                    <Icon
+                        name="check"
+                        className={cn('flex-shrink-0', dense ? 'size-3.5 text-primary' : 'h-4 w-4 text-muted-foreground')}
+                    />
+                ) : null}
+            </button>
+        );
+    });
 }
 
 type ComposerAttachmentControlsProps = {
@@ -1280,6 +1299,9 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const [desktopDraftProjectPickerOpen, setDesktopDraftProjectPickerOpen] = React.useState(false);
     const [desktopDraftProjectActiveIndex, setDesktopDraftProjectActiveIndex] = React.useState(0);
     const desktopDraftProjectInputRef = React.useRef<HTMLInputElement | null>(null);
+    const desktopDraftProjectScrollRef = React.useRef<HTMLDivElement | null>(null);
+    const desktopDraftProjectItemRefs = React.useRef<Array<HTMLElement | null>>([]);
+    const desktopDraftPickerHandoffRef = React.useRef(false);
     // True while ANY MobileOverlayPanel is open (sessions sheet, model/agent
     // panels, pickers...).
     const [mobileOverlayHostBusy, setMobileOverlayHostBusy] = React.useState(false);
@@ -6459,12 +6481,54 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         sessionEvents.requestDirectoryDialog();
     }, typeof window !== 'undefined' ? window : undefined);
 
-    const handleDesktopDraftProjectKeyDown = useEvent((event: React.KeyboardEvent<HTMLInputElement>) => {
+    const resolveDraftPickerFinalFocus = useEvent(() => {
+        if (desktopDraftPickerHandoffRef.current) {
+            desktopDraftPickerHandoffRef.current = false;
+            return false;
+        }
+        return textareaRef.current ?? false;
+    });
+
+    const openDraftBranchPickerFromProject = useEvent(() => {
+        if (!selectedDraftProject || !shouldShowDraftBranchSelector) return;
+        desktopDraftPickerHandoffRef.current = true;
+        setDesktopDraftProjectPickerOpen(false);
+        setDesktopDraftProjectQuery('');
+        window.requestAnimationFrame(() => {
+            window.dispatchEvent(new CustomEvent('yuri:open-draft-branch-picker'));
+        });
+    });
+
+    const openDraftProjectPickerFromBranch = useEvent(() => {
+        if (!selectedDraftProject) return;
+        desktopDraftPickerHandoffRef.current = true;
+        setDesktopDraftProjectPickerOpen(true);
+    });
+
+    const handleDesktopDraftProjectSelect = useEvent((projectId: string) => {
+        handleDraftProjectChange(projectId);
+        setDesktopDraftProjectPickerOpen(false);
+        setDesktopDraftProjectQuery('');
+    });
+
+    const handleDesktopDraftProjectKeyDown = useEvent((event: React.KeyboardEvent) => {
         event.stopPropagation();
+        const targetInput = event.target instanceof HTMLInputElement ? event.target : null;
+
         if (event.key === 'Escape') {
             event.preventDefault();
             setDesktopDraftProjectPickerOpen(false);
-            window.requestAnimationFrame(() => textareaRef.current?.focus());
+            return;
+        }
+        if (event.key === 'ArrowRight') {
+            const atEnd = !targetInput
+                || targetInput.value.length === 0
+                || (targetInput.selectionStart === targetInput.value.length
+                    && targetInput.selectionEnd === targetInput.value.length);
+            if (atEnd && selectedDraftProject && shouldShowDraftBranchSelector) {
+                event.preventDefault();
+                openDraftBranchPickerFromProject();
+            }
             return;
         }
         if (
@@ -6482,12 +6546,32 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         const totalItems = matchingProjects.length + 1; // +1 for "New project" footer action
         if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
             event.preventDefault();
-            setDesktopDraftProjectActiveIndex((prev) => (prev + 1) % totalItems);
+            const nextIndex = (desktopDraftProjectActiveIndex + 1) % totalItems;
+            setDesktopDraftProjectActiveIndex(nextIndex);
+            window.requestAnimationFrame(() => {
+                const container = desktopDraftProjectScrollRef.current;
+                const item = desktopDraftProjectItemRefs.current[nextIndex];
+                if (!container || !item) return;
+                const containerRect = container.getBoundingClientRect();
+                const itemRect = item.getBoundingClientRect();
+                if (itemRect.top < containerRect.top) container.scrollTop += itemRect.top - containerRect.top - 4;
+                else if (itemRect.bottom > containerRect.bottom) container.scrollTop += itemRect.bottom - containerRect.bottom + 4;
+            });
             return;
         }
         if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
             event.preventDefault();
-            setDesktopDraftProjectActiveIndex((prev) => (prev - 1 + totalItems) % totalItems);
+            const nextIndex = (desktopDraftProjectActiveIndex - 1 + totalItems) % totalItems;
+            setDesktopDraftProjectActiveIndex(nextIndex);
+            window.requestAnimationFrame(() => {
+                const container = desktopDraftProjectScrollRef.current;
+                const item = desktopDraftProjectItemRefs.current[nextIndex];
+                if (!container || !item) return;
+                const containerRect = container.getBoundingClientRect();
+                const itemRect = item.getBoundingClientRect();
+                if (itemRect.top < containerRect.top) container.scrollTop += itemRect.top - containerRect.top - 4;
+                else if (itemRect.bottom > containerRect.bottom) container.scrollTop += itemRect.bottom - containerRect.bottom + 4;
+            });
             return;
         }
         if (event.key === 'Enter') {
@@ -6500,8 +6584,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 }
                 setDesktopDraftProjectPickerOpen(false);
                 setDesktopDraftProjectQuery('');
-                window.requestAnimationFrame(() => textareaRef.current?.focus());
             } else {
+                desktopDraftPickerHandoffRef.current = true;
                 setDesktopDraftProjectPickerOpen(false);
                 setDesktopDraftProjectQuery('');
                 window.requestAnimationFrame(() => sessionEvents.requestDirectoryDialog());
@@ -7680,10 +7764,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 {!isMobile && showDraftTargetSelectors ? (
                     <div className="mb-1.5 flex min-w-0 items-center gap-1.5 px-0.5">
                         {selectedDraftProject ? (
-                            <Select
-                                value={selectedDraftProject.id}
+                            <DropdownMenu
                                 open={desktopDraftProjectPickerOpen}
-                                onValueChange={handleDraftProjectChange}
                                 onOpenChange={(open) => {
                                     setDesktopDraftProjectPickerOpen(open);
                                     if (!open) {
@@ -7691,7 +7773,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                     }
                                 }}
                             >
-                                <SelectTrigger asChild size="sm">
+                                <DropdownMenuTrigger asChild>
                                     <button
                                         type="button"
                                         className={cn(
@@ -7699,54 +7781,104 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                             SELECTOR_CHIP_HOVER_CLASS,
                                         )}
                                     >
-                                        <SelectValue>
-                                            {renderProjectLabelWithIcon(selectedDraftProject)}
-                                        </SelectValue>
+                                        {renderProjectLabelWithIcon(selectedDraftProject)}
                                         <Icon
                                             name="arrow-down-s"
                                             className="pointer-events-none absolute right-1 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[popup-open]:opacity-100"
                                             aria-hidden="true"
                                         />
                                     </button>
-                                </SelectTrigger>
-                                <SelectContent fitContent>
-                                    <Input
-                                        ref={desktopDraftProjectInputRef}
-                                        autoFocus
-                                        value={desktopDraftProjectQuery}
-                                        onChange={(event) => {
-                                            setDesktopDraftProjectQuery(event.target.value);
-                                            setDesktopDraftProjectActiveIndex(0);
-                                        }}
-                                        onKeyDown={handleDesktopDraftProjectKeyDown}
-                                        placeholder={t('chat.chatInput.draftPicker.searchProjects')}
-                                        className="mb-1 h-8 min-w-56"
-                                    />
-                                    <DraftProjectItems
-                                        projects={projects}
-                                        query={desktopDraftProjectQuery}
-                                        renderLabel={renderProjectLabelWithIcon}
-                                        highlightedIndex={desktopDraftProjectActiveIndex}
-                                        onHighlightIndex={setDesktopDraftProjectActiveIndex}
-                                    />
-                                    {/* Fixed footer action: replace the removed sidebar "add project" toolbar button. */}
-                                    <SelectSeparator />
-                                    <button
-                                        type="button"
-                                        className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left typography-ui-label text-foreground hover:bg-interactive-hover"
-                                        onPointerDown={(event) => { event.stopPropagation(); }}
-                                        onClick={(event) => {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            setDesktopDraftProjectPickerOpen(false);
-                                            requestAnimationFrame(() => sessionEvents.requestDirectoryDialog());
-                                        }}
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                    align="start"
+                                    finalFocus={resolveDraftPickerFinalFocus}
+                                    onKeyDown={handleDesktopDraftProjectKeyDown}
+                                    className="yuri-composer-picker flex max-h-[60vh] w-[min(320px,calc(100vw-2rem))] flex-col p-0"
+                                >
+                                    <div className="model-picker-search-area">
+                                        <div className="relative">
+                                            <Icon
+                                                name="search"
+                                                className="pointer-events-none absolute left-0 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                                            />
+                                            <Input
+                                                ref={desktopDraftProjectInputRef}
+                                                autoFocus
+                                                value={desktopDraftProjectQuery}
+                                                onChange={(event) => {
+                                                    setDesktopDraftProjectQuery(event.target.value);
+                                                    setDesktopDraftProjectActiveIndex(0);
+                                                }}
+                                                placeholder={t('chat.chatInput.draftPicker.searchProjects')}
+                                                className="model-picker-search h-6 pl-7"
+                                            />
+                                        </div>
+                                    </div>
+                                    <ScrollableOverlay
+                                        ref={desktopDraftProjectScrollRef}
+                                        outerClassName="max-h-[min(320px,calc(60vh-6rem))] min-h-0 flex-1 overflow-x-hidden"
+                                        className="overlay-scrollbar-target--no-gutter"
+                                        scrollbarClassName="overlay-scrollbar--flush overlay-scrollbar--dense overlay-scrollbar--zero"
+                                        disableHorizontal
                                     >
-                                        <Icon name="folder-add" className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                        <span>{t('chat.chatInput.draftPicker.newProject')}</span>
-                                    </button>
-                                </SelectContent>
-                            </Select>
+                                        <div role="listbox" className="model-picker-list flex flex-col gap-0.5">
+                                            <DraftProjectItems
+                                                projects={projects}
+                                                query={desktopDraftProjectQuery}
+                                                renderLabel={renderProjectLabelWithIcon}
+                                                selectedId={selectedDraftProject.id}
+                                                onSelect={handleDesktopDraftProjectSelect}
+                                                highlightedIndex={desktopDraftProjectActiveIndex}
+                                                onHighlightIndex={setDesktopDraftProjectActiveIndex}
+                                                itemRefs={desktopDraftProjectItemRefs}
+                                                dense
+                                            />
+                                        </div>
+                                    </ScrollableOverlay>
+                                    {/* Fixed footer action: replace the removed sidebar "add project" toolbar button. */}
+                                    <div className="composer-picker-actions">
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            className="flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-interactive-hover/50 hover:text-foreground"
+                                            onPointerDown={(event) => { event.stopPropagation(); }}
+                                            onClick={(event) => {
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                desktopDraftPickerHandoffRef.current = true;
+                                                setDesktopDraftProjectPickerOpen(false);
+                                                requestAnimationFrame(() => sessionEvents.requestDirectoryDialog());
+                                            }}
+                                        >
+                                            <Icon name="folder-add" className="size-3.5 shrink-0" />
+                                            <span>{t('chat.chatInput.draftPicker.newProject')}</span>
+                                        </button>
+                                    </div>
+                                    <div className="model-picker-footer flex shrink-0 items-center gap-3 text-muted-foreground">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <Kbd variant="hint">
+                                                <Icon name="arrow-up" className="size-2.5" />
+                                                <Icon name="arrow-down" className="size-2.5" />
+                                            </Kbd>
+                                            {t('directoryExplorerDialog.footer.navigate')}
+                                        </span>
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <Kbd variant="hint">
+                                                <Icon name="corner-down-left" className="size-2.5" />
+                                            </Kbd>
+                                            {t('directoryExplorerDialog.footer.select')}
+                                        </span>
+                                        {shouldShowDraftBranchSelector ? (
+                                            <span className="inline-flex items-center gap-1.5">
+                                                <Kbd variant="hint">
+                                                    <Icon name="arrow-right" className="size-2.5" />
+                                                </Kbd>
+                                                {t('chat.leaderKey.action.branch')}
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
                         ) : (
                             <button
                                 type="button"
@@ -7769,6 +7901,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                 projectRootOption={projectRootBranchOption}
                                 worktreeOptions={worktreeBranchOptions}
                                 onSelectDirectory={handleDraftDirectoryChange}
+                                onNavigatePrevPicker={openDraftProjectPickerFromBranch}
+                                finalFocus={resolveDraftPickerFinalFocus}
                             />
                         ) : null}
                     </div>

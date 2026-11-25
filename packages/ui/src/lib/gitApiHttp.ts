@@ -257,6 +257,7 @@ export async function discoverGitRepositories(
       directory?: unknown;
       isGitRepository?: unknown;
       primaryRoot?: unknown;
+      error?: unknown;
     }>,
   ): void => {
     for (const entry of entries) {
@@ -265,10 +266,14 @@ export async function discoverGitRepositories(
         : '';
       if (!directory) continue;
       const isGitRepository = Boolean(entry.isGitRepository);
+      const hasError = typeof entry.error === 'string' && entry.error.trim().length > 0;
       const primaryRoot = typeof entry.primaryRoot === 'string' && entry.primaryRoot
         ? entry.primaryRoot
         : null;
-      if (generation === getRuntimeGeneration()) writeGitDiscoveryCaches(directory, isGitRepository, primaryRoot);
+      // Never cache a failed probe as an authoritative non-git directory.
+      if (generation === getRuntimeGeneration() && !(hasError && !isGitRepository)) {
+        writeGitDiscoveryCaches(directory, isGitRepository, primaryRoot);
+      }
       result.set(directory, { isGitRepository, primaryRoot });
     }
   };
@@ -342,6 +347,13 @@ export async function discoverGitRepositories(
 
   return result;
 }
+
+export const invalidateGitRepoCheckCache = (directory: string): void => {
+  const key = getDiscoveryCacheKey(directory);
+  if (!key) return;
+  gitRepoCache.delete(key);
+  gitRepoInFlight.delete(key);
+};
 
 export async function checkIsGitRepository(directory: string): Promise<boolean> {
   const key = getDiscoveryCacheKey(directory);

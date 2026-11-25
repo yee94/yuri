@@ -14,16 +14,9 @@ vi.mock('@/components/icon/Icon', () => ({
 vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <div data-dropdown>{children}</div>,
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div data-dropdown-content>{children}</div>,
-}));
-
-vi.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children, className }: { children: React.ReactNode; className?: string }) => (
+    <div data-dropdown-content className={className}>{children}</div>
+  ),
 }));
 
 vi.mock('@/components/ui/tooltip', () => ({
@@ -32,30 +25,10 @@ vi.mock('@/components/ui/tooltip', () => ({
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-vi.mock('@/components/ui/command', () => ({
-  Command: ({ shouldFilter, children }: { shouldFilter?: boolean; children: React.ReactNode }) => (
-    <div data-command data-should-filter={String(shouldFilter ?? true)}>
-      {children}
-    </div>
+vi.mock('@/components/ui/ScrollableOverlay', () => ({
+  ScrollableOverlay: React.forwardRef<HTMLDivElement, { children: React.ReactNode; className?: string }>(
+    ({ children, className }, ref) => <div ref={ref} className={className}>{children}</div>,
   ),
-  CommandInput: ({ value, onValueChange, placeholder }: { value?: string; onValueChange?: (v: string) => void; placeholder?: string }) => (
-    <input
-      data-command-input
-      placeholder={placeholder}
-      value={value ?? ''}
-      onChange={(e) => onValueChange?.(e.target.value)}
-    />
-  ),
-  CommandList: ({ children }: { children: React.ReactNode }) => <div data-command-list>{children}</div>,
-  CommandGroup: ({ heading, children }: { heading?: React.ReactNode; children: React.ReactNode }) => (
-    <section data-command-group={String(heading ?? '')}>{children}</section>
-  ),
-  CommandItem: ({ value, onSelect, children }: { value?: string; onSelect?: () => void; children: React.ReactNode }) => (
-    <button type="button" data-command-item={value} onClick={onSelect}>
-      {children}
-    </button>
-  ),
-  CommandSeparator: () => <hr />,
 }));
 
 import { BranchSelector } from './BranchSelector';
@@ -78,8 +51,9 @@ describe('BranchSelector', () => {
     vi.unstubAllGlobals();
   });
 
-  test('disables cmdk double-filtering, caps large branch lists, and ranks multi-token recent matches first', async () => {
+  test('caps large branch lists, ranks multi-token recent matches first, and supports keyboard navigation', async () => {
     const now = Date.now();
+    const onCheckout = vi.fn();
     const localBranches = [
       'main',
       ...Array.from({ length: 400 }, (_, i) => `archive/old-${i}`),
@@ -100,34 +74,84 @@ describe('BranchSelector', () => {
           localBranches={localBranches}
           remoteBranches={['origin/feat/sidebar-remote']}
           branchInfo={branchInfo}
-          onCheckout={vi.fn(async () => {})}
+          onCheckout={onCheckout}
           onCreate={vi.fn(async () => {})}
         />,
       );
     });
 
-    const command = host.querySelector('[data-command]');
-    expect(command?.getAttribute('data-should-filter')).toBe('false');
+    const content = host.querySelector('[data-dropdown-content]');
+    expect(content?.className).toContain('yuri-composer-picker');
 
     // Empty query caps DOM items instead of mounting all 403 branches.
-    const initialItems = host.querySelectorAll('[data-command-item]');
+    const initialItems = host.querySelectorAll('[data-branch-item]');
     expect(initialItems.length).toBeLessThanOrEqual(105);
 
-    const input = host.querySelector<HTMLInputElement>('[data-command-input]')!;
+    const input = host.querySelector<HTMLInputElement>('[data-branch-search-input]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'feat sidebar');
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
 
-    const matchedItems = [...host.querySelectorAll<HTMLButtonElement>('[data-command-item]')].map(
-      (item) => item.dataset.commandItem,
+    const matchedItems = [...host.querySelectorAll<HTMLButtonElement>('[data-branch-item]')].map(
+      (item) => item.dataset.branchItem,
     );
     expect(matchedItems[0]).toBe('match:local:feat/sidebar-recent');
     expect(matchedItems).toContain('match:local:feat/sidebar-legacy');
     expect(matchedItems).toContain('match:remote:origin/feat/sidebar-remote');
+
+    // ArrowDown moves to second match, Enter checks it out.
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    });
+    expect(host.querySelector('[data-branch-item="match:local:feat/sidebar-legacy"]')?.getAttribute('data-selected')).toBe('true');
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    });
+    expect(onCheckout).toHaveBeenCalledWith('feat/sidebar-legacy');
   });
 
-  test('renders existing worktree badge on non-current local branches with local worktrees', async () => {
+  test('supports ArrowRight drill-down and ArrowLeft handoff to previous picker', async () => {
+    const onCheckout = vi.fn();
+    const onNavigatePrevPicker = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <BranchSelector
+          open
+          directory="/repo"
+          currentBranch="main"
+          localBranches={['main', 'feat/next']}
+          remoteBranches={[]}
+          branchInfo={{}}
+          keepOpenOnCheckout
+          onNavigatePrevPicker={onNavigatePrevPicker}
+          onCheckout={onCheckout}
+          onCreate={vi.fn(async () => {})}
+        />,
+      );
+    });
+
+    const input = host.querySelector<HTMLInputElement>('[data-branch-search-input]')!;
+    // ArrowDown from 'main' to 'feat/next', then ArrowRight drills into checkout/follow-up.
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    });
+    expect(onCheckout).toHaveBeenCalledWith('feat/next');
+
+    // ArrowLeft when search is empty hands off to previous picker.
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
+    expect(onNavigatePrevPicker).toHaveBeenCalledTimes(1);
+  });
+
+  test('renders existing worktree badge on non-current local branches and clear create-worktree footer label', async () => {
     await act(async () => {
       root.render(
         <BranchSelector
@@ -138,23 +162,26 @@ describe('BranchSelector', () => {
           remoteBranches={[]}
           branchInfo={{}}
           existingWorktreeBranches={new Set(['main', 'feat/with-wt'])}
+          onCreateWorktree={vi.fn()}
           onCheckout={vi.fn()}
           onCreate={vi.fn(async () => {})}
         />,
       );
     });
 
-    const mainItem = host.querySelector('[data-command-item="local:main"]');
-    const withWtItem = host.querySelector('[data-command-item="local:feat/with-wt"]');
-    const noWtItem = host.querySelector('[data-command-item="local:feat/no-wt"]');
+    const mainItem = host.querySelector('[data-branch-item="local:main"]');
+    const withWtItem = host.querySelector('[data-branch-item="local:feat/with-wt"]');
+    const noWtItem = host.querySelector('[data-branch-item="local:feat/no-wt"]');
+    const createWtFooter = host.querySelector('[data-branch-item="action:create-worktree"]');
 
     expect(mainItem?.textContent).toContain('gitView.branch.currentBadge');
     expect(mainItem?.textContent).not.toContain('gitView.branch.worktreeBadge');
     expect(withWtItem?.textContent).toContain('gitView.branch.worktreeBadge');
     expect(noWtItem?.textContent).not.toContain('gitView.branch.worktreeBadge');
+    expect(createWtFooter?.textContent).toContain('chat.chatInput.branchSwitch.createWorktree');
   });
 
-  test('supports inline multi-level followUpStep navigation with Tab, Arrow keys, Enter, and Escape', async () => {
+  test('supports inline multi-level followUpStep navigation with Tab, Arrow keys, Enter, and ArrowLeft/Escape', async () => {
     const onCheckoutHere = vi.fn();
     const onCreateWorktree = vi.fn();
     const onBack = vi.fn();
@@ -198,14 +225,14 @@ describe('BranchSelector', () => {
     expect(onCreateWorktree).toHaveBeenCalledTimes(1);
     expect(onCheckoutHere).not.toHaveBeenCalled();
 
-    // Shift+Tab moves back to first action; Escape calls onBack.
+    // Shift+Tab moves back to first action; ArrowLeft calls onBack.
     await act(async () => {
       menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
     });
     expect(host.querySelector('[data-branch-followup-action="checkout-here"]')?.getAttribute('data-selected')).toBe('true');
 
     await act(async () => {
-      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
     });
     expect(onBack).toHaveBeenCalledTimes(1);
   });

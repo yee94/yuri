@@ -66,7 +66,13 @@ const extractJsonObject = (value: string): Record<string, unknown> | null => {
   return null;
 };
 
-export async function checkIsGitRepository(directory: string): Promise<boolean> {
+export async function checkIsGitRepository(
+  directory: string,
+  options?: { fresh?: boolean },
+): Promise<boolean> {
+  if (options?.fresh) {
+    gitHttp.invalidateGitRepoCheckCache(directory);
+  }
   const runtime = getRuntimeGit();
   if (runtime) return runtime.checkIsGitRepository(directory);
   return gitHttp.checkIsGitRepository(directory);

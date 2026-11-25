@@ -179,7 +179,58 @@ type InstantWorktreeDraftOptions = {
   title?: string;
   /** When set, create a worktree for this existing branch instead of generating a new one. */
   existingBranch?: string;
+  projectId?: string;
   projectDirectory?: string;
+};
+
+const resolveTargetProject = (options?: {
+  projectId?: string;
+  projectDirectory?: string;
+}): { remoteProject: ProjectEntry | null; localProjectRef: ProjectRef | null } => {
+  const projectsState = useProjectsStore.getState();
+  const projects = projectsState.projects;
+  const activeProject = projectsState.getActiveProject();
+
+  if (options?.projectId) {
+    const byId = projects.find((project) => project.id === options.projectId) ?? null;
+    if (byId) {
+      return byId.hostId
+        ? { remoteProject: byId, localProjectRef: null }
+        : { remoteProject: null, localProjectRef: { id: byId.id, path: byId.path } };
+    }
+  }
+
+  if (activeProject?.hostId) {
+    return { remoteProject: activeProject, localProjectRef: null };
+  }
+
+  const explicitDirectory = options?.projectDirectory?.trim();
+  if (explicitDirectory) {
+    const matched = resolveProjectRef(explicitDirectory);
+    return {
+      remoteProject: null,
+      localProjectRef: matched ?? { id: explicitDirectory, path: explicitDirectory },
+    };
+  }
+
+  const draft = useSessionUIStore.getState()?.newSessionDraft;
+  if (draft?.open && draft.selectedProjectId) {
+    const draftProject = projects.find((project) => project.id === draft.selectedProjectId) ?? null;
+    if (draftProject) {
+      return draftProject.hostId
+        ? { remoteProject: draftProject, localProjectRef: null }
+        : { remoteProject: null, localProjectRef: { id: draftProject.id, path: draftProject.path } };
+    }
+  }
+
+  if (activeProject?.path) {
+    return {
+      remoteProject: null,
+      localProjectRef: resolveProjectRef(activeProject.path) ?? { id: activeProject.id, path: activeProject.path },
+    };
+  }
+
+  return { remoteProject: null, localProjectRef: null };
 };
 
 const slugifyWorktreeName = (value: string): string => {
@@ -198,14 +249,14 @@ const createInstantWorktreeDraft = async (options?: InstantWorktreeDraftOptions)
     return null;
   }
 
-  const activeProject = useProjectsStore.getState().getActiveProject();
-  if (activeProject?.hostId) {
+  const { remoteProject, localProjectRef: projectRef } = resolveTargetProject(options);
+  if (remoteProject) {
     isCreatingWorktreeSession = true;
-    const isSelected = captureRemoteWorktreeSelection(activeProject);
+    const isSelected = captureRemoteWorktreeSelection(remoteProject);
     try {
       const existingBranch = options?.existingBranch?.trim().replace(/^remotes\//, '');
       const name = existingBranch ? slugifyWorktreeName(existingBranch) : generateBranchName();
-      const result = await createRemoteWorktreeDraft(activeProject, {
+      const result = await createRemoteWorktreeDraft(remoteProject, {
         mode: existingBranch ? 'existing' : 'new', worktreeName: name,
         ...(existingBranch ? { existingBranch } : { branchName: name }),
       }, { ...options, isSelected });
@@ -217,19 +268,7 @@ const createInstantWorktreeDraft = async (options?: InstantWorktreeDraftOptions)
       isCreatingWorktreeSession = false;
     }
   }
-  const projectDirectory = options?.projectDirectory?.trim() || activeProject?.path;
-  if (!projectDirectory) {
-    toast.error('No active project', {
-      description: 'Please select a project first.',
-    });
-    return null;
-  }
 
-  const projectRef = resolveProjectRef(projectDirectory) ?? (
-    activeProject?.path
-      ? { id: activeProject.id, path: activeProject.path }
-      : null
-  );
   if (!projectRef) {
     toast.error('No active project', {
       description: 'Please select a project first.',
@@ -239,9 +278,13 @@ const createInstantWorktreeDraft = async (options?: InstantWorktreeDraftOptions)
 
   let isGitRepo = false;
   try {
-    isGitRepo = await checkIsGitRepository(projectRef.path);
-  } catch {
-    // Ignore errors, treat as not a git repo
+    isGitRepo = await checkIsGitRepository(projectRef.path, { fresh: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to verify Git repository.';
+    toast.error('Failed to check Git repository', {
+      description: message,
+    });
+    return null;
   }
 
   if (!isGitRepo) {
@@ -368,6 +411,7 @@ export async function createWorktreeDraft(options?: { initialPrompt?: string; ti
  */
 export async function createWorktreeDraftForBranch(options: {
   branch: string;
+  projectId?: string;
   projectDirectory?: string;
   initialPrompt?: string;
   title?: string;
@@ -378,6 +422,7 @@ export async function createWorktreeDraftForBranch(options: {
   }
   return createInstantWorktreeDraft({
     existingBranch: branch,
+    projectId: options.projectId,
     projectDirectory: options.projectDirectory,
     initialPrompt: options.initialPrompt,
     title: options.title,
@@ -444,9 +489,13 @@ export async function createWorktreeSessionForNewBranch(
 
     let isGitRepo = false;
     try {
-      isGitRepo = await checkIsGitRepository(projectRef.path);
-    } catch {
-      // ignore
+      isGitRepo = await checkIsGitRepository(projectRef.path, { fresh: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to verify Git repository.';
+      toast.error('Failed to check Git repository', {
+        description: message,
+      });
+      return null;
     }
 
     if (!isGitRepo) {
