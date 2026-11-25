@@ -56,6 +56,7 @@ import { Kbd } from '@/components/ui/kbd';
 import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
 import { scrollFocusedSessionRowIntoView } from './scrollFocusedSessionRow';
 import { notifySidebarVisualSelectionCommitted, useSidebarVisualSelectionStore } from './sidebarVisualSelection';
+import { useSidebarShortcutNumber } from './sidebarShortcutNumbers';
 import {
   getSessionFocusKey,
   isSessionFocusEqual,
@@ -186,8 +187,6 @@ type Props = {
    * to `useSession` only when this map returns undefined.
    */
   liveSessionById: Map<string, Session>;
-  /** Global Mod+1…9 slot for this exact visible Focus row. */
-  shortcutNumber?: number | null;
   /** Task-view shelf membership. Settling never archives or unpins. */
   settledSessionIds?: ReadonlySet<string>;
   /** When provided, the row menu offers settle / move-back-to-active. */
@@ -385,7 +384,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     menuOpenSessionId,
     childRenderExtrasFor,
     liveSessionById,
-    shortcutNumber = null,
     settledSessionIds,
     setSessionSettled,
   } = props;
@@ -505,6 +503,8 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     projectId: projectId ?? null,
   }), [projectId, renderContext, session.id]);
   const rowFocusKey = React.useMemo(() => getSessionFocusKey(rowFocus) ?? '', [rowFocus]);
+  // Global Mod+1…9 slot for this exact visible Focus row.
+  const shortcutNumber = useSidebarShortcutNumber(rowFocusKey);
   const rowElementRef = React.useRef<HTMLDivElement | null>(null);
   const isActive = useSidebarVisualSelectionStore(
     React.useMemo(() => (state: { focus: SessionFocusIdentity | null }) => isSessionFocusEqual(state.focus, rowFocus), [rowFocus]),
@@ -1789,7 +1789,6 @@ const areSessionNodeItemPropsEqual = (prev: Props, next: Props): boolean => {
   if ((prev.renderContext ?? 'project') !== (next.renderContext ?? 'project')) return false;
   if (prev.mobileVariant !== next.mobileVariant) return false;
   if (prev.alwaysShowActions !== next.alwaysShowActions) return false;
-  if (prev.shortcutNumber !== next.shortcutNumber) return false;
   if (prev.hasSessionSearchQuery !== next.hasSessionSearchQuery) return false;
   if (prev.normalizedSessionSearchQuery !== next.normalizedSessionSearchQuery) return false;
   if (prev.notifyOnSubtasks !== next.notifyOnSubtasks) return false;

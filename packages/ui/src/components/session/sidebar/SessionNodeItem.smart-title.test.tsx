@@ -41,6 +41,8 @@ import { SessionNodeItem } from './SessionNodeItem';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui';
 import { applySessionUnreadSnapshot, resetSessionUnreadProjection, useNotificationStore } from '@/sync/notification-store';
+import { getSessionFocusKey } from '@/stores/useSessionFocusStore';
+import { createSidebarShortcutNumberStore, SidebarShortcutNumberContext } from './sidebarShortcutNumbers';
 
 const noop = () => {};
 const session = { id: 'ses_title', title: 'Original title', directory: '/repo', time: { created: 1, updated: 2 } } as Session;
@@ -159,6 +161,32 @@ test.each([false, true])('task card puts its unread dot inline before project te
     expect(container.querySelector('.yuri-task-unread-dot')).toBeNull();
   } finally {
     await act(async () => resetSessionUnreadProjection());
+  }
+});
+
+test('the Mod+1…9 hint reads its slot from the sidebar number store, so renumbering needs no new row props', async () => {
+  vi.useFakeTimers();
+  const key = getSessionFocusKey({ scope: 'project', sessionId: session.id, projectId: null })!;
+  const store = createSidebarShortcutNumberStore(new Map([[key, 3]]));
+  const modifier = (type: 'keydown' | 'keyup') => {
+    for (const name of ['Meta', 'Control']) window.dispatchEvent(new KeyboardEvent(type, { key: name }));
+  };
+  root = createRoot(container);
+  try {
+    await act(async () => root.render(
+      <SidebarShortcutNumberContext.Provider value={store}><Harness editing={false} /></SidebarShortcutNumberContext.Provider>,
+    ));
+    await act(async () => {
+      modifier('keydown');
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(container.querySelector('[data-sidebar-shortcut-number]')?.getAttribute('data-sidebar-shortcut-number')).toBe('3');
+    await act(async () => store.setState({ numbers: new Map([[key, 5]]) }));
+    expect(container.querySelector('[data-sidebar-shortcut-number]')?.getAttribute('data-sidebar-shortcut-number')).toBe('5');
+    await act(async () => store.setState({ numbers: new Map() }));
+    expect(container.querySelector('[data-sidebar-shortcut-number]')).toBeNull();
+  } finally {
+    await act(async () => modifier('keyup'));
   }
 });
 

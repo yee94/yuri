@@ -144,6 +144,11 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
     const ranks = new Map(props.projectOrderIds.map((id, index) => [id, index]));
     allSections.sort((a, b) => (ranks.get(a.project.id) ?? Infinity) - (ranks.get(b.project.id) ?? Infinity));
   }
+  // SortableContext republishes its context for every new `items` array, which
+  // re-renders every project header's useSortable. Keep the array while its
+  // contents are unchanged: this list re-renders on any sidebar update.
+  const sortableProjectIdsKey = JSON.stringify(allSections.map((section) => section.project.id));
+  const sortableProjectIds = React.useMemo<string[]>(() => JSON.parse(sortableProjectIdsKey), [sortableProjectIdsKey]);
   const remoteSection = (id: string) => {
     const project = remoteById.get(id);
     if (!project) return null;
@@ -328,7 +333,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
               props.reorderProjects(String(active.id), String(over.id));
             }}
           >
-            <SortableContext items={allSections.map((section) => section.project.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={sortableProjectIds} strategy={verticalListSortingStrategy}>
               {allSections.slice(0, mountedSectionCount).map((section) => {
                 const project = section.project;
                 const projectKey = project.id;

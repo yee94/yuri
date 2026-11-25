@@ -13,8 +13,9 @@ import {
     publishSidebarNumberedNavigation,
 } from '@/sync/sidebar-numbered-navigation';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
-import { useSessionFocusStore } from '@/stores/useSessionFocusStore';
+import { getSessionFocusKey, useSessionFocusStore } from '@/stores/useSessionFocusStore';
 import { reconcileSessionFocus } from './sessionFocusReconciliation';
+import { createSidebarShortcutNumberStore, SidebarShortcutNumberContext, useSidebarShortcutNumber } from './sidebarShortcutNumbers';
 import { resolveFocusedProjectTarget } from './resolveFocusedProjectTarget';
 
 test('task header add opens the add-project dialog rather than a new session', async () => {
@@ -238,24 +239,33 @@ test('project actions preserve the memo boundary through 50 catalog updates and 
     }
 });
 
-test('numbered row hints refresh through memoized groups when earlier sidebar rows change', async () => {
+test('renumbering the Mod+1…9 slots repaints only the rows, never the memoized groups above them', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');
     const ast = ts.createSourceFile('SessionSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     const declarations = new Map<string, string>();
+    const storeStatements: string[] = [];
     const visit = (node: ts.Node) => {
         if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) declarations.set(node.name.text, `const ${node.getText(ast)};`);
+        if (ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration => (
+            ts.isArrayBindingPattern(declaration.name) && declaration.name.getText(ast) === '[shortcutNumberStore]'
+        ))) storeStatements.push(node.getText(ast));
+        if (ts.isExpressionStatement(node) && node.getText(ast).startsWith('React.useLayoutEffect(')
+            && node.getText(ast).includes('shortcutNumberStore.setState')) storeStatements.push(node.getText(ast));
         ts.forEachChild(node, visit);
     };
     visit(ast);
+    expect(storeStatements).toHaveLength(2);
     const rowDeclaration = declarations.get('renderSessionNode')!;
     const bindings: Record<string, unknown> = {
         React,
-        SessionNodeItem: ({ node, shortcutNumber }: { node: { session: { id: string } }; shortcutNumber: number | null }) => (
-            <span data-session={node.session.id}>{shortcutNumber ?? ''}</span>
-        ),
-        getSessionFocusKey: ({ scope, sessionId, projectId }: { scope: string; sessionId: string; projectId: string | null }) => `${scope}:${projectId ?? ''}:${sessionId}`,
+        SessionNodeItem: ({ node, projectId, renderContext }: { node: { session: { id: string } }; projectId: string | null; renderContext: 'project' | 'pinned' }) => {
+            const number = useSidebarShortcutNumber(getSessionFocusKey({ scope: renderContext, sessionId: node.session.id, projectId }) ?? '');
+            return <span data-session={node.session.id}>{number ?? ''}</span>;
+        },
         EMPTY_SUBTREE_SET: new Set(),
+        createSidebarShortcutNumberStore,
+        SidebarShortcutNumberContext,
     };
     const rowAst = ts.createSourceFile('row.tsx', rowDeclaration, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     const collectBindings = (node: ts.Node) => {
@@ -275,28 +285,121 @@ test('numbered row hints refresh through memoized groups when earlier sidebar ro
     const compiled = ts.transpileModule(`
         ${declarations.get('useStableRenderCallback')}
         return function Surface({ sidebarShortcutNumberByFocusKey }) {
+            ${storeStatements.join('\n')}
             ${rowDeclaration}
-            return React.createElement(Group, { renderSessionNode });
+            return React.createElement(SidebarShortcutNumberContext.Provider, { value: shortcutNumberStore }, React.createElement(Group, { renderSessionNode }));
         }
     `, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
     const Surface = new Function(...Object.keys(bindings), 'Group', compiled)(...Object.values(bindings), Group);
     const host = document.createElement('div');
     const root = createRoot(host);
-    const numbers = (offset: number) => new Map(['a', 'b', 'c'].map((id, index) => [`project:project:${id}`, offset + index + 1]));
+    const numbers = (offset: number) => new Map(['a', 'b', 'c'].map((id, index) => [
+        getSessionFocusKey({ scope: 'project', sessionId: id, projectId: 'project' })!, offset + index + 1,
+    ]));
     const hints = () => Array.from(host.querySelectorAll('[data-session]'), row => row.textContent);
     try {
-        const initialNumbers = numbers(2);
-        await act(async () => root.render(<Surface sidebarShortcutNumberByFocusKey={initialNumbers} />));
+        await act(async () => root.render(<Surface sidebarShortcutNumberByFocusKey={numbers(2)} />));
         expect(hints()).toEqual(['3', '4', '5']);
         const initialRenders = renders;
         for (let index = 0; index < 50; index++) {
             await act(async () => root.render(<Surface sidebarShortcutNumberByFocusKey={numbers(2)} />));
         }
-        expect(renders).toBe(initialRenders);
         await act(async () => root.render(<Surface sidebarShortcutNumberByFocusKey={numbers(5)} />));
         expect(hints()).toEqual(['6', '7', '8']);
         await act(async () => root.render(<Surface sidebarShortcutNumberByFocusKey={new Map()} />));
         expect(hints()).toEqual(['', '', '']);
+        expect(renders).toBe(initialRenders);
+    } finally {
+        await act(async () => root.unmount());
+        vi.unstubAllGlobals();
+    }
+});
+
+const readSidebarDeclarations = () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');
+    const ast = ts.createSourceFile('SessionSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const declarations = new Map<string, ts.VariableDeclaration>();
+    const visit = (node: ts.Node) => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) declarations.set(node.name.text, node);
+        ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    return { text: (name: string) => `const ${declarations.get(name)!.getText(ast)};`, declarations, ast };
+};
+
+test('dropping archived buckets keeps every untouched project section and its groups by reference', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const { text } = readSidebarDeclarations();
+    const compiled = ts.transpileModule(`
+        ${text('sidebarSectionsWithoutArchivedBucket')}
+        ${text('withoutArchivedBucket')}
+        return function Surface({ sectionsForRender, onRender }) {
+            ${text('sectionsForSidebarRender')}
+            onRender(sectionsForSidebarRender);
+            return null;
+        }
+    `, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    type Section = { project: { id: string }; groups: Array<{ id: string; isArchivedBucket: boolean }> };
+    const Surface = new Function('React', compiled)(React) as React.FC<{ sectionsForRender: Section[]; onRender: (sections: Section[]) => void }>;
+    const group = (id: string, isArchivedBucket = false) => ({ id, isArchivedBucket });
+    const plain: Section = { project: { id: 'plain' }, groups: [group('root')] };
+    const archived: Section = { project: { id: 'archived' }, groups: [group('root'), group('archive', true)] };
+    const other: Section = { project: { id: 'other' }, groups: [group('root'), group('archive', true)] };
+    const results: Section[][] = [];
+    const root = createRoot(document.createElement('div'));
+    try {
+        await act(async () => root.render(<Surface sectionsForRender={[plain, archived, other]} onRender={(sections) => results.push(sections)} />));
+        const first = results.at(-1)!;
+        expect(first[0]).toBe(plain);
+        expect(first[1].groups.map((item) => item.id)).toEqual(['root']);
+        const changed: Section = { ...plain, groups: [group('root'), group('next')] };
+        await act(async () => root.render(<Surface sectionsForRender={[changed, archived, other]} onRender={(sections) => results.push(sections)} />));
+        const next = results.at(-1)!;
+        expect(next).not.toBe(first);
+        expect(next[0]).toBe(changed);
+        expect(next[1]).toBe(first[1]);
+        expect(next[2]).toBe(first[2]);
+    } finally {
+        await act(async () => root.unmount());
+        vi.unstubAllGlobals();
+    }
+});
+
+test('a rebuilt but identical focused navigation target keeps the project group render callback', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const { text, declarations, ast } = readSidebarDeclarations();
+    const memo = declarations.get('renderGroupSessions')!.initializer as ts.CallExpression;
+    const focusNames = ['focusedTargetGroupKey', 'focusedTargetSessionId', 'focusedTargetVisibleIndex'];
+    const scopeNames = (memo.arguments[1] as ts.ArrayLiteralExpression).elements
+        .map((element) => element.getText(ast))
+        .filter((name) => !focusNames.includes(name) && name !== 'focusedProjectTarget');
+    let renders = 0;
+    const Group = React.memo(function Group(_props: { renderGroupSessions: unknown }) {
+        renders++;
+        return null;
+    });
+    const compiled = ts.transpileModule(`return function Surface({ focusedProjectTarget, scope }) {
+        const { ${scopeNames.join(', ')} } = scope;
+        ${focusNames.map(text).join('\n')}
+        ${text('renderGroupSessions')}
+        return React.createElement(Group, { renderGroupSessions });
+    }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+    type Target = { projectId: string; groupKey: string; sessionId: string; visibleIndex: number } | null;
+    const Surface = new Function('React', 'Group', compiled)(React, Group) as React.FC<{ focusedProjectTarget: Target; scope: Record<string, unknown> }>;
+    const scope = Object.fromEntries(scopeNames.map((name) => [name, { name }]));
+    const target = (visibleIndex: number): Target => ({ projectId: 'project', groupKey: 'project:root', sessionId: 'session', visibleIndex });
+    const root = createRoot(document.createElement('div'));
+    try {
+        await act(async () => root.render(<Surface focusedProjectTarget={target(2)} scope={scope} />));
+        expect(renders).toBe(1);
+        for (let index = 0; index < 20; index++) {
+            await act(async () => root.render(<Surface focusedProjectTarget={target(2)} scope={scope} />));
+        }
+        expect(renders).toBe(1);
+        await act(async () => root.render(<Surface focusedProjectTarget={target(3)} scope={scope} />));
+        expect(renders).toBe(2);
+        await act(async () => root.render(<Surface focusedProjectTarget={null} scope={scope} />));
+        expect(renders).toBe(3);
     } finally {
         await act(async () => root.unmount());
         vi.unstubAllGlobals();

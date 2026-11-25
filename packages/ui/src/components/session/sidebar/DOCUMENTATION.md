@@ -595,6 +595,18 @@ Reopening refreshes the snapshot, and switching instances clears retained target
   upstream grouping calculations. Group event callbacks take the group explicitly
   so the parent does not allocate an adapter for each render. Folder subscriptions
   select only that group's folder scope.
+- Downstream derivations keep those references, so one project's update (a turn
+  ending, a title refresh) re-renders only that project's section. Removing the
+  archived bucket for the tree derives per source section (`withoutArchivedBucket`,
+  a module-level `WeakMap`); `renderGroupSessions` depends on the focused target's
+  primitive fields, not the rebuilt target object; `useAlwaysVisibleSessionIds`
+  keeps its previous set while the membership is unchanged; the project
+  `SortableContext` receives an `items` array that is only replaced when the order
+  changes, because a new array republishes its context to every project header's
+  `useSortable`. Mod+1…9 slots reach rows through the per-sidebar
+  `SidebarShortcutNumberContext` store (`sidebarShortcutNumbers.ts`); each row
+  selects its own Focus key, so renumbering re-renders only rows whose slot changed
+  and `renderSessionNode` keeps one identity for the sidebar's lifetime.
 - `SidebarMaintenance` owns session-order synchronization and complete-catalog
   folder cleanup subscriptions. Catalog generation/loading changes do not subscribe
   the visible tree's parent to those maintenance-only inputs. Existing complete-
@@ -805,6 +817,7 @@ Reopening refreshes the snapshot, and switching instances clears retained target
 - `ConfirmDialogs.tsx`: Shared confirm dialog wrappers for session delete and folder delete flows.
 - `sortableItems.tsx`: DnD sortable wrappers for project and group ordering plus project-row action affordances.
 - `sessionFolderDnd.tsx`: Folder/session DnD scope and wrappers for dropping/moving sessions into folders.
+- `sidebarShortcutNumbers.ts`: Per-sidebar Mod+1…9 slot store and context; `SessionNodeItem` reads its own slot by Focus key, outside the row's props.
 - `sessionNavigationModel.ts`: Flattens the rendered project/group/folder model into ordered shortcut targets, then filters them against project/group/folder collapse and Show more state so project-scoped shortcuts use only logically visible rows. Also owns `selectVisibleSessionNodes` / `selectVisibleSessions` for the compact Show-more fold (first N, then append always-visible ids past the boundary).
 - `hooks/useAlwaysVisibleSessionIds.ts`: Shared running (busy/retry + uncovered fallback) and always-visible (running ∪ current viewing) session-id sets for PC sidebar and mobile session lists.
 - `sidebar-numbered-navigation.ts` (sync): Publishes the global first-nine visible session target order consumed by Mod+1…9, with revision-safe responsive remount cleanup.

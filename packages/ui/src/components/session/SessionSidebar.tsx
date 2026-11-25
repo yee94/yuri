@@ -37,6 +37,7 @@ import { ArchivedSessionsDialog } from '@/components/sections/yuri/ArchivedSessi
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { SidebarMaintenance } from './sidebar/SidebarMaintenance';
+import { createSidebarShortcutNumberStore, SidebarShortcutNumberContext } from './sidebar/sidebarShortcutNumbers';
 import { useSessionSidebarSections } from './sidebar/hooks/useSessionSidebarSections';
 import { useProjectSessionSelection } from './sidebar/hooks/useProjectSessionSelection';
 import { useGroupOrdering } from './sidebar/hooks/useGroupOrdering';
@@ -277,15 +278,31 @@ const EMPTY_SUBTREE_SET: Set<string> = new Set();
 const EMPTY_PATH_LIST: string[] = [];
 const EMPTY_UNSEEN: Readonly<Record<string, number>> = {};
 
+type SidebarRenderSection = ReturnType<typeof useSessionSidebarSections>['sectionsForRender'][number];
+
+// Keyed by source section: useSessionSidebarSections keeps unchanged sections'
+// references, and this derivation must too, or one project's update re-renders
+// every project section and rebuilds every navigation target.
+const sidebarSectionsWithoutArchivedBucket = new WeakMap<SidebarRenderSection, SidebarRenderSection>();
+const withoutArchivedBucket = (section: SidebarRenderSection): SidebarRenderSection => {
+  const cached = sidebarSectionsWithoutArchivedBucket.get(section);
+  if (cached) return cached;
+  const derived = section.groups.some((group) => group.isArchivedBucket)
+    ? { ...section, groups: section.groups.filter((group) => !group.isArchivedBucket) }
+    : section;
+  sidebarSectionsWithoutArchivedBucket.set(section, derived);
+  return derived;
+};
+
 const useStableRenderCallback = <Args extends unknown[], Return>(
   handler: (...args: Args) => Return,
-  renderKey: string,
 ): ((...args: Args) => Return) => {
   const handlerRef = React.useRef(handler);
   handlerRef.current = handler;
-  // The key invalidates memoized consumers; the ref supplies the latest handler.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  return React.useMemo(() => (...args: Args) => handlerRef.current(...args), [renderKey]);
+  // Consumers re-render through their own props; the ref supplies the latest
+  // handler. Shortcut numbers reach rows through SidebarShortcutNumberContext,
+  // so renumbering never invalidates every section and row.
+  return React.useMemo(() => (...args: Args) => handlerRef.current(...args), []);
 };
 
 const SidebarUpdateDialog = React.memo(function SidebarUpdateDialog({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
@@ -2105,12 +2122,10 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     });
   }, [taskBuckets, taskItems, taskShelves]);
 
-  const sectionsForSidebarRender = React.useMemo(() => {
-    return sectionsForRender.map((section) => ({
-      ...section,
-      groups: section.groups.filter((group) => !group.isArchivedBucket),
-    }));
-  }, [sectionsForRender]);
+  const sectionsForSidebarRender = React.useMemo(
+    () => sectionsForRender.map(withoutArchivedBucket),
+    [sectionsForRender],
+  );
 
   const navigationProjectSections = React.useMemo(() => {
     const sourceSections = hasSessionSearchQuery
@@ -2338,6 +2353,11 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     });
     return result;
   }, [numberedSidebarSessionTargets]);
+
+  const [shortcutNumberStore] = React.useState(() => createSidebarShortcutNumberStore(sidebarShortcutNumberByFocusKey));
+  React.useLayoutEffect(() => {
+    shortcutNumberStore.setState({ numbers: sidebarShortcutNumberByFocusKey });
+  }, [shortcutNumberStore, sidebarShortcutNumberByFocusKey]);
 
   const pinnedFocusIdentities = React.useMemo<SessionFocusIdentity[]>(() => {
     if (!currentSessionId) return [];
@@ -2583,18 +2603,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         nodeStructureKey={renderExtras?.nodeStructureKey ?? ""}
         childRenderExtrasFor={renderExtras?.childRenderExtrasFor}
         liveSessionById={liveSessionById}
-        shortcutNumber={
-          sidebarShortcutNumberByFocusKey.get(
-            getSessionFocusKey({
-              scope: renderContext,
-              sessionId: node.session.id,
-              projectId: projectId ?? null,
-            }) ?? "",
-          ) ?? null
-        }
       />
     ),
-    JSON.stringify([...sidebarShortcutNumberByFocusKey]),
   );
 
   const toggleCollapsedGroup = React.useCallback(
@@ -2635,6 +2645,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     }
     toggleCollapsedGroup(key);
   });
+
+  // Primitives, not the target object: navigation targets are rebuilt whenever
+  // any loaded session changes, and a new object with the same row would
+  // otherwise re-render every project section.
+  const focusedTargetGroupKey = focusedProjectTarget?.groupKey ?? null;
+  const focusedTargetSessionId = focusedProjectTarget?.sessionId ?? null;
+  const focusedTargetVisibleIndex = focusedProjectTarget?.visibleIndex ?? null;
 
   const renderGroupSessions = React.useMemo(
     () => (
@@ -2696,13 +2713,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         onReorderSessions={handleGroupReorder}
         currentSessionId={currentSessionId}
         shortcutTargetSessionId={
-          focusedProjectTarget?.groupKey === groupKey
-            ? focusedProjectTarget.sessionId
+          focusedTargetGroupKey === groupKey
+            ? focusedTargetSessionId
             : null
         }
         shortcutTargetVisibleIndex={
-          focusedProjectTarget?.groupKey === groupKey
-            ? (focusedProjectTarget.visibleIndex ?? null)
+          focusedTargetGroupKey === groupKey
+            ? focusedTargetVisibleIndex
             : null
         }
         editingId={editingId}
@@ -2750,7 +2767,9 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       sessionOrderActivityByScope,
       handleGroupReorder,
       currentSessionId,
-      focusedProjectTarget,
+      focusedTargetGroupKey,
+      focusedTargetSessionId,
+      focusedTargetVisibleIndex,
       editingId,
       editTitle,
       openSidebarMenuKey,
@@ -2963,6 +2982,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     setBulkDeleteConfirm,
   });
   return (
+    <SidebarShortcutNumberContext.Provider value={shortcutNumberStore}>
     <div
       ref={sessionSearchContainerRef}
       className={cn(
@@ -3114,5 +3134,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         onConfirm={confirmBulkDelete}
       />
     </div>
+    </SidebarShortcutNumberContext.Provider>
   );
 });
