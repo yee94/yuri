@@ -252,6 +252,14 @@ export function mergeTranscriptMessageUpdate(existing: Message, incoming: Messag
     delete mergedRecord.turnIdle
   }
 
+  const mergedPrecededByTurnIdle = normalizeMessageTurnIdle(incomingRecord.precededByTurnIdle)
+    ?? normalizeMessageTurnIdle(existingRecord.precededByTurnIdle)
+  if (mergedPrecededByTurnIdle) {
+    mergedRecord.precededByTurnIdle = mergedPrecededByTurnIdle
+  } else {
+    delete mergedRecord.precededByTurnIdle
+  }
+
   return merged
 }
 
@@ -261,10 +269,11 @@ function areMessageUpdateFieldsEqual(existing: Message, next: Message): boolean 
   if ((existing as { finish?: unknown }).finish !== (next as { finish?: unknown }).finish) return false
   if ((existing.time as { completed?: number })?.completed !== (next.time as { completed?: number })?.completed) return false
 
-  const fields: Array<keyof Message | "structured" | "summary" | "snapshot" | "turnIdle" | "tokens" | "error" | "cost" | "model" | "tools" | "format" | "variant" | "agent" | "system" | "mode" | "providerID" | "modelID"> = [
+  const fields: Array<keyof Message | "structured" | "summary" | "snapshot" | "turnIdle" | "precededByTurnIdle" | "tokens" | "error" | "cost" | "model" | "tools" | "format" | "variant" | "agent" | "system" | "mode" | "providerID" | "modelID"> = [
     "summary",
     "snapshot",
     "turnIdle",
+    "precededByTurnIdle",
     "error",
     "cost",
     "tokens",

@@ -2738,9 +2738,19 @@ export function handleEvent(
         || payload.type === "session.execution.failed"
         || (payload.type === "session.execution.interrupted" && payload.properties?.reason !== "shutdown")
       ) {
-        const lastMessageID = transcript?.messageOrder.at(-1)
-        const lastMessage = lastMessageID ? transcript?.messagesByID[lastMessageID] : undefined
-        if (lastMessage && lastMessage.role === "assistant" && !lastMessage.turnIdle) {
+        let closingAssistant: Message | undefined
+        if (transcript) {
+          for (let index = transcript.messageOrder.length - 1; index >= 0; index -= 1) {
+            const candidate = transcript.messagesByID[transcript.messageOrder[index]!]
+            if (!candidate) continue
+            if (candidate.role === "assistant") {
+              closingAssistant = candidate
+              break
+            }
+            if (candidate.role !== "user") break
+          }
+        }
+        if (closingAssistant && !closingAssistant.turnIdle) {
           const outcome = payload.type === "session.execution.failed"
             ? "failed"
             : payload.type === "session.execution.interrupted"
@@ -2751,14 +2761,14 @@ export function handleEvent(
               type: "message.updated",
               properties: {
                 info: {
-                  ...lastMessage,
+                  ...closingAssistant,
                   turnIdle: { outcome },
                 },
               },
             } as Event,
             idleSessionId,
             resolvedDirectory,
-            lastMessage.id,
+            closingAssistant.id,
             childStores,
             routingIndex,
           )

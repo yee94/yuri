@@ -304,6 +304,7 @@ export type Message = {
   summary?: unknown;
   snapshot?: MessageSnapshot;
   turnIdle?: MessageTurnIdle;
+  precededByTurnIdle?: MessageTurnIdle;
   clientRole?: MessageClientRole;
   parts?: Part[];
   [key: string]: unknown;

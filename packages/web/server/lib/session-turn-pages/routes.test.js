@@ -96,6 +96,14 @@ describe('projectSessionMessageRecord (host SessionMessage → {info, parts})', 
       ['user', 'msg_u2'],
       ['assistant', 'msg_a2'],
     ]);
+    const leadingIdleRecords = projectSessionMessageRecords([
+      { id: 'msg_idle_leading', type: 'idle', outcome: 'succeeded', time: { created: 1 } },
+      { id: 'msg_u_after_idle', type: 'user', time: { created: 2 }, text: 'after idle', sessionID: 'ses_1' },
+    ]);
+    expect(leadingIdleRecords[0]?.info.precededByTurnIdle).toEqual({
+      id: 'msg_idle_leading',
+      outcome: 'succeeded',
+    });
     expect(projectSessionMessageRecord({
       id: 'msg_idle2',
       type: 'idle',

@@ -299,4 +299,105 @@ describe('OpenCode v2 turn diff projection', () => {
             outcome: 'succeeded',
         });
     });
+
+    test('does not attach Turn 1 edits onto a trailing read-only Q&A turn in the same execution cycle', () => {
+        const messages: ChatMessageEntry[] = [
+            makeUser('msg_u1', 100, 'edit proto and docs'),
+            makeAssistant('msg_a1', 150, {
+                finish: 'stop',
+                completed: 180,
+                start: 'snap_1',
+                end: 'snap_2',
+                files: [
+                    'docs/group-chat-notify-protocol.md',
+                    'docs/kf-bypass-contract.md',
+                    'src/lib/rpc/protobuf/protobuf.d.ts',
+                    'proto/session.proto',
+                ],
+                // No idle between Turn 1 and Turn 2 (user queued Turn 2 while busy).
+            }),
+            makeUser('msg_u2', 190, 'what is the relation between request_id and relayId?'),
+            makeAssistant('msg_a2', 200, {
+                finish: 'stop',
+                completed: 220,
+                // Zero file edits in Turn 2; single idle closes the busy period.
+                turnIdle: { id: 'msg_idle_1', outcome: 'succeeded' },
+            }),
+        ];
+
+        const result = projectTurnRecords(messages, { showTurnChangedFiles: true });
+        expect(result.turns).toHaveLength(2);
+        // Card attaches to Turn 1 (the turn that actually edited files), NOT Turn 2!
+        expect(result.turns[0]?.turnDiffFromMessageId).toBe('msg_u1');
+        expect(result.turns[0]?.turnDiffFiles).toEqual([
+            'docs/group-chat-notify-protocol.md',
+            'docs/kf-bypass-contract.md',
+            'proto/session.proto',
+            'src/lib/rpc/protobuf/protobuf.d.ts',
+        ]);
+        expect(result.turns[0]?.turnIdleOutcome).toBe('succeeded');
+        expect(result.turns[1]?.turnDiffFromMessageId).toBeUndefined();
+        expect(result.turns[1]?.turnDiffFiles).toBeUndefined();
+        expect(result.turns[1]?.diffStats).toBeUndefined();
+    });
+
+    test('preserves page-boundary leading idle marker as precededByTurnIdle so older turn edits never leak forward', () => {
+        // Newer page (desc) happened to cut right before idle_1 so idle_1 is oldest on the page.
+        const newerPage = normalizeSessionProjectionPage(
+            {
+                data: [
+                    { id: 'msg_idle_2', type: 'idle', outcome: 'succeeded', time: { created: 230 } },
+                    {
+                        id: 'msg_a2',
+                        type: 'assistant',
+                        time: { created: 200, completed: 220 },
+                        finish: 'stop',
+                        snapshot: { start: 's2', end: 'e2', files: ['src/turn2.ts'] },
+                        content: [{ type: 'text', text: 'turn 2 edit' }],
+                    },
+                    { id: 'msg_u2', type: 'user', time: { created: 190 }, text: 'turn 2 prompt' },
+                    { id: 'msg_idle_1', type: 'idle', outcome: 'succeeded', time: { created: 185 } },
+                ],
+                cursor: { next: 'cur_older' },
+            },
+            'ses_1',
+            'desc',
+            20,
+        );
+
+        expect(newerPage.records[0]?.info.id).toBe('msg_u2');
+        expect(newerPage.records[0]?.info.precededByTurnIdle).toEqual({
+            id: 'msg_idle_1',
+            outcome: 'succeeded',
+        });
+
+        // Older page contains Turn 1 without idle_1 (since idle_1 was on newerPage).
+        const olderMessages: ChatMessageEntry[] = [
+            makeUser('msg_u1', 100, 'turn 1 prompt'),
+            makeAssistant('msg_a1', 150, {
+                finish: 'stop',
+                completed: 180,
+                start: 's1',
+                end: 'e1',
+                files: ['src/turn1.ts'],
+            }),
+        ];
+
+        const stitched: ChatMessageEntry[] = [
+            ...olderMessages,
+            ...newerPage.records.map((record) => ({
+                info: record.info,
+                parts: [...(record.parts ?? [])],
+            })),
+        ];
+
+        const result = projectTurnRecords(stitched, { showTurnChangedFiles: true });
+        expect(result.turns).toHaveLength(2);
+        expect(result.turns[0]?.turnDiffFromMessageId).toBe('msg_u1');
+        expect(result.turns[0]?.turnDiffFiles).toEqual(['src/turn1.ts']);
+        expect(result.turns[0]?.turnIdleOutcome).toBe('succeeded');
+        expect(result.turns[1]?.turnDiffFromMessageId).toBe('msg_u2');
+        expect(result.turns[1]?.turnDiffFiles).toEqual(['src/turn2.ts']);
+        expect(result.turns[1]?.turnIdleOutcome).toBe('succeeded');
+    });
 });

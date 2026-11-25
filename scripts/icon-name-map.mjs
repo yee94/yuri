@@ -368,6 +368,7 @@ export const ICON_NAME_MAP = {
   "stop": { lucide: "square", fill: false },
   "stop-circle": { custom: SOFT_STOP_CIRCLE_SVG },
   "subtract": { lucide: "minus", fill: false },
+  "route": { lucide: "route", fill: false },
   "survey": { lucide: "clipboard-list", fill: false },
   // Goal chip / row — Lucide stroke rings; Remix fill+system stroke looked too heavy.
   "target": { lucide: "target", fill: false },

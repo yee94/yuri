@@ -458,6 +458,7 @@ function fillMissingTerminalMessageFields(live: Message, snapshot: Message): Mes
   const snapshotTokens = (snapshot as { tokens?: unknown }).tokens
   const mergedSnapshot = mergeMessageSnapshot(live.snapshot, snapshot.snapshot)
   const incomingTurnIdle = normalizeMessageTurnIdle(snapshot.turnIdle)
+  const incomingPrecededByTurnIdle = normalizeMessageTurnIdle(snapshot.precededByTurnIdle)
 
   const takeFinish = !hasNonEmptyFinish(live)
     && typeof snapshotFinish === "string"
@@ -470,8 +471,9 @@ function fillMissingTerminalMessageFields(live: Message, snapshot: Message): Mes
     && hasAnyPositiveTokenCount(snapshotTokens)
   const takeSnapshot = Boolean(mergedSnapshot) && !areSnapshotsEquivalent(live.snapshot, mergedSnapshot)
   const takeTurnIdle = !normalizeMessageTurnIdle(live.turnIdle) && Boolean(incomingTurnIdle)
+  const takePrecededByTurnIdle = !normalizeMessageTurnIdle(live.precededByTurnIdle) && Boolean(incomingPrecededByTurnIdle)
 
-  if (!takeFinish && !takeCompleted && !takeStreamed && !takeError && !takeTokens && !takeSnapshot && !takeTurnIdle) {
+  if (!takeFinish && !takeCompleted && !takeStreamed && !takeError && !takeTokens && !takeSnapshot && !takeTurnIdle && !takePrecededByTurnIdle) {
     return live
   }
 
@@ -497,6 +499,9 @@ function fillMissingTerminalMessageFields(live: Message, snapshot: Message): Mes
   }
   if (takeTurnIdle) {
     ;(next as Message).turnIdle = incomingTurnIdle
+  }
+  if (takePrecededByTurnIdle) {
+    ;(next as Message).precededByTurnIdle = incomingPrecededByTurnIdle
   }
   return next as Message
 }

@@ -23,7 +23,7 @@ import { useSelectionStore } from './selection-store'
 import { bindLocationTranscriptRepository } from './transcript-repository-runtime'
 import { handoffDeliveredInbox } from './session-inbox-transcript'
 import { queryClient } from '@/lib/queryRuntime'
-import type { Session, SessionStatus } from '@/lib/opencode/v2-types'
+import type { Message, Session, SessionStatus } from '@/lib/opencode/v2-types'
 import type { PermissionRequest } from '@/types/permission'
 import type { QuestionRequest } from '@/types/question'
 import { projectSession, mapV2PermissionRequest, mapV2QuestionRequest, isQuestionFormMetadata, answersToFormAnswer } from './v2-runtime'
@@ -297,9 +297,19 @@ export function createRemoteSessionState(
             || (event.type === 'session.execution.interrupted' && props.reason !== 'shutdown')
           ) {
             const transcript = repository.getTranscript(scope(sessionID))
-            const lastMessageID = transcript?.messageOrder.at(-1)
-            const lastMessage = lastMessageID ? transcript?.messagesByID[lastMessageID] : undefined
-            if (lastMessage && lastMessage.role === 'assistant' && !lastMessage.turnIdle) {
+            let closingAssistant: Message | undefined
+            if (transcript) {
+              for (let index = transcript.messageOrder.length - 1; index >= 0; index -= 1) {
+                const candidate = transcript.messagesByID[transcript.messageOrder[index]!]
+                if (!candidate) continue
+                if (candidate.role === 'assistant') {
+                  closingAssistant = candidate
+                  break
+                }
+                if (candidate.role !== 'user') break
+              }
+            }
+            if (closingAssistant && !closingAssistant.turnIdle) {
               const outcome = event.type === 'session.execution.failed'
                 ? 'failed'
                 : event.type === 'session.execution.interrupted'
@@ -311,7 +321,7 @@ export function createRemoteSessionState(
                   type: 'message.updated',
                   properties: {
                     info: {
-                      ...lastMessage,
+                      ...closingAssistant,
                       turnIdle: { outcome },
                     },
                   },

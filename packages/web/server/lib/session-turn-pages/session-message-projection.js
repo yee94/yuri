@@ -310,6 +310,7 @@ export const projectSessionMessage = (entry) => {
 export const projectSessionMessageRecords = (records) => {
   if (!Array.isArray(records)) return [];
   const projected = [];
+  let pendingLeadingIdle = null;
   for (const entry of records) {
     const idleMarker = extractIdleMarker(entry);
     if (idleMarker) {
@@ -319,11 +320,20 @@ export const projectSessionMessageRecords = (records) => {
           ...previous.info,
           turnIdle: idleMarker,
         };
+      } else {
+        pendingLeadingIdle = idleMarker;
       }
       continue;
     }
     const next = projectSessionMessage(entry);
     if (next != null && typeof next === 'object' && next.info) {
+      if (pendingLeadingIdle) {
+        next.info = {
+          ...next.info,
+          precededByTurnIdle: pendingLeadingIdle,
+        };
+        pendingLeadingIdle = null;
+      }
       projected.push(next);
     }
   }

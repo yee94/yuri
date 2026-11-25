@@ -392,6 +392,14 @@ const readTurnIdleMarker = (turn: TurnRecord): { id?: string; outcome: 'succeede
     return undefined;
 };
 
+const readTurnLeadingIdleMarker = (turn: TurnRecord): { id?: string; outcome: 'succeeded' | 'failed' | 'interrupted' } | undefined => {
+    const marker = turn.messages[0]?.message.info.precededByTurnIdle;
+    if (marker && (marker.outcome === 'succeeded' || marker.outcome === 'failed' || marker.outcome === 'interrupted')) {
+        return marker;
+    }
+    return undefined;
+};
+
 const collectTurnSnapshotFiles = (turn: TurnRecord): { files: string[]; tokens: string[] } => {
     const files: string[] = [];
     const tokens: string[] = [];
@@ -414,10 +422,15 @@ const collectTurnSnapshotFiles = (turn: TurnRecord): { files: string[]; tokens: 
 /**
  * OpenCode v2 turn-diff attribution across execution cycles.
  *
- * Mirrors OpenCode's Timeline projection:
+ * Mirrors OpenCode's Timeline projection with two attribution safeguards:
  * - Everything between two `idle` markers belongs to one execution cycle,
- *   including prompts steered in while busy; the diff card attaches only to the
- *   cycle's closing turn, with `from` set to the opening user message ID.
+ *   including prompts steered/queued while busy (`from` stays the opening user
+ *   message ID).
+ * - Within an execution cycle, the diff card attaches to the **last turn that
+ *   actually edited files** (`lastFileEditTurnIndex`) rather than a trailing
+ *   read-only Q&A turn that touched zero files.
+ * - Page-boundary `precededByTurnIdle` markers close the preceding turn before
+ *   starting the next turn so edits never leak across a paginated boundary.
  * - Running or shutdown-interrupted turns have no `idle` marker and emit no card.
  * - User-interrupted / permission-rejected turns carry `idle(interrupted)` and
  *   emit a card whenever steps already wrote files.
@@ -429,13 +442,64 @@ const applyV2TurnDiffProjection = (
 ): TurnRecord[] => {
     if (turns.length === 0) return turns;
 
+    const leadingIdleMarkers = turns.map(readTurnLeadingIdleMarker);
     const idleMarkers = turns.map(readTurnIdleMarker);
-    const hasIdleMarkers = idleMarkers.some(Boolean);
+    const hasIdleMarkers = idleMarkers.some(Boolean) || leadingIdleMarkers.some(Boolean);
 
-    let execution: { opener: string; files: Set<string>; tokens: string[] } | undefined;
-    let changed = false;
+    type PlannedTurnDiff = {
+        turnIdleOutcome?: 'succeeded' | 'failed' | 'interrupted';
+        turnDiffFromMessageId?: string;
+        turnDiffFiles?: string[];
+        turnDiffSignature?: string;
+    };
 
-    const nextTurns = turns.map((turn, index) => {
+    const planned: PlannedTurnDiff[] = turns.map((_, index) => ({
+        turnIdleOutcome: idleMarkers[index]?.outcome,
+    }));
+
+    let execution: {
+        opener: string;
+        files: Set<string>;
+        tokens: string[];
+        lastFileEditTurnIndex: number;
+    } | undefined;
+
+    const closeExecution = (
+        idle: { id?: string; outcome: 'succeeded' | 'failed' | 'interrupted' } | undefined,
+        fallbackTurnIndex: number,
+    ) => {
+        if (showTurnChangedFiles && execution && execution.files.size > 0) {
+            const targetIndex = execution.lastFileEditTurnIndex >= 0
+                ? execution.lastFileEditTurnIndex
+                : fallbackTurnIndex;
+            const target = planned[targetIndex];
+            if (target) {
+                const files = [...execution.files].sort();
+                target.turnDiffFromMessageId = execution.opener;
+                target.turnDiffFiles = files;
+                target.turnDiffSignature = [
+                    idle ? (idle.id ?? idle.outcome) : undefined,
+                    ...execution.tokens,
+                    ...files,
+                ].filter(Boolean).join('|');
+                if (idle && !target.turnIdleOutcome) {
+                    target.turnIdleOutcome = idle.outcome;
+                }
+            }
+        }
+        execution = undefined;
+    };
+
+    for (let index = 0; index < turns.length; index += 1) {
+        const leadingIdle = leadingIdleMarkers[index];
+        if (leadingIdle && execution) {
+            if (index > 0 && !planned[index - 1]?.turnIdleOutcome) {
+                planned[index - 1]!.turnIdleOutcome = leadingIdle.outcome;
+            }
+            closeExecution(leadingIdle, index - 1);
+        }
+
+        const turn = turns[index]!;
         const idle = idleMarkers[index];
         const snapshot = collectTurnSnapshotFiles(turn);
 
@@ -445,35 +509,37 @@ const applyV2TurnDiffProjection = (
                     opener: turn.userMessageId,
                     files: new Set<string>(),
                     tokens: [],
+                    lastFileEditTurnIndex: -1,
                 };
             }
         }
 
         if (execution) {
-            for (const file of snapshot.files) execution.files.add(file);
+            if (snapshot.files.length > 0) {
+                for (const file of snapshot.files) execution.files.add(file);
+                execution.lastFileEditTurnIndex = index;
+            }
             for (const token of snapshot.tokens) execution.tokens.push(token);
         }
 
-        let nextTurnDiffFromMessageId: string | undefined;
-        let nextTurnDiffFiles: string[] | undefined;
-        let nextTurnDiffSignature: string | undefined;
-        const nextTurnIdleOutcome = idle?.outcome;
-
         if (idle) {
-            if (showTurnChangedFiles && execution && execution.files.size > 0) {
-                nextTurnDiffFromMessageId = execution.opener;
-                nextTurnDiffFiles = [...execution.files].sort();
-                nextTurnDiffSignature = [idle.id ?? idle.outcome, ...execution.tokens, ...nextTurnDiffFiles].join('|');
-            }
-            execution = undefined;
+            closeExecution(idle, index);
         } else if (!hasIdleMarkers) {
-            if (showTurnChangedFiles && execution && execution.files.size > 0 && turn.completionDisposition !== 'active') {
-                nextTurnDiffFromMessageId = execution.opener;
-                nextTurnDiffFiles = [...execution.files].sort();
-                nextTurnDiffSignature = [...execution.tokens, ...nextTurnDiffFiles].join('|');
+            if (turn.completionDisposition !== 'active') {
+                closeExecution(undefined, index);
+            } else {
+                execution = undefined;
             }
-            execution = undefined;
         }
+    }
+
+    let changed = false;
+    const nextTurns = turns.map((turn, index) => {
+        const plan = planned[index]!;
+        const nextTurnIdleOutcome = plan.turnIdleOutcome;
+        const nextTurnDiffFromMessageId = plan.turnDiffFromMessageId;
+        const nextTurnDiffFiles = plan.turnDiffFiles;
+        const nextTurnDiffSignature = plan.turnDiffSignature;
 
         const legacyDiffStats = turn.userMessage ? projectTurnDiffStats(turn.userMessage) : undefined;
         const nextDiffStats = legacyDiffStats ?? (nextTurnDiffFiles && nextTurnDiffFiles.length > 0

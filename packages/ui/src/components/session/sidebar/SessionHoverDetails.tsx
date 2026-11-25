@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Icon } from '@/components/icon/Icon';
+import { ModelLogo } from '@/components/ui/ModelLogo';
 import { isDesktopLocalOriginActive } from '@/lib/desktop';
 import { getDesktopHostApiUrl, locationMatchesHost, redactSensitiveUrl, type DesktopHost } from '@/lib/desktopHosts';
 import { useI18n } from '@/lib/i18n';
@@ -48,7 +49,7 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
   const mismatchedBranch = Boolean(branch && currentBranch && currentBranch !== 'HEAD' && currentBranch !== branch);
 
   return (
-    <div className="flex flex-col gap-1.5 text-left" data-session-hover-details={session.id}>
+    <div className="flex flex-col gap-1.5 text-left text-wrap" data-session-hover-details={session.id}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1 break-words typography-ui-label font-medium text-foreground">{title}</div>
         <span className="shrink-0 text-xs leading-4 text-muted-foreground">{time}</span>
@@ -70,7 +71,7 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
           data-session-hover-path
           className="flex min-w-0 items-start gap-2 text-xs leading-4 text-muted-foreground"
         >
-          <Icon name="folder-open" className="mt-0.5 size-3.5 shrink-0" />
+          <Icon name="route" className="mt-0.5 size-3.5 shrink-0" />
           <span className="min-w-0 break-all">{absolutePath}</span>
         </div>
       ) : null}
@@ -91,7 +92,12 @@ export function SessionHoverDetails({ session, title, projectLabel, project, bra
       ) : null}
       {modelLabel ? (
         <div className="flex min-w-0 items-center gap-2 text-xs leading-4 text-muted-foreground">
-          <Icon name="ai-agent" className="size-3.5 shrink-0" />
+          <ModelLogo
+            modelId={session.model?.id}
+            providerId={session.model?.providerID}
+            className="size-3.5 shrink-0"
+            fallback={<Icon name="ai-agent" className="size-3.5 shrink-0" />}
+          />
           <span className="min-w-0 break-words">{modelLabel}</span>
         </div>
       ) : null}

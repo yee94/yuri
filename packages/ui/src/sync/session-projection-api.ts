@@ -557,6 +557,7 @@ export function normalizeSessionProjectionPage(
   }
 
   const records: TranscriptTransportPage["records"][number][] = []
+  let pendingLeadingIdle: Message["turnIdle"] | undefined
   const chronologicalItems = order === "desc" ? [...payload.data].reverse() : payload.data
   for (const item of chronologicalItems) {
     const idleMarker = projectionTurnIdle(item)
@@ -570,12 +571,28 @@ export function normalizeSessionProjectionPage(
             turnIdle: idleMarker,
           },
         }
+      } else {
+        // Page boundary split between the previous turn's last assistant and its
+        // `idle` row: attach the boundary to the first subsequent record so
+        // stitching an older page in front still closes the preceding turn.
+        pendingLeadingIdle = idleMarker
       }
       continue
     }
     const normalized = normalizeSessionProjectionMessage(sessionID, item)
     if (!normalized) continue
-    records.push(normalized)
+    if (pendingLeadingIdle) {
+      records.push({
+        ...normalized,
+        info: {
+          ...normalized.info,
+          precededByTurnIdle: pendingLeadingIdle,
+        },
+      })
+      pendingLeadingIdle = undefined
+    } else {
+      records.push(normalized)
+    }
   }
 
   // OpenCode 2.x message.list cursor contract (client 2.0.12):
@@ -702,6 +719,7 @@ export function reconcileFetched(input: ReconcileFetchedInput): ReconcileFetched
       const fetchedItem = result.get(id)
       const fetchedSnapshot = fetchedItem?.info.snapshot
       const fetchedTurnIdle = fetchedItem?.info.turnIdle
+      const fetchedPrecededByTurnIdle = fetchedItem?.info.precededByTurnIdle
       const mergedSnapshot = fetchedSnapshot
         ? {
           ...(fetchedSnapshot.start ?? item.info.snapshot?.start ? { start: item.info.snapshot?.start ?? fetchedSnapshot.start } : {}),
@@ -714,13 +732,19 @@ export function reconcileFetched(input: ReconcileFetchedInput): ReconcileFetched
         }
         : item.info.snapshot
       const mergedTurnIdle = item.info.turnIdle ?? fetchedTurnIdle
-      if (mergedSnapshot !== item.info.snapshot || mergedTurnIdle !== item.info.turnIdle) {
+      const mergedPrecededByTurnIdle = item.info.precededByTurnIdle ?? fetchedPrecededByTurnIdle
+      if (
+        mergedSnapshot !== item.info.snapshot
+        || mergedTurnIdle !== item.info.turnIdle
+        || mergedPrecededByTurnIdle !== item.info.precededByTurnIdle
+      ) {
         result.set(id, {
           ...item,
           info: {
             ...item.info,
             ...(mergedSnapshot ? { snapshot: mergedSnapshot } : {}),
             ...(mergedTurnIdle ? { turnIdle: mergedTurnIdle } : {}),
+            ...(mergedPrecededByTurnIdle ? { precededByTurnIdle: mergedPrecededByTurnIdle } : {}),
           },
         })
       } else {
