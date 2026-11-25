@@ -2733,6 +2733,37 @@ export function handleEvent(
         ? (idleSession as Session & { parentID?: string | null }).parentID
         : null
       const transcript = getTranscriptRepository()?.getTranscript(transcriptScope(resolvedDirectory, idleSessionId))
+      if (
+        payload.type === "session.execution.succeeded"
+        || payload.type === "session.execution.failed"
+        || (payload.type === "session.execution.interrupted" && payload.properties?.reason !== "shutdown")
+      ) {
+        const lastMessageID = transcript?.messageOrder.at(-1)
+        const lastMessage = lastMessageID ? transcript?.messagesByID[lastMessageID] : undefined
+        if (lastMessage && lastMessage.role === "assistant" && !lastMessage.turnIdle) {
+          const outcome = payload.type === "session.execution.failed"
+            ? "failed"
+            : payload.type === "session.execution.interrupted"
+              ? "interrupted"
+              : "succeeded"
+          commitTranscriptSseEvent(
+            {
+              type: "message.updated",
+              properties: {
+                info: {
+                  ...lastMessage,
+                  turnIdle: { outcome },
+                },
+              },
+            } as Event,
+            idleSessionId,
+            resolvedDirectory,
+            lastMessage.id,
+            childStores,
+            routingIndex,
+          )
+        }
+      }
       const plan = planSessionIdleMaterialization({
         idleSessionID: idleSessionId,
         directory: resolvedDirectory,

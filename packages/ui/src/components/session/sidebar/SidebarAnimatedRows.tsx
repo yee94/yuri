@@ -1,5 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion, useIsPresent, useReducedMotion, type Variants } from 'motion/react';
+import { SessionListReorderLockContext } from './sessionDragState';
 
 const ROW_TRANSITION = { duration: 0.2, ease: [0.22, 1, 0.36, 1] as const };
 
@@ -57,9 +58,15 @@ export function withoutRemovedRows<T extends { id: string }>(deferred: T[], curr
   return removed === 0 ? deferred : deferred.filter((item) => currentIds.has(item.id));
 }
 
-type RowsMode = { animate: boolean; animateEnter: boolean };
+/**
+ * A `layout` row is measured on every render of its list, so reordering is animated only
+ * in lists of a size the task, pinned and in-progress views actually reach.
+ */
+const MAX_REORDER_ANIMATED_ROWS = 300;
 
-const STATIC_MODE: RowsMode = { animate: false, animateEnter: false };
+type RowsMode = { animate: boolean; animateEnter: boolean; animateReorder: boolean };
+
+const STATIC_MODE: RowsMode = { animate: false, animateEnter: false, animateReorder: false };
 const RowsModeContext = React.createContext<RowsMode>(STATIC_MODE);
 
 /**
@@ -83,9 +90,10 @@ export function SidebarAnimatedRows({ children }: { children: React.ReactNode })
   React.useLayoutEffect(() => {
     previousKeys.current = new Set(keys);
   });
+  const animateReorder = keys.length <= MAX_REORDER_ANIMATED_ROWS;
   const mode = React.useMemo<RowsMode>(
-    () => (reduceMotion ? STATIC_MODE : { animate: true, animateEnter }),
-    [animateEnter, reduceMotion],
+    () => (reduceMotion ? STATIC_MODE : { animate: true, animateEnter, animateReorder }),
+    [animateEnter, animateReorder, reduceMotion],
   );
   return (
     <RowsModeContext.Provider value={mode}>
@@ -102,9 +110,12 @@ export function SidebarAnimatedRow({ children }: { children: React.ReactNode }):
   const mode = React.useContext(RowsModeContext);
   // A removed row stays mounted for its exit; it must not take clicks or focus meanwhile.
   const present = useIsPresent();
+  // A drag-to-reorder moves rows through dnd-kit's own transforms; animating the same move again would replay it.
+  const reorderLocked = React.useContext(SessionListReorderLockContext);
   if (!mode.animate) return <div>{children}</div>;
   return (
     <motion.div
+      layout={mode.animateReorder && !reorderLocked && present ? 'position' : false}
       style={ROW_STYLE}
       variants={ROW_VARIANTS}
       initial={mode.animateEnter ? 'collapsed' : false}

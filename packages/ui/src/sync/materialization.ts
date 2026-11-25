@@ -14,7 +14,9 @@ import {
 } from "./transcript-durable-store"
 import {
   hasAnyPositiveTokenCount,
+  mergeMessageSnapshot,
   mergeTranscriptMessageUpdate,
+  normalizeMessageTurnIdle,
 } from "./transcript-event-reducer"
 
 const STREAMING_PART_FIELDS = ["text", "output"] as const
@@ -430,6 +432,22 @@ const hasError = (message: Message): boolean => Boolean(readTerminalFields(messa
  * The provider-stream boundary is also terminal measurement data: missing it
  * leaves TPS unavailable even when completion and token usage have settled.
  */
+function areSnapshotsEquivalent(
+  left: Message["snapshot"] | undefined,
+  right: Message["snapshot"] | undefined,
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return !left && !right
+  if (left.start !== right.start || left.end !== right.end) return false
+  const leftFiles = left.files ?? []
+  const rightFiles = right.files ?? []
+  if (leftFiles.length !== rightFiles.length) return false
+  for (let index = 0; index < leftFiles.length; index += 1) {
+    if (leftFiles[index] !== rightFiles[index]) return false
+  }
+  return true
+}
+
 function fillMissingTerminalMessageFields(live: Message, snapshot: Message): Message {
   const snapshotFields = readTerminalFields(snapshot)
   const snapshotFinish = snapshotFields.finish
@@ -438,6 +456,8 @@ function fillMissingTerminalMessageFields(live: Message, snapshot: Message): Mes
   const snapshotError = snapshotFields.error
   const liveTokens = (live as { tokens?: unknown }).tokens
   const snapshotTokens = (snapshot as { tokens?: unknown }).tokens
+  const mergedSnapshot = mergeMessageSnapshot(live.snapshot, snapshot.snapshot)
+  const incomingTurnIdle = normalizeMessageTurnIdle(snapshot.turnIdle)
 
   const takeFinish = !hasNonEmptyFinish(live)
     && typeof snapshotFinish === "string"
@@ -448,8 +468,10 @@ function fillMissingTerminalMessageFields(live: Message, snapshot: Message): Mes
   const takeError = !hasError(live) && Boolean(snapshotError)
   const takeTokens = !hasAnyPositiveTokenCount(liveTokens)
     && hasAnyPositiveTokenCount(snapshotTokens)
+  const takeSnapshot = Boolean(mergedSnapshot) && !areSnapshotsEquivalent(live.snapshot, mergedSnapshot)
+  const takeTurnIdle = !normalizeMessageTurnIdle(live.turnIdle) && Boolean(incomingTurnIdle)
 
-  if (!takeFinish && !takeCompleted && !takeStreamed && !takeError && !takeTokens) {
+  if (!takeFinish && !takeCompleted && !takeStreamed && !takeError && !takeTokens && !takeSnapshot && !takeTurnIdle) {
     return live
   }
 
@@ -469,6 +491,12 @@ function fillMissingTerminalMessageFields(live: Message, snapshot: Message): Mes
   }
   if (takeTokens) {
     ;(next as { tokens?: unknown }).tokens = snapshotTokens
+  }
+  if (takeSnapshot) {
+    ;(next as Message).snapshot = mergedSnapshot
+  }
+  if (takeTurnIdle) {
+    ;(next as Message).turnIdle = incomingTurnIdle
   }
   return next as Message
 }

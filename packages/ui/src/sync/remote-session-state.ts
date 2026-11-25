@@ -291,6 +291,35 @@ export function createRemoteSessionState(
         if (executionTerminal) {
           metadataRevision++
           publishLiveStatus(sessionID, props.reason === 'shutdown' ? { type: 'busy' } : { type: 'idle' })
+          if (
+            event.type === 'session.execution.succeeded'
+            || event.type === 'session.execution.failed'
+            || (event.type === 'session.execution.interrupted' && props.reason !== 'shutdown')
+          ) {
+            const transcript = repository.getTranscript(scope(sessionID))
+            const lastMessageID = transcript?.messageOrder.at(-1)
+            const lastMessage = lastMessageID ? transcript?.messagesByID[lastMessageID] : undefined
+            if (lastMessage && lastMessage.role === 'assistant' && !lastMessage.turnIdle) {
+              const outcome = event.type === 'session.execution.failed'
+                ? 'failed'
+                : event.type === 'session.execution.interrupted'
+                  ? 'interrupted'
+                  : 'succeeded'
+              repository.apply(scope(sessionID), {
+                type: 'sse-event',
+                event: {
+                  type: 'message.updated',
+                  properties: {
+                    info: {
+                      ...lastMessage,
+                      turnIdle: { outcome },
+                    },
+                  },
+                  clientLocation: entry.location,
+                } as Event & { clientLocation: HostLocation },
+              })
+            }
+          }
         }
         if (event.type.startsWith('permission.') || event.type.startsWith('question.') || event.type.startsWith('form.') || event.type === 'session.updated') {
           metadataRevision++

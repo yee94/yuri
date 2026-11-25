@@ -69,6 +69,16 @@ describe('SidebarAnimatedRows', () => {
     after.forEach((el, index) => expect(el).toBe(before[index]));
   });
 
+  test('swapping two rows reorders the same DOM nodes without remounting or collapsing them', async () => {
+    await show(['a', 'b', 'c']);
+    const before = new Map(rowEls().map((el) => [el.dataset.row, el]));
+    await show(['b', 'a', 'c']);
+    const after = rowEls();
+    expect(after.map((el) => el.dataset.row)).toEqual(['b', 'a', 'c']);
+    after.forEach((el) => expect(el).toBe(before.get(el.dataset.row)));
+    expect(collapsedRows()).toHaveLength(0);
+  });
+
   test('a removed row unmounts once its exit finishes', async () => {
     await show(ids(5));
     await show(ids(5).slice(1));

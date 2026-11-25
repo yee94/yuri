@@ -155,7 +155,7 @@ function normalizeMessageSnapshot(value: unknown): Message["snapshot"] | undefin
   return Object.keys(snapshot).length > 0 ? snapshot : undefined
 }
 
-function mergeMessageSnapshot(existing: unknown, incoming: unknown): Message["snapshot"] | undefined {
+export function mergeMessageSnapshot(existing: unknown, incoming: unknown): Message["snapshot"] | undefined {
   const prev = normalizeMessageSnapshot(existing)
   const next = normalizeMessageSnapshot(incoming)
   if (!prev) return next
@@ -171,7 +171,7 @@ function mergeMessageSnapshot(existing: unknown, incoming: unknown): Message["sn
   }
 }
 
-function normalizeMessageTurnIdle(value: unknown): Message["turnIdle"] | undefined {
+export function normalizeMessageTurnIdle(value: unknown): Message["turnIdle"] | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
   const record = value as Record<string, unknown>
   const outcome = record.outcome

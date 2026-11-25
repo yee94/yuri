@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { normalizeSessionProjectionPage } from '@/sync/session-projection-api';
+import { normalizeSessionProjectionPage, reconcileFetched } from '@/sync/session-projection-api';
+import { materializeSessionSnapshots } from '@/sync/materialization';
+import { resolveSessionMergeStrategy } from '@/sync/session-merge-strategy';
 import { applyTranscriptDirectoryEvent, type TranscriptEventDraft } from '@/sync/transcript-event-reducer';
 import { projectTurnRecords } from './projectTurnRecords';
 import type { ChatMessageEntry } from './types';
@@ -224,5 +226,77 @@ describe('OpenCode v2 turn diff projection', () => {
         expect(result.turns[0]?.turnDiffFiles).toEqual(['src/a.ts']);
         expect(result.turns[1]?.turnDiffFiles).toBeUndefined();
         expect(result.turns[1]?.diffStats).toBeUndefined();
+    });
+
+    test('insert-only idle materialization fills missing snapshot end/files and turnIdle onto live assistant rows', () => {
+        const liveAssistant = makeAssistant('msg_a1', 150, {
+            finish: 'stop',
+            completed: 180,
+            start: 'snap_start',
+        });
+        const httpAssistant = makeAssistant('msg_a1', 150, {
+            finish: 'stop',
+            completed: 180,
+            start: 'snap_start',
+            end: 'snap_end',
+            files: ['src/live.ts'],
+            turnIdle: { id: 'msg_idle_1', outcome: 'succeeded' },
+        });
+
+        const materialized = materializeSessionSnapshots(
+            {
+                message: { ses_1: [liveAssistant.info] },
+                part: { msg_a1: liveAssistant.parts },
+            },
+            'ses_1',
+            [httpAssistant],
+            {
+                merge: resolveSessionMergeStrategy({ purpose: 'materialize' }),
+            },
+        );
+
+        expect(materialized.messagesChanged).toBe(true);
+        expect(materialized.messages[0]?.snapshot).toEqual({
+            start: 'snap_start',
+            end: 'snap_end',
+            files: ['src/live.ts'],
+        });
+        expect(materialized.messages[0]?.turnIdle).toEqual({
+            id: 'msg_idle_1',
+            outcome: 'succeeded',
+        });
+    });
+
+    test('reconcileFetched preserves fetched snapshot and turnIdle even when SSE touched the live row', () => {
+        const liveAssistant = makeAssistant('msg_a1', 150, {
+            finish: 'stop',
+            completed: 180,
+            start: 'snap_start',
+        });
+        const fetchedAssistant = makeAssistant('msg_a1', 150, {
+            finish: 'stop',
+            completed: 180,
+            start: 'snap_start',
+            end: 'snap_end',
+            files: ['src/reconciled.ts'],
+            turnIdle: { id: 'msg_idle_2', outcome: 'succeeded' },
+        });
+
+        const reconciled = reconcileFetched({
+            fetched: [fetchedAssistant],
+            previous: [liveAssistant],
+            touched: new Set(['msg_a1']),
+            completeTail: true,
+        });
+
+        expect(reconciled[0]?.info.snapshot).toEqual({
+            start: 'snap_start',
+            end: 'snap_end',
+            files: ['src/reconciled.ts'],
+        });
+        expect(reconciled[0]?.info.turnIdle).toEqual({
+            id: 'msg_idle_2',
+            outcome: 'succeeded',
+        });
     });
 });

@@ -319,7 +319,10 @@ export const TurnChangesCard = React.memo(({
 
     return (
         <section
-            className="mt-2 flex min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] bg-[color-mix(in_srgb,var(--surface-foreground)_5.5%,var(--surface-background))] text-foreground"
+            className={cn(
+                'flex min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] bg-[color-mix(in_srgb,var(--surface-foreground)_5.5%,var(--surface-background))] text-foreground',
+                isMobile ? 'mt-2.5' : 'mt-3',
+            )}
             data-turn-changes-preview="true"
             data-message-action-group="true"
             aria-labelledby={`turn-changes-${turnId}`}

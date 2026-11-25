@@ -17,7 +17,10 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import { Icon } from "@/components/icon/Icon";
 import { canReorderVisibleSessions } from './sessionSortableOrder';
-import { SessionRowDragContext } from './sessionDragState';
+import { SessionListReorderLockContext, SessionRowDragContext } from './sessionDragState';
+
+/** dnd-kit clears its own displacement on drop in the same commit that reorders the list. */
+const REORDER_SETTLE_MS = 400;
 import { triggerMobileHaptic } from '@/hooks/streamingHaptics';
 
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
@@ -90,13 +93,22 @@ export const SessionFolderDndScope: React.FC<{
   const [activeDragTitle, setActiveDragTitle] = React.useState<string>('Session');
   const [activeDragWidth, setActiveDragWidth] = React.useState<number | null>(null);
   const [activeDragHeight, setActiveDragHeight] = React.useState<number | null>(null);
+  const [settling, setSettling] = React.useState(false);
+  React.useEffect(() => {
+    if (!settling) return;
+    const timer = setTimeout(() => setSettling(false), REORDER_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [settling]);
 
   if (!scopeKey) {
     return <>{children}</>;
   }
 
+  const reorderLocked = activeDragId !== null || settling;
+
   const handleDragEnd = (event: DragEndEvent) => {
     triggerMobileHaptic('light', { bypassCadence: true });
+    setSettling(true);
     setActiveDragId(null);
     setActiveDragWidth(null);
     setActiveDragHeight(null);
@@ -135,6 +147,7 @@ export const SessionFolderDndScope: React.FC<{
       }}
       onDragCancel={() => {
         triggerMobileHaptic('light', { bypassCadence: true });
+        setSettling(true);
         setActiveDragId(null);
         setActiveDragWidth(null);
         setActiveDragHeight(null);
@@ -142,7 +155,7 @@ export const SessionFolderDndScope: React.FC<{
       onDragEnd={handleDragEnd}
     >
       <SortableContext items={sessionIds.map((sessionId) => `session-drag:${sessionId}`)} strategy={verticalListSortingStrategy}>
-        {children}
+        <SessionListReorderLockContext.Provider value={reorderLocked}>{children}</SessionListReorderLockContext.Provider>
       </SortableContext>
       {typeof document !== 'undefined' ? createPortal(<DragOverlay>
         {activeDragId ? (

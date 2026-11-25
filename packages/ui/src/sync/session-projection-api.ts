@@ -698,8 +698,37 @@ export function reconcileFetched(input: ReconcileFetchedInput): ReconcileFetched
 
   for (const id of touched) {
     const item = live.get(id)
-    if (item) result.set(id, item)
-    else result.delete(id)
+    if (item) {
+      const fetchedItem = result.get(id)
+      const fetchedSnapshot = fetchedItem?.info.snapshot
+      const fetchedTurnIdle = fetchedItem?.info.turnIdle
+      const mergedSnapshot = fetchedSnapshot
+        ? {
+          ...(fetchedSnapshot.start ?? item.info.snapshot?.start ? { start: item.info.snapshot?.start ?? fetchedSnapshot.start } : {}),
+          ...(fetchedSnapshot.end ?? item.info.snapshot?.end ? { end: item.info.snapshot?.end ?? fetchedSnapshot.end } : {}),
+          ...(item.info.snapshot?.files?.length
+            ? { files: item.info.snapshot.files }
+            : fetchedSnapshot.files?.length
+              ? { files: fetchedSnapshot.files }
+              : {}),
+        }
+        : item.info.snapshot
+      const mergedTurnIdle = item.info.turnIdle ?? fetchedTurnIdle
+      if (mergedSnapshot !== item.info.snapshot || mergedTurnIdle !== item.info.turnIdle) {
+        result.set(id, {
+          ...item,
+          info: {
+            ...item.info,
+            ...(mergedSnapshot ? { snapshot: mergedSnapshot } : {}),
+            ...(mergedTurnIdle ? { turnIdle: mergedTurnIdle } : {}),
+          },
+        })
+      } else {
+        result.set(id, item)
+      }
+    } else {
+      result.delete(id)
+    }
   }
 
   const previousIDs = previous.map(record => record.info.id).filter(id => result.has(id))
