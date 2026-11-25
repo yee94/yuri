@@ -210,6 +210,19 @@ export const hasSettledBackgroundRunningHint = (part: unknown): boolean => {
         || readTaskStatusFromRecord(toolStateOf(toolPart)) === 'running';
 };
 
+/**
+ * A shell that was launched in, or moved to, the background. It no longer
+ * blocks the turn, so it must behave like a completed tool for process-group
+ * merging and the live "what is it doing" status.
+ */
+export const isBackgroundShellToolPart = (part: unknown): boolean => {
+    if (!part || typeof part !== 'object') return false;
+    const toolPart = part as ToolLikePart;
+    if (toolPart.type !== undefined && toolPart.type !== 'tool') return false;
+    if (!isShellToolName(toolNameOf(toolPart))) return false;
+    return toolInputOf(toolPart)?.background === true || hasSettledBackgroundRunningHint(part);
+};
+
 /** @deprecated Prefer hasSettledBackgroundRunningHint + resolveBackgroundToolActivity. */
 export const isBackgroundRunningToolPart = (part: unknown): boolean => {
     return hasSettledBackgroundRunningHint(part);

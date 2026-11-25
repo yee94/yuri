@@ -17,6 +17,7 @@ import { isFullySyntheticMessage } from '@/lib/messages/synthetic';
 import { isNativeSyntheticMessage } from '@/sync/session-projection-api';
 import { useI18n, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { canonicalizeBuiltInToolName } from '@/lib/toolHelpers';
+import { isBackgroundShellToolPart } from '@/components/chat/message/parts/sessionBackgroundModel';
 import { useSessionActivity } from './useSessionActivity';
 
 type AssistantActivity = 'idle' | 'streaming' | 'tooling' | 'cooldown' | 'permission';
@@ -176,7 +177,7 @@ const createParsedStatus = (
                 }
                 case 'tool': {
                     const toolStatus = part.state?.status;
-                    if ((toolStatus === 'running' || toolStatus === 'pending') && !activePartType) {
+                    if ((toolStatus === 'running' || toolStatus === 'pending') && !activePartType && !isBackgroundShellToolPart(part)) {
                         const toolName = canonicalizeBuiltInToolName(getToolDisplayName(part));
                         if (EDITING_TOOLS.has(toolName)) {
                             activePartType = 'editing';

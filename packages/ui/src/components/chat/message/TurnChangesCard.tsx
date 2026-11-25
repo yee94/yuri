@@ -11,7 +11,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useSessionTurnDiffQuery } from '@/queries/sessionTurnChangesQueries';
-import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import type { TurnChangedFile } from '../lib/turns/types';
 import { openTurnChangedFilePreview } from '../openTurnChangedFile';
 import { getSessionSurfaceActionAvailability, useSessionSurface } from '../SessionSurfaceContext';
@@ -98,7 +98,7 @@ interface TurnChangesCardProps {
     turnDiffSignature?: string;
     isLatestTurn: boolean;
     isMobile: boolean;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
 }
 
 export const TurnChangesCard = React.memo(({

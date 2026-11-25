@@ -57,7 +57,7 @@ import { TranscriptScrollControls } from './components/TranscriptScrollControls'
 import { PromptNavigatorRail } from './components/PromptNavigatorRail';
 import { getFullText } from './lib/messagePreview';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
-import { useChatAutoFollow, type AnimationHandlers, type ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import { useChatAutoFollow, type AnimationHandlers, type ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import { useMobileComposerSwap } from './useMobileComposerSwap';
 import { useChatTimelineController } from './hooks/useChatTimelineController';
 import { useDesktopHistoryWarmup } from './hooks/useDesktopHistoryWarmup';
@@ -294,7 +294,7 @@ type ChatViewportProps = {
         confirmedAt?: number;
         fallbackTimestamp?: number;
     } | null;
-    handleMessageContentChange: (reason?: ContentChangeReason) => void;
+    handleMessageContentChange: ContentChangeHandler;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     handleHistoryScroll: () => void;
     scrollToBottom: () => void;

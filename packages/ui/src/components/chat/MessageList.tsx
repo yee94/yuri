@@ -14,7 +14,7 @@ import { computeAssistantTps } from './message/assistantTps';
 import { StatusRowContainer } from './StatusRowContainer';
 import { areOptionalRenderRelevantMessagesEqual, areRelevantTurnGroupingContextsEqual, areRenderRelevantMessagesEqual } from './message/renderCompare';
 import TurnItem from './components/TurnItem';
-import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { AnimationHandlers, ContentChangeReason, ContentChangeDetail, ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import type { ChatMessageEntry, TurnRecord, TurnGroupingContext } from './lib/turns/types';
 import { useTurnRecords } from './hooks/useTurnRecords';
 import { applyRetryOverlay } from './lib/turns/applyRetryOverlay';
@@ -663,7 +663,7 @@ interface MessageListProps {
         confirmedAt?: number;
         fallbackTimestamp?: number;
     } | null;
-    onMessageContentChange: (reason?: ContentChangeReason) => void;
+    onMessageContentChange: ContentChangeHandler;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     isLoadingOlder: boolean;
     scrollToBottom?: () => void;
@@ -694,6 +694,7 @@ export interface MessageListHandle {
     isHistoryVirtualized: () => boolean;
     scrollToBottom: (options?: { behavior?: ScrollBehavior; reveal?: boolean }) => boolean;
     cancelScroll: () => void;
+    scrollToOffset: (offset: number) => boolean;
 }
 
 type RenderEntry =
@@ -759,7 +760,7 @@ interface MessageRowProps {
     activeStreamingPhase?: StreamPhase | null;
     animateUserOnMount?: boolean;
     onUserAnimationConsumed?: (messageId: string) => void;
-    onContentChange: (reason?: ContentChangeReason) => void;
+    onContentChange: ContentChangeHandler;
     animationHandlers: AnimationHandlers;
     scrollToBottom?: () => void;
 }
@@ -857,7 +858,7 @@ interface TurnBlockProps {
     turnUiStates: Map<string, TurnUiState>;
     onToggleTurnGroup: (turnId: string, defaultExpanded: boolean) => void;
     chatRenderMode: 'sorted' | 'live';
-    onMessageContentChange: (reason?: ContentChangeReason) => void;
+    onMessageContentChange: ContentChangeHandler;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     scrollToBottom?: () => void;
     stickyUserHeader?: boolean;
@@ -1256,7 +1257,7 @@ interface UngroupedMessageRowProps {
     message: ChatMessageEntry;
     previousMessage?: ChatMessageEntry;
     nextMessage?: ChatMessageEntry;
-    onMessageContentChange: (reason?: ContentChangeReason) => void;
+    onMessageContentChange: ContentChangeHandler;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     scrollToBottom?: () => void;
     shouldAnimateUserMessage: (message: ChatMessageEntry) => boolean;
@@ -1312,7 +1313,7 @@ UngroupedMessageRow.displayName = 'UngroupedMessageRow';
 interface MessageListEntryProps {
     entry: RenderEntry;
     hydrateMarkdown?: boolean;
-    onMessageContentChange: (reason?: ContentChangeReason) => void;
+    onMessageContentChange: ContentChangeHandler;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     scrollToBottom?: () => void;
     stickyUserHeader?: boolean;
@@ -1399,7 +1400,7 @@ type StaticHistoryListProps = {
     scrollRef?: React.RefObject<HTMLDivElement | null>;
     registerTanstackVirtualizer?: (virtualizer: TanstackVirtualizerInstance | null) => void;
     virtualizerKey: string;
-    onMessageContentChange: (reason?: ContentChangeReason) => void;
+    onMessageContentChange: ContentChangeHandler;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     scrollToBottom?: () => void;
     stickyUserHeader: boolean;
@@ -2085,7 +2086,7 @@ StaticHistoryList.displayName = 'StaticHistoryList';
  */
 const TailEntry = React.memo<{
     entry: RenderEntry;
-    onMessageContentChange: (reason?: ContentChangeReason) => void;
+    onMessageContentChange: ContentChangeHandler;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     scrollToBottom?: () => void;
     stickyUserHeader: boolean;
@@ -2111,7 +2112,7 @@ const StreamingTailContent: React.FC<{
     directory?: string;
     /** Session scope for repository-narrowed parts subscription (Ticket 02). */
     sessionId?: string | null;
-    onMessageContentChange: (reason?: ContentChangeReason) => void;
+    onMessageContentChange: ContentChangeHandler;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     scrollToBottom?: () => void;
     stickyUserHeader: boolean;
@@ -2459,12 +2460,12 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     });
     const tanstackPinStyle = mergeMarkdownPinRevealStyle(undefined, tanstackPinHidden);
 
-    const stableHistoryContentChange = useEvent((reason?: ContentChangeReason) => {
-        onMessageContentChange(reason);
+    const stableHistoryContentChange = useEvent((reason?: ContentChangeReason, detail?: ContentChangeDetail) => {
+        onMessageContentChange(reason, detail);
     });
 
-    const stableTailContentChange = useEvent((reason?: ContentChangeReason) => {
-        onMessageContentChange(reason);
+    const stableTailContentChange = useEvent((reason?: ContentChangeReason, detail?: ContentChangeDetail) => {
+        onMessageContentChange(reason, detail);
     });
 
     const currentUserOrder = React.useMemo(() => {
@@ -2867,6 +2868,11 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
             cancelScroll: () => {
                 cancelViewportAnchorHold();
                 tanstackVirtualizerRef.current?.cancelScroll();
+            },
+            scrollToOffset: (offset: number) => {
+                if (!shouldVirtualizeHistory || historyEntries.length === 0 || !tanstackVirtualizerRef.current) return false;
+                tanstackVirtualizerRef.current.scrollToOffset(offset, { behavior: 'auto' });
+                return true;
             },
             scrollToBottom: ({ behavior = 'auto', reveal = true } = {}) => {
                 if (reveal) setPinRevealGeneration((current) => current + 1);

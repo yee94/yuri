@@ -35,7 +35,7 @@ describe('progressive activity presentation', () => {
         // other non-context static tools: one call per tool-static-group row
         expect(progressiveGroupSource).toContain("rows.push({ type: 'tool-static-group', toolName, activities: [activity] });");
         // explore + used tools (read/glob/grep/list/edit/bash/custom): one process fold
-        expect(progressiveGroupSource).toContain('if (isProcessGroupTool(toolName))');
+        expect(progressiveGroupSource).toContain('if (isProcessGroupTool(toolName) && !isBackgroundShellToolPart(toolPart))');
         expect(progressiveGroupSource).toContain('collectConsecutiveProcessTools');
         expect(progressiveGroupSource).toContain("type: 'tool-context-group'");
         expect(progressiveGroupSource).toContain('hasProcessSuccessor');

@@ -2,7 +2,7 @@ import React from 'react';
 import type { Part } from '@/lib/opencode/v2-types';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import type { StreamPhase, ToolPopupContent } from '../types';
-import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import { useStreamingTextThrottle } from '../../hooks/useStreamingTextThrottle';
 import { resolveAssistantDisplayText, shouldRenderAssistantText } from './assistantTextVisibility';
 import { streamPerfCount, streamPerfObserve } from '@/stores/utils/streamDebug';
@@ -31,7 +31,7 @@ interface AssistantTextPartProps {
      */
     allowSortedFinalStreaming?: boolean;
     hasStreamingHapticLifecycle?: boolean;
-    onContentChange?: (reason?: ContentChangeReason, messageId?: string) => void;
+    onContentChange?: ContentChangeHandler;
     onShowPopup?: (content: ToolPopupContent) => void;
 }
 

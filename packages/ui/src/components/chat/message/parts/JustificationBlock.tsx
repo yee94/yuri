@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Part } from '@/lib/opencode/v2-types';
-import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import { useUIStore } from '@/stores/useUIStore';
 import type { StreamPhase, ToolPopupContent } from '../types';
 import AssistantTextPart from './AssistantTextPart';
@@ -11,7 +11,7 @@ type PartWithSession = Part & { sessionID?: string };
 interface JustificationBlockProps {
     part: Part;
     messageId: string;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
     actions?: React.ReactNode;
     streamPhase?: StreamPhase;
     onShowPopup?: (content: ToolPopupContent) => void;

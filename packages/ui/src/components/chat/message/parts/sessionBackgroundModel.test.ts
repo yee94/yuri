@@ -5,12 +5,14 @@ import {
     collectBackgroundCompletions,
     hasSettledBackgroundRunningHint,
     isBackgroundRunningToolPart,
+    isBackgroundShellToolPart,
     isBlockingForegroundToolPart,
     moveSessionBlockingWorkToBackground,
     projectSessionBackgroundFromMessages,
     readBackgroundWorkIdentity,
     resolveBackgroundToolActivity,
 } from './sessionBackgroundModel';
+import { isToolPartSettled } from './toolRenderUtils';
 import {
     isBackgroundableToolName,
     isShellToolName,
@@ -113,6 +115,27 @@ describe('blocking vs background-running tool parts', () => {
             label: 'npm run build',
             agent: undefined,
         });
+    });
+
+    test('background shells count as settled tools; foreground shells and subagents do not', () => {
+        expect(isBackgroundShellToolPart(officialShellBackgroundPart)).toBe(true);
+        expect(isToolPartSettled(officialShellBackgroundPart)).toBe(true);
+        expect(isBackgroundShellToolPart({
+            type: 'tool',
+            tool: 'shell',
+            id: 'prt_launching',
+            state: { status: 'running', input: { command: 'sleep 9', background: true } },
+        })).toBe(true);
+        expect(isToolPartSettled({
+            type: 'tool',
+            tool: 'shell',
+            id: 'prt_launching',
+            state: { status: 'running', input: { command: 'sleep 9', background: true } },
+        })).toBe(true);
+        const foreground = { type: 'tool', tool: 'shell', id: 'prt_fg', state: { status: 'running', input: { command: 'ls' } } };
+        expect(isBackgroundShellToolPart(foreground)).toBe(false);
+        expect(isToolPartSettled(foreground)).toBe(false);
+        expect(isBackgroundShellToolPart(officialSubagentBackgroundPart)).toBe(false);
     });
 
     test('shell completion notice ends background-running despite historical metadata.running', () => {

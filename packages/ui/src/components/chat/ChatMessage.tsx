@@ -16,7 +16,7 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 
-import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { AnimationHandlers, ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import MessageHeader from './message/MessageHeader';
 import MessageBody from './message/MessageBody';
 import { UserMessageBubble } from './message/UserMessageBubble';
@@ -165,7 +165,7 @@ interface ChatMessageProps {
         parts: Part[];
         sourceParts?: Part[];
     };
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
     animationHandlers?: AnimationHandlers;
     scrollToBottom?: () => void;
     turnGroupingContext?: TurnGroupingContext;

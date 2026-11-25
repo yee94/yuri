@@ -15,6 +15,22 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+// Manual frame queue: the bottom chase advances one rAF per step.
+const chaseFrames = new Map<number, FrameRequestCallback>();
+let chaseFrameId = 0;
+function stubChaseFrames() {
+    chaseFrames.clear();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { chaseFrames.set(++chaseFrameId, callback); return chaseFrameId; });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => { chaseFrames.delete(id); });
+}
+async function runChaseFrames(max = 120) {
+    for (let i = 0; i < max && chaseFrames.size; i += 1) {
+        const [id, callback] = chaseFrames.entries().next().value as [number, FrameRequestCallback];
+        chaseFrames.delete(id);
+        await act(async () => callback(i * 16));
+    }
+}
+
 test.each([true, false].flatMap((nativeResize) => [true, false].flatMap((following) =>
     (nativeResize ? [true, false] : [false]).map((handoff) => ({ nativeResize, following, handoff })))))(
     'keyboard viewport keeps the existing scroll owner (native=$nativeResize following=$following handoff=$handoff)', async ({ nativeResize, following, handoff }) => {
@@ -305,8 +321,16 @@ describe('virtual list scroll ownership', () => {
             expect(top).toBe(600);
             if (enabled) {
                 scrollToBottom.mockClear();
+                stubChaseFrames();
+                rawWrites = 0;
                 await act(async () => { height += 100; api.notifyContentChange('text'); });
-                expect(scrollToBottom).toHaveBeenCalledExactlyOnceWith({ behavior: 'auto', reveal: false });
+                // Growth is chased by easing, not pinned in one controller call.
+                expect(scrollToBottom).not.toHaveBeenCalled();
+                expect(top).toBe(600);
+                await runChaseFrames();
+                expect(top).toBe(700);
+                expect(rawWrites).toBeGreaterThan(1);
+                rawWrites = 0;
                 await act(async () => api.releaseAutoFollow());
                 expect(cancelScroll).toHaveBeenCalled();
                 scrollToBottom.mockClear();
@@ -528,14 +552,21 @@ describe('primary transcript reading ownership', () => {
                 }
             });
             const readingTop = top;
+            stubChaseFrames();
             await act(async () => {
                 height = 960;
                 api.notifyContentChange('text');
             });
             const remainsFollowing = scenario === 'horizontal-touch' || scenario === 'content-shrink' || scenario === 'bottom-bounce';
-            expect({ top, writes, state: api.state }).toEqual(remainsFollowing
-                ? { top: 660, writes: 1, state: 'following' }
-                : { top: readingTop, writes: 0, state: 'released' });
+            if (remainsFollowing && scenario !== 'horizontal-touch') {
+                // Growth is eased, not pinned in the same frame; the chase then settles on the bottom.
+                expect({ top, writes }).toEqual({ top: readingTop, writes: 0 });
+                await runChaseFrames();
+            }
+            expect({ top, state: api.state }).toEqual(remainsFollowing
+                ? { top: 660, state: 'following' }
+                : { top: readingTop, state: 'released' });
+            if (!remainsFollowing) expect(writes).toBe(0);
             await act(async () => {
                 element.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
                 top = 660;

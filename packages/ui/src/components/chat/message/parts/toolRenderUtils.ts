@@ -1,3 +1,5 @@
+import { isBackgroundShellToolPart } from './sessionBackgroundModel';
+
 // Keep only tools with a direct in-app navigation destination compact. Every
 // other tool uses ToolPart so custom, plugin, and MCP calls expose their input
 // and output through the common expandable renderer.
@@ -73,6 +75,7 @@ export const isProcessGroupTool = (toolName: unknown): boolean => {
 
 export const isToolPartSettled = (part: unknown): boolean => {
     if (!part || typeof part !== 'object') return false;
+    if (isBackgroundShellToolPart(part)) return true;
 
     const state = (part as { state?: unknown }).state;
     if (!state || typeof state !== 'object') return false;

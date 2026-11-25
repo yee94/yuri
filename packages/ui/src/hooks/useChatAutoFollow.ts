@@ -15,7 +15,12 @@ import { getSpeechTracking, pauseSpeechFollowing, subscribeSpeechTracking } from
 
 type AutoFollowState = 'following' | 'released';
 
-export type ContentChangeReason = 'text' | 'structural' | 'permission' | 'animation';
+export type ContentChangeReason = 'text' | 'structural' | 'permission' | 'animation' | 'reveal';
+
+/** `reveal`: a panel was laid out at its final height; ease the viewport just far enough to show it. */
+export type ContentChangeDetail = { revealElement?: HTMLElement | null };
+
+export type ContentChangeHandler = (reason?: ContentChangeReason, detail?: ContentChangeDetail) => void;
 
 export type ViewportIdentity = {
     sessionId: string | null;
@@ -59,6 +64,8 @@ interface UseChatAutoFollowOptions {
     scrollControllerRef?: React.RefObject<{
         scrollToBottom: (options?: { behavior?: ScrollBehavior; reveal?: boolean }) => boolean;
         cancelScroll: () => void;
+        /** Absolute write through the virtualizer; false when the list is not virtualized. */
+        scrollToOffset?: (offset: number) => boolean;
     } | null>;
     currentSessionId: string | null;
     viewportKey?: string;
@@ -77,7 +84,7 @@ export interface UseChatAutoFollowResult {
     isOverflowing: boolean;
     isFollowingProgrammatically: boolean;
     showScrollButton: boolean;
-    notifyContentChange: (reason?: ContentChangeReason) => void;
+    notifyContentChange: (reason?: ContentChangeReason, detail?: ContentChangeDetail) => void;
     getAnimationHandlers: (messageId: string) => AnimationHandlers;
     goToBottom: (mode?: 'instant' | 'smooth', options?: { reveal?: boolean }) => void;
     scrollToBottomOnSend: () => void;
@@ -129,6 +136,10 @@ const AUTO_MATCH_TOLERANCE_PX = 2;
 // through releaseFromUserIntent, so this is not glue. Sized to the reasoning
 // animation (200ms) plus headroom for trailing async scroll events.
 const ANIMATION_GUARD_MS = 350;
+// Time constant of the exponential catch-up: each frame closes 1 - e^(-dt/tau)
+// of the remaining gap, so a far target moves fast and the tail settles softly.
+const CHASE_TAU_MS = 90;
+const CHASE_MAX_FRAME_MS = 50;
 // Entry-stick window. On the FIRST open of a session, late async data (most
 // visibly a task/subagent tool whose nested rows are fetched from the child
 // session after entry — see useEnsureSessionMessages in ToolPart.tsx) grows the
@@ -237,6 +248,12 @@ export const useChatAutoFollow = ({
     // Timestamp until which a tracked height animation is in flight (see
     // ANIMATION_GUARD_MS). 0 = no animation guard active.
     const animationGuardUntilRef = React.useRef(0);
+    // Bottom chase: growth leaves the viewport behind and an eased rAF loop
+    // catches up, faster the farther away it is. Single writer: this hook.
+    const chaseFrameRef = React.useRef(0);
+    const chaseLastTimeRef = React.useRef(0);
+    const chasingRef = React.useRef(false);
+    const chaseClientHeightRef = React.useRef(0);
 
     // True while the native (Capacitor) keyboard geometry is changing or the
     // keyboard is open. Composer expand + IME resize must not chase the chat
@@ -389,7 +406,67 @@ export const useChatAutoFollow = ({
     });
 
     // ── core scroll primitives ───────────────────────────────────────────────
+    const stopChase = useEvent(() => {
+        if (chaseFrameRef.current) window.cancelAnimationFrame(chaseFrameRef.current);
+        chaseFrameRef.current = 0;
+        chaseLastTimeRef.current = 0;
+        chasingRef.current = false;
+    });
+
+    const chaseBlocked = useEvent((): boolean => (
+        !enabled
+        || stateRef.current !== 'following'
+        || !!touchPositionRef.current
+        || !!scrollbarPointerRef.current
+        || keyboardGeometryFreezeRef.current
+        || historyViewportPreservationRef.current
+    ));
+
+    // Passive follow: the content grows first, then the viewport eases to the new
+    // bottom. The gap is re-read every frame, so streaming growth during the chase
+    // simply moves the target. Distance sets the speed (proportional step).
+    const chaseFrame = useEvent((time: number) => {
+        chaseFrameRef.current = 0;
+        const el = scrollRef.current;
+        if (!el || chaseBlocked()) {
+            stopChase();
+            return;
+        }
+        const target = Math.max(0, el.scrollHeight - el.clientHeight);
+        const gap = target - el.scrollTop;
+        if (gap <= 1) {
+            if (gap > 0) el.scrollTop = target;
+            markAuto(el);
+            lastScrollTopRef.current = el.scrollTop;
+            stopChase();
+            updateOverflowAndButton();
+            return;
+        }
+        const elapsed = chaseLastTimeRef.current ? time - chaseLastTimeRef.current : 16;
+        const dt = Math.min(CHASE_MAX_FRAME_MS, Math.max(1, elapsed));
+        chaseLastTimeRef.current = time;
+        const step = Math.min(gap, Math.max(1, gap * (1 - Math.exp(-dt / CHASE_TAU_MS))));
+        markAuto(el);
+        const nextTop = el.scrollTop + step;
+        if (!scrollControllerRef?.current?.scrollToOffset?.(nextTop)) el.scrollTop = nextTop;
+        lastScrollTopRef.current = el.scrollTop;
+        chaseFrameRef.current = window.requestAnimationFrame(chaseFrame);
+    });
+
+    const startChase = useEvent((): boolean => {
+        if (typeof window === 'undefined' || chaseBlocked()) return false;
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false;
+        if (chasingRef.current) return true;
+        chasingRef.current = true;
+        chaseLastTimeRef.current = 0;
+        chaseFrameRef.current = window.requestAnimationFrame(chaseFrame);
+        return true;
+    });
+
+    React.useEffect(() => () => stopChase(), [stopChase]);
+
     const cancelForcedBottom = useEvent(() => {
+        stopChase();
         forceBottomGenerationRef.current += 1;
         if (forceBottomFrameRef.current !== null && typeof window !== 'undefined') {
             window.cancelAnimationFrame(forceBottomFrameRef.current);
@@ -475,7 +552,9 @@ export const useChatAutoFollow = ({
 
     // `force` true = user-intent jump (clears released and always scrolls).
     // `force` false = passive follow (only while still following — idle ok).
-    const scrollToBottom = useEvent((force: boolean, behavior: ScrollBehavior = 'auto') => {
+    // `chase` (passive only) = the content grew: ease there instead of pinning in
+    // one frame. Viewport resizes (keyboard, composer) keep the instant pin.
+    const scrollToBottom = useEvent((force: boolean, behavior: ScrollBehavior = 'auto', chase = false) => {
         if (!enabled) return;
         const el = scrollRef.current;
 
@@ -494,6 +573,8 @@ export const useChatAutoFollow = ({
             markAuto(el);
             return;
         }
+        if (force) stopChase();
+        else if (chasingRef.current || (chase && startChase())) return;
         scrollToBottomNow(force ? behavior : 'auto');
     });
 
@@ -576,6 +657,38 @@ export const useChatAutoFollow = ({
         followSpeech();
         return subscribeSpeechTracking(followSpeech);
     }, [enabled, containerEl, followSpeech]);
+
+    // A panel already laid out at its final height asks this owner for one eased
+    // movement. A bottom-following reader needs none: the bottom chase follows the
+    // growth. A reading user's panel only moves far enough to show its bottom edge
+    // and never past its own header.
+    const revealFrameRef = React.useRef(0);
+    const revealElement = useEvent((target: HTMLElement) => {
+        window.cancelAnimationFrame(revealFrameRef.current);
+        // Two frames: the virtualizer measures the grown row and extends the
+        // scroll extent before the target offset is clamped.
+        revealFrameRef.current = window.requestAnimationFrame(() => {
+            revealFrameRef.current = window.requestAnimationFrame(() => {
+                const container = scrollRef.current;
+                if (!enabled || !container || !target.isConnected || !container.contains(target)) return;
+                if (stateRef.current === 'following' || touchPositionRef.current) return;
+                const geometry = readScrollGeometry(container);
+                if (!canScrollGeometry(geometry)) return;
+                const rect = target.getBoundingClientRect();
+                const viewport = container.getBoundingClientRect();
+                const margin = 16;
+                const overflow = rect.bottom - (viewport.bottom - margin);
+                const headroom = rect.top - (viewport.top + margin);
+                const delta = Math.min(overflow, headroom);
+                if (delta <= 1) return;
+                const nextTop = Math.min(geometry.scrollHeight - geometry.clientHeight, geometry.scrollTop + delta);
+                if (Math.abs(nextTop - geometry.scrollTop) <= 1) return;
+                container.scrollTo({ top: nextTop, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+                lastScrollTopRef.current = container.scrollTop;
+            });
+        });
+    });
+    React.useEffect(() => () => window.cancelAnimationFrame(revealFrameRef.current), []);
 
     const beginHistoryViewportPreservation = useEvent(() => {
         historyViewportPreservationRef.current = true;
@@ -813,10 +926,10 @@ export const useChatAutoFollow = ({
         // the main chat does not jump when the IME or composer resizes.
         if (
             stateRef.current === 'following'
-            && (isAuto(el) || isAnimationGuardActive() || scrollTopUnchanged)
+            && (chasingRef.current || isAuto(el) || isAnimationGuardActive() || scrollTopUnchanged)
         ) {
             if (!keyboardGeometryFreezeRef.current) {
-                scrollToBottom(false);
+                scrollToBottom(false, 'auto', scrollTopUnchanged || chasingRef.current);
             }
             queueSave();
             return;
@@ -1030,11 +1143,13 @@ export const useChatAutoFollow = ({
         // cold history / async measure cannot leave the viewport mid-list.
         // Released users are left alone — their gesture already opted out.
         if (stateRef.current !== 'following') return;
+        const viewportResized = chaseClientHeightRef.current !== geometry.clientHeight;
+        chaseClientHeightRef.current = geometry.clientHeight;
         if (distanceFromBottomOf(geometry) <= AUTO_MATCH_TOLERANCE_PX) {
             markAuto(el);
             return;
         }
-        scrollToBottom(false);
+        scrollToBottom(false, 'auto', !viewportResized);
     });
 
     const canObserveResize = typeof ResizeObserver !== 'undefined';
@@ -1176,8 +1291,12 @@ export const useChatAutoFollow = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps -- enabled/sessionMessageCount are the real inputs; updateOverflowAndButton is useEvent-stable.
     }, [enabled, sessionMessageCount]);
 
-    const notifyContentChange = useEvent((reason?: ContentChangeReason) => {
+    const notifyContentChange = useEvent((reason?: ContentChangeReason, detail?: ContentChangeDetail) => {
         if (!enabled) return;
+        if (reason === 'reveal') {
+            if (detail?.revealElement) revealElement(detail.revealElement);
+            return;
+        }
         // A tracked height animation (e.g. Thinking auto-collapse) opens a guard
         // window so its transient geometry / async scroll events are not misread
         // as a user scroll-away. Real gestures still release through
@@ -1196,7 +1315,7 @@ export const useChatAutoFollow = ({
             return;
         }
         if (stateRef.current === 'following') {
-            scrollToBottom(false);
+            scrollToBottom(false, 'auto', true);
         }
     });
 
@@ -1209,7 +1328,7 @@ export const useChatAutoFollow = ({
         const kick = () => {
             if (!enabled) return;
             if (stateRef.current === 'following') {
-                scrollToBottom(false);
+                scrollToBottom(false, 'auto', true);
             }
         };
 

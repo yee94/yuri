@@ -21,7 +21,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { toast } from '@/components/ui';
 import { Text } from '@/components/ui/text';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
-import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { ContentChangeHandler } from '@/hooks/useChatAutoFollow';
+import { cancelPanelReveal, playPanelReveal } from './panelReveal';
 import type { ToolPopupContent } from '../types';
 import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
 import { getDefaultTheme } from '@/lib/theme/themes';
@@ -125,7 +126,7 @@ interface ToolPartProps {
     onToggle: (toolId: string) => void;
     isMobile: boolean;
     alwaysShowActions?: boolean;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
     onShowPopup?: (content: ToolPopupContent) => void;
     animateTailText?: boolean;
 }
@@ -1863,6 +1864,23 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const onContentChangeRef = React.useRef(onContentChange);
     onContentChangeRef.current = onContentChange;
     const expandedContentRef = React.useRef<HTMLDivElement>(null);
+
+    // Closed → open after mount: layout is already final, so only paint animates
+    // and the scroll owner eases the viewport once. A row that mounts open
+    // (virtualizer recycle, history load) stays static.
+    const wasExpandedRef = React.useRef(isExpanded);
+    const revealAnimationRef = React.useRef<ReturnType<typeof playPanelReveal>>(null);
+    React.useLayoutEffect(() => {
+        const opened = isExpanded && !wasExpandedRef.current;
+        wasExpandedRef.current = isExpanded;
+        const element = expandedContentRef.current;
+        cancelPanelReveal(revealAnimationRef.current);
+        revealAnimationRef.current = null;
+        if (!opened || !element || isTaskTool || isFileNavTool) return;
+        revealAnimationRef.current = playPanelReveal(element);
+        onContentChangeRef.current?.('reveal', { revealElement: element });
+    }, [isExpanded, isFileNavTool, isTaskTool]);
+    React.useEffect(() => () => cancelPanelReveal(revealAnimationRef.current), []);
 
     React.useLayoutEffect(() => {
         if (isTaskTool || isFileNavTool) {

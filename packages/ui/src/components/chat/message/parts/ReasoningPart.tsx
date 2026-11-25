@@ -1,9 +1,8 @@
 import React from 'react';
 import { useEvent } from '@reactuses/core';
-import { animate, type AnimationPlaybackControls } from 'motion';
 import type { Part } from '@/lib/opencode/v2-types';
 import { cn } from '@/lib/utils';
-import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Icon } from '@/components/icon/Icon';
 import { LatticeOrb } from './LatticeOrb';
@@ -13,6 +12,7 @@ import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { useStreamingTextThrottle } from '../../hooks/useStreamingTextThrottle';
 import type { StreamPhase } from '../types';
 import { TOOL_ROW_INTERACTIVE_CHROME_CLASS } from './toolRowChrome';
+import { cancelPanelReveal, playPanelReveal } from './panelReveal';
 import {
     emitStreamingHapticEvent,
     evaluateVisiblePartHaptic,
@@ -44,7 +44,6 @@ const cleanReasoningText = (text: string): string => {
 
 const SUMMARY_MAX_CHARS = 80;
 const EXPANDED_CONTENT_UNMOUNT_DELAY_MS = 200;
-const EXPANDED_CONTENT_TRANSITION = { duration: 0.2, ease: 'easeOut' as const };
 
 /** Strip common markdown syntax so the header preview reads as plain text. */
 const stripMarkdown = (text: string): string =>
@@ -90,7 +89,7 @@ const getReasoningSummary = (text: string): string => {
 type ReasoningTimelineBlockProps = {
     text: string;
     variant: ReasoningVariant;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
     blockId: string;
     time?: { start?: number; end?: number };
     showDuration?: boolean;
@@ -129,8 +128,9 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
     const [shouldRenderExpandedContent, setShouldRenderExpandedContent] = React.useState(defaultExpanded === true || canAutoExpand);
     const contentId = React.useId();
     const contentRef = React.useRef<HTMLDivElement>(null);
-    const contentAnimationRef = React.useRef<AnimationPlaybackControls | null>(null);
+    const contentAnimationRef = React.useRef<Animation | null>(null);
     const contentMountedRef = React.useRef(false);
+    const userToggledRef = React.useRef(false);
     // Stable handle to onContentChange so the height-animation layout effect can
     // signal auto-follow without taking onContentChange as a dependency (which
     // would risk re-running — and thus restarting — the animation on re-render).
@@ -143,6 +143,7 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
         : t('chat.reasoningTrace.expandAria');
 
     const handleToggle = useEvent(() => {
+        userToggledRef.current = true;
         setShouldRenderExpandedContent(true);
         setExpansion({ expanded: !isExpanded, source: 'user' });
         onContentChange?.('structural');
@@ -198,93 +199,41 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
         };
     }, [isExpanded, isStreaming, shouldRenderExpandedContent]);
 
+    // Layout is always final: the panel opens to its full height in one commit
+    // and only paint (clip-path/opacity) animates. Per-frame height changes would
+    // re-measure the virtualized row every frame and fight scroll compensation.
     React.useLayoutEffect(() => {
         const element = contentRef.current;
         if (!element) {
             return;
         }
 
-        contentAnimationRef.current?.stop();
+        const firstRun = !contentMountedRef.current;
+        contentMountedRef.current = true;
+        const userToggled = userToggledRef.current;
+        userToggledRef.current = false;
 
-        if (!contentMountedRef.current) {
-            contentMountedRef.current = true;
-            if (!isExpanded) {
-                element.style.height = '0px';
-                element.style.overflow = 'hidden';
-                return;
-            }
+        cancelPanelReveal(contentAnimationRef.current);
+        contentAnimationRef.current = null;
 
-            element.style.height = '0px';
-            element.style.overflow = 'hidden';
-
-            const animation = animate(
-                element,
-                { height: 'auto' },
-                EXPANDED_CONTENT_TRANSITION,
-            );
-            contentAnimationRef.current = animation;
-
-            void animation.finished.then(() => {
-                if (contentAnimationRef.current !== animation) {
-                    return;
-                }
-                contentAnimationRef.current = null;
-                element.style.overflow = 'visible';
-                element.style.height = 'auto';
-            }).catch(() => undefined);
-
-            return () => {
-                animation.stop();
-                if (contentAnimationRef.current === animation) {
-                    contentAnimationRef.current = null;
-                }
-            };
+        if (!isExpanded) {
+            return;
+        }
+        // A remounted, already-open panel (virtualizer recycle) stays static.
+        if (firstRun && !userToggled && !isStreaming) {
+            return;
         }
 
-        element.style.overflow = 'hidden';
-
-        if (isExpanded) {
-            element.style.height = '0px';
-        } else {
-            element.style.height = `${element.scrollHeight}px`;
-            // Only the COLLAPSE animation needs the guard: it shrinks the
-            // timeline and the trailing async scroll events can be misread as a
-            // user scroll-away. Expansion grows the timeline and re-pins cleanly,
-            // and guarding it caused a faint scroll fight while thinking streams.
-            onContentChangeRef.current?.('animation');
+        contentAnimationRef.current = playPanelReveal(element);
+        if (userToggled) {
+            onContentChangeRef.current?.('reveal', { revealElement: element });
         }
-
-        const animation = animate(
-            element,
-            { height: isExpanded ? 'auto' : '0px' },
-            EXPANDED_CONTENT_TRANSITION,
-        );
-        contentAnimationRef.current = animation;
-
-        void animation.finished.then(() => {
-            if (contentAnimationRef.current !== animation) {
-                return;
-            }
-            contentAnimationRef.current = null;
-            if (isExpanded) {
-                element.style.overflow = 'visible';
-                element.style.height = 'auto';
-            } else {
-                element.style.overflow = 'hidden';
-            }
-        }).catch(() => undefined);
-
-        return () => {
-            animation.stop();
-            if (contentAnimationRef.current === animation) {
-                contentAnimationRef.current = null;
-            }
-        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- isStreaming only qualifies the first mount; the animation must not restart when it changes.
     }, [isExpanded]);
 
     React.useEffect(() => {
         return () => {
-            contentAnimationRef.current?.stop();
+            cancelPanelReveal(contentAnimationRef.current);
             contentAnimationRef.current = null;
         };
     }, []);
@@ -452,7 +401,7 @@ export const ReasoningTimelineBlock: React.FC<ReasoningTimelineBlockProps> = ({
 
 type ReasoningPartProps = {
     part: Part;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
     messageId: string;
     streamPhase?: StreamPhase;
 };

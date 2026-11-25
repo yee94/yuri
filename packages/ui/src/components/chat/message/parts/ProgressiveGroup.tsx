@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import type { TurnActivityPresentationKind, TurnActivityRecord as TurnActivityPart, TurnCompletionDisposition } from '../../lib/turns/types';
 import type { Part, ToolPart as ToolPartType } from '@/lib/opencode/v2-types';
 import type { StreamPhase } from '../types';
-import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import type { ToolPopupContent } from '../types';
 import ToolPart from './ToolPart';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
@@ -17,6 +17,7 @@ import { ContextToolGroup, ProcessDiffTotals } from './ContextToolGroup';
 import { aggregateToolPartLineDiffTotals } from './toolDiffUtils';
 import { SkillToolGroup } from './SkillToolGroup';
 import { collectConsecutiveProcessTools, hasProcessSuccessor } from './processToolGrouping';
+import { isBackgroundShellToolPart } from './sessionBackgroundModel';
 import { collectConsecutiveSkillTools, getSkillNameFromToolPart } from './skillToolGrouping';
 import { LatticeOrb } from './LatticeOrb';
 import { extractTextContent } from '../partUtils';
@@ -69,7 +70,7 @@ interface ProgressiveGroupProps {
     expandedTools: Set<string>;
     onToggleTool: (toolId: string) => void;
     onShowPopup: (content: ToolPopupContent) => void;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
     streamPhase: StreamPhase;
     showHeader: boolean;
     renderJustificationActions?: (activity: TurnActivityPart) => React.ReactNode;
@@ -457,7 +458,7 @@ interface ExpandableToolRowProps {
     isMobile: boolean;
     onToggleTool: (toolId: string) => void;
     onShowPopup: (content: ToolPopupContent) => void;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
 }
 
 const ExpandableToolRow: React.FC<ExpandableToolRowProps> = ({
@@ -568,17 +569,17 @@ const aggregateRows = (parts: TurnActivityPart[]): AggregatedRow[] => {
         const toolPart = activity.part as ToolPartType;
         const toolName = toolPart.tool?.toLowerCase() ?? '';
 
-        if (isProcessGroupTool(toolName)) {
+        if (isProcessGroupTool(toolName) && !isBackgroundShellToolPart(toolPart)) {
             const grouped = collectConsecutiveProcessTools(parts, i, (item) => {
                 const tool = item.part as ToolPartType;
-                return tool.tool;
+                return isBackgroundShellToolPart(tool) ? '' : tool.tool;
             });
             rows.push({
                 type: 'tool-context-group',
                 activities: grouped.items,
                 hasFollowingOtherType: hasProcessSuccessor(parts, grouped.end, (item) => ({
                     kind: item.kind,
-                    toolName: (item.part as ToolPartType).tool,
+                    toolName: isBackgroundShellToolPart(item.part) ? '' : (item.part as ToolPartType).tool,
                 })),
             });
             i = grouped.end;
@@ -942,7 +943,7 @@ export const StaticToolRow = React.memo(StaticToolRowInner, (prev, next) => {
  */
 const InlineReasoningBlock = React.memo(({ activity, onContentChange, streamPhase }: {
     activity: TurnActivityPart;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
     streamPhase: StreamPhase;
 }) => {
     return (
@@ -960,7 +961,7 @@ const InlineReasoningBlock = React.memo(({ activity, onContentChange, streamPhas
  */
 const InlineJustificationBlock = React.memo(({ activity, onContentChange, onShowPopup, actions, streamPhase }: {
     activity: TurnActivityPart;
-    onContentChange?: (reason?: ContentChangeReason) => void;
+    onContentChange?: ContentChangeHandler;
     onShowPopup?: (content: ToolPopupContent) => void;
     actions?: React.ReactNode;
     streamPhase: StreamPhase;

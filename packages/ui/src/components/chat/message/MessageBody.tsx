@@ -24,7 +24,7 @@ import {
 import { FadeInOnReveal } from './FadeInOnReveal';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import type { ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import {
     emitStreamingHapticEvent,
     hasStreamingHapticSubscribers,
@@ -54,6 +54,7 @@ import { StaticToolRow } from './parts/ProgressiveGroup';
 import { getToolRowBlockClass } from './parts/toolRowChrome';
 import { collectConsecutiveProcessTools, hasProcessSuccessor } from './parts/processToolGrouping';
 import { collectConsecutiveSkillTools } from './parts/skillToolGrouping';
+import { isBackgroundShellToolPart } from './parts/sessionBackgroundModel';
 import { isContextGroupTool, isExpandableTool, isProcessGroupTool, isSkillGroupTool, isToolPartActive, isToolPartSettled } from './parts/toolRenderUtils';
 import TurnActivity from '../components/TurnActivity';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
@@ -409,7 +410,7 @@ interface MessageBodyProps {
     onShowPopup: (content: ToolPopupContent) => void;
     streamPhase: StreamPhase;
     allowAnimation: boolean;
-    onContentChange?: (reason?: ContentChangeReason, messageId?: string) => void;
+    onContentChange?: ContentChangeHandler;
 
     shouldShowHeader?: boolean;
     hasTextContent?: boolean;
@@ -1497,10 +1498,11 @@ const AssistantMessageBody = React.memo(({
                     continue;
                 }
 
-                if (isSortedRenderMode && isProcessGroupTool(toolName)) {
+                if (isSortedRenderMode && isProcessGroupTool(toolName) && !isBackgroundShellToolPart(toolPart)) {
                     const grouped = collectConsecutiveProcessTools(visibleParts, i, (item) => {
                         if (item.type !== 'tool') return '';
                         if (activityByPart.get(item)?.kind === 'tool') return '';
+                        if (isBackgroundShellToolPart(item)) return '';
                         return (item as ToolPartType).tool;
                     });
                     if (grouped.items.length > 0) {
