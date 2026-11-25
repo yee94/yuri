@@ -12,6 +12,7 @@ import type { SessionNodeRenderExtras } from './sessionNodeItemUtils';
 import { SidebarSectionHeader } from './SidebarSectionHeader';
 import { useSessionFocusStore } from '@/stores/useSessionFocusStore';
 import { SessionFolderDndScope } from './sessionFolderDnd';
+import { SidebarAnimatedRow, SidebarAnimatedRows } from './SidebarAnimatedRows';
 import { PINNED_SESSION_ORDER_SCOPE } from './pinnedSessions';
 
 export type PinnedItem = {
@@ -150,8 +151,9 @@ export function SidebarPinnedSessions({
     return null;
   }
 
-  const renderRows = (rows: PinnedItem[]): React.ReactNode =>
-    rows.map((item) => {
+  const renderRows = (rows: PinnedItem[]): React.ReactNode => (
+    <SidebarAnimatedRows>
+      {rows.map((item) => {
        const row = item.content ?? renderSessionNode(
           item.node,
           0,
@@ -162,8 +164,10 @@ export function SidebarPinnedSessions({
           'pinned',
           getRenderExtras(item.node),
       );
-      return <React.Fragment key={item.identity ?? item.node.session.id}>{row}</React.Fragment>;
-    });
+      return <SidebarAnimatedRow key={item.identity ?? item.node.session.id}>{row}</SidebarAnimatedRow>;
+      })}
+    </SidebarAnimatedRows>
+  );
 
   return (
     // Same grouping params as SidebarProjectsList so pinned ↔ project handoff

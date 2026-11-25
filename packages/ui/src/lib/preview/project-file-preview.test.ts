@@ -32,6 +32,11 @@ describe('scoped file preview lifecycle', () => {
     expect(preview.src).not.toContain('?');
     expect(state.fetch.mock.calls[0][0]).toBe('/api/hosts/remote/api/preview/targets');
     expect(JSON.parse(state.fetch.mock.calls[0][1].body)).toEqual({ kind: 'file', directory: '/project', path: '/project/docs/index.html' });
+    const nextExpiry = Date.now() + 120_000;
+    state.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ id: 'a'.repeat(32), expiresAt: nextExpiry })));
+    await expect(preview.extend()).resolves.toBe(nextExpiry);
+    expect(state.fetch.mock.calls[1][0]).toBe(`/api/hosts/remote/api/preview/targets/${'a'.repeat(32)}/extend`);
+    expect(JSON.parse(state.fetch.mock.calls[1][1].body)).toEqual({ previewToken: 'b'.repeat(32) });
     controller.abort(); await preview.release(); await preview.release();
     expect(state.fetch.mock.calls.filter(([, init]) => init.method === 'DELETE')).toHaveLength(1);
     registry.dispose();

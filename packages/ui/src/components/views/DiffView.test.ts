@@ -16,6 +16,7 @@ import type { ChatMessageEntry } from '../chat/lib/turns/types';
 
 const diffViewSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'DiffView.tsx'), 'utf-8');
 const messageBodySource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../chat/message/MessageBody.tsx'), 'utf-8');
+const turnChangesCardSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../chat/message/TurnChangesCard.tsx'), 'utf-8');
 
 describe('getFirstChangedModifiedLineFromPatch', () => {
   test('returns the first added line instead of the hunk context start', () => {
@@ -101,27 +102,28 @@ describe('projectTurnDiffStats L1 marker contract', () => {
 });
 
 describe('Turn Changes preview contract', () => {
-  test('renders inline file rows from the L1 thin list on the wire', () => {
+  test('renders inline file rows from the L1 thin list or v2 turn diff card with wired actions', () => {
     expect(messageBodySource).toContain('fileCount={turnGroupingContext.diffStats.files}');
     expect(messageBodySource).toContain('changedFiles={turnGroupingContext.changedFiles}');
-    // The thin list rides the message wire; there is no async list load.
-    expect(messageBodySource).not.toContain('useSessionTurnChangesQuery');
-    expect(messageBodySource).toContain('data-turn-change-file="true"');
-    expect(messageBodySource).toContain('TURN_CHANGES_PREVIEW_VISIBLE_LIMIT');
-    expect(messageBodySource).toContain("mode: 'diff'");
-    expect(messageBodySource).toContain("diffScope: 'turn'");
-    expect(messageBodySource).toContain("dedupeKey: `turn-diff:${diffSessionId || 'session'}:${turnId}`");
-    expect(messageBodySource).toContain('mobileActions.openTurnDiff(turnId, diffSessionId, file)');
-    expect(messageBodySource).toContain('mobileActions.openTurnDiff(turnId, diffSessionId)');
-    expect(messageBodySource).toContain('openTurnChangedFilePreview');
+    expect(messageBodySource).toContain('turnDiffFromMessageId={turnGroupingContext.turnDiffFromMessageId}');
+    expect(messageBodySource).toContain('turnDiffFiles={turnGroupingContext.turnDiffFiles}');
+    expect(turnChangesCardSource).not.toContain('useSessionTurnChangesQuery');
+    expect(turnChangesCardSource).toContain('data-turn-change-file="true"');
+    expect(turnChangesCardSource).toContain('TURN_CHANGES_CARD_VISIBLE_LIMIT');
+    expect(turnChangesCardSource).toContain("mode: 'diff'");
+    expect(turnChangesCardSource).toContain("diffScope: 'turn'");
+    expect(turnChangesCardSource).toContain("dedupeKey: `turn-diff:${diffSessionId || 'session'}:${targetTurnMessageId}`");
+    expect(turnChangesCardSource).toContain('mobileActions.openTurnDiff(targetTurnMessageId, diffSessionId, file)');
+    expect(turnChangesCardSource).toContain('mobileActions.openTurnDiff(targetTurnMessageId, diffSessionId)');
+    expect(turnChangesCardSource).toContain('openTurnChangedFilePreview');
   });
 });
 
 describe('DiffView staged turn changes queries', () => {
-  test('renders turn file rows from sync thin diffs without any list request', () => {
-    expect(diffViewSource).toContain('const thinDiffs = listTurnDiffs(message.summary?.diffs);');
-    expect(diffViewSource).toContain('return turnChangesMarker.thinDiffs;');
-    // No async list query for turn scope — the L1 thin list is authoritative.
+  test('renders turn file rows from sync thin diffs or v2 turn diff query', () => {
+    expect(diffViewSource).toContain('const thinDiffs = listTurnDiffs(userMessage.summary?.diffs);');
+    expect(diffViewSource).toContain('if (turnChangesMarker.thinDiffs.length > 0) return turnChangesMarker.thinDiffs;');
+    expect(diffViewSource).toContain('useSessionTurnDiffQuery');
     expect(diffViewSource).not.toContain('useSessionTurnChangesQuery');
     expect(diffViewSource).not.toContain('getSessionDiff');
     expect(diffViewSource).not.toContain('mergeTurnDiffSummariesWithFull');

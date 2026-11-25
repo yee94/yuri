@@ -660,7 +660,7 @@ test('remote delete requires confirmation, keeps failures retryable, deduplicate
   expect(deleteSession).toHaveBeenLastCalledWith('same-id', project('a').path);
   expect(resolveService).toHaveBeenLastCalledWith(expect.objectContaining({ hubId: 'hub', hostId: 'a', directory: project('a').path }), expect.anything(), expect.anything());
   expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ sessionId: null, location: { hostId: 'a', directory: project('a').path } });
-  expect(renderedIds()).toEqual([]);
+  await vi.waitFor(() => expect(renderedIds()).toEqual([]));
 });
 
 test('remote delete never clears a later selection on another Host with the same session ID', async () => {
@@ -708,7 +708,7 @@ test('bulk remote delete retains only failed targets and retries them without de
   const confirms = [...container.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent === 'sessions.sidebar.bulkActions.delete');
   await act(async () => confirms.at(-1)!.click()); await flush();
   expect(deleteSession.mock.calls.map(([id]) => id).sort()).toEqual(['failed', 'ok']);
-  expect(renderedIds()).toEqual(['failed']);
+  await vi.waitFor(() => expect(renderedIds()).toEqual(['failed']));
   expect(toast.error).toHaveBeenCalledWith('Partial delete failed');
   expect(container.querySelector('[role="alert"]')).toBeNull();
   fail = false;
@@ -716,7 +716,7 @@ test('bulk remote delete retains only failed targets and retries them without de
   await act(async () => retry.click()); await flush();
   expect(deleteSession.mock.calls.filter(([id]) => id === 'ok')).toHaveLength(1);
   expect(deleteSession.mock.calls.filter(([id]) => id === 'failed')).toHaveLength(2);
-  expect(renderedIds()).toEqual([]);
+  await vi.waitFor(() => expect(renderedIds()).toEqual([]));
 });
 
 test('failed remote child loading reports outside the tree, retains cached children and retries through the toast action', async () => {
@@ -801,7 +801,7 @@ test('a summary refresh re-reads loaded older pages so a session archived elsewh
   await act(async () => { await queryClient.invalidateQueries({ predicate: (query) => query.queryKey[1] === 'remote-projects' && query.queryKey[2] === 'summaries' }); });
   await flush(); await flush();
   expect(list).toHaveBeenCalledTimes(2);
-  expect(container.textContent).not.toContain('Older one');
+  await vi.waitFor(() => expect(container.textContent).not.toContain('Older one'));
 });
 
 test('custom project icons use the remote project ID and Host fetch, and release browser object URLs on unmount', async () => {

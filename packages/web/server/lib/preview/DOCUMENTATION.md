@@ -51,6 +51,14 @@ resolve `index.html`. Files permit GET/HEAD only; file WebSockets are explicitly
 rejected, including when the normal HTTP preview proxy has attached its automatic
 upgrade listener. Normal network-preview WebSockets are unchanged.
 
+`POST /api/preview/targets/:id/extend` accepts `{ previewToken, ttlMs? }`
+through normal session/client authorization and origin checks to extend an
+active target's deadline in place without changing its `id` or `previewToken`.
+Expired or missing targets return `404`; mismatched `previewToken` returns
+`403`. Injected preview bridges accept same-parent `update-url-auth-token`
+messages to rotate short URL-auth credentials in place (`history.replaceState`
+and request-proxy state) without reloading the document.
+
 `DELETE /api/preview/targets/:id` accepts `{ previewToken }` through normal
 session/client authorization and origin checks. It is idempotent for an already
 missing target. Revocation destroys active responses; expiry checks every request

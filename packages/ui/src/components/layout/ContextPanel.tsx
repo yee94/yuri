@@ -40,7 +40,12 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useSessionBtwStore } from '@/stores/useSessionBtwStore';
 import { toast } from '@/components/ui';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { refreshRuntimeUrlAuthToken } from '@/lib/runtime-auth';
+import {
+  acquireRuntimeUrlAuthToken,
+  getRuntimeUrlAuthTokenSync,
+  refreshRuntimeUrlAuthToken,
+  subscribeRuntimeUrlAuthToken,
+} from '@/lib/runtime-auth';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { getRuntimeApiBaseUrl, getRuntimeKey } from '@/lib/runtime-switch';
 import { Icon } from "@/components/icon/Icon";
@@ -82,7 +87,7 @@ import {
   getCachedProxyTarget,
   previewProxyTargetCache,
 } from '@/lib/preview/screenshot-capture';
-import { resolveRelayPreviewFrameSrc } from '@/lib/preview/relay-preview-frame-src';
+import { postPreviewUrlAuthToken, resolveRelayPreviewFrameSrc } from '@/lib/preview/relay-preview-frame-src';
 import {
   ensurePreviewGatewayOrigin,
   hasDesktopPreviewGateway,
@@ -582,7 +587,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
   const [reloadNonce, bumpReload] = React.useReducer((x: number) => x + 1, 0);
   const [proxyRegistrationNonce, bumpProxyRegistration] = React.useReducer((x: number) => x + 1, 0);
   const [proxyState, setProxyState] = React.useState<PreviewProxyState>({ status: 'idle' });
-  const [urlAuthReadyKey, setUrlAuthReadyKey] = React.useState('');
+  const [resolvedProxyAsset, setResolvedProxyAsset] = React.useState<{ key: string; url: string }>({ key: '', url: '' });
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
   const nextConsoleEventIdRef = React.useRef(1);
   const [bridgeReady, setBridgeReady] = React.useState(false);
@@ -715,38 +720,54 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
   const proxyUrlAuthKey = needsProxy && proxyState.status === 'ready'
     ? `${proxyState.proxyBasePath}|${proxyState.previewToken || ''}|${reloadNonce}`
     : '';
+  const proxyAssetPath = React.useMemo(() => {
+    if (!needsProxy || proxyState.status !== 'ready' || !targetKey) return '';
+    try {
+      const targetUrl = new URL(targetKey);
+      const path = targetUrl.pathname || '/';
+      const searchParams = new URLSearchParams(targetUrl.search);
+      searchParams.delete('yuri_url_token');
+      searchParams.delete('yuri_client_token');
+      searchParams.set('yuriPreview', String(reloadNonce));
+      searchParams.set('yuri_preview_token', proxyState.previewToken || '');
+      const search = searchParams.toString();
+      const hash = targetUrl.hash || '';
+      return scopedPreviewPath(entry, `${proxyState.proxyBasePath}${path}${search ? `?${search}` : ''}${hash}`);
+    } catch {
+      return '';
+    }
+  }, [entry, needsProxy, proxyState, reloadNonce, targetKey]);
 
+  // Freeze the resolved authenticated asset URL once per proxy registration +
+  // reload nonce. Reading `authenticatedAsset` during render would mutate
+  // `proxySrc` after 60s URL-token expiry/rotation and force-remount the iframe.
   React.useEffect(() => {
-    if (!proxyUrlAuthKey) {
-      setUrlAuthReadyKey('');
+    if (!proxyUrlAuthKey || !proxyAssetPath) {
+      setResolvedProxyAsset({ key: '', url: '' });
       return;
     }
 
     let cancelled = false;
-    setUrlAuthReadyKey('');
+    setResolvedProxyAsset({ key: '', url: '' });
     void refreshRuntimeUrlAuthToken(getRuntimeApiBaseUrl())
       .then((token) => {
-        if (!cancelled && token) setUrlAuthReadyKey(proxyUrlAuthKey);
+        if (!cancelled && token) {
+          setResolvedProxyAsset({
+            key: proxyUrlAuthKey,
+            url: getRuntimeUrlResolver().authenticatedAsset(proxyAssetPath),
+          });
+        }
       })
       .catch(() => {});
 
     return () => {
       cancelled = true;
     };
-  }, [proxyUrlAuthKey]);
+  }, [proxyAssetPath, proxyUrlAuthKey]);
 
+  const urlAuthReadyKey = resolvedProxyAsset.key;
   const proxySrc = needsProxy && proxyState.status === 'ready' && normalizedUrl && urlAuthReadyKey === proxyUrlAuthKey
-    ? (() => {
-      const path = normalizedUrl.pathname || '/';
-      const searchParams = new URLSearchParams(normalizedUrl.search);
-      searchParams.delete('yuri_url_token');
-      searchParams.delete('yuri_client_token');
-      searchParams.set('yuriPreview', String(reloadNonce));
-      searchParams.set('yuri_preview_token', proxyState.previewToken || '');
-      const search = searchParams.toString();
-      const hash = normalizedUrl.hash || '';
-       return getRuntimeUrlResolver().authenticatedAsset(scopedPreviewPath(entry, `${proxyState.proxyBasePath}${path}${search ? `?${search}` : ''}${hash}`));
-    })()
+    ? resolvedProxyAsset.url
     : '';
 
   // Electron + Relay: iframe must load http://127.0.0.1:<ephemeral> (loopback
@@ -866,6 +887,64 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ rawUrl, onNavigate }) => {
       enabled: inspectMode,
     });
   }, [bridgeReady, effectiveSrc, inspectMode, proxySrc]);
+
+  React.useEffect(() => {
+    if (!needsProxy || proxyState.status !== 'ready' || !effectiveSrc) {
+      return;
+    }
+    const releaseAuth = acquireRuntimeUrlAuthToken(getRuntimeApiBaseUrl());
+    const unsubscribe = subscribeRuntimeUrlAuthToken(() => {
+      postPreviewUrlAuthToken(iframeRef.current, effectiveSrc, getRuntimeUrlAuthTokenSync());
+    });
+    const proxyPrefix = hostApiPath(entry?.location.hostId, '/api/preview/proxy/');
+    const targetId = proxyState.proxyBasePath.startsWith(proxyPrefix)
+      ? proxyState.proxyBasePath.slice(proxyPrefix.length)
+      : proxyState.proxyBasePath.startsWith('/api/preview/proxy/')
+        ? proxyState.proxyBasePath.slice('/api/preview/proxy/'.length)
+        : '';
+    let cancelled = false;
+    let keepaliveTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleKeepalive = (expiresAt: number) => {
+      if (!targetId || !proxyState.previewToken || cancelled) return;
+      clearTimeout(keepaliveTimer);
+      keepaliveTimer = setTimeout(() => {
+        void (async () => {
+          if (cancelled) return;
+          try {
+            const response = await fetchPreview(`/api/preview/targets/${targetId}/extend`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(entry?.location.hostId ? { 'x-opencode-directory': entry.location.directory } : {}) },
+              credentials: 'include',
+              body: JSON.stringify({ previewToken: proxyState.previewToken }),
+            });
+            if (!response.ok || cancelled) return;
+            const body = await response.json() as { expiresAt?: unknown };
+            if (typeof body.expiresAt === 'number' && Number.isFinite(body.expiresAt) && body.expiresAt > Date.now() && !cancelled) {
+              const cached = previewProxyTargetCache.get(proxyCacheKey);
+              if (cached && cached.proxyBasePath === proxyState.proxyBasePath) {
+                previewProxyTargetCache.set(proxyCacheKey, { ...cached, expiresAt: body.expiresAt });
+              }
+              scheduleKeepalive(body.expiresAt);
+            }
+          } catch {
+            // Keep the mounted preview intact; never force-reload on keepalive error.
+          }
+        })();
+      }, Math.max(1000, expiresAt - Date.now() - 10_000));
+    };
+    scheduleKeepalive(proxyState.expiresAt);
+    return () => {
+      cancelled = true;
+      clearTimeout(keepaliveTimer);
+      unsubscribe();
+      releaseAuth();
+    };
+  }, [effectiveSrc, entry, fetchPreview, needsProxy, proxyCacheKey, proxyState]);
+
+  React.useEffect(() => {
+    if (!bridgeReady || !effectiveSrc) return;
+    postPreviewUrlAuthToken(iframeRef.current, effectiveSrc, getRuntimeUrlAuthTokenSync());
+  }, [bridgeReady, effectiveSrc]);
 
   React.useEffect(() => {
     const frameWindow = iframeRef.current?.contentWindow;

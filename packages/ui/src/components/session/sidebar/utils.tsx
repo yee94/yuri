@@ -10,6 +10,18 @@ export { normalizePath };
 const t = (key: Parameters<typeof formatMessage>[1], params?: Parameters<typeof formatMessage>[2]) =>
   formatMessage(useI18nStore.getState().dictionary, key, params);
 
+// `toLocaleDateString(locale, options)` builds a new Intl.DateTimeFormat on every call, which
+// dominates row mount cost in long lists; one formatter per locale gives identical output.
+const dateLabelFormatters = new Map<string, Intl.DateTimeFormat>();
+const formatAbsoluteDate = (date: Date, locale: string): string => {
+  let formatter = dateLabelFormatters.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: 'numeric' });
+    dateLabelFormatters.set(locale, formatter);
+  }
+  return formatter.format(date);
+};
+
 const formatDateLabel = (value: string | number) => {
   const targetDate = new Date(value);
   const today = new Date();
@@ -27,11 +39,7 @@ const formatDateLabel = (value: string | number) => {
   if (isSameDay(targetDate, yesterday)) {
     return t('common.date.yesterday');
   }
-  const formatted = targetDate.toLocaleDateString(getCurrentIntlLocale(), {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  const formatted = formatAbsoluteDate(targetDate, getCurrentIntlLocale());
   return formatted.replace(',', '');
 };
 

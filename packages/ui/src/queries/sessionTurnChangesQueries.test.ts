@@ -239,4 +239,77 @@ describe('sessionTurnChangesQueries', () => {
       file: 'a.ts',
     }).retry).toBe(false);
   });
+
+  test('turn diff query calls opencodeClient.getSessionDiff with from and caches indefinitely', async () => {
+    const { sessionTurnDiffQueryKey, sessionTurnDiffQueryOptions } = await import('./sessionTurnChangesQueries');
+    const signal = new AbortController().signal;
+    getSessionDiffMock.mockResolvedValueOnce([
+      { file: 'src/a.ts', status: 'modified', additions: 3, deletions: 1, patch: '@@' },
+    ]);
+
+    expect(sessionTurnDiffQueryKey({
+      sessionID: 'ses_1',
+      directory: '/repo',
+      from: 'msg_u1',
+      snapshotSignature: 'sig_1',
+    })).toEqual([
+      'transport-test',
+      'sessionTurnChanges',
+      'turn',
+      '/repo',
+      'ses_1',
+      'msg_u1',
+      'sig_1',
+    ]);
+
+    const options = sessionTurnDiffQueryOptions({
+      sessionID: 'ses_1',
+      directory: '/repo',
+      from: 'msg_u1',
+      snapshotSignature: 'sig_1',
+    });
+    expect(options.staleTime).toBe(Infinity);
+    expect(options.retry).toBe(false);
+
+    const diffs = await options.queryFn({ signal });
+    expect(diffs).toEqual([
+      { file: 'src/a.ts', status: 'modified', additions: 3, deletions: 1, patch: '@@' },
+    ]);
+    expect(getSessionDiffMock).toHaveBeenCalledWith(
+      {
+        sessionID: 'ses_1',
+        directory: '/repo',
+        from: 'msg_u1',
+      },
+      { signal },
+    );
+  });
+
+  test('turn diff query uses remote HostRuntimeEntry sdk.session.diff when scope is provided', async () => {
+    const { sessionTurnDiffQueryOptions } = await import('./sessionTurnChangesQueries');
+    const signal = new AbortController().signal;
+    const remoteDiffMock = vi.fn(async () => [
+      { file: 'remote.ts', status: 'added', additions: 2, deletions: 0, patch: '@@' },
+    ]);
+    const scope = {
+      key: 'host:remote-1:/repo',
+      sdk: () => ({ session: { diff: remoteDiffMock } }),
+    } as never;
+
+    const options = sessionTurnDiffQueryOptions({
+      sessionID: 'ses_1',
+      directory: '/repo',
+      from: 'msg_u1',
+      scope,
+    });
+    expect(options.queryKey[0]).toBe('host:remote-1:/repo');
+
+    const diffs = await options.queryFn({ signal });
+    expect(diffs).toHaveLength(1);
+    expect(remoteDiffMock).toHaveBeenCalledWith(
+      { sessionID: 'ses_1', from: 'msg_u1' },
+      { signal },
+    );
+    expect(getSessionDiffMock).not.toHaveBeenCalled();
+  });
 });

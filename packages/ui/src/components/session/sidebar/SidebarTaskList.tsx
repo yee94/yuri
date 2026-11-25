@@ -5,8 +5,10 @@ import { SIDEBAR_MUTED_HINT_CLASS } from './utils';
 import { SidebarSectionHeader } from './SidebarSectionHeader';
 import type { PinnedItem } from './SidebarPinnedSessions';
 import { SETTLED_SHELF_PAGE_SIZE } from './taskView';
+import { useProgressiveCount } from '@/components/layout/ProgressiveRows';
 import { SessionFolderDndScope } from './sessionFolderDnd';
 import { TasksAllDoneIllustration } from './TasksAllDoneIllustration';
+import { SidebarAnimatedRow, SidebarAnimatedRows } from './SidebarAnimatedRows';
 
 export type TaskListItems = {
   active: PinnedItem[];
@@ -15,6 +17,10 @@ export type TaskListItems = {
   /** Full Settled count, independent of how many rows are built. */
   settledTotal: number;
 };
+
+/** A session row is heavy (menus, tooltips, status): fill one viewport, then add a few per frame. */
+const TASK_INITIAL_ROWS = 12;
+const TASK_ROWS_PER_FRAME = 6;
 
 const ShelfCount = ({ count }: { count: number }) => (
   <span className="text-[12px] tabular-nums text-muted-foreground/70">{count}</span>
@@ -36,6 +42,7 @@ export function SidebarTaskList({ items, renderTaskRow, onSessionsReordered }: T
   const { t } = useI18n();
   const sessionIds = React.useMemo(() => items.active.map((item) => item.node.session.id), [items.active]);
   const folderIdBySessionId = React.useMemo(() => new Map(sessionIds.map((id) => [id, null])), [sessionIds]);
+  const mountedCount = useProgressiveCount(items.active.length, TASK_INITIAL_ROWS, TASK_ROWS_PER_FRAME);
   if (items.active.length === 0) {
     return (
       <div className="flex flex-col items-center gap-1 pt-6 pb-2">
@@ -44,7 +51,13 @@ export function SidebarTaskList({ items, renderTaskRow, onSessionsReordered }: T
       </div>
     );
   }
-  const rows = items.active.map(renderTaskRow);
+  const rows = (
+    <SidebarAnimatedRows>
+      {items.active.slice(0, mountedCount).map((item) => (
+        <SidebarAnimatedRow key={rowKey(item)}>{renderTaskRow(item)}</SidebarAnimatedRow>
+      ))}
+    </SidebarAnimatedRows>
+  );
   return (
     <div className="-ml-1 -mr-1 space-y-0.5">
       {onSessionsReordered && items.active.length > 1 ? (
@@ -63,6 +76,8 @@ export function SidebarTaskList({ items, renderTaskRow, onSessionsReordered }: T
 }
 
 const noopDrop = (): void => {};
+
+const rowKey = (item: PinnedItem): string => item.identity ?? item.node.session.id;
 
 type SettledShelfProps = {
   items: TaskListItems;
@@ -94,7 +109,11 @@ export function SidebarSettledShelf({ items, open, onToggle, onShowMore, renderT
       />
       {open ? (
         <div className="-ml-1 -mr-2 max-h-[40vh] space-y-px overflow-y-auto overscroll-contain">
-          {items.settled.map(renderTaskRow)}
+          <SidebarAnimatedRows>
+            {items.settled.map((item) => (
+              <SidebarAnimatedRow key={rowKey(item)}>{renderTaskRow(item)}</SidebarAnimatedRow>
+            ))}
+          </SidebarAnimatedRows>
           {remaining > 0 ? (
             <button
               type="button"

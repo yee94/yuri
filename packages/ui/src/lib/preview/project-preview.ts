@@ -36,6 +36,23 @@ export async function resolveProjectPreviewUrl(entry: HostRuntimeEntry, rawUrl: 
     || !isNormalizedPreviewProxyPath(`${proxyBasePath}${url.pathname}`)
     || typeof target.previewToken !== 'string' || !target.previewToken
     || typeof target.expiresAt !== 'number' || !Number.isFinite(target.expiresAt) || target.expiresAt <= Date.now()) throw new Error('invalid_preview');
+  const targetId = proxyBasePath.slice(prefix.length);
+  const extend = async (extendSignal?: AbortSignal): Promise<number> => {
+    const activeSignal = extendSignal ?? signal;
+    scope.assertCurrent(activeSignal);
+    const response = await scope.fetch(`/api/preview/targets/${targetId}/extend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-opencode-directory': entry.location.directory },
+      body: JSON.stringify({ previewToken: target.previewToken }),
+      signal: activeSignal,
+    });
+    if (!response.ok) throw new Error('preview_extend_failed');
+    const body = await response.json() as { expiresAt?: unknown };
+    if (typeof body.expiresAt !== 'number' || !Number.isFinite(body.expiresAt) || body.expiresAt <= Date.now()) {
+      throw new Error('invalid_preview');
+    }
+    return body.expiresAt;
+  };
   await refreshRuntimeUrlAuthToken();
   scope.assertCurrent(signal);
   const query = new URLSearchParams(url.search);
@@ -44,5 +61,6 @@ export async function resolveProjectPreviewUrl(entry: HostRuntimeEntry, rawUrl: 
   return {
     src: getRuntimeUrlResolver().authenticatedAsset(`${proxyBasePath}${url.pathname}?${query}${url.hash}`),
     expiresAt: target.expiresAt,
+    extend,
   };
 }

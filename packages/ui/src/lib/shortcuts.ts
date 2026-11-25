@@ -270,6 +270,13 @@ const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutAction> = [
     customizable: true,
   },
   {
+    id: 'archive_session',
+    defaultCombo: 'mod+shift+backspace',
+    label: 'Archive session',
+    description: 'Archive the current session and hide it from the task and project views',
+    customizable: true,
+  },
+  {
     id: 'new_chat',
     defaultCombo: 'mod+n',
     label: 'New session',

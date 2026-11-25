@@ -17,10 +17,12 @@ not displayed. Helper or iframe errors remove the document and offer local retry
 Loading and retry copy use existing localized preview messages.
 
 An active proactive URL-auth consumer renews short-lived path credentials before
-their expiry. Each token replacement re-registers, swaps the source and revokes
-the old target; a replacement during registration triggers a trailing resolution
-instead of displaying an outdated path token. A separate deadline renews target
-expiry. Renewal can reload page state, as with the existing URL preview sheet.
+their expiry. A token replacement while initial registration is still in flight
+triggers a trailing resolution instead of displaying an outdated path token.
+Once the iframe is mounted, routine URL-auth token rotation pushes the fresh
+token to the preview bridge in place (`update-url-auth-token`) and target
+expiry extends the active target via `POST /api/preview/targets/:id/extend`
+without unmounting, reloading, or resetting reading scroll position.
 Metadata-only file polls retain the iframe; actual HTML content changes replace
 the target. Sheet overscroll handling and mobile fullscreen/source controls remain.
 

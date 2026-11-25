@@ -6,8 +6,11 @@ import { useI18n } from '@/lib/i18n';
 import { Icon } from "@/components/icon/Icon";
 import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './sidebar/sessionNodeItemUtils';
 import { getSidebarRowPaddingLeft, SIDEBAR_ROW_HOVER_CLASS } from './sidebar/utils';
+import { SidebarAnimatedRow, SidebarAnimatedRows } from './sidebar/SidebarAnimatedRows';
 
-interface SessionFolderItemProps<TSessionNode> {
+type FolderSessionNode = { session: { id: string } };
+
+interface SessionFolderItemProps<TSessionNode extends FolderSessionNode> {
   folder: SessionFolder;
   sessions: TSessionNode[];
   /** Sub-folders that belong directly to this folder */
@@ -66,7 +69,7 @@ interface SessionFolderItemProps<TSessionNode> {
   sessionSecondaryMeta?: { projectLabel?: string | null; branchLabel?: string | null } | null;
 }
 
-const SessionFolderItemBase = <TSessionNode,>({
+const SessionFolderItemBase = <TSessionNode extends FolderSessionNode>({
   folder,
   sessions,
   subFolderItems,
@@ -352,20 +355,24 @@ const SessionFolderItemBase = <TSessionNode,>({
           {subFolderItems}
           {/* Then sessions */}
           {sessions.length > 0 ? (
-            sessions.map((node) =>
-              renderSessionNode(
-                node,
-                // One step under the folder so text lines up with the folder name
-                // (icon column reserved on the left; hover chip stays full-width).
-                depth + 1,
-                groupDirectory ?? null,
-                projectId ?? null,
-                archivedBucket,
-                sessionSecondaryMeta,
-                'project',
-                getRenderExtras?.(node),
-              ),
-            )
+            <SidebarAnimatedRows>
+              {sessions.map((node) => (
+                <SidebarAnimatedRow key={node.session.id}>
+                  {renderSessionNode(
+                    node,
+                    // One step under the folder so text lines up with the folder name
+                    // (icon column reserved on the left; hover chip stays full-width).
+                    depth + 1,
+                    groupDirectory ?? null,
+                    projectId ?? null,
+                    archivedBucket,
+                    sessionSecondaryMeta,
+                    'project',
+                    getRenderExtras?.(node),
+                  )}
+                </SidebarAnimatedRow>
+              ))}
+            </SidebarAnimatedRows>
           ) : !subFolderItems ? (
             <div
               className="py-1.5 pr-2 text-left typography-micro text-muted-foreground/70"
@@ -380,6 +387,6 @@ const SessionFolderItemBase = <TSessionNode,>({
   );
 };
 
-export const SessionFolderItem = React.memo(SessionFolderItemBase) as <TSessionNode>(
+export const SessionFolderItem = React.memo(SessionFolderItemBase) as <TSessionNode extends FolderSessionNode>(
   props: SessionFolderItemProps<TSessionNode>,
 ) => React.ReactElement;

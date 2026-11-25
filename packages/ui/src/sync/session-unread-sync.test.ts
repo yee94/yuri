@@ -57,6 +57,44 @@ describe('session unread sync', () => {
     expect(state.fetch.mock.calls.every(([, options]) => options?.method !== 'PUT')).toBe(true);
   });
 
+  test('a live completion stays unread until the Host commits that session, so running → unread never passes through read', async () => {
+    const row = (revision: number, unreadCount: number) => ({ directory: '/project', unreadCount, manual: false, hasError: false, revision });
+    let server: SessionUnreadSnapshot = { revision: 1, sessions: { one: row(1, 0) } };
+    const revision = () => state.client!.getQueryData<SessionUnreadSnapshot>(sessionUnreadKey())?.revision;
+    state.fetch.mockImplementation(async () => reply(server));
+    stop = mountSessionUnreadSync(() => false);
+    await vi.waitFor(() => expect(revision()).toBe(1));
+    appendNotification({ session: 'one', directory: '/project', type: 'turn-complete', time: Date.now(), viewed: false });
+    expect(count()).toBe(1);
+    expect(useNotificationStore.getState().index.project.unseenCount['/project']).toBe(1);
+    // Another session's commit lands first; this one is still pending on the Host.
+    server = { revision: 2, sessions: { one: row(1, 0), other: row(2, 1) } };
+    tip();
+    await vi.waitFor(() => expect(revision()).toBe(2));
+    expect(count()).toBe(1);
+    server = { revision: 3, sessions: { one: row(3, 1), other: row(2, 1) } };
+    tip();
+    await vi.waitFor(() => expect(revision()).toBe(3));
+    expect(count()).toBe(1);
+    // From here the Host decides: a read elsewhere clears it.
+    server = { revision: 4, sessions: { one: row(4, 0), other: row(2, 1) } };
+    tip();
+    await vi.waitFor(() => expect(count()).toBe(0));
+  });
+
+  test('a live completion the Host never commits expires instead of leaving a stale marker', async () => {
+    state.fetch.mockImplementation(async () => reply({ revision: 1, sessions: {} }));
+    stop = mountSessionUnreadSync(() => false);
+    await vi.waitFor(() => expect(state.client!.getQueryData(sessionUnreadKey())).toBeDefined());
+    appendNotification({ session: 'one', directory: '/project', type: 'turn-complete', time: Date.now() - 15_000 + 40, viewed: false });
+    expect(count()).toBe(1);
+    await vi.waitFor(() => expect(count()).toBe(0), { timeout: 1000 });
+    appendNotification({ session: 'one', directory: '/project', type: 'turn-complete', time: Date.now(), viewed: false });
+    expect(count()).toBe(1);
+    markSessionViewed('one');
+    expect(count()).toBe(0);
+  });
+
   test('focused completion becomes globally read; a manual reminder stays unread until explicit opening', async () => {
     let server = snapshot(1, 1, true);
     state.fetch.mockImplementation(async (_path, options) => {

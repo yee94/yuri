@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { isNormalizedPreviewProxyPath, resolveRelayPreviewFrameSrc } from './relay-preview-frame-src';
+import { describe, expect, it, vi } from 'vitest';
+import { isNormalizedPreviewProxyPath, postPreviewUrlAuthToken, resolveRelayPreviewFrameSrc } from './relay-preview-frame-src';
 
 describe('resolveRelayPreviewFrameSrc', () => {
   const authenticated = '/api/preview/proxy/abc123/index.html?yuri_preview_token=p&yuri_url_token=u#top';
@@ -86,5 +86,22 @@ describe('isNormalizedPreviewProxyPath', () => {
     expect(isNormalizedPreviewProxyPath('/api/preview/proxy/../../api/session')).toBe(false);
     expect(isNormalizedPreviewProxyPath('/api/session')).toBe(false);
     expect(isNormalizedPreviewProxyPath('http://evil.example/api/preview/proxy/abc')).toBe(false);
+  });
+});
+
+describe('postPreviewUrlAuthToken', () => {
+  it('posts only validated short URL auth tokens to the exact preview origin', () => {
+    const postMessage = vi.fn();
+    const frame = { contentWindow: { postMessage } } as unknown as HTMLIFrameElement;
+    const validToken = `yuri_url_${'a'.repeat(32)}`;
+    expect(postPreviewUrlAuthToken(frame, 'http://127.0.0.1:41234/api/preview/proxy/abc/index.html', validToken)).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith(
+      { source: 'yuri-preview-parent', version: 1, type: 'update-url-auth-token', token: validToken },
+      'http://127.0.0.1:41234',
+    );
+    postMessage.mockClear();
+    expect(postPreviewUrlAuthToken(frame, 'http://127.0.0.1:41234/api/preview/proxy/abc/', 'long-lived-bearer')).toBe(false);
+    expect(postPreviewUrlAuthToken(frame, 'about:blank', validToken)).toBe(false);
+    expect(postMessage).not.toHaveBeenCalled();
   });
 });

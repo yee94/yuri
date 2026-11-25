@@ -339,12 +339,34 @@ const createSdkFetchMessage = ({ buildOpenCodeUrl, getOpenCodeAuthHeaders, logge
 };
 
 /**
- * L3 diff source. v2 SessionMessageInfo has no summary.diffs; keep failure
- * explicit until the parent lands an authoritative per-message diff API.
- * Do not substitute working-tree / vcs.diff here.
+ * L3 diff source. Uses official OpenCode v2 `session.diff({ sessionID, from })`
+ * when exposed by the client; falls back to `session.message` `summary.diffs`
+ * only for legacy clients without `session.diff`. Never substitutes working-tree
+ * `vcs.diff`.
  */
 const createSdkFetchDiff = ({ buildOpenCodeUrl, getOpenCodeAuthHeaders, logger }) => {
   return async ({ sessionID, messageID, directory, signal }) => {
+    const client = createSdkClient({ buildOpenCodeUrl, getOpenCodeAuthHeaders });
+    if (typeof client.session?.diff === 'function') {
+      let result;
+      try {
+        result = await client.session.diff({ sessionID, from: messageID }, { signal });
+      } catch (error) {
+        if (isAbortError(error) || signal?.aborted) throw error;
+        if (isNotFoundError(error)) {
+          const notFound = new Error('not_found');
+          notFound.code = 'not_found';
+          throw notFound;
+        }
+        throwUpstream(logger, '[session-changes] session.diff SDK error');
+      }
+      const diffs = Array.isArray(result) ? result : (Array.isArray(result?.data) ? result.data : null);
+      if (!diffs) {
+        throwUpstream(logger, '[session-changes] session.diff malformed payload');
+      }
+      return diffs;
+    }
+
     const payload = await createSdkFetchMessage({
       buildOpenCodeUrl,
       getOpenCodeAuthHeaders,

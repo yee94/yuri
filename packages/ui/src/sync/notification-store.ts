@@ -25,6 +25,8 @@ type NotificationBase = {
   session?: string
   time: number
   viewed: boolean
+  /** Host unread row revision for `session` when this notification was appended. */
+  serverRevision?: number
 }
 
 type TurnCompleteNotification = NotificationBase & {
@@ -56,6 +58,8 @@ type NotificationIndex = {
 
 const MAX_NOTIFICATIONS = 500
 const NOTIFICATION_TTL_MS = 1000 * 60 * 60 * 24 * 30 // 30 days
+// Upper bound for a live completion to stand in for a Host commit that never arrives.
+const SERVER_UNREAD_BRIDGE_MS = 15_000
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -68,15 +72,43 @@ function pruneNotifications(list: Notification[]): Notification[] {
   return pruned.slice(pruned.length - MAX_NOTIFICATIONS)
 }
 
+let bridgeExpiryTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleBridgeExpiry(at: number | null) {
+  if (bridgeExpiryTimer) clearTimeout(bridgeExpiryTimer)
+  bridgeExpiryTimer = null
+  if (at === null) return
+  bridgeExpiryTimer = setTimeout(() => {
+    bridgeExpiryTimer = null
+    useNotificationStore.setState({ index: buildIndex(useNotificationStore.getState().list) })
+  }, Math.max(0, at - Date.now()))
+}
+
 function buildIndex(list: Notification[]): NotificationIndex {
   const index: NotificationIndex = {
     session: { unseenCount: {}, unseenHasError: {} },
     project: { unseenCount: {}, unseenHasError: {} },
   }
+  // The Host commits a completion only after its own identity read, so its snapshot
+  // trails the live event. Until the Host records a newer revision for that session,
+  // the live completion keeps it unread; otherwise running → unread flashes through read.
+  const now = Date.now()
+  let nextBridgeExpiry: number | null = null
+  const bridged = new Map<string, { count: number; hasError: boolean; directory?: string }>()
 
   for (const n of list) {
     if (n.viewed) continue
-    if (serverUnread && n.session) continue
+    if (serverUnread && n.session) {
+      const expiresAt = n.time + SERVER_UNREAD_BRIDGE_MS
+      if (expiresAt > now && (serverUnread[n.session]?.revision ?? 0) <= (n.serverRevision ?? 0)) {
+        const entry = bridged.get(n.session) ?? { count: 0, hasError: false, directory: n.directory }
+        entry.count += 1
+        if (n.type === "error") entry.hasError = true
+        bridged.set(n.session, entry)
+        nextBridgeExpiry = Math.min(nextBridgeExpiry ?? expiresAt, expiresAt)
+      }
+      continue
+    }
 
     if (n.session) {
       index.session.unseenCount[n.session] = (index.session.unseenCount[n.session] ?? 0) + 1
@@ -99,6 +131,21 @@ function buildIndex(list: Notification[]): NotificationIndex {
       }
     }
   }
+
+  for (const [id, entry] of bridged) {
+    const committed = index.session.unseenCount[id] ?? 0
+    if (entry.count > committed) {
+      index.session.unseenCount[id] = entry.count
+      if (entry.directory) {
+        index.project.unseenCount[entry.directory] = (index.project.unseenCount[entry.directory] ?? 0) + entry.count - committed
+      }
+    }
+    if (entry.hasError) {
+      index.session.unseenHasError[id] = true
+      if (entry.directory) index.project.unseenHasError[entry.directory] = true
+    }
+  }
+  scheduleBridgeExpiry(nextBridgeExpiry)
 
   return index
 }
@@ -132,7 +179,10 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
   append: (notification) => {
     const current = get().list
-    const next = pruneNotifications([...current, notification])
+    const stamped = notification.session
+      ? { ...notification, serverRevision: serverUnread?.[notification.session]?.revision ?? 0 }
+      : notification
+    const next = pruneNotifications([...current, stamped])
     set({ list: next, index: buildIndex(next) })
   },
 

@@ -12,7 +12,7 @@ import { MessageFilesDisplay } from '../FileAttachment';
 import { TurnChangedFilesDropdown } from '../TurnChangedFilesDropdown';
 import type { ToolPart as ToolPartType } from '@/lib/opencode/v2-types';
 import type { StreamPhase, ToolPopupContent, AgentMentionInfo } from './types';
-import type { TurnChangedFile, TurnGroupingContext } from '../lib/turns/types';
+import type { TurnGroupingContext } from '../lib/turns/types';
 import { cn } from '@/lib/utils';
 import { WorkerHighlightedCode } from '@/components/code/WorkerHighlightedCode';
 import { isEmptyTextPart, extractTextContent } from './partUtils';
@@ -63,281 +63,17 @@ import { useDeviceInfo } from '@/lib/device';
 import { isEmbeddedSessionChat } from '@/components/layout/contextPanelEmbeddedChat';
 import { getSessionSurfaceActionAvailability, navigateNestedSession, useSessionSurface } from '../SessionSurfaceContext';
 import { pushPhoneNestedSession } from '@/mobile/useMobileNavigationStore';
-import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { isSyntheticPart } from '@/lib/messages/synthetic';
 import type { AssistantErrorPresentation } from './assistantErrorPresentation';
 import { AssistantResponseStatus } from './AssistantResponseStatus';
 import { parseSubagentNotification, type SubagentNotification } from './parts/taskToolModel';
-import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
-import { openTurnChangedFilePreview } from '../openTurnChangedFile';
+import { TurnChangesCard } from './TurnChangesCard';
 
 
 const CONTAIN_LAYOUT_STYLE = { contain: 'layout' as const };
 const INLINE_MESSAGE_ACTIONS_CLASS_NAME = 'mt-1.5 mb-0.5 flex items-center justify-start gap-1.5';
 /** 移动端：正文与底栏再拉开一点，避免贴死. */
 const INLINE_MESSAGE_ACTIONS_MOBILE_CLASS_NAME = 'mt-3 mb-0.5 flex items-center justify-start gap-1.5';
-const getDisplayFileName = (file: string): string => {
-    const normalized = file.replace(/\\/g, '/');
-    const segments = normalized.split('/').filter(Boolean);
-    return segments.at(-1) ?? file;
-};
-
-// Desktop rows stay h-7 / meta; mobile matches ProgressiveGroup + message-footer density.
-const TURN_CHANGES_ROW_CLASS =
-    'w-full min-w-0 justify-start rounded-[var(--radius-md)] bg-transparent px-1 hover:!bg-interactive-hover focus-visible:!bg-interactive-hover active:!bg-interactive-active supports-[corner-shape:squircle]:rounded-[var(--radius-md)]';
-const TURN_CHANGES_ROW_DESKTOP_CLASS = 'h-7 gap-1.5';
-const TURN_CHANGES_ROW_MOBILE_CLASS = 'h-6 gap-1';
-/** Header/footer chrome — same 11px density as MESSAGE_FOOTER_META_CLASS. */
-const TURN_CHANGES_CHROME_TEXT_MOBILE_CLASS = 'text-[11px] leading-none';
-const TURN_CHANGES_ICON_DESKTOP_CLASS = 'size-3.5';
-const TURN_CHANGES_ICON_MOBILE_CLASS = 'size-3';
-/** Inline transcript preview shows a short head; overflow opens the full turn DiffView. */
-const TURN_CHANGES_PREVIEW_VISIBLE_LIMIT = 5;
-
-const TurnChangedFileRowContent = React.memo(({
-    file,
-    isMobile,
-}: {
-    file: TurnChangedFile;
-    isMobile: boolean;
-}) => (
-    <span
-        className={cn(
-            'flex min-w-0 flex-1 items-center leading-none text-muted-foreground',
-            isMobile ? 'gap-1 text-[11px]' : 'gap-1.5 text-xs',
-        )}
-    >
-        <FileTypeIcon
-            filePath={file.file}
-            className={cn('flex-shrink-0', isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5')}
-        />
-        <span className="min-w-0 flex-1 truncate text-left text-foreground/80" title={file.file}>
-            {getDisplayFileName(file.file)}
-        </span>
-        <span
-            className={cn(
-                'inline-flex flex-shrink-0 items-center gap-0 leading-none tabular-nums',
-                isMobile ? 'text-[11px]' : 'typography-meta',
-            )}
-        >
-            <span style={{ color: 'var(--status-success)' }}>+{file.additions}</span>
-            <span className="text-muted-foreground/70">/</span>
-            <span style={{ color: 'var(--status-error)' }}>-{file.deletions}</span>
-        </span>
-    </span>
-));
-
-const TurnChangedFilePreviewButton = React.memo(({
-    file,
-    canOpen,
-    isMobile,
-    onOpen,
-}: {
-    file: TurnChangedFile;
-    canOpen: boolean;
-    isMobile: boolean;
-    onOpen: (file: string) => void;
-}) => {
-    const { t } = useI18n();
-    const handleOpen = useEvent(() => {
-        onOpen(file.file);
-    });
-
-    return (
-        <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={!canOpen}
-            data-turn-change-file="true"
-            className={cn(
-                TURN_CHANGES_ROW_CLASS,
-                isMobile ? TURN_CHANGES_ROW_MOBILE_CLASS : TURN_CHANGES_ROW_DESKTOP_CLASS,
-            )}
-            aria-label={t('chat.changedFiles.actions.openFileTitle', { path: file.file })}
-            title={file.file}
-            onClick={handleOpen}
-        >
-            <TurnChangedFileRowContent file={file} isMobile={isMobile} />
-        </Button>
-    );
-});
-
-const TurnChangesPreview = React.memo(({
-    fileCount,
-    changedFiles,
-    turnId,
-    isLatestTurn,
-    isMobile,
-}: {
-    fileCount: number;
-    changedFiles?: TurnChangedFile[];
-    turnId: string;
-    isLatestTurn: boolean;
-    isMobile: boolean;
-}) => {
-    const { t } = useI18n();
-    const effectiveDirectory = useEffectiveDirectory();
-    const hostRuntime = useHostRuntime();
-    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
-    const sessionSurface = useSessionSurface();
-    // Nested/subagent surfaces own their directory + session; primary falls back to global.
-    const diffDirectory = sessionSurface.directory || effectiveDirectory;
-    const diffSessionId = sessionSurface.sessionId;
-    const mobileActions = useMobileAppActions();
-    const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
-    // L1 carries the thin file list on the message wire; render it synchronously.
-    const files = React.useMemo<TurnChangedFile[]>(() => changedFiles ?? [], [changedFiles]);
-    const visibleFiles = files.slice(0, TURN_CHANGES_PREVIEW_VISIBLE_LIMIT);
-    const hiddenCount = Math.max(0, files.length - visibleFiles.length);
-    const displayFileCount = files.length > 0 ? files.length : fileCount;
-    const canOpen = Boolean(mobileActions || (!isMobile && diffDirectory) || (isMobile && isLatestTurn));
-    const fileCountLabel = displayFileCount === 1
-        ? t('chat.pendingChanges.fileCountSingle', { count: displayFileCount })
-        : t('chat.pendingChanges.fileCountPlural', { count: displayFileCount });
-    const hiddenCountLabel = hiddenCount === 1
-        ? t('chat.pendingChanges.fileCountSingle', { count: hiddenCount })
-        : t('chat.pendingChanges.fileCountPlural', { count: hiddenCount });
-    const rowClass = cn(
-        TURN_CHANGES_ROW_CLASS,
-        isMobile ? TURN_CHANGES_ROW_MOBILE_CLASS : TURN_CHANGES_ROW_DESKTOP_CLASS,
-    );
-    const iconClass = isMobile ? TURN_CHANGES_ICON_MOBILE_CLASS : TURN_CHANGES_ICON_DESKTOP_CLASS;
-    // Title/footer: message-footer density on mobile; meta emphasis on desktop.
-    const titleClass = isMobile
-        ? cn(TURN_CHANGES_CHROME_TEXT_MOBILE_CLASS, 'font-semibold text-foreground/85')
-        : 'typography-meta font-semibold text-foreground/85';
-    const metaClass = isMobile
-        ? cn(TURN_CHANGES_CHROME_TEXT_MOBILE_CLASS, 'text-muted-foreground')
-        : 'typography-meta text-muted-foreground';
-    const footerClass = isMobile
-        ? cn(TURN_CHANGES_CHROME_TEXT_MOBILE_CLASS, 'font-medium')
-        : 'typography-meta font-medium';
-
-    const openTurnFile = useEvent((file: string) => {
-        if (mobileActions) {
-            // Pass the clicked file so the sheet expands/scrolls to it (desktop parity).
-            mobileActions.openTurnDiff(turnId, diffSessionId, file);
-            return;
-        }
-
-        if (!isMobile && diffDirectory) {
-            openTurnChangedFilePreview({
-                scope: hostScope,
-                directory: diffDirectory,
-                filePath: file,
-                turnMessageId: turnId,
-                sessionId: diffSessionId,
-            });
-            return;
-        }
-
-        if (isMobile && isLatestTurn && diffDirectory) {
-            openTurnChangedFilePreview({
-                scope: hostScope,
-                directory: diffDirectory,
-                filePath: file,
-                turnMessageId: turnId,
-                sessionId: diffSessionId,
-                mobile: true,
-            });
-        }
-    });
-
-    const openCompleteTurnDiff = useEvent(() => {
-        if (mobileActions) {
-            mobileActions.openTurnDiff(turnId, diffSessionId);
-            return;
-        }
-
-        if (!isMobile && diffDirectory) {
-            openContextPanelTab(hostScope?.key ?? diffDirectory, {
-                mode: 'diff',
-                dedupeKey: `turn-diff:${diffSessionId || 'session'}:${turnId}`,
-                targetPath: null,
-                diffScope: 'turn',
-                diffTurnMessageId: turnId,
-                diffSessionId,
-            });
-            return;
-        }
-
-        const firstFile = visibleFiles[0]?.file;
-        if (firstFile && isMobile && isLatestTurn && diffDirectory) {
-            openTurnChangedFilePreview({
-                scope: hostScope,
-                directory: diffDirectory,
-                filePath: firstFile,
-                turnMessageId: turnId,
-                sessionId: diffSessionId,
-                mobile: true,
-            });
-        }
-    });
-
-    return (
-        <section
-            className={cn(
-                // Mobile remaps --border to ~3% foreground; /50 would double-dilute to
-                // near-invisible. Use a direct foreground mix there instead.
-                'mt-4 flex min-w-0 flex-col rounded-[var(--radius-lg)] border bg-muted/20',
-                isMobile
-                    ? 'gap-0 border-foreground/15 p-1'
-                    : 'gap-0.5 border-border/50 p-1.5',
-            )}
-            data-turn-changes-preview="true"
-            data-message-action-group="true"
-            aria-labelledby={`turn-changes-${turnId}`}
-        >
-            <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                disabled={!canOpen}
-                onClick={openCompleteTurnDiff}
-                className={cn(rowClass, 'max-w-full text-muted-foreground hover:text-foreground')}
-                aria-label={t('chat.changedFiles.title')}
-                title={t('chat.changedFiles.title')}
-            >
-                <Icon name="file-edit" className={iconClass} />
-                <span id={`turn-changes-${turnId}`} className={titleClass}>
-                    {t('chat.changedFiles.title')}
-                </span>
-                <span className={metaClass}>{fileCountLabel}</span>
-                <Icon name="arrow-right-s" className={cn(iconClass, 'opacity-60')} />
-            </Button>
-            {visibleFiles.length > 0 ? (
-                <div className={cn('flex min-w-0 flex-col', isMobile ? 'gap-0' : 'gap-0.5')}>
-                    {visibleFiles.map((file) => (
-                        <TurnChangedFilePreviewButton
-                            key={file.file}
-                            file={file}
-                            canOpen={canOpen}
-                            isMobile={isMobile}
-                            onOpen={openTurnFile}
-                        />
-                    ))}
-                    {hiddenCount > 0 ? (
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="xs"
-                            disabled={!canOpen}
-                            className={cn(rowClass, 'text-muted-foreground hover:text-foreground')}
-                            onClick={openCompleteTurnDiff}
-                            aria-label={t('chat.changedFiles.title')}
-                            title={t('chat.changedFiles.title')}
-                        >
-                            <span aria-hidden="true" className={cn(iconClass, 'flex-shrink-0')} />
-                            <span className={footerClass}>+{hiddenCountLabel}</span>
-                            <Icon name="arrow-right-s" className={iconClass} />
-                        </Button>
-                    ) : null}
-                </div>
-            ) : null}
-        </section>
-    );
-});
 
 type SubtaskPartLike = Part & {
     type: 'subtask';
@@ -1517,14 +1253,25 @@ const AssistantMessageBody = React.memo(({
         ? getSortedBodyPartIndex(sourceParts ?? parts) >= 0
         : Boolean(hasTextContent) && !awaitingMessageCompletion;
     const shouldShowMessageActions = hasCopyableText;
-    const hasAuthoritativeChangesMarker = turnGroupingContext?.diffStats?.hasDiffs === true;
+    const hasV2TurnDiff = Boolean(
+        turnGroupingContext?.turnDiffFromMessageId
+        && turnGroupingContext?.turnDiffFiles
+        && turnGroupingContext.turnDiffFiles.length > 0,
+    );
+    const hasLegacyTurnDiff = turnGroupingContext?.diffStats?.hasDiffs === true && !hasV2TurnDiff;
+    const hasAuthoritativeChangesMarker = hasV2TurnDiff || hasLegacyTurnDiff;
     const showBackgroundActivity = Boolean(turnGroupingContext?.activityParts?.length) && sessionId && sessionSurface.active && !isMiniChatSurface;
+    const isV2TurnReadyForChanges = hasV2TurnDiff && (
+        Boolean(turnGroupingContext?.turnIdleOutcome)
+        || isTurnSettled
+    );
+    const isLegacyTurnReadyForChanges = hasLegacyTurnDiff
+        && hasConfirmedStopFinish
+        && isTurnSettled;
     const shouldShowChangesPreview = !isMiniChatSurface
         && isLastAssistantInTurn
-        && hasConfirmedStopFinish
-        && isTurnSettled
         && !hideCompactionBody
-        && turnGroupingContext?.diffStats?.hasDiffs === true;
+        && (isV2TurnReadyForChanges || isLegacyTurnReadyForChanges);
     const shouldRenderActionsInActivity = isSortedRenderMode;
     const shouldShowStandaloneMessageActions = showSplitAssistantMessageActions && shouldShowMessageActions && !shouldShowTurnFooter && !shouldRenderActionsInActivity;
 
@@ -2071,12 +1818,19 @@ const AssistantMessageBody = React.memo(({
                     )}
                 </div>
                 {shouldShowChangesPreview && turnGroupingContext?.diffStats ? (
-                    <TurnChangesPreview
+                    <TurnChangesCard
+                        sessionId={sessionId}
                         fileCount={turnGroupingContext.diffStats.files}
+                        totalAdditions={hasLegacyTurnDiff ? turnGroupingContext.diffStats.additions : undefined}
+                        totalDeletions={hasLegacyTurnDiff ? turnGroupingContext.diffStats.deletions : undefined}
                         changedFiles={turnGroupingContext.changedFiles}
                         turnId={turnGroupingContext.turnId}
+                        turnDiffFromMessageId={turnGroupingContext.turnDiffFromMessageId}
+                        turnDiffFiles={turnGroupingContext.turnDiffFiles}
+                        turnDiffSignature={turnGroupingContext.turnDiffSignature}
                         isLatestTurn={turnGroupingContext.isLatestTurn}
                         isMobile={isMobile}
+                        onContentChange={onContentChange}
                     />
                 ) : null}
                 <MessageFilesDisplay files={parts} messageID={messageId} sessionID={sessionId} onShowPopup={onShowPopup} />

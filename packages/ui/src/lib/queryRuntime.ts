@@ -103,6 +103,21 @@ export const queryKeys = {
     snapshot: (directory: string, transport = getRuntimeTransportIdentity()): readonly [string, 'sessionStatus', 'snapshot', string | null] => [transport, 'sessionStatus', 'snapshot', normalizeQueryDirectory(directory)],
   },
   sessionTurnChanges: {
+    turn: (
+      directory: string | null | undefined,
+      sessionID: string,
+      fromMessageID: string,
+      snapshotSignature: string | undefined,
+      transport = getRuntimeTransportIdentity(),
+    ): readonly [string, 'sessionTurnChanges', 'turn', string | null, string, string, string] => [
+      transport,
+      'sessionTurnChanges',
+      'turn',
+      normalizeQueryDirectory(directory),
+      sessionID,
+      fromMessageID,
+      snapshotSignature ?? '',
+    ],
     file: (
       directory: string | null | undefined,
       sessionID: string,

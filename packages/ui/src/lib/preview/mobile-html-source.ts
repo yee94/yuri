@@ -8,7 +8,7 @@ import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 import { resolveProjectPreviewUrl } from './project-preview';
 
 /** Keep Host-local URLs behind its existing preview proxy, including IP literals. */
-export async function resolveMobileHtmlUrl(rawUrl: string, hostOrigin: string | undefined, signal: AbortSignal, scope?: HostRuntimeEntry): Promise<{ src: string; expiresAt?: number }> {
+export async function resolveMobileHtmlUrl(rawUrl: string, hostOrigin: string | undefined, signal: AbortSignal, scope?: HostRuntimeEntry): Promise<{ src: string; expiresAt?: number; extend?: (extendSignal?: AbortSignal) => Promise<number> }> {
   if (scope) {
     const result = await resolveProjectPreviewUrl(scope, rawUrl, signal);
     if (!isLoopbackHttpUrl(rawUrl)) return result;
@@ -36,12 +36,30 @@ export async function resolveMobileHtmlUrl(rawUrl: string, hostOrigin: string | 
     || !isNormalizedPreviewProxyPath(`${target.proxyBasePath}${url.pathname}`)
     || typeof target.previewToken !== 'string' || !target.previewToken
     || typeof target.expiresAt !== 'number' || !Number.isFinite(target.expiresAt) || target.expiresAt <= Date.now()) throw new Error('invalid_preview');
+  const targetId = target.proxyBasePath.slice('/api/preview/proxy/'.length);
+  const previewToken = target.previewToken;
+  const extend = async (extendSignal?: AbortSignal): Promise<number> => {
+    const activeSignal = extendSignal ?? signal;
+    if (activeSignal.aborted || generation !== getRuntimeGeneration()) throw new DOMException('Preview ended', 'AbortError');
+    const extendResponse = await runtimeFetch(`/api/preview/targets/${targetId}/extend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previewToken }),
+      signal: activeSignal,
+    });
+    if (!extendResponse.ok) throw new Error('preview_extend_failed');
+    const body = await extendResponse.json() as { expiresAt?: unknown };
+    if (typeof body.expiresAt !== 'number' || !Number.isFinite(body.expiresAt) || body.expiresAt <= Date.now()) {
+      throw new Error('invalid_preview');
+    }
+    return body.expiresAt;
+  };
   await refreshRuntimeUrlAuthToken();
   assertCurrent();
   const query = new URLSearchParams(url.search);
   query.delete('yuri_client_token'); query.delete('yuri_url_token');
-  query.set('yuri_preview_token', target.previewToken);
+  query.set('yuri_preview_token', previewToken);
   const route = `${target.proxyBasePath}${url.pathname}?${query}${url.hash}`;
   const authenticated = new URL(getRuntimeUrlResolver().authenticatedAsset(route), 'http://runtime.invalid');
-  return { src: `${hostOrigin}${authenticated.pathname}${authenticated.search}${authenticated.hash}`, expiresAt: target.expiresAt };
+  return { src: `${hostOrigin}${authenticated.pathname}${authenticated.search}${authenticated.hash}`, expiresAt: target.expiresAt, extend };
 }

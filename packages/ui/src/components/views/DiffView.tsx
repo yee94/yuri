@@ -50,8 +50,10 @@ import {
     buildDiffNavigationAlignKey,
     shouldAlignDiffNavigation,
 } from './diffNavigationAlign';
+import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import {
     useSessionTurnChangeFileQuery,
+    useSessionTurnDiffQuery,
 } from '@/queries/sessionTurnChangesQueries';
 import type { FileDiffMetadata } from '@pierre/diffs';
 
@@ -1072,6 +1074,8 @@ export const DiffView: React.FC<DiffViewProps> = ({
 }) => {
     const { t } = useI18n();
     const { git } = useRuntimeAPIs();
+    const hostRuntime = useHostRuntime();
+    const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const fallbackDirectory = useEffectiveDirectory();
     const effectiveDirectory = (typeof directory === 'string' && directory.trim())
         ? directory.trim()
@@ -1160,9 +1164,17 @@ export const DiffView: React.FC<DiffViewProps> = ({
         if (turnMessageId) {
             startIndex = sessionMessages.findIndex((message) => message.id === turnMessageId);
             if (startIndex < 0) {
-                return { messageID: null, count: 0, hasDiffs: false, thinDiffs: [] as TurnSnapshotDiff[] };
+                return {
+                    messageID: turnMessageId,
+                    count: 0,
+                    hasDiffs: false,
+                    thinDiffs: [] as TurnSnapshotDiff[],
+                    v2SnapshotFiles: [] as string[],
+                    v2SnapshotSignature: undefined as string | undefined,
+                };
             }
         }
+        let userIndex = -1;
         for (let index = startIndex; index >= 0; index -= 1) {
             const message = sessionMessages[index] as {
                 id?: string;
@@ -1170,18 +1182,69 @@ export const DiffView: React.FC<DiffViewProps> = ({
                 summary?: { diffs?: unknown; diffCount?: unknown; hasDiffs?: unknown };
             };
             if (message.role !== 'user') continue;
-            const thinDiffs = listTurnDiffs(message.summary?.diffs);
-            const markerCount = typeof message.summary?.diffCount === 'number' && Number.isFinite(message.summary.diffCount)
-                ? Math.max(0, Math.trunc(message.summary.diffCount))
-                : thinDiffs.length;
+            userIndex = index;
+            break;
+        }
+        if (userIndex < 0) {
             return {
-                messageID: typeof message.id === 'string' && message.id ? message.id : null,
-                count: markerCount,
-                hasDiffs: message.summary?.hasDiffs === true || markerCount > 0 || thinDiffs.length > 0,
-                thinDiffs,
+                messageID: turnMessageId ?? null,
+                count: 0,
+                hasDiffs: false,
+                thinDiffs: [] as TurnSnapshotDiff[],
+                v2SnapshotFiles: [] as string[],
+                v2SnapshotSignature: undefined as string | undefined,
             };
         }
-        return { messageID: null, count: 0, hasDiffs: false, thinDiffs: [] as TurnSnapshotDiff[] };
+        const userMessage = sessionMessages[userIndex] as {
+            id?: string;
+            summary?: { diffs?: unknown; diffCount?: unknown; hasDiffs?: unknown };
+        };
+        const thinDiffs = listTurnDiffs(userMessage.summary?.diffs);
+        const markerCount = typeof userMessage.summary?.diffCount === 'number' && Number.isFinite(userMessage.summary.diffCount)
+            ? Math.max(0, Math.trunc(userMessage.summary.diffCount))
+            : thinDiffs.length;
+
+        // Collect OpenCode v2 assistant snapshot metadata for this execution cycle
+        // so the Turn DiffView query shares the exact same key and cache as TurnChangesCard.
+        const hasIdleMarkers = sessionMessages.some((msg) => Boolean((msg as { turnIdle?: unknown }).turnIdle));
+        const snapshotFilesSet = new Set<string>();
+        const snapshotTokens: string[] = [];
+        let idleTag: string | undefined;
+        for (let index = userIndex + 1; index < sessionMessages.length; index += 1) {
+            const msg = sessionMessages[index] as {
+                role?: string;
+                snapshot?: { start?: string; end?: string; files?: string[] };
+                turnIdle?: { id?: string; outcome?: string };
+            };
+            if (msg.role === 'user' && !hasIdleMarkers) break;
+            if (msg.role === 'assistant' && msg.snapshot) {
+                if (msg.snapshot.start) snapshotTokens.push(`s:${msg.snapshot.start}`);
+                if (msg.snapshot.end) snapshotTokens.push(`e:${msg.snapshot.end}`);
+                if (Array.isArray(msg.snapshot.files)) {
+                    for (const file of msg.snapshot.files) {
+                        if (typeof file === 'string' && file.length > 0) snapshotFilesSet.add(file);
+                    }
+                }
+            }
+            if (msg.turnIdle) {
+                idleTag = msg.turnIdle.id ?? msg.turnIdle.outcome;
+                break;
+            }
+        }
+        const v2SnapshotFiles = [...snapshotFilesSet].sort();
+        const v2SnapshotSignature = v2SnapshotFiles.length > 0
+            ? [idleTag, ...snapshotTokens, ...v2SnapshotFiles].filter(Boolean).join('|')
+            : undefined;
+        const resolvedCount = markerCount > 0 ? markerCount : v2SnapshotFiles.length;
+
+        return {
+            messageID: typeof userMessage.id === 'string' && userMessage.id ? userMessage.id : null,
+            count: resolvedCount,
+            hasDiffs: userMessage.summary?.hasDiffs === true || resolvedCount > 0 || thinDiffs.length > 0,
+            thinDiffs,
+            v2SnapshotFiles,
+            v2SnapshotSignature,
+        };
     }, [sessionMessages, turnMessageId]);
 
     const selectedToolTurnDiffs = React.useMemo(
@@ -1190,6 +1253,24 @@ export const DiffView: React.FC<DiffViewProps> = ({
     );
 
     const usesToolPatches = selectedToolTurnDiffs.length > 0;
+    const usesV2TurnDiff = activeDiffScope === 'turn'
+        && !usesToolPatches
+        && turnChangesMarker.thinDiffs.length === 0
+        && Boolean(resolvedSessionId && effectiveDirectory && turnChangesMarker.messageID);
+
+    const v2TurnDiffQuery = useSessionTurnDiffQuery(
+        usesV2TurnDiff && resolvedSessionId && effectiveDirectory && turnChangesMarker.messageID
+            ? {
+                sessionID: resolvedSessionId,
+                directory: effectiveDirectory,
+                from: turnChangesMarker.messageID,
+                snapshotSignature: turnChangesMarker.v2SnapshotSignature,
+                scope: hostScope,
+            }
+            : null,
+        { enabled: usesV2TurnDiff },
+    );
+
     const turnChangesRequest = React.useMemo<TurnChangesRequest | null>(() => {
         if (!resolvedSessionId || !effectiveDirectory || !turnChangesMarker.messageID) return null;
         return {
@@ -1200,13 +1281,32 @@ export const DiffView: React.FC<DiffViewProps> = ({
         };
     }, [effectiveDirectory, resolvedSessionId, turnChangesMarker.count, turnChangesMarker.messageID]);
 
-    // L1 carries the thin file list on the turn user message; render it
-    // synchronously. There is no async list load for turn scope — only the
-    // per-file L3 patch query below fetches on demand.
+    // L1 carries the thin file list on legacy V1 user messages; OpenCode V2
+    // resolves full per-file patches via GET /api/session/:id/diff?from= (sharing
+    // the TanStack Query cache already warmed by TurnChangesCard).
     const activeTurnDiffs = React.useMemo<TurnSnapshotDiff[]>(() => {
         if (usesToolPatches) return selectedToolTurnDiffs;
-        return turnChangesMarker.thinDiffs;
-    }, [selectedToolTurnDiffs, turnChangesMarker.thinDiffs, usesToolPatches]);
+        if (turnChangesMarker.thinDiffs.length > 0) return turnChangesMarker.thinDiffs;
+        if (v2TurnDiffQuery.data && v2TurnDiffQuery.data.length > 0) {
+            return v2TurnDiffQuery.data.map((entry) => ({
+                file: entry.file,
+                status: entry.status,
+                additions: entry.additions,
+                deletions: entry.deletions,
+                patch: entry.patch,
+            }));
+        }
+        if (turnChangesMarker.v2SnapshotFiles.length > 0) {
+            return turnChangesMarker.v2SnapshotFiles.map((file) => ({ file }));
+        }
+        return [];
+    }, [
+        selectedToolTurnDiffs,
+        turnChangesMarker.thinDiffs,
+        turnChangesMarker.v2SnapshotFiles,
+        usesToolPatches,
+        v2TurnDiffQuery.data,
+    ]);
 
     const lastTurnDiffData = React.useMemo(() => {
         const map = new Map<string, DiffData>();
@@ -1276,7 +1376,9 @@ export const DiffView: React.FC<DiffViewProps> = ({
         return status.files.filter(isStagedStatusFile).length;
     }, [status]);
 
-    const turnFileCount = usesToolPatches ? activeTurnDiffs.length : turnChangesMarker.count;
+    const turnFileCount = usesToolPatches
+        ? activeTurnDiffs.length
+        : (activeTurnDiffs.length > 0 ? activeTurnDiffs.length : turnChangesMarker.count);
 
     const changedFilePathsKey = React.useMemo(
         () => changedFiles.map((file) => file.path).join('\0'),

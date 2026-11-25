@@ -52,6 +52,36 @@ const stripMessagePartCarriers = (value) => {
   return changed ? next : value;
 };
 
+const projectNativeSnapshot = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const start = asNonEmptyString(value.start);
+  const end = asNonEmptyString(value.end);
+  const files = Array.isArray(value.files)
+    ? value.files.filter((file) => typeof file === 'string' && file.length > 0)
+    : undefined;
+  const snapshot = {
+    ...(start ? { start } : {}),
+    ...(end ? { end } : {}),
+    ...(files && files.length > 0 ? { files } : {}),
+  };
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+};
+
+const extractIdleMarker = (entry) => {
+  if (!entry || typeof entry !== 'object') return null;
+  const info = entry.info && typeof entry.info === 'object' ? entry.info : entry;
+  const type = asNonEmptyString(info.type);
+  const role = asNonEmptyString(info.role) ?? asNonEmptyString(info.clientRole);
+  if (type !== 'idle' && role !== 'idle') return null;
+  const rawOutcome = asNonEmptyString(info.outcome);
+  const outcome = rawOutcome === 'failed' || rawOutcome === 'interrupted' ? rawOutcome : 'succeeded';
+  const id = asNonEmptyString(info.id);
+  return {
+    ...(id ? { id } : {}),
+    outcome,
+  };
+};
+
 /**
  * True for v2 control rows that must never reach ChatMessage props.
  * Accepts raw SessionMessageInfo or already-projected `{ info, parts }`.
@@ -202,6 +232,8 @@ const projectNativeSessionInfo = (entry, role) => {
   }
   if (asNonEmptyString(entry.parentID)) info.parentID = entry.parentID;
   if (entry.summary != null) info.summary = entry.summary;
+  const snapshot = projectNativeSnapshot(entry.snapshot);
+  if (snapshot) info.snapshot = snapshot;
   if (role === 'compaction') info.clientRole = 'compaction';
   if (role === 'system') info.clientRole = 'system';
   if (role === 'synthetic') {
@@ -275,7 +307,25 @@ export const projectSessionMessage = (entry) => {
   };
 };
 
-export const projectSessionMessageRecords = (records) =>
-  (Array.isArray(records) ? records : [])
-    .map(projectSessionMessage)
-    .filter((record) => record != null && typeof record === 'object' && record.info);
+export const projectSessionMessageRecords = (records) => {
+  if (!Array.isArray(records)) return [];
+  const projected = [];
+  for (const entry of records) {
+    const idleMarker = extractIdleMarker(entry);
+    if (idleMarker) {
+      const previous = projected[projected.length - 1];
+      if (previous && previous.info && typeof previous.info === 'object') {
+        previous.info = {
+          ...previous.info,
+          turnIdle: idleMarker,
+        };
+      }
+      continue;
+    }
+    const next = projectSessionMessage(entry);
+    if (next != null && typeof next === 'object' && next.info) {
+      projected.push(next);
+    }
+  }
+  return projected;
+};

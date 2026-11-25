@@ -28,6 +28,7 @@ import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { normalizePath } from './utils';
+import { useProgressiveCount } from '@/components/layout/ProgressiveRows';
 import { scrollFocusedSessionRowIntoView } from './scrollFocusedSessionRow';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import type { RemoteProject } from '@/lib/remote-projects/types';
@@ -35,6 +36,8 @@ import { RemoteProjectSection } from './RemoteProjectSection';
 import { PendingRemoteProjectRow } from './RemoteProjectRows';
 import type { SessionNavigationTarget } from '@/sync/session-navigation';
 
+const PROJECT_INITIAL_SECTIONS = 3;
+const PROJECT_SECTIONS_PER_FRAME = 2;
 const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 8 } };
 const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
 
@@ -134,6 +137,9 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
   const remoteById = new Map((props.remoteProjects ?? []).map((project) => [project.id, project]));
   const remoteSections: ProjectSection[] = (props.remoteProjects ?? []).map((project) => ({ project: { id: project.id, hostId: project.hostId, normalizedPath: project.path }, groups: [] }));
   const allSections = [...props.sectionsForRender, ...remoteSections];
+  // Entering the project view mounts every project's groups and session rows;
+  // mount the first few sections, then the rest a couple per frame.
+  const mountedSectionCount = useProgressiveCount(allSections.length, PROJECT_INITIAL_SECTIONS, PROJECT_SECTIONS_PER_FRAME, props.taskContent === undefined);
   if (props.projectOrderIds?.length) {
     const ranks = new Map(props.projectOrderIds.map((id, index) => [id, index]));
     allSections.sort((a, b) => (ranks.get(a.project.id) ?? Infinity) - (ranks.get(b.project.id) ?? Infinity));
@@ -178,7 +184,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
     if (!header) return;
     revealedProjectRef.current = target;
     scrollFocusedSessionRowIntoView(header);
-  }, [props.projectRevealTarget, props.mobileVariant, props.showOnlyMainWorkspace, props.hasSessionSearchQuery, props.sectionsForRender]);
+  }, [props.projectRevealTarget, props.mobileVariant, props.showOnlyMainWorkspace, props.hasSessionSearchQuery, props.sectionsForRender, mountedSectionCount]);
 
   // Memoize the result of getOrderedGroups. The callback is stable
   // (deps: [groupOrderByProject]) and `section.groups` is a stable
@@ -231,11 +237,13 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
         {props.hostRegistry && props.onRemoteTaskItems ? (props.remoteProjects ?? []).map((project) => (
           <RemoteProjectSection key={project.id} project={project} registry={props.hostRegistry!} onTaskItems={props.onRemoteTaskItems} />
         )) : null}
-        <ScrollableOverlay useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1 [overflow-anchor:none]', props.mobileVariant ? '' : '')}>
+        <ScrollableOverlay key="sidebar-view-tasks" useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1 [overflow-anchor:none]', props.mobileVariant ? '' : '')}>
           {props.topContent}
           {projectsHeader}
-          {props.tabLeadingContent}
-          {props.taskContent}
+          <div className="yuri-sidebar-view-enter-from-left space-y-1">
+            {props.tabLeadingContent}
+            {props.taskContent}
+          </div>
         </ScrollableOverlay>
         {props.taskFooter}
       </SidebarTooltipProvider>
@@ -265,7 +273,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
     // like they insert upward. With anchoring off, scrollTop stays put and new
     // rows appear below naturally.
     <SidebarTooltipProvider>
-    <ScrollableOverlay ref={scrollContainerRef} useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1 [overflow-anchor:none]', props.mobileVariant ? '' : '')}>
+    <ScrollableOverlay key="sidebar-view-projects" ref={scrollContainerRef} useScrollShadow scrollShadowSize={96} outerClassName="flex-1 min-h-0" className={cn('space-y-1 px-3 pb-1 [overflow-anchor:none]', props.mobileVariant ? '' : '')}>
       {props.topContent}
       {props.showOnlyMainWorkspace ? (
         <div className="space-y-[0.6rem] py-1">
@@ -306,6 +314,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
               Per-project loading lives on the folder icon + body placeholder;
               do not reintroduce a global "syncing sessions" accessory here. */}
           {projectsHeader}
+          <div className="yuri-sidebar-view-enter-from-right space-y-1">
           {props.tabLeadingContent}
           <DndContext
             sensors={projectSensors}
@@ -320,7 +329,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
             }}
           >
             <SortableContext items={allSections.map((section) => section.project.id)} strategy={verticalListSortingStrategy}>
-              {allSections.map((section) => {
+              {allSections.slice(0, mountedSectionCount).map((section) => {
                 const project = section.project;
                 const projectKey = project.id;
                 if (remoteById.has(projectKey)) return remoteSection(projectKey);
@@ -360,6 +369,7 @@ export function SidebarProjectsList(props: Props): React.ReactNode {
             </SortableContext>
             <DragOverlay dropAnimation={null} />
           </DndContext>
+          </div>
         </>
       )}
     </ScrollableOverlay>

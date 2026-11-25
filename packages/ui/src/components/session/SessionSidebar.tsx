@@ -93,6 +93,7 @@ import { useSetSessionSettled, useSettledSessionIds, useTaskIndexMembership } fr
 import { unarchiveSession } from '@/sync/session-actions';
 import { SidebarViewSwitch } from './sidebar/SidebarViewSwitch';
 import { SidebarSettledShelf, SidebarTaskList } from './sidebar/SidebarTaskList';
+import { withoutRemovedRows } from './sidebar/SidebarAnimatedRows';
 import type { TaskProjectMark } from './sidebar/TaskCardParts';
 import { useRunStartTimes } from './sidebar/taskRunElapsed';
 import {
@@ -550,8 +551,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   // Defer the heavy sidebar memo/DOM commit so typing/send stay on the urgent
   // lane while a per-directory session wave lands. Without this, one project
   // with a large history still freezes input for a frame when the list commits.
-  const deferredGlobalActiveSessions =
+  const lateGlobalActiveSessions =
     React.useDeferredValue(globalActiveSessions);
+  const deferredGlobalActiveSessions = React.useMemo(
+    () => withoutRemovedRows(lateGlobalActiveSessions, globalActiveSessions),
+    [globalActiveSessions, lateGlobalActiveSessions],
+  );
   const archivedSessions = React.useDeferredValue(archivedSessionsRaw);
   const selectedLocalSessionId = useSessionUIStore((state) => state.currentSessionId);
   const hasRemoteSession = useSessionNavigationStore((state) => state.remoteSession !== null);

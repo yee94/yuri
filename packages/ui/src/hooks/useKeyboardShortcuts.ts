@@ -24,6 +24,8 @@ import { getActiveChatInputSurface, isChatComposerMainTab } from '@/components/c
 import { createChatInputControllerWiring } from '@/components/chat/chatInputSurfaceWiring';
 import { getCycledPrimaryAgentName } from '@/components/chat/mobileControlsUtils';
 import { navigateAdjacentSession } from '@/sync/session-navigation';
+import { readSettledSessionIds, useSetSessionSettled } from '@/queries/sessionIndexSettleQueries';
+import { showArchivedSessionsUndoToast } from '@/lib/sessionMutationUndo';
 import { resetWebviewZoom, zoomWebviewIn, zoomWebviewOut } from '@/lib/webviewZoom';
 import { resolveEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { locationKey } from '@/lib/remote-projects/location';
@@ -167,6 +169,7 @@ export const executeLeaderCompact = async ({
 
 export const useKeyboardShortcuts = () => {
   const { t } = useI18n();
+  const setSessionSettled = useSetSessionSettled();
   const { match: matchPluginShortcut, run: runPluginShortcut } = useGuiPluginKeyboardShortcuts();
   const openNewSessionDraft = useSessionUIStore((s) => s.openNewSessionDraft);
   const armAbortPrompt = useSessionUIStore((s) => s.armAbortPrompt);
@@ -1016,6 +1019,32 @@ export const useKeyboardShortcuts = () => {
         );
       };
 
+      const archiveCurrentSession = async (sessionId: string) => {
+        // The settle below is only this shortcut's side effect; failure and undo restore it.
+        const settledByShortcut = !readSettledSessionIds().has(sessionId);
+        // Move off the session first so the adjacent target is resolved while it is still listed.
+        if (!navigateSession(1) && !navigateSession(-1)) {
+          openNewSessionDraft();
+        }
+        // Both writes are optimistic and start in the same tick, so the row leaves the
+        // task and project views together with the session switch instead of after the round trip.
+        if (settledByShortcut) setSessionSettled(sessionId, true);
+        const archived = await sessionActions.archiveSession(sessionId);
+        if (!archived) {
+          if (settledByShortcut) setSessionSettled(sessionId, false);
+          toast.error(t('sessions.sidebar.session.archive.error'));
+          return;
+        }
+        showArchivedSessionsUndoToast({
+          sessionIds: [sessionId],
+          message: t('sessions.sidebar.session.archive.success'),
+          undoLabel: t('sessions.sidebar.undo'),
+          settingsLabel: t('settings.yuri.archivedSessions.actions.view'),
+          undoFailedMessage: t('sessions.sidebar.session.archive.undoFailed'),
+          onUndo: settledByShortcut ? () => setSessionSettled(sessionId, false) : undefined,
+        });
+      };
+
       if (combos('previous_session').some((shortcut) => eventMatchesShortcut(e, shortcut))) {
         e.preventDefault();
         navigateSession(-1);
@@ -1025,6 +1054,17 @@ export const useKeyboardShortcuts = () => {
       if (combos('next_session').some((shortcut) => eventMatchesShortcut(e, shortcut))) {
         e.preventDefault();
         navigateSession(1);
+        return;
+      }
+
+      if (eventMatchesShortcut(e, combo('archive_session'))) {
+        const sessionId = useSessionUIStore.getState().currentSessionId;
+        if (!sessionId || useUIStore.getState().activeMainTab !== 'chat') {
+          return;
+        }
+        // Also overrides the native "delete to line start" when the composer has focus.
+        e.preventDefault();
+        void archiveCurrentSession(sessionId);
         return;
       }
 

@@ -1,5 +1,6 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUIStore } from '@/stores/useUIStore';
@@ -59,6 +60,9 @@ const surface: ChatInputSurface = {
 let root: Root;
 let textarea: HTMLTextAreaElement;
 function Harness() {
+  return <QueryClientProvider client={queryClient}><Keys /></QueryClientProvider>;
+}
+function Keys() {
   useKeyboardShortcuts();
   return <textarea data-chat-input="true" />;
 }

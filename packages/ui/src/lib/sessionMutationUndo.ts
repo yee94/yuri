@@ -18,6 +18,7 @@ type ArchiveUndoToastArgs = {
   undoLabel: string
   settingsLabel: string
   undoFailedMessage: string
+  onUndo?: () => void
 }
 
 type DeleteUndoToastArgs = {
@@ -106,6 +107,7 @@ export function showArchivedSessionsUndoToast(args: ArchiveUndoToastArgs): void 
     message: args.message,
     primaryLabel: args.undoLabel,
     onPrimary: () => {
+      args.onUndo?.()
       void (async () => {
         const results = await Promise.all(sessionIds.map((id) => unarchiveSession(id)))
         if (results.some((ok) => !ok)) {

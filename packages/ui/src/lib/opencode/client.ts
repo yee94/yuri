@@ -1291,26 +1291,36 @@ class OpencodeService {
 
   /**
    * Full turn/session file diffs including patch bodies.
-   * Uses OpenCode `GET /session/{sessionID}/diff` (optional `messageID` scopes to a user turn).
+   * Uses OpenCode v2 `GET /api/session/{sessionID}/diff` with `from` (optional `to`, `context`).
    * Throws on transport/SDK failure — never returns an empty list as a silent success.
    */
   async getSessionDiff(
     params: {
       sessionID: string;
       directory?: string | null;
+      from?: string | null;
+      to?: string | null;
+      context?: number;
+      /** Legacy alias for `from`. */
       messageID?: string | null;
     },
     options?: { signal?: AbortSignal },
   ): Promise<SnapshotFileDiff[]> {
-    // Prefer the Host-proxied HTTP route so optional messageID scoping stays
-    // available even when SessionDiffInput is session-scoped only.
     const requestDirectory = this.normalizeCandidatePath(params.directory) ?? this.currentDirectory;
-    const messageID = typeof params.messageID === 'string' && params.messageID.trim().length > 0
-      ? params.messageID.trim()
+    const rawFrom = params.from ?? params.messageID;
+    const from = typeof rawFrom === 'string' && rawFrom.trim().length > 0
+      ? rawFrom.trim()
+      : undefined;
+    const to = typeof params.to === 'string' && params.to.trim().length > 0
+      ? params.to.trim()
       : undefined;
     const query = new URLSearchParams();
     if (requestDirectory) query.set('directory', requestDirectory);
-    if (messageID) query.set('messageID', messageID);
+    if (from) query.set('from', from);
+    if (to) query.set('to', to);
+    if (typeof params.context === 'number' && Number.isFinite(params.context) && params.context >= 0) {
+      query.set('context', String(Math.trunc(params.context)));
+    }
     const queryString = query.toString();
     const response = await this.runtimeFetch(
       `/api/session/${encodeURIComponent(params.sessionID)}/diff${queryString ? `?${queryString}` : ''}`,
@@ -1322,9 +1332,11 @@ class OpencodeService {
       throw error;
     }
     const payload: unknown = await response.json().catch(() => null);
-    const data = payload !== null && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data)
-      ? (payload as { data: SnapshotFileDiff[] }).data
-      : null;
+    const data = Array.isArray(payload)
+      ? (payload as SnapshotFileDiff[])
+      : payload !== null && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data)
+        ? (payload as { data: SnapshotFileDiff[] }).data
+        : null;
     if (!data) {
       throw new Error('session.diff failed: empty response');
     }

@@ -54,7 +54,7 @@ async function renderFolder(collapsed: boolean, onToggle = vi.fn(), child = <spa
   await act(async () => root.render(
     <SessionFolderItem
       folder={{ id: 'folder', name: 'Folder', sessionIds: ['session'], createdAt: 0 }}
-      sessions={['session']}
+      sessions={[{ session: { id: 'session' } }]}
       isCollapsed={collapsed}
       onToggle={onToggle}
       onRename={vi.fn()}

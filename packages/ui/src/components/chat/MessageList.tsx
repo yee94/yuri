@@ -1070,10 +1070,14 @@ const TurnBlock = React.memo(({
             activityPresentationKind: turn.activityPresentationKind,
             diffStats: turn.diffStats,
             changedFiles: turn.changedFiles,
+            turnDiffFromMessageId: turn.turnDiffFromMessageId,
+            turnDiffFiles: turn.turnDiffFiles,
+            turnDiffSignature: turn.turnDiffSignature,
+            turnIdleOutcome: turn.turnIdleOutcome,
             userMessageCreatedAt: typeof userCreatedAt === 'number' ? userCreatedAt : undefined,
             userMessageVariant,
         };
-    }, [turn.activityPresentationKind, turn.assistantMessages, turn.changedFiles, turn.diffStats, turn.hasReasoning, turn.hasTools, turn.headerMessageId, turn.summaryText, turn.turnId, turn.userMessage?.info, visibleActivityParts, visibleActivitySegments]);
+    }, [turn.activityPresentationKind, turn.assistantMessages, turn.changedFiles, turn.diffStats, turn.hasReasoning, turn.hasTools, turn.headerMessageId, turn.summaryText, turn.turnDiffFiles, turn.turnDiffFromMessageId, turn.turnDiffSignature, turn.turnId, turn.turnIdleOutcome, turn.userMessage?.info, visibleActivityParts, visibleActivitySegments]);
 
     // Called by `TurnAssistantBlock` during its render, so it must see this
     // render's values. Through `useEvent` it saw the previous render's, and a
@@ -1147,6 +1151,10 @@ const TurnBlock = React.memo(({
                     headerMessageId: turnGroupingContextBase.headerMessageId,
                     diffStats: turnGroupingContextBase.diffStats,
                     changedFiles: turnGroupingContextBase.changedFiles,
+                    turnDiffFromMessageId: turnGroupingContextBase.turnDiffFromMessageId,
+                    turnDiffFiles: turnGroupingContextBase.turnDiffFiles,
+                    turnDiffSignature: turnGroupingContextBase.turnDiffSignature,
+                    turnIdleOutcome: turnGroupingContextBase.turnIdleOutcome,
                     userMessageCreatedAt: turnGroupingContextBase.userMessageCreatedAt,
                     userMessageVariant: turnGroupingContextBase.userMessageVariant,
                     isGroupExpanded: activityExpanded,

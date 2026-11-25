@@ -23,6 +23,7 @@ import { sessionEvents } from '@/lib/sessionEvents';
 import type { MainTab } from '@/stores/useUIStore';
 import { SessionFolderItem } from '../SessionFolderItem';
 import { DroppableFolderWrapper, SessionFolderDndScope } from './sessionFolderDnd';
+import { SidebarAnimatedRow, SidebarAnimatedRows } from './SidebarAnimatedRows';
 import type { SortableDragHandleProps } from './sortableItems';
 import type { GroupSearchData, SessionGroup, SessionNode } from './types';
 import { getSidebarRowPaddingLeft, isBranchDifferentFromLabel, normalizePath, renderHighlightedText, SIDEBAR_MUTED_HINT_CLASS, SIDEBAR_ROW_HOVER_CLASS } from './utils';
@@ -1078,13 +1079,19 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
           )}
         </div>
       ) : (
-        visibleSessions.map((node) => renderSessionNode(node, contentDepth, group.directory, projectId, group.isArchivedBucket === true, groupSessionSecondaryMeta, 'project', {
-          subtreeContainsActive,
-          subtreeContainsEditing,
-          menuOpenSessionId,
-          nodeStructureKey: resolveNodeStructureKey(node),
-          childRenderExtrasFor,
-        }))
+        <SidebarAnimatedRows>
+          {visibleSessions.map((node) => (
+            <SidebarAnimatedRow key={node.session.id}>
+              {renderSessionNode(node, contentDepth, group.directory, projectId, group.isArchivedBucket === true, groupSessionSecondaryMeta, 'project', {
+                subtreeContainsActive,
+                subtreeContainsEditing,
+                menuOpenSessionId,
+                nodeStructureKey: resolveNodeStructureKey(node),
+                childRenderExtrasFor,
+              })}
+            </SidebarAnimatedRow>
+          ))}
+        </SidebarAnimatedRows>
       )}
       {totalSessions === 0 && allFoldersForGroup.length === 0 ? (
         <div

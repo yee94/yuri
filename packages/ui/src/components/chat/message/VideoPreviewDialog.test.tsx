@@ -115,12 +115,15 @@ test('runtime video exposes a playback URL before the complete response body arr
   expect(release).toHaveBeenCalled();
 });
 
-test('direct runtime video uses an authenticated streaming URL without buffering the body', async () => {
+test('direct runtime video uses an authenticated streaming URL without buffering the body or subscribing to periodic URL-token remounts', async () => {
   mocks.relay = false;
   await render('file:///workspace/large.mp4');
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
-  expect(host.querySelector('video')?.getAttribute('src')).toBe('/api/fs/raw?path=%2Fworkspace%2Flarge.mp4');
+  const video = host.querySelector('video')!;
+  expect(video.getAttribute('src')).toBe('/api/fs/raw?path=%2Fworkspace%2Flarge.mp4');
   expect(mocks.fetch).not.toHaveBeenCalled();
+  await render('file:///workspace/large.mp4');
+  expect(host.querySelector('video')).toBe(video);
 });
 
 test('relative video and save retain the originating worktree while the active directory differs', async () => {

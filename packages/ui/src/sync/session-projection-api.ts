@@ -216,6 +216,36 @@ function messageTime(value: unknown): Message["time"] {
   }
 }
 
+function projectionSnapshot(value: unknown): Message["snapshot"] | undefined {
+  if (!record(value)) return undefined
+  const start = asString(value.start)
+  const end = asString(value.end)
+  const files = Array.isArray(value.files)
+    ? value.files.filter((file): file is string => typeof file === "string" && file.length > 0)
+    : undefined
+  const snapshot: NonNullable<Message["snapshot"]> = {
+    ...(start ? { start } : {}),
+    ...(end ? { end } : {}),
+    ...(files && files.length > 0 ? { files } : {}),
+  }
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined
+}
+
+function projectionTurnIdle(raw: unknown): Message["turnIdle"] | undefined {
+  if (!record(raw)) return undefined
+  const type = asString(raw.type)
+  const roleHint = asString(raw.role) ?? asString(raw.clientRole)
+  if (type !== "idle" && roleHint !== "idle") return undefined
+  const rawOutcome = asString(raw.outcome)
+  const outcome: NonNullable<Message["turnIdle"]>["outcome"] =
+    rawOutcome === "failed" || rawOutcome === "interrupted" ? rawOutcome : "succeeded"
+  const id = asString(raw.id)
+  return {
+    ...(id ? { id } : {}),
+    outcome,
+  }
+}
+
 /**
  * Map official TokenUsageInfo onto Message.tokens for TPS / settle chrome.
  * Partial records are kept when any recognized count is present.
@@ -396,6 +426,10 @@ export function normalizeSessionProjectionMessage(
     if (tokens) {
       info.tokens = tokens
     }
+    const snapshot = projectionSnapshot(item.snapshot)
+    if (snapshot) {
+      info.snapshot = snapshot
+    }
     const parts: Part[] = []
     const content: unknown[] = Array.isArray(item.content) ? item.content : []
     let textOrdinal = 0
@@ -523,12 +557,26 @@ export function normalizeSessionProjectionPage(
   }
 
   const records: TranscriptTransportPage["records"][number][] = []
-  for (const item of payload.data) {
+  const chronologicalItems = order === "desc" ? [...payload.data].reverse() : payload.data
+  for (const item of chronologicalItems) {
+    const idleMarker = projectionTurnIdle(item)
+    if (idleMarker) {
+      const previous = records[records.length - 1]
+      if (previous) {
+        records[records.length - 1] = {
+          ...previous,
+          info: {
+            ...previous.info,
+            turnIdle: idleMarker,
+          },
+        }
+      }
+      continue
+    }
     const normalized = normalizeSessionProjectionMessage(sessionID, item)
     if (!normalized) continue
     records.push(normalized)
   }
-  if (order === "desc") records.reverse()
 
   // OpenCode 2.x message.list cursor contract (client 2.0.12):
   // - order=desc first/older pages advance via `cursor.next`

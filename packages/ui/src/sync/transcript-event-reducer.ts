@@ -139,6 +139,50 @@ function readNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
+function normalizeMessageSnapshot(value: unknown): Message["snapshot"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const start = readNonEmptyString(record.start)
+  const end = readNonEmptyString(record.end)
+  const files = Array.isArray(record.files)
+    ? record.files.filter((file): file is string => typeof file === "string" && file.length > 0)
+    : undefined
+  const snapshot: NonNullable<Message["snapshot"]> = {
+    ...(start ? { start } : {}),
+    ...(end ? { end } : {}),
+    ...(files && files.length > 0 ? { files } : {}),
+  }
+  return Object.keys(snapshot).length > 0 ? snapshot : undefined
+}
+
+function mergeMessageSnapshot(existing: unknown, incoming: unknown): Message["snapshot"] | undefined {
+  const prev = normalizeMessageSnapshot(existing)
+  const next = normalizeMessageSnapshot(incoming)
+  if (!prev) return next
+  if (!next) return prev
+  return {
+    ...(next.start ?? prev.start ? { start: next.start ?? prev.start } : {}),
+    ...(next.end ?? prev.end ? { end: next.end ?? prev.end } : {}),
+    ...(next.files && next.files.length > 0
+      ? { files: next.files }
+      : prev.files && prev.files.length > 0
+        ? { files: prev.files }
+        : {}),
+  }
+}
+
+function normalizeMessageTurnIdle(value: unknown): Message["turnIdle"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const outcome = record.outcome
+  if (outcome !== "succeeded" && outcome !== "failed" && outcome !== "interrupted") return undefined
+  const id = readNonEmptyString(record.id)
+  return {
+    ...(id ? { id } : {}),
+    outcome,
+  }
+}
+
 /**
  * Merge an incoming message payload into the stored one while preserving
  * agent/model identity fields the payload omitted. Runtime `message.updated`
@@ -193,6 +237,21 @@ export function mergeTranscriptMessageUpdate(existing: Message, incoming: Messag
     mergedRecord.tokens = existingRecord.tokens
   }
 
+  const mergedSnapshot = mergeMessageSnapshot(existingRecord.snapshot, incomingRecord.snapshot)
+  if (mergedSnapshot) {
+    mergedRecord.snapshot = mergedSnapshot
+  } else {
+    delete mergedRecord.snapshot
+  }
+
+  const mergedTurnIdle = normalizeMessageTurnIdle(incomingRecord.turnIdle)
+    ?? normalizeMessageTurnIdle(existingRecord.turnIdle)
+  if (mergedTurnIdle) {
+    mergedRecord.turnIdle = mergedTurnIdle
+  } else {
+    delete mergedRecord.turnIdle
+  }
+
   return merged
 }
 
@@ -202,8 +261,10 @@ function areMessageUpdateFieldsEqual(existing: Message, next: Message): boolean 
   if ((existing as { finish?: unknown }).finish !== (next as { finish?: unknown }).finish) return false
   if ((existing.time as { completed?: number })?.completed !== (next.time as { completed?: number })?.completed) return false
 
-  const fields: Array<keyof Message | "structured" | "summary" | "tokens" | "error" | "cost" | "model" | "tools" | "format" | "variant" | "agent" | "system" | "mode" | "providerID" | "modelID"> = [
+  const fields: Array<keyof Message | "structured" | "summary" | "snapshot" | "turnIdle" | "tokens" | "error" | "cost" | "model" | "tools" | "format" | "variant" | "agent" | "system" | "mode" | "providerID" | "modelID"> = [
     "summary",
+    "snapshot",
+    "turnIdle",
     "error",
     "cost",
     "tokens",
@@ -619,10 +680,22 @@ function applyStepLifecycle(
 ): boolean {
   const eventCreated = readEventCreated(props)
   if (type === "session.step.started") {
-    return ensureAssistantMessage(draft, sessionID, messageID, {
+    const startSnapshot = asString(props.snapshot)
+    const ensured = ensureAssistantMessage(draft, sessionID, messageID, {
       created: eventCreated,
       ...modelMetaFromStep(props),
     })
+    if (!startSnapshot) return ensured
+    const created = existingAssistantCreated(draft, sessionID, messageID)
+      ?? resolveAssistantCreatedTime({ created: eventCreated })
+    const patched = patchAssistantMessage(draft, sessionID, messageID, {
+      id: messageID,
+      sessionID,
+      role: "assistant",
+      time: { created },
+      snapshot: { start: startSnapshot },
+    })
+    return ensured || patched
   }
   if (type === "session.step.streamed") {
     if (!eventCreated) return false
@@ -637,6 +710,10 @@ function applyStepLifecycle(
     const finish = asString(props.finish)
     const tokens = readTokenUsage(props.tokens)
     const cost = typeof props.cost === "number" && Number.isFinite(props.cost) ? props.cost : undefined
+    const snapshot = normalizeMessageSnapshot({
+      end: props.snapshot,
+      files: props.files,
+    })
     const created = existingAssistantCreated(draft, sessionID, messageID)
       ?? resolveAssistantCreatedTime({ created: eventCreated })
     const patch = {
@@ -650,6 +727,7 @@ function applyStepLifecycle(
       ...(finish ? { finish } : {}),
       ...(tokens ? { tokens } : {}),
       ...(cost !== undefined ? { cost } : {}),
+      ...(snapshot ? { snapshot } : {}),
     } as Message
     return patchAssistantMessage(draft, sessionID, messageID, patch)
   }
@@ -658,6 +736,10 @@ function applyStepLifecycle(
     const error = asRecord(props.error)
     const tokens = readTokenUsage(props.tokens)
     const cost = typeof props.cost === "number" && Number.isFinite(props.cost) ? props.cost : undefined
+    const snapshot = normalizeMessageSnapshot({
+      end: props.snapshot,
+      files: props.files,
+    })
     const created = existingAssistantCreated(draft, sessionID, messageID)
       ?? resolveAssistantCreatedTime({ created: eventCreated })
     const patch = {
@@ -682,6 +764,7 @@ function applyStepLifecycle(
           : {}),
       ...(tokens ? { tokens } : {}),
       ...(cost !== undefined ? { cost } : {}),
+      ...(snapshot ? { snapshot } : {}),
     } as Message
     return patchAssistantMessage(draft, sessionID, messageID, patch)
   }

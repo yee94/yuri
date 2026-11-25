@@ -576,8 +576,17 @@ Reopening refreshes the snapshot, and switching instances clears retained target
   `useEvent`; render callbacks retain their semantic invalidation dependencies.
   `SidebarProjectsList.performance.test.tsx` covers 50 unrelated parent commits,
   50 other-directory store updates, same-project loading, retained row DOM and
-  fresh action callbacks with the real sensor Hooks. ContextMenu/Tooltip roots retain their existing presence:
-  conditionally wrapping an already-focused or dragged row would remount that DOM.
+  fresh action callbacks with the real sensor Hooks. Menu and tooltip presence never changes the
+  row's or title's ancestry: conditionally wrapping an already-focused or dragged row would remount that DOM.
+  `SessionNodeItem` renders the row itself with `sessionRowContextMenuTriggerProps` (right-click at
+  the pointer, still touch long press, iOS callout suppressed) and mounts `SessionRowContextMenuRoot`
+  beside it only from a menu request until the exit finishes. The root opens on the commit after it
+  mounts so the enter transition still plays. The title hover card keeps its always-mounted root.
+- Row action tips (pin, unpin, archive, open in editor) mount on the first mouse/pen hover of the
+  row or keyboard focus of its title; `mobileVariant` mounts them eagerly. Before that the buttons
+  render bare with their accessible labels. Arming remounts only those buttons, so it waits while
+  one of them holds focus. In production React (Chrome, 4× CPU throttle, 200 rows with real drag
+  Hooks) idle per-row menu and action-tip roots made up about half of row mount and unmount time.
 - `useSessionSidebarSections` structurally shares the last committed project's
   JSON model, matching projects and groups by id. Unchanged groups and nodes retain
   references across other-project updates; removed projects leave
@@ -785,6 +794,7 @@ Reopening refreshes the snapshot, and switching instances clears retained target
 - `SidebarPinnedSessions.tsx`: Global top-section renderer for pinned sessions plus the unlabeled in-progress/unread rows below them.
 - `SidebarViewSwitch.tsx`: Two-segment Tasks / Projects switch; only the selected segment shows text.
 - `SidebarTaskList.tsx`: Task view body (active list and the Settled shelf); an empty shelf renders nothing.
+- `SidebarAnimatedRows.tsx`: Row add/remove animation for the task list, Settled shelf, pinned / in-progress section, non-virtualized project-tree groups and folder rows. Virtualized groups (30+ active, 50+ archived rows) do not animate. Rows collapse and expand in height and opacity with a 200ms tween, never a spring. A commit that adds more than three rows mounts them without an enter animation; one that removes more than three drops them at once. Rows already mounted never animate in. Opacity stays on motion's frameloop (not WAAPI) so it starts on the same frame as the height collapse, after the long frame that commits a session switch. `withoutRemovedRows` lets `SessionSidebar` drop rows the live session list removed (archive, delete) in the same commit as the action, instead of after the deferred (`useDeferredValue`) list render that navigation keeps interrupting; removals of more than three rows stay on the deferred lane. The wrapper must take exactly the row's space through the whole animation: it clips with `overflow: clip` (no new formatting context, so the row's 2px `my-0.5` margins keep collapsing as at rest), repeats the row's bottom margin, and at zero height cancels the gap above it with a negative top margin. Neighbours therefore move monotonically and do not shift when an animation starts, ends or the row unmounts. Browsers without `overflow: clip` (Safari 15) fall back to `hidden`, which shifts neighbours by the row margin.
 - `taskView.ts`: Pure partition of sessions into active / settled and the logically visible task order used by keyboard navigation.
 - Remote projects in the task view: while it is active, desktop and mobile mount one headless `RemoteProjectSection` per remote project (`onTaskItems`) instead of the project tree. It publishes unarchived root sessions from that Host's summary snapshot and renders only the rename/delete dialogs its row actions open. Both task views pass unpinned remote rows to `deriveTaskBuckets({ remoteSessions })`, so they rank with local rows without filtering by local index or settle state. Mobile uses the same task card surface and its existing filters, with the shared compact Host tag next to the project name; the project mark stays unchanged. Remote actions stay scoped to the Host; Archive is a real remote archive, not a local settle.
   Remote task cards use the desktop session context-menu styling and shared hover details; task-only actions never go through local session stores. Unknown branches leave the third line blank at its usual height rather than displaying the remote path.

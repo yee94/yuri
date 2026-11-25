@@ -5,7 +5,7 @@ import { useI18n } from '@/lib/i18n';
 import { readFileResourceUrl, readRuntimeFileBlob } from '@/lib/runtime-file-resource';
 import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 import { fileResourceBrowserUrl } from '@/lib/runtime-file-download';
-import { acquireRuntimeUrlAuthToken, subscribeRuntimeUrlAuthToken } from '@/lib/runtime-auth';
+import { getRuntimeAuthGeneration, subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
 import { openNativeVideoSource } from '@/lib/native-video';
 import { resolveImageSource, needsRuntimeImageStream, useRuntimeTransportIdentity } from '../imageSource';
 import { MediaSaveButton } from './MediaSaveButton';
@@ -40,15 +40,16 @@ export function VideoPreviewDialog({ video, onClose, isMobile }: {
     return () => { controller.abort(); void release?.(); };
   }, [needsBlob, runtimePath, runtimeRoute, sourceKey]);
   const activeNative = nativeSource?.key === sourceKey ? nativeSource : undefined;
+  const authGeneration = React.useSyncExternalStore(
+    subscribeRuntimeAuthGeneration,
+    getRuntimeAuthGeneration,
+    getRuntimeAuthGeneration,
+  );
   const [urlRevision, setUrlRevision] = React.useState(0);
-  React.useEffect(() => {
-    if (!needsBlob || isRelayModeActive()) return;
-    const release = acquireRuntimeUrlAuthToken();
-    const stop = subscribeRuntimeUrlAuthToken(() => setUrlRevision(value => value + 1));
-    return () => { stop(); release(); };
-  }, [needsBlob, transport]);
+  const resumeTimeRef = React.useRef<number | null>(null);
+  const retriedAuthSourceRef = React.useRef<string>('');
   const resource = useQuery({
-    queryKey: ['video-preview', transport, directory, video.url, urlRevision],
+    queryKey: ['video-preview', transport, authGeneration, directory, video.url, urlRevision],
     enabled: needsBlob && activeNative?.unsupported === true,
     gcTime: 0,
     staleTime: Infinity,
@@ -82,7 +83,27 @@ export function VideoPreviewDialog({ video, onClose, isMobile }: {
     {failed && <p role="alert">{t('filesView.error.readFileFailed')}</p>}
     {source && <video key={source} src={source} controls playsInline preload="metadata"
       aria-label={video.filename} className="max-h-[80dvh] w-full max-w-5xl object-contain"
-      onError={() => setFailedSource(source)}
+      onLoadedMetadata={(event) => {
+        if (resumeTimeRef.current !== null && Number.isFinite(resumeTimeRef.current)) {
+          event.currentTarget.currentTime = resumeTimeRef.current;
+          resumeTimeRef.current = null;
+        }
+      }}
+      onError={(event) => {
+        if (
+          needsBlob
+          && !isRelayModeActive()
+          && !activeNative?.url
+          && event.currentTarget.readyState >= 1
+          && retriedAuthSourceRef.current !== source
+        ) {
+          retriedAuthSourceRef.current = source;
+          resumeTimeRef.current = event.currentTarget.currentTime;
+          setUrlRevision((value) => value + 1);
+          return;
+        }
+        setFailedSource(source);
+      }}
       controlsList="nodownload" onContextMenu={(event) => event.preventDefault()}
     />}
     <MediaPreviewToolbar isMobile={isMobile}><MediaSaveButton isMobile={isMobile} key={sourceKey} target={{ kind: 'video', sourceUrl: video.url,

@@ -5,6 +5,7 @@ import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 import { ProjectFilePreview } from './ProjectFilePreview';
 
 const fixture = vi.hoisted(() => ({ resolve: vi.fn(), releaseAuth: vi.fn(), auth: 0, generation: 0, hostOrigin: undefined as string | undefined,
+  urlToken: 'yuri_url_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   tokens: new Set<() => void>(), authListeners: new Set<() => void>(), endpoints: new Set<() => void>() }));
 vi.mock('@/lib/preview/project-file-preview', () => ({ resolveProjectFilePreview: fixture.resolve }));
 vi.mock('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
@@ -12,6 +13,7 @@ vi.mock('@/components/preview/MobileHtmlNetworkBoundary', () => ({ MobileHtmlNet
 vi.mock('@/components/ui/iframeSheetOverscroll', () => ({ attachIframeSheetOverscroll: () => () => {} }));
 vi.mock('@/lib/runtime-auth', () => ({
   acquireRuntimeUrlAuthToken: () => fixture.releaseAuth,
+  getRuntimeUrlAuthTokenSync: () => fixture.urlToken,
   subscribeRuntimeUrlAuthToken: (listener: () => void) => { fixture.tokens.add(listener); return () => fixture.tokens.delete(listener); },
   getRuntimeAuthGeneration: () => fixture.auth,
   subscribeRuntimeAuthGeneration: (listener: () => void) => { fixture.authListeners.add(listener); return () => fixture.authListeners.delete(listener); },
@@ -26,10 +28,18 @@ const entry = (host: string): HostRuntimeEntry => ({ queryScope: ['transport', '
   location: { hubId: 'hub', hostId: host, directory: '/project' }, key: host, cachePartition: host, connectionGeneration: 1,
   sdk: () => { throw new Error('Unexpected SDK read'); }, service: () => { throw new Error('Unexpected service read'); },
   fetch: () => { throw new Error('Unexpected HTTP read'); } });
-const source = (name: string, expiresAt = Date.now() + 30 * 60_000) => ({ src: `about:blank#${name}`, expiresAt, release: vi.fn(async () => {}) });
+const source = (name: string, expiresAt = Date.now() + 30 * 60_000) => ({
+  src: `http://preview.example/api/preview/proxy/0123456789abcdef0123456789abcdef/_file/fedcba9876543210fedcba9876543210/${fixture.urlToken}/${name}.html`,
+  expiresAt,
+  extend: vi.fn(async () => Date.now() + 30 * 60_000),
+  release: vi.fn(async () => {}),
+});
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const settings = (window as unknown as { happyDOM?: { settings?: { disableIframePageLoading?: boolean } } }).happyDOM?.settings;
+  if (settings) settings.disableIframePageLoading = true;
   fixture.resolve.mockReset(); fixture.releaseAuth.mockClear(); fixture.hostOrigin = undefined; fixture.auth = 0; fixture.generation = 0;
+  fixture.urlToken = 'yuri_url_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   node = document.createElement('div'); document.body.append(node); root = createRoot(node);
 });
 afterEach(async () => {
@@ -79,29 +89,50 @@ it('failed registration/iframe load shows retry, never srcDoc or direct FS fallb
   expect(node.textContent).toContain('contextPanel.preview.actions.retry');
 });
 
-it('replaces the path token long before target expiry and does not display a response overtaken by another token', async () => {
-  const first = source('first'); fixture.resolve.mockResolvedValueOnce(first);
-  await act(async () => root.render(<ProjectFilePreview path="/project/index.html" directory="/project" />));
+it('syncs rotated URL auth tokens in place without reloading the mounted iframe, while superseding in-flight registrations', async () => {
   let finish!: (value: ReturnType<typeof source>) => void;
   fixture.resolve.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => root.render(<ProjectFilePreview path="/project/index.html" directory="/project" />));
+  // Token rotates while initial registration is still in flight: supersede before mounting.
+  fixture.urlToken = 'yuri_url_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
   await act(async () => fixture.tokens.forEach(listener => listener()));
-  expect(node.querySelector('iframe')).toBeNull(); expect(first.release).toHaveBeenCalled();
-  await act(async () => fixture.tokens.forEach(listener => listener()));
-  const superseded = source('superseded'); const latest = source('latest'); fixture.resolve.mockResolvedValueOnce(latest);
+  const superseded = source('superseded'); const mounted = source('mounted');
+  fixture.resolve.mockResolvedValueOnce(mounted);
   await act(async () => finish(superseded));
   expect(superseded.release).toHaveBeenCalled();
-  expect(node.querySelector('iframe')?.src).toBe(latest.src);
+  const iframe = node.querySelector('iframe')!;
+  expect(iframe.src).toBe(mounted.src);
+  const postMessage = vi.fn();
+  Object.defineProperty(iframe, 'contentWindow', { value: { postMessage }, configurable: true });
+
+  // Token rotates AFTER mount: never unmount/reload iframe; push fresh token in place.
+  fixture.urlToken = 'yuri_url_cccccccccccccccccccccccccccccccc';
+  await act(async () => fixture.tokens.forEach(listener => listener()));
+  expect(node.querySelector('iframe')).toBe(iframe);
+  expect(iframe.src).toBe(mounted.src);
+  expect(mounted.release).not.toHaveBeenCalled();
+  expect(fixture.resolve).toHaveBeenCalledTimes(2);
+  expect(postMessage).toHaveBeenCalledWith(
+    { source: 'yuri-preview-parent', version: 1, type: 'update-url-auth-token', token: fixture.urlToken },
+    'http://preview.example',
+  );
 });
 
-it('renews target expiry and removes the document on runtime/auth generation change', async () => {
-  vi.useFakeTimers(); const first = source('first', Date.now() + 20_000); const renewed = source('renewed');
-  fixture.resolve.mockResolvedValueOnce(first).mockResolvedValueOnce(renewed);
+it('extends target expiry in place without reloading and still removes the document on runtime/auth generation change', async () => {
+  vi.useFakeTimers(); const first = source('first', Date.now() + 20_000);
+  fixture.resolve.mockResolvedValueOnce(first);
   await act(async () => root.render(<ProjectFilePreview path="/project/index.html" directory="/project" />));
+  const iframe = node.querySelector('iframe')!;
   await act(async () => vi.advanceTimersByTimeAsync(10_000));
-  expect(first.release).toHaveBeenCalled(); expect(node.querySelector('iframe')?.src).toBe(renewed.src);
+  expect(first.extend).toHaveBeenCalledTimes(1);
+  expect(first.release).not.toHaveBeenCalled();
+  expect(node.querySelector('iframe')).toBe(iframe);
+  expect(iframe.src).toBe(first.src);
+  expect(fixture.resolve).toHaveBeenCalledTimes(1);
+
   fixture.resolve.mockImplementation(() => new Promise(() => {}));
   await act(async () => { fixture.auth++; fixture.authListeners.forEach(listener => listener()); });
-  expect(node.querySelector('iframe')).toBeNull(); expect(renewed.release).toHaveBeenCalled();
+  expect(node.querySelector('iframe')).toBeNull(); expect(first.release).toHaveBeenCalled();
   await act(async () => { fixture.generation++; fixture.endpoints.forEach(listener => listener()); });
   expect(fixture.resolve.mock.calls.at(-2)![3].aborted).toBe(true);
 });

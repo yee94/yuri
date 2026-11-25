@@ -458,7 +458,9 @@ describe('opencodeClient getSessionDiff', () => {
     const [url] = healthFetchCalls.at(-1) as [string];
     expect(url).toContain('/session/ses_1/diff');
     expect(url).toContain('directory=');
-    expect(url).toContain('messageID=msg_user');
+    // messageID is the legacy alias for the v2 `from` cursor.
+    expect(url).toContain('from=msg_user');
+    expect(url).not.toContain('messageID=');
   });
 
   test('passes AbortSignal to the transport and fails closed on non-2xx', async () => {

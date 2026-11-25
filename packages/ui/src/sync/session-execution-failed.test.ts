@@ -10,10 +10,15 @@ import {
 } from "./session-error-log";
 import {
   appendNotification,
+  applySessionUnreadSnapshot,
   clearSessionErrorNotifications,
+  resetSessionUnreadProjection,
   useLatestSessionError,
   useNotificationStore,
 } from "./notification-store";
+import { useGlobalSessionStatusStore } from "./global-session-status";
+import { useGlobalSessionsStore } from "@/stores/useGlobalSessionsStore";
+import type { Session } from "@/lib/opencode/v2-types";
 import { clearTurnCompleteNotificationGuardForTests, handleEvent, setActiveSession } from "./sync-context";
 import type { ChildStoreManager } from "./child-store";
 import { INITIAL_STATE, type Event, type State } from "./types";
@@ -418,6 +423,49 @@ describe("session.execution.succeeded unread marker", () => {
     dispatch("session.execution.succeeded");
 
     expect(useNotificationStore.getState().sessionUnseenCount(SESSION)).toBe(1);
+  });
+
+  test("with Host unread authority, the completion is unread in the same dispatch that ends the run", () => {
+    setActiveSession(DIRECTORY, "ses_other");
+    applySessionUnreadSnapshot({});
+    try {
+      dispatch("session.execution.started");
+      expect(useGlobalSessionStatusStore.getState().statusById.get(SESSION)?.status).toBe("busy");
+      dispatch("session.execution.succeeded");
+      expect(useGlobalSessionStatusStore.getState().statusById.get(SESSION)?.status ?? "idle").toBe("idle");
+      expect(useNotificationStore.getState().sessionUnseenCount(SESSION)).toBe(1);
+    } finally {
+      resetSessionUnreadProjection();
+    }
+  });
+
+  test("a completion in a directory without a child store is unread in the same dispatch that ends the run", () => {
+    setActiveSession(DIRECTORY, "ses_other");
+    applySessionUnreadSnapshot({});
+    const previousGlobal = useGlobalSessionsStore.getState();
+    useGlobalSessionsStore.setState({
+      activeSessions: [{ id: SESSION, title: "unopened", directory: DIRECTORY, time: { created: 1, updated: 1 } } as Session],
+    });
+    const childStores = {
+      getChild: () => undefined,
+      children: new Map(),
+      ensureChild: () => undefined,
+      mark: () => undefined,
+    } as unknown as ChildStoreManager;
+    const send = (type: string) => handleEvent(DIRECTORY, { type, properties: { sessionID: SESSION } } as Event, childStores, emptyRoutingIndex);
+    try {
+      send("session.execution.started");
+      expect(useGlobalSessionStatusStore.getState().statusById.get(SESSION)?.status).toBe("busy");
+      send("session.execution.succeeded");
+      expect(useGlobalSessionStatusStore.getState().statusById.has(SESSION)).toBe(false);
+      expect(useNotificationStore.getState().sessionUnseenCount(SESSION)).toBe(1);
+      // The trailing legacy idle is the same completion.
+      send("session.idle");
+      expect(useNotificationStore.getState().list.filter((n) => n.session === SESSION)).toHaveLength(1);
+    } finally {
+      resetSessionUnreadProjection();
+      useGlobalSessionsStore.setState(previousGlobal);
+    }
   });
 
   test("does not add a second unread marker when deprecated session.idle follows succeeded", () => {

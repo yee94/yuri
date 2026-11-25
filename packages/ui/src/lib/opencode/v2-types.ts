@@ -255,6 +255,25 @@ export type MessageTokens = {
 };
 
 /**
+ * OpenCode v2 assistant step snapshot metadata (shadow git trees + touched relative paths).
+ */
+export type MessageSnapshot = {
+  start?: string;
+  end?: string;
+  files?: string[];
+};
+
+/**
+ * Authoritative turn-idle boundary stamped from an immediately following v2
+ * `idle` lifecycle row so turn projections can group steered prompts and gate
+ * turn diff cards without inserting visible rows into the transcript.
+ */
+export type MessageTurnIdle = {
+  id?: string;
+  outcome: "succeeded" | "failed" | "interrupted";
+};
+
+/**
  * Unique local message projection.
  * Compatible with `normalizeSessionProjectionMessage` `info`.
  */
@@ -283,6 +302,8 @@ export type Message = {
   model?: { providerID?: string; modelID?: string; variant?: string };
   system?: string;
   summary?: unknown;
+  snapshot?: MessageSnapshot;
+  turnIdle?: MessageTurnIdle;
   clientRole?: MessageClientRole;
   parts?: Part[];
   [key: string]: unknown;

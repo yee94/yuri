@@ -372,6 +372,153 @@ const hydrateStableTurnRecords = (
  * response on the following turn. A turn abandoned mid-stream therefore keeps
  * ticking until the next turn is answered, which is the narrower failure.
  */
+const areStringArraysEqual = (left?: string[], right?: string[]): boolean => {
+    if (left === right) return true;
+    if (!left || !right) return !left && !right;
+    if (left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index += 1) {
+        if (left[index] !== right[index]) return false;
+    }
+    return true;
+};
+
+const readTurnIdleMarker = (turn: TurnRecord): { id?: string; outcome: 'succeeded' | 'failed' | 'interrupted' } | undefined => {
+    for (let index = turn.messages.length - 1; index >= 0; index -= 1) {
+        const marker = turn.messages[index]?.message.info.turnIdle;
+        if (marker && (marker.outcome === 'succeeded' || marker.outcome === 'failed' || marker.outcome === 'interrupted')) {
+            return marker;
+        }
+    }
+    return undefined;
+};
+
+const collectTurnSnapshotFiles = (turn: TurnRecord): { files: string[]; tokens: string[] } => {
+    const files: string[] = [];
+    const tokens: string[] = [];
+    for (const assistant of turn.assistantMessages) {
+        const snapshot = assistant.info.snapshot;
+        if (!snapshot) continue;
+        if (snapshot.start) tokens.push(`s:${snapshot.start}`);
+        if (snapshot.end) tokens.push(`e:${snapshot.end}`);
+        if (Array.isArray(snapshot.files)) {
+            for (const file of snapshot.files) {
+                if (typeof file === 'string' && file.length > 0) {
+                    files.push(file);
+                }
+            }
+        }
+    }
+    return { files, tokens };
+};
+
+/**
+ * OpenCode v2 turn-diff attribution across execution cycles.
+ *
+ * Mirrors OpenCode's Timeline projection:
+ * - Everything between two `idle` markers belongs to one execution cycle,
+ *   including prompts steered in while busy; the diff card attaches only to the
+ *   cycle's closing turn, with `from` set to the opening user message ID.
+ * - Running or shutdown-interrupted turns have no `idle` marker and emit no card.
+ * - User-interrupted / permission-rejected turns carry `idle(interrupted)` and
+ *   emit a card whenever steps already wrote files.
+ * - Sessions predating `idle` markers fall back to per-turn settled attribution.
+ */
+const applyV2TurnDiffProjection = (
+    turns: TurnRecord[],
+    showTurnChangedFiles: boolean,
+): TurnRecord[] => {
+    if (turns.length === 0) return turns;
+
+    const idleMarkers = turns.map(readTurnIdleMarker);
+    const hasIdleMarkers = idleMarkers.some(Boolean);
+
+    let execution: { opener: string; files: Set<string>; tokens: string[] } | undefined;
+    let changed = false;
+
+    const nextTurns = turns.map((turn, index) => {
+        const idle = idleMarkers[index];
+        const snapshot = collectTurnSnapshotFiles(turn);
+
+        if (turn.userMessageId) {
+            if (!execution || !hasIdleMarkers) {
+                execution = {
+                    opener: turn.userMessageId,
+                    files: new Set<string>(),
+                    tokens: [],
+                };
+            }
+        }
+
+        if (execution) {
+            for (const file of snapshot.files) execution.files.add(file);
+            for (const token of snapshot.tokens) execution.tokens.push(token);
+        }
+
+        let nextTurnDiffFromMessageId: string | undefined;
+        let nextTurnDiffFiles: string[] | undefined;
+        let nextTurnDiffSignature: string | undefined;
+        const nextTurnIdleOutcome = idle?.outcome;
+
+        if (idle) {
+            if (showTurnChangedFiles && execution && execution.files.size > 0) {
+                nextTurnDiffFromMessageId = execution.opener;
+                nextTurnDiffFiles = [...execution.files].sort();
+                nextTurnDiffSignature = [idle.id ?? idle.outcome, ...execution.tokens, ...nextTurnDiffFiles].join('|');
+            }
+            execution = undefined;
+        } else if (!hasIdleMarkers) {
+            if (showTurnChangedFiles && execution && execution.files.size > 0 && turn.completionDisposition !== 'active') {
+                nextTurnDiffFromMessageId = execution.opener;
+                nextTurnDiffFiles = [...execution.files].sort();
+                nextTurnDiffSignature = [...execution.tokens, ...nextTurnDiffFiles].join('|');
+            }
+            execution = undefined;
+        }
+
+        const legacyDiffStats = turn.userMessage ? projectTurnDiffStats(turn.userMessage) : undefined;
+        const nextDiffStats = legacyDiffStats ?? (nextTurnDiffFiles && nextTurnDiffFiles.length > 0
+            ? {
+                additions: 0,
+                deletions: 0,
+                files: nextTurnDiffFiles.length,
+                hasDiffs: true,
+            }
+            : undefined);
+
+        const diffStatsUnchanged = (turn.diffStats === nextDiffStats)
+            || Boolean(
+                turn.diffStats
+                && nextDiffStats
+                && turn.diffStats.additions === nextDiffStats.additions
+                && turn.diffStats.deletions === nextDiffStats.deletions
+                && turn.diffStats.files === nextDiffStats.files
+                && turn.diffStats.hasDiffs === nextDiffStats.hasDiffs,
+            );
+
+        if (
+            turn.turnIdleOutcome === nextTurnIdleOutcome
+            && turn.turnDiffFromMessageId === nextTurnDiffFromMessageId
+            && turn.turnDiffSignature === nextTurnDiffSignature
+            && areStringArraysEqual(turn.turnDiffFiles, nextTurnDiffFiles)
+            && diffStatsUnchanged
+        ) {
+            return turn;
+        }
+
+        changed = true;
+        return {
+            ...turn,
+            turnIdleOutcome: nextTurnIdleOutcome,
+            turnDiffFromMessageId: nextTurnDiffFromMessageId,
+            turnDiffFiles: nextTurnDiffFiles,
+            turnDiffSignature: nextTurnDiffSignature,
+            diffStats: diffStatsUnchanged ? turn.diffStats : nextDiffStats,
+        };
+    });
+
+    return changed ? nextTurns : turns;
+};
+
 const settleHistoricalActiveTurns = (turns: TurnRecord[]): TurnRecord[] => {
     if (turns.length <= 1) {
         return turns;
@@ -540,8 +687,11 @@ export const projectTurnRecords = (
         for (const record of turn.messages) groupedMessageIds.delete(record.messageId);
         return false;
     });
-    const stableTurns = settleHistoricalActiveTurns(
-        hydrateStableTurnRecords(contentTurns, effectiveOptions),
+    const stableTurns = applyV2TurnDiffProjection(
+        settleHistoricalActiveTurns(
+            hydrateStableTurnRecords(contentTurns, effectiveOptions),
+        ),
+        effectiveOptions.showTurnChangedFiles,
     );
     const projection = projectTurnIndexes(stableTurns);
     const ungroupedMessageIds = new Set<string>();

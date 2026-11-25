@@ -1,6 +1,8 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { queryClient } from '@/lib/queryRuntime';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { setActiveChatInputSurface } from '@/components/chat/activeChatInputSurface';
@@ -42,6 +44,10 @@ afterEach(async () => {
 afterAll(() => vi.unstubAllGlobals());
 
 function Harness({ withRail }: { withRail: boolean }) {
+  return <QueryClientProvider client={queryClient}><Keys withRail={withRail} /></QueryClientProvider>;
+}
+
+function Keys({ withRail }: { withRail: boolean }) {
   useKeyboardShortcuts();
   return <>
     <textarea data-chat-input="true" />

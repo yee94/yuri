@@ -329,6 +329,7 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
       next();
     } catch (error) { report(res, error); }
   });
+  app.post('/api/hosts/:hostId/api/preview/targets/:id/extend', parseMutation, (_req, _res, next) => next());
   app.delete('/api/hosts/:hostId/api/preview/targets/:id', parseMutation, (_req, _res, next) => next());
   app.use('/api/hosts/:hostId', async (req, res) => {
     const controller = new AbortController();

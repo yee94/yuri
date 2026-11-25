@@ -14,6 +14,8 @@ const fixture = vi.hoisted(() => ({
   t: (key: string) => key,
   query: vi.fn(),
   network: vi.fn(), local: true,
+  urlToken: 'yuri_url_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  urlTokenListeners: new Set<() => void>(),
 }));
 vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => fixture.directory }));
 vi.mock('@/hooks/useDesktopWindowControlsLayout', () => ({ useDesktopWindowControlsLayout: () => ({ usesFramelessChrome: false }) }));
@@ -25,8 +27,24 @@ vi.mock('@/stores/useDirectoryStore', () => ({ useDirectoryStore: Object.assign(
 vi.mock('@/stores/useSessionBtwStore', () => ({ useSessionBtwStore: Object.assign(() => null, { getState: () => ({ clear: vi.fn(), cancel: vi.fn() }) }) }));
 vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: (...args: unknown[]) => fixture.localFetch(...args) }));
 vi.mock('@/lib/desktopNative', () => ({ invokeDesktopCommand: (...args: unknown[]) => fixture.native(...args) }));
-vi.mock('@/lib/runtime-auth', () => ({ refreshRuntimeUrlAuthToken: async () => 'short-lived-test' }));
-vi.mock('@/lib/runtime-url', () => ({ getRuntimeUrlResolver: () => ({ authenticatedAsset: (path: string) => `http://hub.test${path}` }) }));
+vi.mock('@/lib/runtime-auth', () => ({
+  acquireRuntimeUrlAuthToken: () => () => {},
+  getRuntimeUrlAuthTokenSync: () => fixture.urlToken,
+  refreshRuntimeUrlAuthToken: async () => fixture.urlToken,
+  subscribeRuntimeUrlAuthToken: (listener: () => void) => {
+    fixture.urlTokenListeners.add(listener);
+    return () => fixture.urlTokenListeners.delete(listener);
+  },
+}));
+vi.mock('@/lib/runtime-url', () => ({
+  getRuntimeUrlResolver: () => ({
+    authenticatedAsset: (path: string) => {
+      const url = new URL(path, 'http://hub.test');
+      url.searchParams.set('yuri_url_token', fixture.urlToken);
+      return url.href;
+    },
+  }),
+}));
 vi.mock('@/lib/relay/runtime-tunnel', () => ({ isRelayModeActive: () => false }));
 vi.mock('@/lib/preview/relay-preview-gateway-client', () => ({ hasDesktopPreviewGateway: () => false, ensurePreviewGatewayOrigin: vi.fn() }));
 vi.mock('@/lib/preview/desktop-browser-network', () => ({ openDesktopBrowserNetwork: (...args: unknown[]) => fixture.network(...args) }));
@@ -71,6 +89,8 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} });
   vi.clearAllMocks();
   fixture.local = true;
+  fixture.urlToken = 'yuri_url_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  fixture.urlTokenListeners.clear();
   fixture.network.mockReset().mockImplementation(async (_signal, _failure, entry) => ({ partition: `yuri-browser-relay-${entry?.location.hostId ?? 'hub'}` }));
   previewProxyTargetCache.clear();
   fixture.fetch.mockImplementation(async (path: string) => path === '/api/preview/targets'
@@ -203,4 +223,27 @@ it('adds no remote summary Query or preview requests when mounting a local file-
   expect(fixture.query).not.toHaveBeenCalled();
   expect(fixture.fetch).not.toHaveBeenCalled();
   expect(fixture.localFetch).not.toHaveBeenCalled();
+});
+
+it('keeps the live preview iframe mounted and syncs rotated URL tokens in place across rerenders', async () => {
+  const scope = host('host-a');
+  useUIStore.getState().openContextPreview(scope.entry.key, 'http://localhost:3000/docs');
+  await render(scope);
+  const frame = node.querySelector('iframe')!;
+  expect(frame).not.toBeNull();
+  const initialSrc = frame.src;
+  const postMessage = vi.fn();
+  Object.defineProperty(frame, 'contentWindow', { value: { postMessage }, configurable: true });
+
+  // Simulate 45s URL-token rotation followed by unrelated rerenders.
+  fixture.urlToken = 'yuri_url_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  await act(async () => fixture.urlTokenListeners.forEach((listener) => listener()));
+  for (let i = 0; i < 10; i++) await render(scope);
+
+  expect(node.querySelector('iframe')).toBe(frame);
+  expect(frame.src).toBe(initialSrc);
+  expect(postMessage).toHaveBeenCalledWith(
+    { source: 'yuri-preview-parent', version: 1, type: 'update-url-auth-token', token: fixture.urlToken },
+    'http://hub.test',
+  );
 });

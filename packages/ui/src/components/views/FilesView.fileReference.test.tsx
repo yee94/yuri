@@ -464,6 +464,19 @@ describe('background file preview refresh', () => {
     expect(original.release).toHaveBeenCalled();
   });
 
+  test('PDF preview keeps its iframe mounted and URL frozen across URL-token rotations and unrelated rerenders', async () => {
+    const path = '/repo/manual.pdf';
+    await startPreview(path, 'editor-only');
+    const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="manual.pdf"]')!;
+    expect(iframe).not.toBeNull();
+    const initialSrc = iframe.getAttribute('src');
+    for (let i = 0; i < 5; i++) {
+      await act(async () => reactRoot.render(<FilesView mode="editor-only" targetPath={path} />));
+    }
+    expect(host.querySelector('iframe[title="manual.pdf"]')).toBe(iframe);
+    expect(iframe.getAttribute('src')).toBe(initialSrc);
+  });
+
   test('a failed background read keeps the last successful preview instead of clearing it', async () => {
     const path = '/repo/report.md';
     harness.files.readFile.mockResolvedValue({ content: '# Existing report' });

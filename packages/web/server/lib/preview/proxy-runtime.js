@@ -478,16 +478,54 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
       || text.indexOf('Cannot read properties of undefined (reading "send")') >= 0;
   };
 
+  const FILE_PREVIEW_PATH_RE = /^((?:\/api\/hosts\/[^/]+)?\/api\/preview\/proxy\/[a-f0-9]{16,64}\/_file\/[a-f0-9]{32}\/)(yuri_url_[A-Za-z0-9_-]{32}|-)(\/.*)$/i;
+  const PROXY_BASE_RE = /^((?:\/api\/hosts\/[^/]+)?\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/_file\/[a-f0-9]{32}\/(?:yuri_url_[A-Za-z0-9_-]{32}|-))?)(?:\/|$)/i;
+  const URL_AUTH_TOKEN_RE = /^yuri_url_[A-Za-z0-9_-]{32}$/;
+  const nativeReplaceState = window.history && typeof window.history.replaceState === 'function'
+    ? window.history.replaceState.bind(window.history)
+    : null;
+  const initialProxyMatch = window.location.pathname.match(PROXY_BASE_RE);
+  const initialFileMatch = window.location.pathname.match(FILE_PREVIEW_PATH_RE);
+  let activeProxyBase = initialProxyMatch ? initialProxyMatch[1] : '';
+  const activeFilePrefix = initialFileMatch ? initialFileMatch[1] : '';
+  let activeFileToken = initialFileMatch ? initialFileMatch[2] : '';
+  let activeUrlAuthToken = (() => {
+    try { return new URL(window.location.href).searchParams.get('yuri_url_token') || ''; } catch { return ''; }
+  })();
+
+  const applyUrlAuthTokenUpdate = (nextToken) => {
+    if (typeof nextToken !== 'string' || !URL_AUTH_TOKEN_RE.test(nextToken)) return;
+    const fileMatch = window.location.pathname.match(FILE_PREVIEW_PATH_RE);
+    if (fileMatch) {
+      if (fileMatch[2] === '-' || fileMatch[2] === nextToken) return;
+      const nextBase = fileMatch[1] + nextToken;
+      activeProxyBase = nextBase;
+      activeFileToken = nextToken;
+      try {
+        if (nativeReplaceState) {
+          nativeReplaceState(window.history.state, '', nextBase + fileMatch[3] + window.location.search + window.location.hash);
+        }
+      } catch {}
+      return;
+    }
+    if (activeUrlAuthToken === nextToken) return;
+    activeUrlAuthToken = nextToken;
+    try {
+      const parsed = new URL(window.location.href);
+      if (parsed.searchParams.has('yuri_url_token') && nativeReplaceState) {
+        parsed.searchParams.set('yuri_url_token', nextToken);
+        nativeReplaceState(window.history.state, '', parsed.pathname + parsed.search + parsed.hash);
+      }
+    } catch {}
+  };
+
   const installViteHmrProxyPatch = () => {
     if (window.__yuriViteHmrProxyPatched || typeof window.WebSocket !== 'function') return;
     window.__yuriViteHmrProxyPatched = true;
     const NativeWebSocket = window.WebSocket;
-    const proxyMatch = window.location.pathname.match(/^((?:\/api\/hosts\/[^/]+)?\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/_file\/[a-f0-9]{32}\/(?:yuri_url_[A-Za-z0-9_-]{32}|-))?)(?:\/|$)/i);
-    if (!proxyMatch) return;
-    const proxyBase = proxyMatch[1] + '/';
+    if (!activeProxyBase) return;
     const currentSearchParams = new URL(window.location.href).searchParams;
     const previewToken = currentSearchParams.get('yuri_preview_token') || '';
-    const urlAuthToken = currentSearchParams.get('yuri_url_token') || '';
     let reloadTimer = 0;
 
     const schedulePreviewReload = () => {
@@ -505,13 +543,14 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
       const isViteSocket = protocolList.indexOf('vite-hmr') >= 0 || protocolList.indexOf('vite-ping') >= 0;
       if (!isViteSocket) return url;
       try {
+        const proxyBase = activeProxyBase + '/';
         const parsed = new URL(String(url), window.location.href);
         if (parsed.host !== window.location.host) return url;
         if (parsed.pathname.indexOf(proxyBase) !== 0) {
           parsed.pathname = proxyBase;
         }
         if (previewToken) parsed.searchParams.set('yuri_preview_token', previewToken);
-        if (urlAuthToken) parsed.searchParams.set('yuri_url_token', urlAuthToken);
+        if (activeUrlAuthToken) parsed.searchParams.set('yuri_url_token', activeUrlAuthToken);
         return parsed.toString();
       } catch {
         return url;
@@ -549,45 +588,60 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
   const installAppRequestProxyPatch = () => {
     if (window.__yuriAppRequestProxyPatched) return;
     window.__yuriAppRequestProxyPatched = true;
-    const proxyMatch = window.location.pathname.match(/^((?:\/api\/hosts\/[^/]+)?\/api\/preview\/proxy\/[a-f0-9]{16,64}(?:\/_file\/[a-f0-9]{32}\/(?:yuri_url_[A-Za-z0-9_-]{32}|-))?)(?:\/|$)/i);
-    if (!proxyMatch) return;
-    const proxyBase = proxyMatch[1];
+    if (!activeProxyBase) return;
     const currentSearchParams = new URL(window.location.href).searchParams;
     const previewToken = currentSearchParams.get('yuri_preview_token') || '';
-    const urlAuthToken = currentSearchParams.get('yuri_url_token') || '';
+
+    const refreshFileTokenInPath = (pathname) => {
+      if (!activeFilePrefix || !activeFileToken || activeFileToken === '-' || typeof pathname !== 'string') return pathname;
+      const match = pathname.match(FILE_PREVIEW_PATH_RE);
+      if (!match || match[1] !== activeFilePrefix || match[2] === '-' || match[2] === activeFileToken) return pathname;
+      return match[1] + activeFileToken + match[3];
+    };
 
     const withProxyAuth = (value) => {
-      if (typeof value !== 'string' || value.indexOf(proxyBase) !== 0) return value;
-      if (!previewToken && !urlAuthToken) return value;
+      const proxyBase = activeProxyBase;
+      if (typeof value !== 'string') return value;
+      const refreshed = refreshFileTokenInPath(value);
+      if (refreshed.indexOf(proxyBase) !== 0) return refreshed;
+      if (!previewToken && !activeUrlAuthToken) return refreshed;
       try {
-        const parsed = new URL(value, window.location.origin);
+        const parsed = new URL(refreshed, window.location.origin);
         parsed.searchParams.delete('yuri_client_token');
         if (previewToken) parsed.searchParams.set('yuri_preview_token', previewToken);
-        if (urlAuthToken) parsed.searchParams.set('yuri_url_token', urlAuthToken);
+        if (activeUrlAuthToken) parsed.searchParams.set('yuri_url_token', activeUrlAuthToken);
         return parsed.pathname + parsed.search + parsed.hash;
       } catch {
-        return value;
+        return refreshed;
       }
     };
 
     const shouldProxyPath = (pathname) => {
       if (typeof pathname !== 'string' || !pathname.startsWith('/') || pathname.startsWith('//')) return false;
-      if (pathname.indexOf(proxyBase) === 0) return false;
+      if (pathname.indexOf(activeProxyBase) === 0) return false;
+      if (activeFilePrefix && pathname.indexOf(activeFilePrefix) === 0) return false;
       return true;
     };
 
     const proxiedUrl = (value) => {
       if (typeof value !== 'string') return value;
       if (value.startsWith('/')) {
-        if (value.indexOf(proxyBase) === 0) return withProxyAuth(value);
-        if (!shouldProxyPath(value)) return value;
-        return withProxyAuth(proxyBase + value);
+        const refreshed = refreshFileTokenInPath(value);
+        if (refreshed.indexOf(activeProxyBase) === 0) return withProxyAuth(refreshed);
+        if (!shouldProxyPath(refreshed)) return refreshed;
+        return withProxyAuth(activeProxyBase + refreshed);
       }
 
       try {
         const parsed = new URL(value, window.location.href);
-        if (parsed.origin === window.location.origin && shouldProxyPath(parsed.pathname)) {
-          return withProxyAuth(proxyBase + parsed.pathname + parsed.search + parsed.hash);
+        if (parsed.origin === window.location.origin) {
+          const refreshedPathname = refreshFileTokenInPath(parsed.pathname);
+          if (refreshedPathname !== parsed.pathname) {
+            return withProxyAuth(refreshedPathname + parsed.search + parsed.hash);
+          }
+          if (shouldProxyPath(parsed.pathname)) {
+            return withProxyAuth(activeProxyBase + parsed.pathname + parsed.search + parsed.hash);
+          }
         }
       } catch {}
 
@@ -602,10 +656,10 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
         const sameHost = parsed.host === current.host;
         const isWebSocketProtocol = parsed.protocol === 'ws:' || parsed.protocol === 'wss:';
         if (sameHost && isWebSocketProtocol && shouldProxyPath(parsed.pathname)) {
-          parsed.pathname = proxyBase + parsed.pathname;
+          parsed.pathname = activeProxyBase + parsed.pathname;
           parsed.searchParams.delete('yuri_client_token');
           if (previewToken) parsed.searchParams.set('yuri_preview_token', previewToken);
-          if (urlAuthToken) parsed.searchParams.set('yuri_url_token', urlAuthToken);
+          if (activeUrlAuthToken) parsed.searchParams.set('yuri_url_token', activeUrlAuthToken);
           return parsed.toString();
         }
       } catch {}
@@ -617,14 +671,17 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
       try {
         const parsed = new URL(value, window.location.href);
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return value;
-        if (parsed.origin === window.location.origin && parsed.pathname.indexOf(proxyBase) === 0) {
-          return withProxyAuth(parsed.pathname + parsed.search + parsed.hash);
+        if (parsed.origin === window.location.origin) {
+          const refreshedPathname = refreshFileTokenInPath(parsed.pathname);
+          if (refreshedPathname.indexOf(activeProxyBase) === 0) {
+            return withProxyAuth(refreshedPathname + parsed.search + parsed.hash);
+          }
         }
         const host = parsed.hostname;
         const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1' || host === '[::1]';
         if (!isLoopback && parsed.origin !== window.location.origin) return value;
         if (!shouldProxyPath(parsed.pathname)) return value;
-        return withProxyAuth(proxyBase + parsed.pathname + parsed.search + parsed.hash);
+        return withProxyAuth(activeProxyBase + parsed.pathname + parsed.search + parsed.hash);
       } catch {
         return proxiedUrl(value);
       }
@@ -637,8 +694,7 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
       };
     }
 
-    if (window.history && typeof window.history.replaceState === 'function') {
-      const nativeReplaceState = window.history.replaceState.bind(window.history);
+    if (nativeReplaceState) {
       window.history.replaceState = function(state, unused, url) {
         return nativeReplaceState(state, unused, url === undefined ? url : proxiedNavigationUrl(String(url)));
       };
@@ -654,9 +710,16 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
         if (input instanceof Request) {
           try {
             const parsed = new URL(input.url);
-            if (parsed.origin === window.location.origin && shouldProxyPath(parsed.pathname)) {
-              const nextUrl = withProxyAuth(proxyBase + parsed.pathname + parsed.search + parsed.hash);
-              return nativeFetch(new Request(nextUrl, input), init);
+            if (parsed.origin === window.location.origin) {
+              const refreshedPathname = refreshFileTokenInPath(parsed.pathname);
+              if (refreshedPathname !== parsed.pathname) {
+                const nextUrl = withProxyAuth(refreshedPathname + parsed.search + parsed.hash);
+                return nativeFetch(new Request(nextUrl, input), init);
+              }
+              if (shouldProxyPath(parsed.pathname)) {
+                const nextUrl = withProxyAuth(activeProxyBase + parsed.pathname + parsed.search + parsed.hash);
+                return nativeFetch(new Request(nextUrl, input), init);
+              }
             }
           } catch {}
         }
@@ -872,6 +935,11 @@ const PREVIEW_BRIDGE_SCRIPT = String.raw`(() => {
     }
     if (data.type === 'set-color-scheme') {
       applyPreviewColorScheme(data.scheme);
+    }
+    if (data.type === 'update-url-auth-token') {
+      if (!parentOrigin || event.origin === parentOrigin) {
+        applyUrlAuthTokenUpdate(data.token);
+      }
     }
   });
 
@@ -1424,6 +1492,24 @@ export const createPreviewProxyRuntime = ({
         console.error('[preview-proxy] Failed to create target:', error);
         return res.status(500).json({ error: 'Failed to create preview target' });
       }
+    });
+
+    app.post('/api/preview/targets/:id/extend', express.json(), async (req, res) => {
+      if (uiAuthController?.enabled) {
+        if (!await uiAuthController.ensureSessionToken(req, res)) return res.status(401).json({ error: 'UI authentication required' });
+        if (!await isRequestOriginAllowed(req)) return res.status(403).json({ error: 'Invalid origin' });
+      }
+      const entry = targets.get(req.params.id);
+      if (!entry || entry.expiresAt <= now()) {
+        if (entry) revokeTarget(req.params.id);
+        return res.status(404).json({ error: 'Preview target expired' });
+      }
+      if (!req.body?.previewToken || req.body.previewToken !== entry.token) return res.status(403).json({ error: 'Preview token missing' });
+      const ttlMs = Number.isFinite(req.body?.ttlMs)
+        ? Math.max(15_000, Math.min(DEFAULT_TARGET_TTL_MS, Math.trunc(req.body.ttlMs)))
+        : DEFAULT_TARGET_TTL_MS;
+      entry.expiresAt = Math.max(entry.expiresAt, now() + ttlMs);
+      return res.set('Cache-Control', 'no-store').json({ id: entry.id, expiresAt: entry.expiresAt });
     });
 
     app.delete('/api/preview/targets/:id', express.json(), async (req, res) => {

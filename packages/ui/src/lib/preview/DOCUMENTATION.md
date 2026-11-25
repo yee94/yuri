@@ -66,9 +66,11 @@ network lease still belongs to the current Hub, not a second per-Host Relay.
 Preview and screenshot resource requests capture the Host entry and reject late
 completions after its generation changes.
 
-The URL sheet owns a proactive URL-auth consumer and renews expiring preview
-targets. Credential/target renewal replaces the iframe URL; it can reload page
-state. Registration/network failure removes the document and exposes retry.
+The URL sheet owns a proactive URL-auth consumer and extends expiring preview
+targets in place. Once mounted, routine URL-token rotation syncs to the preview
+bridge (`update-url-auth-token`) and target keepalive calls
+`POST /api/preview/targets/:id/extend` so page state and scroll position are
+preserved. Registration/network failure removes the document and exposes retry.
 Cancelled/stale registrations cannot mint credentials for the next runtime or
 replace its displayed document. Ordinary rerenders do not reconnect or re-register.
 
@@ -93,8 +95,9 @@ Callers own iframe loading/error/retry and remove it immediately on path, Host,
 generation or lease failure. Abort/release revokes the target idempotently;
 failed cleanup after the old transport ends is bounded by server expiry and is
 never sent through the new runtime. Callers keep the existing proactive URL-auth
-consumer and renew the source when that short credential changes, as well as
-before the target deadline. A failed registration must not restore stale HTML.
+consumer, push rotated tokens to the mounted preview bridge in place, and extend
+the active target before its deadline so reading state and scroll position are
+never reset. A failed registration must not restore stale HTML.
 
 ## Evidence and limits
 

@@ -30,6 +30,7 @@ import { messagesFromTranscriptData } from '@/sync/transcript-repository-observe
 import { useSync } from '@/sync/use-sync';
 import { useViewportStore, viewportSessionKey } from '@/sync/viewport-store';
 import { DraggableSessionRow } from './sessionFolderDnd';
+import { SessionRowContextMenuRoot, sessionRowContextMenuTriggerProps, type ContextMenuAnchor } from './sessionRowContextMenu';
 import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
 import { TaskProjectBadge, TaskRunElapsed, TaskUnreadDot, type TaskProjectMark } from './TaskCardParts';
 import { SessionHoverDetails } from './SessionHoverDetails';
@@ -193,7 +194,25 @@ type Props = {
   setSessionSettled?: (sessionId: string, nextSettled: boolean) => void;
 };
 
+/** Row action tip; renders the bare button until the row arms its tooltips. */
+function RowActionTooltip({ enabled, label, children }: {
+  enabled: boolean;
+  label: string;
+  children: React.ReactElement;
+}): React.ReactNode {
+  if (!enabled) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="top" sideOffset={4} className="rounded-md px-1.5 py-0.5 typography-micro">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 type QuickSessionActionProps = {
+  tooltip: boolean;
   pinned: boolean;
   pinLabel: string;
   buttonSizeClass: string;
@@ -205,6 +224,7 @@ type QuickSessionActionProps = {
 
 // Pin-only quick action. Shift+delete lives on the archive button instead.
 const QuickSessionAction = React.memo(function QuickSessionAction({
+  tooltip,
   pinned,
   pinLabel,
   buttonSizeClass,
@@ -216,8 +236,7 @@ const QuickSessionAction = React.memo(function QuickSessionAction({
   // No per-tooltip Provider — inherit the sidebar TooltipProvider grouping
   // so adjacent row tips hand off instantly.
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
+    <RowActionTooltip enabled={tooltip} label={pinLabel}>
         <button
           type="button"
           className={cn(
@@ -233,15 +252,12 @@ const QuickSessionAction = React.memo(function QuickSessionAction({
         >
           <Icon name={pinned ? 'pushpin-2-fill' : 'pushpin-2'} className={cn(iconSizeClass, !pinned && 'rotate-45')} />
         </button>
-      </TooltipTrigger>
-      <TooltipContent side="top" sideOffset={4} className="rounded-md px-1.5 py-0.5 typography-micro">
-        {pinLabel}
-      </TooltipContent>
-    </Tooltip>
+    </RowActionTooltip>
   );
 });
 
 type QuickArchiveActionProps = {
+  tooltip: boolean;
   archiveLabel: string;
   deleteLabel: string;
   /** Archived bucket: only hard-delete is available. */
@@ -258,6 +274,7 @@ type QuickArchiveActionProps = {
 
 // Default archives; hold Shift to hard-delete (same pattern as pin quick action).
 const QuickArchiveAction = React.memo(function QuickArchiveAction({
+  tooltip,
   archiveLabel,
   deleteLabel,
   deleteOnly = false,
@@ -283,8 +300,7 @@ const QuickArchiveAction = React.memo(function QuickArchiveAction({
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
+    <RowActionTooltip enabled={tooltip} label={label}>
         <button
           type="button"
           className={cn(
@@ -303,11 +319,7 @@ const QuickArchiveAction = React.memo(function QuickArchiveAction({
         >
           <Icon name={showDelete ? 'delete-bin' : restore ? 'undo-2' : 'inbox-archive'} className={iconSizeClass} />
         </button>
-      </TooltipTrigger>
-      <TooltipContent side="top" sideOffset={4} className="rounded-md px-1.5 py-0.5 typography-micro">
-        {label}
-      </TooltipContent>
-    </Tooltip>
+    </RowActionTooltip>
   );
 });
 
@@ -563,6 +575,12 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   const sessionUpdatedLabel = formatSessionDateLabel(sessionTimestamp);
   const sessionCompactUpdatedLabel = formatSessionCompactDateLabel(sessionTimestamp);
   const [isContextMenuOpen, setIsContextMenuOpen] = React.useState(false);
+  // The Base UI menu root mounts from a right-click or long press until its exit finishes;
+  // one idle root per row was a large share of list mount cost.
+  const [contextMenuAnchor, setContextMenuAnchor] = React.useState<ContextMenuAnchor | null>(null);
+  // Action tips mount on the first row hover or title focus. Their Base UI roots cost more
+  // than the rest of the actions, which stay hidden until then on pointer devices.
+  const [actionTooltipsArmed, setActionTooltipsArmed] = React.useState(mobileVariant);
   const [hoverDetailsOpen, setHoverDetailsOpen] = React.useState(false);
   const isSessionMenuOpen = isContextMenuOpen;
   const isMultiRunLikeSession = React.useMemo(() => parseMultiRunSessionTitle(resolvedSession.title) !== null, [resolvedSession.title]);
@@ -702,6 +720,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   // Event handlers live above the rename early-return so useEvent hook order is
   // stable across edit vs display modes (rules-of-hooks).
   const handleMenuOpenChangeComplete = useEvent((open: boolean) => {
+    if (!open && !isContextMenuOpen) setContextMenuAnchor(null);
     if (!open && pendingRenameRef.current) {
       const { id, title } = pendingRenameRef.current;
       pendingRenameRef.current = null;
@@ -714,6 +733,25 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   const handleContextMenuOpenChange = useEvent((open: boolean) => {
     setIsContextMenuOpen(open);
   });
+
+  const handleRowPointerEnter = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (actionTooltipsArmed || event.pointerType === 'touch') return;
+    // Arming remounts the action buttons; keep a keyboard-focused one until a later hover.
+    const focused = event.currentTarget.ownerDocument.activeElement;
+    if (focused instanceof HTMLElement && event.currentTarget.contains(focused) && focused !== event.currentTarget
+      && !focused.hasAttribute('data-session-title')) return;
+    setActionTooltipsArmed(true);
+  };
+
+  const handleRowFocus = (event: React.FocusEvent<HTMLDivElement>) => {
+    if (!actionTooltipsArmed && event.target.hasAttribute('data-session-title')) setActionTooltipsArmed(true);
+  };
+
+  // Open on the commit after the root mounts: Base UI plays the enter transition only for a
+  // closed-to-open change, not for a root that mounts already open.
+  React.useLayoutEffect(() => {
+    if (contextMenuAnchor) setIsContextMenuOpen(true);
+  }, [contextMenuAnchor]);
 
   const handleQuickPinPointerDown = useEvent((event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -1249,9 +1287,9 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     </>
   );
 
-  const contextMenuContent = (
+  const contextMenuContent = contextMenuAnchor === null ? null : (
     <ContextMenu.Portal>
-      <ContextMenu.Positioner className="app-region-no-drag z-50">
+      <ContextMenu.Positioner anchor={contextMenuAnchor} className="app-region-no-drag z-50">
         <ContextMenu.Popup
           data-slot="dropdown-menu-content"
           finalFocus={() => (renamingFolderId || editingIdRef.current) ? false : true}
@@ -1299,9 +1337,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   return (
     <React.Fragment key={session.id}>
       <DraggableSessionRow sessionId={session.id} sessionDirectory={sessionDirectory ?? null} sessionTitle={sessionTitle}>
-        <ContextMenu.Root open={isContextMenuOpen} onOpenChange={handleContextMenuOpenChange} onOpenChangeComplete={handleMenuOpenChangeComplete}>
-          <ContextMenu.Trigger
-            render={
               <SessionRowLayout
                 ref={rowElementRef}
                 active={isActive}
@@ -1314,6 +1349,10 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                 data-session-archived={archivedBucket ? '1' : '0'}
                 data-session-depth={depth}
                 onClick={handleRowBackgroundClick}
+                onPointerEnter={handleRowPointerEnter}
+                onFocus={handleRowFocus}
+                {...sessionRowContextMenuTriggerProps(setContextMenuAnchor)}
+                data-popup-open={isContextMenuOpen ? '' : undefined}
                 className={cn(
                   // Full-width chip; nest indent lives on the inner content row
                   // so ContextMenu render-prop merges cannot drop paddingLeft.
@@ -1323,9 +1362,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                   !isActive && !isRowSelected && SIDEBAR_ROW_HOVER_CLASS,
                   isSlimRow && 'py-1',
                 )}
-              />
-            }
-          >
+              >
           {subsessionChevron}
           <SessionRowContent depth={depth}>
           <div className="flex min-w-0 flex-1 items-center">
@@ -1498,6 +1535,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             {/* No fade veil — title button reserves pr on hover so icons own their space. */}
             {showQuickPinAction ? (
               <QuickSessionAction
+                tooltip={actionTooltipsArmed}
                 pinned={isPinnedSession}
                 pinLabel={t(isPinnedSession ? 'sessions.sidebar.session.menu.unpin' : 'sessions.sidebar.session.menu.pin')}
                 buttonSizeClass={actionButtonSizeClass}
@@ -1508,8 +1546,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
               />
             ) : null}
             {showQuickUnpinAction ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
+              <RowActionTooltip enabled={actionTooltipsArmed} label={t('sessions.sidebar.session.actions.pinned')}>
                   <button
                     type="button"
                     className={cn(
@@ -1524,15 +1561,10 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                   >
                     <Icon name="pushpin-2-fill" className={actionIconSizeClass} />
                   </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={4} className="rounded-md px-1.5 py-0.5 typography-micro">
-                  {t('sessions.sidebar.session.actions.pinned')}
-                </TooltipContent>
-              </Tooltip>
+              </RowActionTooltip>
             ) : null}
             {showOpenInEditorAction ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
+              <RowActionTooltip enabled={actionTooltipsArmed} label={t('sessions.sidebar.session.actions.openInEditor')}>
                   <button
                     type="button"
                     className={cn(
@@ -1547,13 +1579,10 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                   >
                     <Icon name="external-link" className={actionIconSizeClass} />
                   </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={4} className="rounded-md px-1.5 py-0.5 typography-micro">
-                  {t('sessions.sidebar.session.actions.openInEditor')}
-                </TooltipContent>
-              </Tooltip>
+              </RowActionTooltip>
             ) : null}
             <QuickArchiveAction
+              tooltip={actionTooltipsArmed}
               archiveLabel={t(archiveSettlesInPlace && isSettledSession ? 'sessions.sidebar.session.menu.unsettle' : 'sessions.sidebar.bulkActions.archive')}
               restore={archiveSettlesInPlace && isSettledSession}
               deleteLabel={t('sessions.sidebar.bulkActions.delete')}
@@ -1571,9 +1600,12 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
               onDelete={handleQuickHardDeleteClick}
             />
           </SessionRowActions>
-          </ContextMenu.Trigger>
-          {contextMenuContent}
-        </ContextMenu.Root>
+              </SessionRowLayout>
+        {contextMenuAnchor ? (
+          <SessionRowContextMenuRoot open={isContextMenuOpen} onOpenChange={handleContextMenuOpenChange} onOpenChangeComplete={handleMenuOpenChangeComplete}>
+            {contextMenuContent}
+          </SessionRowContextMenuRoot>
+        ) : null}
       </DraggableSessionRow>
       {!isPinnedContext && hasChildren && isExpanded
         ? node.children.map((child): React.ReactNode => {

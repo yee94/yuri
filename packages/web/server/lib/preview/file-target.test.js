@@ -46,6 +46,7 @@ describe('production file target HTTP resource graph', () => {
       expect(html.headers.get('cache-control')).toContain('no-store');
       const text = await html.text();
       expect(text).toContain(index === 0 ? 'remote-a' : 'remote-b');
+      expect(text).toContain('update-url-auth-token');
       expect((await request('../assets/style.css')).status).toBe(200);
       expect((await request('../assets/extra.css')).status).toBe(200);
       expect((await request('../assets/main.mjs')).headers.get('content-type')).toContain('javascript');
@@ -72,8 +73,11 @@ describe('production file target HTTP resource graph', () => {
     const fresh = await (await fixture.hub.call('/auth/url-token', 'POST')).json();
     const renewed = replaceFilePreviewUrlAuthToken(b.route, fresh.token);
     expect((await fetch(`${fixture.hub.origin}${renewed}`)).status).toBe(200);
+    const remoteExtend = await fixture.hub.call(`/api/hosts/b/api/preview/targets/${b.id}/extend`, 'POST', { previewToken: b.previewToken });
+    expect(remoteExtend.status).toBe(200);
     await fixture.hub.clients.revokeClient(fixture.hub.issued.client.id);
     expect((await fetch(`${fixture.hub.origin}${renewed}`)).status).toBe(401);
+    expect((await fixture.hub.call(`/api/hosts/b/api/preview/targets/${b.id}/extend`, 'POST', { previewToken: b.previewToken })).status).toBe(401);
   }, 30_000);
 
   it('target expiry is authoritative even with valid bearer auth; revoke and client cancel terminate remote streams', async () => {
@@ -87,8 +91,17 @@ describe('production file target HTTP resource graph', () => {
       expect((await fetch(`${fixture.first.origin}${shortRoute}?yuri_preview_token=arbitrary`, { headers })).status).toBe(401);
     }
     const actualNow = Date.now();
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(actualNow + 15_001);
+    const extended = await fixture.first.call(`/api/preview/targets/${short.id}/extend`, 'POST', { previewToken: short.previewToken, ttlMs: 30_000 });
+    expect(extended.status).toBe(200);
+    const extendedBody = await extended.json();
+    expect(extendedBody.id).toBe(short.id);
+    expect(extendedBody.expiresAt).toBeGreaterThanOrEqual(actualNow + 29_000);
+    expect((await fixture.first.call(`/api/preview/targets/${short.id}/extend`, 'POST', { previewToken: '0'.repeat(32) })).status).toBe(403);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(actualNow + 20_000);
+    expect((await fixture.first.call(shortRoute)).status).toBe(200);
+    clock.mockReturnValue(actualNow + 31_000);
     expect((await fixture.first.call(shortRoute)).status).toBe(404);
+    expect((await fixture.first.call(`/api/preview/targets/${short.id}/extend`, 'POST', { previewToken: short.previewToken })).status).toBe(404);
     clock.mockRestore();
     const file = await fs.open(path.join(fixture.first.root, 'large.bin'), 'w');
     await file.truncate(80 * 1024 * 1024); await file.close();

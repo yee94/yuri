@@ -29,7 +29,7 @@ export async function resolveProjectFilePreview(
   directory: string,
   signal: AbortSignal,
   hostOrigin?: string,
-): Promise<{ src: string; expiresAt: number; release: () => Promise<void> }> {
+): Promise<{ src: string; expiresAt: number; extend: (extendSignal?: AbortSignal) => Promise<number>; release: () => Promise<void> }> {
   const scope = captureProjectScope(entry);
   scope.assertCurrent(signal);
   if (entry && entry.location.directory !== directory) throw new Error('invalid_preview_directory');
@@ -70,6 +70,23 @@ export async function resolveProjectFilePreview(
     })().finally(() => { releasing = undefined; });
     return releasing;
   };
+  const extend = async (extendSignal?: AbortSignal): Promise<number> => {
+    if (released) throw new Error('preview_released');
+    const activeSignal = extendSignal ?? signal;
+    scope.assertCurrent(activeSignal);
+    const extendResponse = await scope.fetch(`/api/preview/targets/${id}/extend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-opencode-directory': directory },
+      body: JSON.stringify({ previewToken }),
+      signal: activeSignal,
+    });
+    if (!extendResponse.ok) throw new Error('preview_extend_failed');
+    const body = await extendResponse.json() as { expiresAt?: unknown };
+    if (typeof body.expiresAt !== 'number' || !Number.isFinite(body.expiresAt) || body.expiresAt <= Date.now()) {
+      throw new Error('invalid_preview');
+    }
+    return body.expiresAt;
+  };
   const abort = () => { void release().catch(() => { /* Expiry remains authoritative if the original transport has ended. */ }); };
   signal.addEventListener('abort', abort, { once: true });
   try {
@@ -96,7 +113,7 @@ export async function resolveProjectFilePreview(
       src = resolveRelayPreviewFrameSrc({ relayActive: true, gatewayOrigin, authenticatedAssetUrl: src });
     }
     scope.assertCurrent(signal);
-    return { src, expiresAt, release };
+    return { src, expiresAt, extend, release };
   } catch (error) {
     await release().catch(() => { /* A changed transport cannot revoke the original Host's grant; it expires. */ });
     throw error;

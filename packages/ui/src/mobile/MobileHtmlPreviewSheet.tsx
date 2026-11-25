@@ -5,8 +5,9 @@ import { FilePreviewError } from '@/components/ui/FilePreviewError';
 import { Button } from '@/components/ui/button';
 import { MobileHtmlNetworkBoundary } from '@/components/preview/MobileHtmlNetworkBoundary';
 import { resolveMobileHtmlUrl } from '@/lib/preview/mobile-html-source';
+import { postPreviewUrlAuthToken } from '@/lib/preview/relay-preview-frame-src';
 import { getRuntimeGeneration, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
-import { acquireRuntimeUrlAuthToken, subscribeRuntimeUrlAuthToken } from '@/lib/runtime-auth';
+import { acquireRuntimeUrlAuthToken, getRuntimeUrlAuthTokenSync, subscribeRuntimeUrlAuthToken } from '@/lib/runtime-auth';
 import { isLoopbackHttpUrl } from '@/lib/url';
 import { useI18n } from '@/lib/i18n';
 import { useMobileHtmlPreviewStore } from './useMobileHtmlPreviewStore';
@@ -24,22 +25,52 @@ function PreviewFrame({ url, hostOrigin, entry }: { url: string; hostOrigin?: st
   React.useEffect(() => {
     const controller = new AbortController();
     let renewal: ReturnType<typeof setTimeout> | undefined;
-    let revision = 0;
+    let activeSource: Awaited<ReturnType<typeof resolveMobileHtmlUrl>> | undefined;
+    let resolving = false;
+    let tokenChanged = false;
+    const scheduleKeepalive = (expiresAt?: number) => {
+      clearTimeout(renewal);
+      if (!expiresAt || !activeSource?.extend || controller.signal.aborted) return;
+      renewal = setTimeout(() => {
+        void (async () => {
+          if (controller.signal.aborted || !activeSource?.extend) return;
+          try {
+            const nextExpiresAt = await activeSource.extend(controller.signal);
+            if (!controller.signal.aborted && activeSource) scheduleKeepalive(nextExpiresAt);
+          } catch {
+            // Preserve the mounted preview document and scroll position.
+          }
+        })();
+      }, Math.max(1000, expiresAt - Date.now() - 10_000));
+    };
     const resolve = async () => {
-      const current = ++revision;
+      if (controller.signal.aborted || resolving) return;
+      resolving = true;
       clearTimeout(renewal);
       try {
         const source = await resolveMobileHtmlUrl(url, hostOrigin, controller.signal, entry);
-        if (controller.signal.aborted || current !== revision) return;
+        if (controller.signal.aborted || tokenChanged) return;
+        activeSource = source;
         setResult({ url, hostOrigin, scope, attempt, src: source.src });
-        if (source.expiresAt) renewal = setTimeout(() => { void resolve(); }, Math.max(1000, source.expiresAt - Date.now() - 10_000));
+        scheduleKeepalive(source.expiresAt);
       } catch {
-        if (!controller.signal.aborted && current === revision) setResult({ url, hostOrigin, scope, attempt, error: true });
+        if (!controller.signal.aborted && !tokenChanged) setResult({ url, hostOrigin, scope, attempt, error: true });
+      } finally {
+        resolving = false;
+        if (tokenChanged && !controller.signal.aborted) { tokenChanged = false; void resolve(); }
       }
     };
     const local = isLoopbackHttpUrl(url);
     const release = local ? acquireRuntimeUrlAuthToken() : undefined;
-    const unsubscribe = local ? subscribeRuntimeUrlAuthToken(() => { void resolve(); }) : undefined;
+    const unsubscribe = local ? subscribeRuntimeUrlAuthToken(() => {
+      if (resolving) {
+        tokenChanged = true;
+        return;
+      }
+      if (activeSource) {
+        postPreviewUrlAuthToken(frame.current, activeSource.src, getRuntimeUrlAuthTokenSync());
+      }
+    }) : undefined;
     void resolve();
     return () => { controller.abort(); clearTimeout(renewal); unsubscribe?.(); release?.(); };
   }, [url, hostOrigin, attempt, entry, scope]);
@@ -57,7 +88,9 @@ function PreviewFrame({ url, hostOrigin, entry }: { url: string; hostOrigin?: st
     <Button size="sm" onClick={retry}>{t('contextPanel.preview.actions.retry')}</Button>
   </div>;
   if (!current?.src) return <div className="flex h-full items-center justify-center text-muted-foreground">{t('contextPanel.preview.loading')}</div>;
-  return <iframe ref={frame} src={current.src} title={t('contextPanel.preview.iframeTitle')}
+  const activeSrc = current.src;
+  return <iframe ref={frame} src={activeSrc} title={t('contextPanel.preview.iframeTitle')}
+    onLoad={() => { if (isLoopbackHttpUrl(url)) postPreviewUrlAuthToken(frame.current, activeSrc, getRuntimeUrlAuthTokenSync()); }}
     onError={() => setResult({ url, hostOrigin, scope, attempt, error: true })}
     className="h-full w-full border-0" sandbox="allow-scripts allow-same-origin allow-forms" />;
 }

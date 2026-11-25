@@ -94,3 +94,31 @@ export const resolveRelayPreviewFrameSrc = (
     return authenticatedAssetUrl;
   }
 };
+
+const URL_AUTH_TOKEN_PATTERN = /^yuri_url_[A-Za-z0-9_-]{32}$/;
+
+/**
+ * Push a freshly minted short-lived URL auth token to an already-mounted
+ * preview iframe bridge so subsequent lazy/dynamic requests stay authorized
+ * without reloading the document or resetting scroll position.
+ */
+export const postPreviewUrlAuthToken = (
+  frame: HTMLIFrameElement | null,
+  frameSrc: string,
+  token: string,
+): boolean => {
+  if (typeof window === 'undefined' || !frame?.contentWindow || !frameSrc || !URL_AUTH_TOKEN_PATTERN.test(token)) {
+    return false;
+  }
+  try {
+    const targetOrigin = new URL(frameSrc, window.location.href).origin;
+    if (!targetOrigin || targetOrigin === 'null') return false;
+    frame.contentWindow.postMessage(
+      { source: 'yuri-preview-parent', version: 1, type: 'update-url-auth-token', token },
+      targetOrigin,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+};

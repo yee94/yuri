@@ -2299,6 +2299,94 @@ function verifySessionLocation(sessionID: string, childStores: ChildStoreManager
     .finally(() => verifyingSessionLocations.delete(sessionID))
 }
 
+/**
+ * Run start/end attention for one session event. The global status map clears a
+ * session's running state for every directory, including ones without a child store,
+ * so its completion marker must land in the same dispatch there too; otherwise the
+ * sidebar's running-or-unread rows lose it until the Host unread commit arrives.
+ */
+function applySessionAttentionEvent(
+  payload: Event,
+  resolvedDirectory: string,
+  directorySessions: readonly Session[],
+) {
+  // New authoritative run: drop the previous turn's error notification so
+  // useLatestSessionError / SessionErrorNotice do not keep the stale failure
+  // after session.execution.started (reducer already clears session_error_at).
+  if (payload.type === "session.execution.started") {
+    const startedSessionID = (payload.properties as { sessionID?: string }).sessionID
+    if (startedSessionID) {
+      clearSessionErrorNotifications(startedSessionID)
+      turnCompleteNotified.delete(startedSessionID)
+    }
+  }
+  if (payload.type === "session.status") {
+    const statusProps = payload.properties as { sessionID?: string; status?: { type?: string } }
+    if (
+      statusProps.sessionID
+      && (statusProps.status?.type === "busy" || statusProps.status?.type === "retry")
+    ) {
+      turnCompleteNotified.delete(statusProps.sessionID)
+    }
+  }
+
+  // Notification dispatch for top-level turn-complete and execution failures.
+  // OpenCode 2 completes a turn with session.execution.succeeded; session.idle
+  // is deprecated and is only a fallback. Completion is already viewed when
+  // the user is watching this session in a focused window (or an external view).
+  // session.execution.failed is the v2 path that carries the error payload
+  // (legacy session.error keeps the same shape). Reducer settles idle +
+  // session_error_at; this store retains the message for live UI.
+  if (
+    payload.type === "session.idle"
+    || payload.type === "session.execution.succeeded"
+    || payload.type === "session.error"
+    || payload.type === "session.execution.failed"
+  ) {
+    const props = payload.properties as { sessionID?: string; error?: unknown }
+    const sessionID = props.sessionID
+    const isSuccessCompletion = payload.type === "session.idle" || payload.type === "session.execution.succeeded"
+    const errorSummary = isSuccessCompletion
+      ? null
+      : summarizeOpenCodeError(props.error)
+    // Only record/retain when OpenCode actually supplied failure details.
+    // Empty summaries must not invent a fake error row.
+    const hasErrorDetails = Boolean(
+      errorSummary && (errorSummary.message || errorSummary.name),
+    )
+    if (hasErrorDetails && errorSummary && sessionID) {
+      recordSessionError({
+        sessionId: sessionID,
+        directory: resolvedDirectory ?? null,
+        ...errorSummary,
+      })
+    }
+    const session = directorySessions.find((candidate) => candidate.id === sessionID)
+      ?? useGlobalSessionsStore.getState().activeSessions.find((candidate) => candidate.id === sessionID)
+    if (sessionID && session && isVisibleGlobalSession(session)) {
+      // succeeded then idle is one completion. A lone idle (legacy) still notifies.
+      const duplicateSuccess = isSuccessCompletion && payload.type === "session.idle" && turnCompleteNotified.has(sessionID)
+      if (!duplicateSuccess) {
+        if (isSuccessCompletion && resolvedDirectory && resolvedDirectory !== "global") {
+          sessionEvents.requestGitRefresh({ directory: resolvedDirectory })
+        }
+        appendNotification({
+          directory: resolvedDirectory,
+          session: sessionID,
+          time: Date.now(),
+          viewed: isViewedInCurrentSession(resolvedDirectory, sessionID),
+          ...(hasErrorDetails && errorSummary
+            ? { type: "error" as const, error: errorSummary }
+            : { type: "turn-complete" as const }),
+        })
+        if (payload.type === "session.execution.succeeded") turnCompleteNotified.add(sessionID)
+      } else {
+        turnCompleteNotified.delete(sessionID)
+      }
+    }
+  }
+}
+
 /** Directory event dispatch. Exported as a minimal test seam for idle materialization. */
 export function handleEvent(
   rawDirectory: string,
@@ -2496,6 +2584,7 @@ export function handleEvent(
         return
       }
     }
+    applySessionAttentionEvent(payload, resolvedDirectory, [])
     // Try as global event for unknown directories
     const result = reduceGlobalEvent(payload)
     if (result?.type === "refresh") {
@@ -2623,82 +2712,7 @@ export function handleEvent(
     }
   }
 
-  // New authoritative run: drop the previous turn's error notification so
-  // useLatestSessionError / SessionErrorNotice do not keep the stale failure
-  // after session.execution.started (reducer already clears session_error_at).
-  if (payload.type === "session.execution.started") {
-    const startedSessionID = (payload.properties as { sessionID?: string }).sessionID
-    if (startedSessionID) {
-      clearSessionErrorNotifications(startedSessionID)
-      turnCompleteNotified.delete(startedSessionID)
-    }
-  }
-  if (payload.type === "session.status") {
-    const statusProps = payload.properties as { sessionID?: string; status?: { type?: string } }
-    if (
-      statusProps.sessionID
-      && (statusProps.status?.type === "busy" || statusProps.status?.type === "retry")
-    ) {
-      turnCompleteNotified.delete(statusProps.sessionID)
-    }
-  }
-
-  // Notification dispatch for top-level turn-complete and execution failures.
-  // OpenCode 2 completes a turn with session.execution.succeeded; session.idle
-  // is deprecated and is only a fallback. Completion is already viewed when
-  // the user is watching this session in a focused window (or an external view).
-  // session.execution.failed is the v2 path that carries the error payload
-  // (legacy session.error keeps the same shape). Reducer settles idle +
-  // session_error_at; this store retains the message for live UI.
-  if (
-    payload.type === "session.idle"
-    || payload.type === "session.execution.succeeded"
-    || payload.type === "session.error"
-    || payload.type === "session.execution.failed"
-  ) {
-    const props = payload.properties as { sessionID?: string; error?: unknown }
-    const sessionID = props.sessionID
-    const isSuccessCompletion = payload.type === "session.idle" || payload.type === "session.execution.succeeded"
-    const errorSummary = isSuccessCompletion
-      ? null
-      : summarizeOpenCodeError(props.error)
-    // Only record/retain when OpenCode actually supplied failure details.
-    // Empty summaries must not invent a fake error row.
-    const hasErrorDetails = Boolean(
-      errorSummary && (errorSummary.message || errorSummary.name),
-    )
-    if (hasErrorDetails && errorSummary && sessionID) {
-      recordSessionError({
-        sessionId: sessionID,
-        directory: resolvedDirectory ?? null,
-        ...errorSummary,
-      })
-    }
-    const storeState = store.getState()
-    const session = storeState.session.find((candidate) => candidate.id === sessionID)
-      ?? useGlobalSessionsStore.getState().activeSessions.find((candidate) => candidate.id === sessionID)
-    if (sessionID && session && isVisibleGlobalSession(session)) {
-      // succeeded then idle is one completion. A lone idle (legacy) still notifies.
-      const duplicateSuccess = isSuccessCompletion && payload.type === "session.idle" && turnCompleteNotified.has(sessionID)
-      if (!duplicateSuccess) {
-        if (isSuccessCompletion && resolvedDirectory && resolvedDirectory !== "global") {
-          sessionEvents.requestGitRefresh({ directory: resolvedDirectory })
-        }
-        appendNotification({
-          directory: resolvedDirectory,
-          session: sessionID,
-          time: Date.now(),
-          viewed: isViewedInCurrentSession(resolvedDirectory, sessionID),
-          ...(hasErrorDetails && errorSummary
-            ? { type: "error" as const, error: errorSummary }
-            : { type: "turn-complete" as const }),
-        })
-        if (payload.type === "session.execution.succeeded") turnCompleteNotified.add(sessionID)
-      } else {
-        turnCompleteNotified.delete(sessionID)
-      }
-    }
-  }
+  applySessionAttentionEvent(payload, resolvedDirectory, store.getState().session)
 
   // Sync-layer resync on idle:
   // - child idle → materialize parent (task tool completion without mounted ToolPart)

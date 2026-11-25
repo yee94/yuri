@@ -281,7 +281,13 @@ One weakly keyed reader per runtime child-store manager shares the projection ac
 Query observer owns the Host unread snapshot and projects it into the existing
 notification store's narrow session/project badge indexes (sidebar, switcher,
 tray/dock and widget share the same projection). Local live notifications retain
-their error details but never double-count Host attention. Initial GET, revision
+their error details but never double-count Host attention. The Host commits a
+completion only after its own identity read, so its snapshot trails the live
+event that ends the run. An unviewed live completion therefore stands in for that
+session's attention (count = max with the Host row, never a sum) until the Host row
+revision passes the one recorded when the notification arrived, the session is
+viewed, or 15 seconds elapse. Running → unread is then one transition instead of
+running → read → unread. Initial GET, revision
 tips and stream-ready recovery converge without per-session polling or transcript
 reads; tips received during a GET force a trailing read. Failed refreshes keep the
 last authoritative snapshot. Transport/generation fences reject stale responses,
@@ -302,7 +308,7 @@ persisted hidden attention before a successful unread snapshot is returned.
 
 Successful top-level turn completion also emits the existing directory-scoped `sessionEvents.requestGitRefresh` hint, refreshing mounted Changes/Diff consumers through their runtime Git API. This is independent of window focus and targets the completed session's directory. The native succeeded event and its trailing legacy idle share the completion deduplication gate; streaming events do not trigger extra Git reads.
 
-Turn-complete and error notifications use the same viewed-session gate: the matching active directory/session in a focused window, or an externally registered viewed session, is already read on receipt. Background or other-session completions remain unread. `session.execution.succeeded` and its legacy `session.idle` fallback share this rule and retain completion deduplication. Regression coverage: `session-execution-failed.test.ts`.
+Turn-complete and error notifications use the same viewed-session gate: the matching active directory/session in a focused window, or an externally registered viewed session, is already read on receipt. Background or other-session completions remain unread. `session.execution.succeeded` and its legacy `session.idle` fallback share this rule and retain completion deduplication. The global status map clears a session's running state for every directory, so run start/end attention also applies when the event's directory has no child store (the session is resolved from the global catalog). The completion marker therefore lands in the same dispatch that ends the run instead of waiting for the Host unread commit. Regression coverage: `session-execution-failed.test.ts`.
 
 An idle/succeeded/failed/interrupted receipt for the viewed session requests an authoritative tail reconciliation regardless of the locally known assistant finish. A wholly missing final step cannot be detected from completion metadata on the preceding step. The materialization scheduler coalesces terminal receipts and drains them after any pre-terminal materialization; a receipt during reconciliation schedules another pass after that flight. Runtime/directory-store fences apply before each pass. Failures preserve the transcript and defer recovery until another terminal receipt or selection. Background sessions retain their bounded materialization policy. `sync-context.settle-repair.test.ts` covers absent final rows after both tool-calls and stop, overlapping reads, duplicate receipts and retry after failure.
 

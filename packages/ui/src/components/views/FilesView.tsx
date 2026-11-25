@@ -1,5 +1,7 @@
 import '@/lib/brand-storage-bootstrap';
 import React from 'react';
+import { FileTreeChildren, useSingleToggleExpansion } from '@/components/layout/FileTreeChildren';
+import { BULK_INITIAL_ROWS, INITIAL_ROWS, ProgressiveRows } from '@/components/layout/ProgressiveRows';
 import { GuiFileLinkBridge } from '@/components/gui-plugins/GuiFileLinkBridge';
 import { ProjectFilePreview } from '@/components/preview/ProjectFilePreview';
 import { LoadingImage } from '@/components/ui/LoadingImage';
@@ -66,8 +68,8 @@ import { useDeviceInfo } from '@/lib/device';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { cn, getModifierLabel, getRevealLabelKey, hasModifier } from '@/lib/utils';
 import { getLanguageFromExtension, getImageMimeType, isDrawioFile, isHtmlFile, isImageFile, isPdfFile } from '@/lib/toolHelpers';
-import { acquireRuntimeUrlAuthToken, refreshRuntimeUrlAuthToken, subscribeRuntimeUrlAuthToken } from '@/lib/runtime-auth';
-import { getRuntimeApiBaseUrl, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { getRuntimeAuthGeneration, refreshRuntimeUrlAuthToken, subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
+import { getRuntimeApiBaseUrl, getRuntimeGeneration, getRuntimeTransportIdentity, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { getOutsideFileGrant } from '@/lib/outsideFileGrants';
 import { DiagramEditor } from '@/components/diagram';
 import { useProjectRuntimeAPIs as useRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
@@ -694,59 +696,61 @@ export const shouldPollSelectedFile = (
 ): boolean => isActive && Boolean(selectedPath) && loadedPath === selectedPath;
 
 /**
- * Keeps a token-bearing asset preview (image/HTML/PDF) authenticated. While
- * `assetKey` is set this registers an active url-token consumer (so runtime-auth
- * proactively refreshes the shared token before it expires) and subscribes to
- * token replacements, bumping `nonce` so the iframe/img remounts with the fresh
- * token — but only when the token actually changed, not on every interval.
+ * Resolves and freezes an authenticated direct browser asset URL (image/PDF)
+ * once per asset identity and runtime/auth generation. Routine background
+ * `yuri_url_token` rotations must NOT remount or mutate the URL of an already
+ * loaded image/PDF, otherwise reading state (e.g. PDF page/scroll position)
+ * resets every 45 seconds.
  */
-const useAssetAuthRefresh = (
+const useDirectAssetUrl = (
   assetKey: string,
+  buildUrl: () => string,
   setFileError: React.Dispatch<React.SetStateAction<string | null>>,
   errorFallback: string,
-): { readyKey: string; nonce: number } => {
-  const [readyKey, setReadyKey] = React.useState('');
-  const [nonce, setNonce] = React.useState(0);
+): { ready: boolean; url: string } => {
+  const runtimeGeneration = React.useSyncExternalStore(
+    subscribeRuntimeEndpointChanged,
+    getRuntimeGeneration,
+    getRuntimeGeneration,
+  );
+  const authGeneration = React.useSyncExternalStore(
+    subscribeRuntimeAuthGeneration,
+    getRuntimeAuthGeneration,
+    getRuntimeAuthGeneration,
+  );
+  const effectiveKey = assetKey ? `${runtimeGeneration}|${authGeneration}|${assetKey}` : '';
+  const buildUrlEvent = useEvent(buildUrl);
+  const [resolved, setResolved] = React.useState<{ key: string; url: string }>({ key: '', url: '' });
 
   React.useEffect(() => {
-    if (!assetKey) {
-      setReadyKey('');
+    if (!effectiveKey) {
+      setResolved({ key: '', url: '' });
       return;
     }
 
     let cancelled = false;
-    setReadyKey('');
+    setResolved({ key: '', url: '' });
     const apiBaseUrl = getRuntimeApiBaseUrl();
-    const release = acquireRuntimeUrlAuthToken(apiBaseUrl);
 
     void refreshRuntimeUrlAuthToken(apiBaseUrl)
       .then((token) => {
         if (cancelled || !token) return;
-        setReadyKey(assetKey);
+        setResolved({ key: effectiveKey, url: buildUrlEvent() });
         setFileError(null);
       })
       .catch((error) => {
         if (cancelled) return;
         setFileError(error instanceof Error ? error.message : errorFallback);
-        setReadyKey(assetKey);
+        setResolved({ key: effectiveKey, url: '' });
       });
-
-    const unsubscribe = subscribeRuntimeUrlAuthToken(() => {
-      if (cancelled) return;
-      // Token was refreshed underneath us — remount the asset with the fresh URL.
-      setReadyKey(assetKey);
-      setNonce((n) => n + 1);
-      setFileError(null);
-    });
 
     return () => {
       cancelled = true;
-      release();
-      unsubscribe();
     };
-  }, [assetKey, setFileError, errorFallback]);
+  }, [effectiveKey, setFileError, errorFallback, buildUrlEvent]);
 
-  return { readyKey, nonce };
+  const ready = Boolean(effectiveKey && resolved.key === effectiveKey);
+  return { ready, url: ready ? resolved.url : '' };
 };
 
 export const FilesView: React.FC<FilesViewProps> = (props) => {
@@ -2404,6 +2408,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     [expandedPaths],
   );
   const allDirectoriesExpanded = shouldCollapseFileTree(expandedPaths);
+  const animateExpansion = useSingleToggleExpansion(expandedPathSet.size);
 
   const toggleAllDirectories = React.useCallback(() => {
     if (!root) return;
@@ -2440,7 +2445,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   function renderTree(dirPath: string, depth: number): React.ReactNode {
     const nodes = childrenByDir[dirPath] ?? [];
 
-    return nodes.map((node, index) => {
+    return <ProgressiveRows items={nodes} initialRows={animateExpansion ? INITIAL_ROWS : BULK_INITIAL_ROWS} renderItem={(node, index) => {
       const isDir = node.type === 'directory';
       const isExpanded = isDir && expandedPathSet.has(normalizePath(node.path));
       const isActive = selectedFile?.path === node.path;
@@ -2476,8 +2481,12 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
             onRevealPath={handleRevealPath}
             onOpenDialog={handleOpenDialog}
           />
-          {isDir && isExpanded && (
-            <ul className="flex flex-col gap-1 ml-3 pl-3 border-l border-border/40 relative">
+          {isDir && (
+            <FileTreeChildren
+              expanded={isExpanded && (childrenByDir[node.path] !== undefined || Boolean(loadErrorsByDir[node.path]))}
+              animate={animateExpansion}
+              className="flex flex-col gap-1 ml-3 pl-3 border-l border-border/40 relative"
+            >
               {loadErrorsByDir[node.path] ? (
                 <li className="flex items-center gap-2 px-2 py-1 typography-meta text-muted-foreground">
                   <span className="min-w-0 flex-1 truncate text-[var(--status-error)]" title={loadErrorsByDir[node.path]}>{loadErrorsByDir[node.path]}</span>
@@ -2487,12 +2496,12 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
                   </Button>
                 </li>
               ) : null}
-              {renderTree(node.path, depth + 1)}
-            </ul>
+              {isExpanded ? renderTree(node.path, depth + 1) : null}
+            </FileTreeChildren>
           )}
         </li>
       );
-    });
+    }} />;
   }
 
   const isSelectedImage = Boolean(selectedFile?.path && isImageFile(selectedFile.path));
@@ -3283,12 +3292,20 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     : '';
 
   const assetAuthErrorFallback = t('filesView.error.readFileFailed');
-  const { readyKey: imageAssetAuthReadyKey, nonce: imagePreviewNonce } =
-    useAssetAuthRefresh(imageAssetAuthKey, setFileError, assetAuthErrorFallback);
-  const { readyKey: pdfAssetAuthReadyKey, nonce: pdfPreviewNonce } =
-    useAssetAuthRefresh(pdfAssetAuthKey, setFileError, assetAuthErrorFallback);
+  const buildDirectRawUrl = () => (selectedFile?.path
+    ? directFileResource('/api/fs/raw', {
+      path: selectedFile.path,
+      allowOutsideWorkspace: selectedFileReadOptions.allowOutsideWorkspace ? 'true' : undefined,
+      outsideFileGrant: selectedFileReadOptions.outsideFileGrant,
+      directory: root || undefined,
+    }, projectScope).url
+    : '');
+  const { ready: isDirectImageReady, url: directImageUrl } =
+    useDirectAssetUrl(imageAssetAuthKey, buildDirectRawUrl, setFileError, assetAuthErrorFallback);
+  const { ready: isDirectPdfReady, url: directPdfUrl } =
+    useDirectAssetUrl(pdfAssetAuthKey, buildDirectRawUrl, setFileError, assetAuthErrorFallback);
 
-  const isImageAssetAuthLoading = Boolean(imageAssetAuthKey && imageAssetAuthReadyKey !== imageAssetAuthKey);
+  const isImageAssetAuthLoading = Boolean(imageAssetAuthKey && !isDirectImageReady);
   const [projectPdfSource, setProjectPdfSource] = React.useState<{ key: string; url: string }>();
   const projectPdfKey = projectScope && selectedFile?.path && isSelectedPdf ? JSON.stringify([projectScope.queryScope, selectedFile.path]) : '';
   React.useEffect(() => {
@@ -3305,7 +3322,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     });
     return () => { controller.abort(); if (source) URL.revokeObjectURL(source); };
   }, [projectScope, projectPdfKey, selectedFile?.path, selectedFileReadOptions, root, assetAuthErrorFallback]);
-  const isPdfAssetAuthLoading = Boolean(projectPdfKey ? projectPdfSource?.key !== projectPdfKey : pdfAssetAuthKey && pdfAssetAuthReadyKey !== pdfAssetAuthKey);
+  const isPdfAssetAuthLoading = Boolean(projectPdfKey ? projectPdfSource?.key !== projectPdfKey : pdfAssetAuthKey && !isDirectPdfReady);
 
   const imageSrc = selectedFile?.path && isSelectedImage
     ? (runtime.isDesktop || projectScope
@@ -3314,12 +3331,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
         : desktopImageSrc)
       : (isSelectedSvg
         ? `data:${getImageMimeType(selectedFile.path)};utf8,${encodeURIComponent(fileContent)}`
-         : imageAssetAuthReadyKey === imageAssetAuthKey ? directFileResource('/api/fs/raw', {
-          path: selectedFile.path,
-          allowOutsideWorkspace: selectedFileReadOptions.allowOutsideWorkspace ? 'true' : undefined,
-          outsideFileGrant: selectedFileReadOptions.outsideFileGrant,
-          directory: root || undefined,
-         }, projectScope).url : ''))
+        : directImageUrl))
     : '';
 
   const openSelectedImagePreview = useEvent((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -3360,7 +3372,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     [root, selectedFile?.path],
   );
 
-  const renderImagePreview = React.useCallback((file: FileNode, options?: { fullHeight?: boolean }) => {
+  const renderImagePreview = (file: FileNode, options?: { fullHeight?: boolean }) => {
     const alt = file.name || t('filesView.editor.imageAltFallback');
     return (
       <div className={cn('flex items-center justify-center', options?.fullHeight ? 'h-full p-4' : 'h-full p-3')}>
@@ -3372,7 +3384,6 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
           disabled={!imageSrc}
         >
           <LoadingImage
-            key={imagePreviewNonce}
             src={imageSrc}
             alt={alt}
             className={cn(
@@ -3384,27 +3395,19 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
         </button>
       </div>
     );
-  }, [imagePreviewNonce, imageSrc, openSelectedImagePreview, t]);
+  };
 
-  const pdfSrc = projectPdfKey ? (projectPdfSource?.key === projectPdfKey ? projectPdfSource.url : '') : selectedFile?.path && isSelectedPdf && pdfAssetAuthReadyKey === pdfAssetAuthKey
-    ? directFileResource('/api/fs/raw', {
-      path: selectedFile.path,
-      allowOutsideWorkspace: selectedFileReadOptions.allowOutsideWorkspace ? 'true' : undefined,
-      outsideFileGrant: selectedFileReadOptions.outsideFileGrant,
-      directory: root || undefined,
-    }, projectScope).url
-    : '';
+  const pdfSrc = projectPdfKey ? (projectPdfSource?.key === projectPdfKey ? projectPdfSource.url : '') : directPdfUrl;
 
-  const renderPdfPreview = React.useCallback((file: FileNode) => (
+  const renderPdfPreview = (file: FileNode) => (
     <div className="h-full overflow-hidden bg-[var(--surface-background)]">
       <iframe
-        key={pdfPreviewNonce}
         src={pdfSrc}
         className="h-full w-full border-0"
         title={file.name}
       />
     </div>
-  ), [pdfSrc, pdfPreviewNonce]);
+  );
 
   React.useEffect(() => {
     let cancelled = false;

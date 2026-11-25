@@ -38,6 +38,8 @@ import { useGitStatus } from '@/lib/api/useProjectGitStore';
 import { useDirectoryShowHidden } from '@/lib/directoryShowHidden';
 import { useFilesViewShowGitignored } from '@/lib/filesViewShowGitignored';
 import { copyTextToClipboard } from '@/lib/clipboard';
+import { FileTreeChildren, useSingleToggleExpansion } from './FileTreeChildren';
+import { BULK_INITIAL_ROWS, INITIAL_ROWS, ProgressiveRows } from './ProgressiveRows';
 import { collectExpandableDirectoryPaths, collectUnexpandedDirectoryPaths, isFileTreeExpandAllSettled, shouldCollapseFileTree } from '@/lib/fileTreeExpand';
 import { cn, getRevealLabelKey } from '@/lib/utils';
 import { opencodeClient } from '@/lib/opencode/client';
@@ -905,6 +907,7 @@ export const SidebarFilesTree: React.FC = () => {
     [expandedPaths],
   );
   const allDirectoriesExpanded = shouldCollapseFileTree(expandedPaths);
+  const animateExpansion = useSingleToggleExpansion(expandedPathSet.size);
 
   const toggleAllDirectories = React.useCallback(() => {
     if (!root) return;
@@ -1068,7 +1071,7 @@ export const SidebarFilesTree: React.FC = () => {
   function renderTree(dirPath: string, depth: number): React.ReactNode {
     const nodes = childrenByDir[dirPath] ?? [];
 
-    return nodes.map((node) => {
+    return <ProgressiveRows items={nodes} initialRows={animateExpansion ? INITIAL_ROWS : BULK_INITIAL_ROWS} renderItem={(node) => {
       const isDir = node.type === 'directory';
       const isExpanded = isDir && expandedPathSet.has(normalizePath(node.path));
       const isActive = selectedPath === node.path;
@@ -1091,8 +1094,12 @@ export const SidebarFilesTree: React.FC = () => {
             onRevealPath={handleRevealPath}
             onOpenDialog={handleOpenDialog}
           />
-          {isDir && isExpanded && (
-            <ul className="relative ml-3 flex flex-col border-l border-border/40 pl-3">
+          {isDir && (
+            <FileTreeChildren
+              expanded={isExpanded && (childrenByDir[node.path] !== undefined || Boolean(loadErrorsByDir[node.path]))}
+              animate={animateExpansion}
+              className="relative ml-3 flex flex-col border-l border-border/40 pl-3"
+            >
               {loadErrorsByDir[node.path] ? (
                 <li className="flex items-center gap-2 px-2 py-1 typography-code text-muted-foreground">
                   <span className="min-w-0 flex-1 truncate text-[var(--status-error)]" title={loadErrorsByDir[node.path]}>{loadErrorsByDir[node.path]}</span>
@@ -1102,12 +1109,12 @@ export const SidebarFilesTree: React.FC = () => {
                   </Button>
                 </li>
               ) : null}
-              {renderTree(node.path, depth + 1)}
-            </ul>
+              {isExpanded ? renderTree(node.path, depth + 1) : null}
+            </FileTreeChildren>
           )}
         </li>
       );
-    });
+    }} />;
   }
 
   const hasTree = Boolean(root && childrenByDir[root]);

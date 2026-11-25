@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button';
 import { FilePreviewError } from '@/components/ui/FilePreviewError';
 import { MobileHtmlNetworkBoundary } from './MobileHtmlNetworkBoundary';
 import { resolveProjectFilePreview } from '@/lib/preview/project-file-preview';
+import { postPreviewUrlAuthToken } from '@/lib/preview/relay-preview-frame-src';
 import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
-import { acquireRuntimeUrlAuthToken, subscribeRuntimeUrlAuthToken, getRuntimeAuthGeneration, subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
+import { acquireRuntimeUrlAuthToken, getRuntimeUrlAuthTokenSync, subscribeRuntimeUrlAuthToken, getRuntimeAuthGeneration, subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
 import { getRuntimeGeneration, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { attachIframeSheetOverscroll } from '@/components/ui/iframeSheetOverscroll';
 
@@ -35,6 +36,22 @@ function FileDocument({ path, directory, entry, hostOrigin, className, iframeCla
     let renewal: ReturnType<typeof setTimeout> | undefined;
     let resolving = false;
     let tokenChanged = false;
+    const scheduleKeepalive = (expiresAt: number) => {
+      clearTimeout(renewal);
+      if (!source?.extend || controller.signal.aborted) return;
+      renewal = setTimeout(() => {
+        void (async () => {
+          if (controller.signal.aborted || !source?.extend) return;
+          try {
+            const nextExpiresAt = await source.extend(controller.signal);
+            if (!controller.signal.aborted && source) scheduleKeepalive(nextExpiresAt);
+          } catch {
+            // Keep the mounted document intact while the user reads; never reload
+            // or reset scroll position on a background keepalive failure.
+          }
+        })();
+      }, Math.max(1000, expiresAt - Date.now() - 10_000));
+    };
     const resolve = async () => {
       if (controller.signal.aborted || resolving) return;
       resolving = true;
@@ -48,7 +65,7 @@ function FileDocument({ path, directory, entry, hostOrigin, className, iframeCla
         if (controller.signal.aborted || tokenChanged) { void next.release().catch(() => {}); return; }
         source = next;
         setResult({ attempt, source: next });
-        renewal = setTimeout(() => { void resolve(); }, Math.max(1000, next.expiresAt - Date.now() - 10_000));
+        scheduleKeepalive(next.expiresAt);
       } catch {
         if (!controller.signal.aborted && !tokenChanged) setResult({ attempt, failed: true });
       } finally {
@@ -58,8 +75,15 @@ function FileDocument({ path, directory, entry, hostOrigin, className, iframeCla
     };
     const releaseAuth = acquireRuntimeUrlAuthToken();
     const unsubscribe = subscribeRuntimeUrlAuthToken(() => {
-      if (resolving) { tokenChanged = true; setResult(undefined); }
-      else void resolve();
+      if (resolving) {
+        tokenChanged = true;
+        return;
+      }
+      // Sync rotated URL auth tokens to the mounted preview bridge in place so
+      // reading state and scroll position are never interrupted by a reload.
+      if (source) {
+        postPreviewUrlAuthToken(frame.current, source.src, getRuntimeUrlAuthTokenSync());
+      }
     });
     void resolve();
     return () => {
@@ -75,8 +99,10 @@ function FileDocument({ path, directory, entry, hostOrigin, className, iframeCla
     <Button size="sm" onClick={retry}>{t('contextPanel.preview.actions.retry')}</Button>
   </div>;
   if (!current?.source) return <div className="flex h-full items-center justify-center text-muted-foreground">{t('contextPanel.preview.loading')}</div>;
-  return <div className={className ?? 'h-full overflow-hidden'}><iframe ref={frame} src={current.source.src}
+  const activeSrc = current.source.src;
+  return <div className={className ?? 'h-full overflow-hidden'}><iframe ref={frame} src={activeSrc}
     className={iframeClassName ?? 'h-full w-full border-none'} style={iframeStyle}
     sandbox="allow-scripts allow-same-origin allow-forms" title={t('filesView.editor.htmlPreviewTitle')}
+    onLoad={() => { postPreviewUrlAuthToken(frame.current, activeSrc, getRuntimeUrlAuthTokenSync()); }}
     onErrorCapture={() => setResult({ attempt, failed: true })} /></div>;
 }

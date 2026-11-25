@@ -1,12 +1,13 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { OpenCodeClient } from '@yuriai/opencode-gui-client';
 import { GuiPluginHost } from '@/lib/gui-plugins/host';
 import { GuiPluginHostContext } from '@/lib/gui-plugins/react';
 import { guiCommandShortcutId } from '@/lib/gui-plugins/command-shortcuts';
 import type { FilesAPI } from '@/lib/api/types';
+import { queryClient } from '@/lib/queryRuntime';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { UNASSIGNED_SHORTCUT } from '@/lib/shortcuts';
@@ -36,7 +37,9 @@ let textarea: HTMLTextAreaElement;
 const calls = { count: 0 };
 let revisionSequence = 0;
 function Harness({ owner, tick = 0 }: { owner: GuiPluginHost | null; tick?: number }) {
-  return <GuiPluginHostContext.Provider value={owner}><Keys /><span>{tick}</span></GuiPluginHostContext.Provider>;
+  return <QueryClientProvider client={queryClient}>
+    <GuiPluginHostContext.Provider value={owner}><Keys /><span>{tick}</span></GuiPluginHostContext.Provider>
+  </QueryClientProvider>;
 }
 function Keys() {
   useKeyboardShortcuts();

@@ -108,6 +108,14 @@ export interface TurnRecord {
     hasReasoning: boolean;
     diffStats?: TurnDiffStats;
     changedFiles?: TurnChangedFile[];
+    /** OpenCode v2: opening user message ID of the execution cycle for GET /api/session/:id/diff?from= */
+    turnDiffFromMessageId?: string;
+    /** OpenCode v2: sorted unique relative paths from assistant snapshot.files across the execution cycle. */
+    turnDiffFiles?: string[];
+    /** Deterministic revision signature for v2 turn diff query invalidation. */
+    turnDiffSignature?: string;
+    /** Authoritative OpenCode v2 idle marker outcome when the execution cycle ended. */
+    turnIdleOutcome?: 'succeeded' | 'failed' | 'interrupted';
     stream: TurnStreamState;
     completionDisposition: TurnCompletionDisposition;
     activityPresentationKind: TurnActivityPresentationKind;
@@ -167,6 +175,10 @@ export interface TurnGroupingContext {
     activityPresentationKind?: TurnActivityPresentationKind;
     diffStats?: TurnDiffStats;
     changedFiles?: TurnChangedFile[];
+    turnDiffFromMessageId?: string;
+    turnDiffFiles?: string[];
+    turnDiffSignature?: string;
+    turnIdleOutcome?: 'succeeded' | 'failed' | 'interrupted';
     userMessageCreatedAt?: number;
     userMessageVariant?: string;
     durationMs?: number;

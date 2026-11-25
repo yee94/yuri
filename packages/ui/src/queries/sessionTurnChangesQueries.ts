@@ -3,6 +3,22 @@ import { queryKeys } from '@/lib/queryRuntime';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { opencodeClient } from '@/lib/opencode/client';
+import type { SnapshotFileDiff } from '@/lib/opencode/v2-types';
+import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
+
+export type SessionTurnDiffRequest = {
+  sessionID: string;
+  directory: string;
+  from: string;
+  to?: string;
+  /**
+   * Deterministic signature of the turn's recorded snapshot metadata
+   * (e.g. end snapshots / touched file list) so growing or retried turns
+   * invalidate stale cached diffs.
+   */
+  snapshotSignature?: string;
+  scope?: HostRuntimeEntry;
+};
 
 export type SessionTurnChangeRequest = {
   sessionID: string;
@@ -101,6 +117,77 @@ const fallbackLegacySessionDiff = async (
     },
     { signal },
   );
+};
+
+export const sessionTurnDiffQueryKey = (
+  input: SessionTurnDiffRequest,
+  transport = input.scope?.key ?? getRuntimeTransportIdentity(),
+) => queryKeys.sessionTurnChanges.turn(
+  input.directory,
+  input.sessionID,
+  input.from,
+  input.snapshotSignature,
+  transport,
+);
+
+export const sessionTurnDiffQueryOptions = (
+  input: SessionTurnDiffRequest,
+  transport = input.scope?.key ?? getRuntimeTransportIdentity(),
+) => ({
+  queryKey: sessionTurnDiffQueryKey(input, transport),
+  queryFn: async ({ signal }: { signal: AbortSignal }): Promise<SnapshotFileDiff[]> => {
+    if (input.scope) {
+      const sdk = input.scope.sdk();
+      return sdk.session.diff(
+        {
+          sessionID: input.sessionID,
+          from: input.from,
+          ...(input.to ? { to: input.to } : {}),
+        },
+        { signal },
+      );
+    }
+    return opencodeClient.getSessionDiff(
+      {
+        sessionID: input.sessionID,
+        directory: input.directory,
+        from: input.from,
+        ...(input.to ? { to: input.to } : {}),
+      },
+      { signal },
+    );
+  },
+  // Settled turn snapshots are immutable for a given snapshotSignature.
+  staleTime: Infinity,
+  gcTime: 5 * 60_000,
+  retry: false as const,
+});
+
+export const useSessionTurnDiffQuery = (
+  input: SessionTurnDiffRequest | null,
+  options: { enabled?: boolean } = {},
+) => {
+  const transport = input?.scope?.key ?? getRuntimeTransportIdentity();
+  const enabled = Boolean(input)
+    && Boolean(input?.sessionID?.trim())
+    && Boolean(input?.directory?.trim())
+    && Boolean(input?.from?.trim())
+    && options.enabled !== false;
+  const request: SessionTurnDiffRequest = input ?? {
+    sessionID: '',
+    directory: '',
+    from: '',
+  };
+  return useQuery({
+    ...sessionTurnDiffQueryOptions(
+      {
+        ...request,
+        directory: normalizeDirectory(request.directory),
+      },
+      transport,
+    ),
+    enabled,
+  });
 };
 
 export const sessionTurnChangeFileQueryKey = (

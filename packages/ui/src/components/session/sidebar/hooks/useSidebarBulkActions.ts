@@ -198,7 +198,7 @@ export const useSidebarBulkActions = (args: Args) => {
         useSessionMultiSelectStore.getState().disable();
         return;
       }
-      if (modifier && event.key === 'Backspace') {
+      if (modifier && !event.shiftKey && event.key === 'Backspace') {
         event.preventDefault();
         handleBulkDelete();
         return;

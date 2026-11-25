@@ -193,6 +193,16 @@ const areTurnDiffStatsEqual = (left?: TurnDiffStats, right?: TurnDiffStats): boo
     && left.hasDiffs === right.hasDiffs;
 };
 
+const areStringListsEqual = (left?: string[], right?: string[]): boolean => {
+  if (left === right) return true;
+  if (!left || !right) return !left && !right;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+};
+
 const areTurnChangedFilesEqual = (left?: TurnChangedFile[], right?: TurnChangedFile[]): boolean => {
   if (left === right) return true;
   if (!left || !right) return !left && !right;
@@ -376,6 +386,18 @@ export const areRelevantTurnGroupingContextsEqual = (
   }
 
   if ((ownerRelevant || segmentsRelevant || left.isLastAssistantInTurn || right.isLastAssistantInTurn) && !areTurnChangedFilesEqual(left.changedFiles, right.changedFiles)) {
+    return false;
+  }
+
+  if (
+    (ownerRelevant || segmentsRelevant || left.isLastAssistantInTurn || right.isLastAssistantInTurn)
+    && (
+      left.turnDiffFromMessageId !== right.turnDiffFromMessageId
+      || left.turnDiffSignature !== right.turnDiffSignature
+      || left.turnIdleOutcome !== right.turnIdleOutcome
+      || !areStringListsEqual(left.turnDiffFiles, right.turnDiffFiles)
+    )
+  ) {
     return false;
   }
 

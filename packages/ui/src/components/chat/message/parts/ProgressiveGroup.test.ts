@@ -7,6 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const progressiveGroupSource = readFileSync(join(__dirname, 'ProgressiveGroup.tsx'), 'utf-8');
 const formatActivityDurationSource = readFileSync(join(__dirname, 'formatActivityDuration.ts'), 'utf-8');
 const messageBodySource = readFileSync(join(__dirname, '../MessageBody.tsx'), 'utf-8');
+const turnChangesCardSource = readFileSync(join(__dirname, '../TurnChangesCard.tsx'), 'utf-8');
 const messageListSource = readFileSync(join(__dirname, '../../MessageList.tsx'), 'utf-8');
 const turnItemSource = readFileSync(join(__dirname, '../../components/TurnItem.tsx'), 'utf-8');
 const turnAssistantHeaderSource = readFileSync(join(__dirname, '../../components/TurnAssistantHeader.tsx'), 'utf-8');
@@ -502,33 +503,30 @@ describe('progressive activity presentation', () => {
 
     test('turn changes preview carries historical turn identity across desktop and dedicated mobile', () => {
         // File row passes the clicked path so mobile expands that file; header opens the whole turn.
-        expect(messageBodySource).toContain('mobileActions.openTurnDiff(turnId, diffSessionId, file);');
-        expect(messageBodySource).toContain('mobileActions.openTurnDiff(turnId, diffSessionId);');
-        expect(messageBodySource).toContain("dedupeKey: `turn-diff:${diffSessionId || 'session'}:${turnId}`");
-        expect(messageBodySource).toContain("diffScope: 'turn'");
-        expect(messageBodySource).toContain('const diffSessionId = sessionSurface.sessionId;');
+        expect(turnChangesCardSource).toContain('const targetTurnMessageId = turnDiffFromMessageId || turnId;');
+        expect(turnChangesCardSource).toContain('mobileActions.openTurnDiff(targetTurnMessageId, diffSessionId, file);');
+        expect(turnChangesCardSource).toContain('mobileActions.openTurnDiff(targetTurnMessageId, diffSessionId);');
+        expect(turnChangesCardSource).toContain("dedupeKey: `turn-diff:${diffSessionId || 'session'}:${targetTurnMessageId}`");
+        expect(turnChangesCardSource).toContain("diffScope: 'turn'");
+        expect(turnChangesCardSource).toContain('const diffSessionId = sessionSurface.sessionId || sessionId || null;');
         expect(messageBodySource).toContain('fileCount={turnGroupingContext.diffStats.files}');
+        expect(messageBodySource).toContain('turnDiffFromMessageId={turnGroupingContext.turnDiffFromMessageId}');
         expect(messageBodySource).toContain('isLatestTurn={turnGroupingContext.isLatestTurn}');
         expect(messageBodySource).toContain('&& !hasAuthoritativeChangesMarker');
     });
 
-    test('turn changes preview uses a lightweight bordered card with tokenized interactive rows', () => {
-        expect(messageBodySource).toContain('data-turn-changes-preview="true"');
-        expect(messageBodySource).toContain('data-message-action-group="true"');
-        expect(messageBodySource).toContain("const TURN_CHANGES_ROW_CLASS =");
-        expect(messageBodySource).toContain("const TURN_CHANGES_ROW_DESKTOP_CLASS = 'h-7 gap-1.5';");
-        expect(messageBodySource).toContain("const TURN_CHANGES_ROW_MOBILE_CLASS = 'h-6 gap-1';");
-        expect(messageBodySource).toContain('mt-4 flex min-w-0 flex-col rounded-[var(--radius-lg)] border bg-muted/20');
+    test('turn changes preview uses a lightweight card with tokenized interactive rows', () => {
+        expect(turnChangesCardSource).toContain('data-turn-changes-preview="true"');
+        expect(turnChangesCardSource).toContain('data-message-action-group="true"');
+        expect(turnChangesCardSource).toContain('rounded-[var(--radius-xl)] bg-[color-mix(in_srgb,var(--surface-foreground)_5.5%,var(--surface-background))]');
         // L1 thin list renders per-file rows under the count header, no async list load.
-        expect(messageBodySource).toContain('data-turn-change-file="true"');
+        expect(turnChangesCardSource).toContain('data-turn-change-file="true"');
         expect(messageBodySource).toContain('changedFiles={turnGroupingContext.changedFiles}');
         expect(messageBodySource).not.toContain('useSessionTurnChangesQuery');
-        expect(messageBodySource).toContain('TURN_CHANGES_ROW_CLASS');
-        expect(messageBodySource).toContain('TURN_CHANGES_ROW_DESKTOP_CLASS');
-        expect(messageBodySource).toContain('TURN_CHANGES_ROW_MOBILE_CLASS');
-        expect(messageBodySource).toContain("t('chat.changedFiles.title')");
-        expect(messageBodySource).not.toContain('mt-4 rounded-xl border border-border/50 bg-muted/15 p-3');
-        expect(messageBodySource).not.toContain('gap-1.5 sm:grid-cols-2');
-        expect(messageBodySource).not.toContain('rounded-lg border border-border/30 bg-muted/30');
+        expect(turnChangesCardSource).not.toContain('useSessionTurnChangesQuery');
+        expect(turnChangesCardSource).toContain("t('chat.changedFiles.editedFilesSingle'");
+        expect(turnChangesCardSource).not.toContain('mt-4 rounded-xl border border-border/50 bg-muted/15 p-3');
+        expect(turnChangesCardSource).not.toContain('gap-1.5 sm:grid-cols-2');
+        expect(turnChangesCardSource).not.toContain('rounded-lg border border-border/30 bg-muted/30');
     });
 });
