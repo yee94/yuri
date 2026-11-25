@@ -287,7 +287,12 @@ event that ends the run. An unviewed live completion therefore stands in for tha
 session's attention (count = max with the Host row, never a sum) until the Host row
 revision passes the one recorded when the notification arrived, the session is
 viewed, or 15 seconds elapse. Running → unread is then one transition instead of
-running → read → unread. Initial GET, revision
+running → read → unread. Conversely, a completion in the session this client is
+viewing is read on receipt, yet the Host still commits it as unread because it does
+not know who is watching. The read acknowledgement therefore projects that row as
+read at once, until the Host row revision passes the acknowledged one; a failed
+write restores the Host marker. Running → read is then one transition instead of
+read → unread → read. Initial GET, revision
 tips and stream-ready recovery converge without per-session polling or transcript
 reads; tips received during a GET force a trailing read. Failed refreshes keep the
 last authoritative snapshot. Transport/generation fences reject stale responses,

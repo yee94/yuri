@@ -115,6 +115,52 @@ describe('session unread sync', () => {
     expect(server.sessions.one.manual).toBe(true);
   });
 
+  test('a completion in the viewed session never surfaces the Host unread commit before its read lands', async () => {
+    let server = snapshot(1, 0);
+    let releasePut!: () => void;
+    state.fetch.mockImplementation(async (_path, options) => {
+      if (options?.method === 'PUT') {
+        await new Promise<void>(done => { releasePut = done; });
+        server = snapshot(server.revision + 1, 0);
+      }
+      return reply(server);
+    });
+    stop = mountSessionUnreadSync(() => true);
+    await vi.waitFor(() => expect(state.client!.getQueryData<SessionUnreadSnapshot>(sessionUnreadKey())?.revision).toBe(1));
+    const seen: number[] = [];
+    const unsubscribe = useNotificationStore.subscribe(next => { seen.push(next.index.session.unseenCount.one ?? 0); });
+    try {
+      appendNotification({ session: 'one', directory: '/project', type: 'turn-complete', time: Date.now(), viewed: true });
+      // The Host records the completion without knowing this client is watching.
+      server = snapshot(2, 1);
+      tip();
+      await vi.waitFor(() => expect(state.fetch.mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(true));
+      expect(state.client!.getQueryData<SessionUnreadSnapshot>(sessionUnreadKey())?.revision).toBe(2);
+      expect(count()).toBe(0);
+      releasePut();
+      await vi.waitFor(() => expect(state.client!.getQueryData<SessionUnreadSnapshot>(sessionUnreadKey())?.revision).toBe(3));
+      expect(count()).toBe(0);
+      expect(seen.every(value => value === 0)).toBe(true);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test('a failed read of the viewed session restores the Host unread marker', async () => {
+    let server = snapshot(1, 0);
+    state.fetch.mockImplementation(async (_path, options) => {
+      if (options?.method === 'PUT') return reply({}, 409);
+      return reply(server);
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    stop = mountSessionUnreadSync(() => true);
+    await vi.waitFor(() => expect(state.client!.getQueryData<SessionUnreadSnapshot>(sessionUnreadKey())?.revision).toBe(1));
+    server = snapshot(2, 1);
+    tip();
+    await vi.waitFor(() => expect(count()).toBe(1));
+    expect(state.fetch.mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(true);
+  });
+
   test('failed GET and failed mutations preserve the previous authority; reconnect and focus retry', async () => {
     state.fetch.mockImplementation(async () => reply(snapshot(1, 1, true)));
     stop = mountSessionUnreadSync(() => false);
