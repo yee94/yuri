@@ -531,7 +531,7 @@ const decorateLinks = (root: HTMLElement, ctx: DecorateContext): void => {
     if (faviconUrl) {
       const favWrap = document.createElement('span');
       favWrap.className =
-        'mr-1 inline-flex size-[18px] items-center justify-center rounded border border-[var(--border)] bg-[var(--interactive-hover)] align-middle';
+        'mr-1 inline-flex size-[0.85em] items-center justify-center rounded border border-[var(--border)] bg-[var(--interactive-hover)] align-middle';
       const img = document.createElement('img');
       img.setAttribute('data-md-link-favicon', 'true');
       img.src = faviconUrl;
@@ -539,7 +539,7 @@ const decorateLinks = (root: HTMLElement, ctx: DecorateContext): void => {
       img.setAttribute('aria-hidden', 'true');
       img.loading = 'lazy';
       img.decoding = 'async';
-      img.className = 'size-3.5 rounded-sm';
+      img.className = 'size-[0.65em] rounded-sm';
       img.addEventListener('error', () => favWrap.remove(), { once: true });
       favWrap.appendChild(img);
       anchor.parentNode?.insertBefore(favWrap, anchor);

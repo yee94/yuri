@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/web",
-  "version": "0.3.9-beta.20",
+  "version": "0.3.9-beta.21",
   "private": false,
   "type": "module",
   "main": "./server/index.js",
