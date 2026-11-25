@@ -999,6 +999,27 @@ const stopControlMasterBestEffort = async (parsed, controlPath) => {
   }
 };
 
+const waitForChildExit = (child, timeoutMs = 500) => {
+  if (!child || typeof child.once !== 'function' || child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener?.('exit', done);
+      child.removeListener?.('close', done);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    timer.unref?.();
+    child.once('exit', done);
+    child.once('close', done);
+  });
+};
+
 const askpassScriptContent = () => `#!/bin/bash
 PROMPT="$1"
 
@@ -2818,12 +2839,14 @@ find_opencode
         await this.stopRemoteServerBestEffort(session.parsed, session.controlPath, session.remotePort);
       }
       await stopControlMasterBestEffort(session.parsed, session.controlPath);
-      for (const child of [session.mainForward, session.master]) {
+      const children = [session.mainForward, session.master];
+      for (const child of children) {
         try {
-          child.kill('SIGTERM');
+          child?.kill?.('SIGTERM');
         } catch {
         }
       }
+      await Promise.all(children.map((child) => waitForChildExit(child)));
       try {
         await fsp.rm(session.controlPath, { force: true });
       } catch {
@@ -2874,7 +2897,10 @@ find_opencode
       localPort = await pickUnusedLocalPort();
     }
     if (!(await isLocalPortAvailable(bindHost, localPort))) {
-      localPort = await pickUnusedLocalPort();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      if (!(await isLocalPortAvailable(bindHost, localPort))) {
+        localPort = await pickUnusedLocalPort();
+      }
     }
 
     const mainForward = await this.spawnMainForward(parsed, controlPath, bindHost, localPort, remotePort);

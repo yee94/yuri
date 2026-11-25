@@ -435,12 +435,13 @@ surfaces stay on the current path. Markstream in-bubble node virtualization
 is off (`maxLiveNodes=0` plus batch/smooth/defer off) so TanStack remains the
 only MessageList height owner.
 
-`useSidebarBrandStore` persists the sidebar wordmark. Packaged Electron multi-window
-shares one UI origin while each window may bind a different API host, so the store
-uses transport-scoped localStorage (`createRuntimeScopedJSONStorage` in
-`runtimeScopedStorage.ts`). In-window host switches rehydrate from the new transport
-bucket. Theme localStorage keys follow the same transport-scoped helper so remote
-windows do not inherit the local theme.
+`useSidebarBrandStore` persists the sidebar wordmark per host instance (`sidebarBrandName`
+in Host `settings.json`, mirrored in instance-scoped localStorage `yuri.inst.{runtimeKey}.sidebar-brand-store`
+so SSH local-forward port changes and direct⇄relay switches never reset it). Packaged Electron
+multi-window stays isolated per host, reads legacy transport-scoped keys (`yuri.rt.*`) once to
+migrate existing installs, and resets in-memory state to default when switching in-window to a host
+with no saved brand. Theme localStorage keys remain transport-scoped (`runtimeScopedStorage.ts`) so
+remote windows do not inherit the local theme.
 
 Model picker sections are always expanded in the shared picker. Legacy section-collapse preferences are no longer read or written.
 
@@ -658,11 +659,11 @@ manual order onto that authoritative array, even when only the cached manual
 order differs. Missing projects preserve the cache; explicit empty projects
 clear it. Local manual order is startup continuity, not a per-device override.
 
-`useSessionDisplayStore` (`projectSortOrder`) and `useMobileSessionTreeStore`
-use the same instance-scoped persist helper and rehydrate when `runtimeKey`
+`useSessionDisplayStore` (`projectSortOrder`), `useSidebarBrandStore` (`sidebarBrandName`),
+and `useMobileSessionTreeStore` use instance-scoped persistence and rehydrate when `runtimeKey`
 changes. Directory last/home caches, sidebar chrome (`yuri.sessions.*`),
 session folders, and settings mirrors in `persistence.ts` follow the
-same instance key. Theme/brand remain transport-scoped
+same instance key. Theme localStorage mirrors remain transport-scoped
 (`runtimeScopedStorage.ts`) because packaged multi-window shares an origin
 across different API hosts.
 

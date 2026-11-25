@@ -5112,6 +5112,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (!targetUrl) throw new Error('Invalid URL');
       const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
       await createAdditionalWindow(windowUrl, {
+        hostId: host.id,
         apiBaseUrl: targetUrl,
         clientToken: host.clientToken || '',
         requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),

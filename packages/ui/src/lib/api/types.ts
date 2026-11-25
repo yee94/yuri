@@ -707,6 +707,7 @@ export interface SettingsPayload {
   gitProviderId?: string;
   gitModelId?: string;
   pwaAppName?: string;
+  sidebarBrandName?: string;
   mobileKeyboardMode?: 'native' | 'resize-content';
   draftStarters?: DraftStarterRef[];
   draftStartersCraftGoalAdded?: boolean;
