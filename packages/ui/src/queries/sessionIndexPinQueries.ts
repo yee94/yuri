@@ -64,17 +64,45 @@ const samePinnedMembership = (left: ReadonlySet<string>, right: ReadonlySet<stri
   return true;
 };
 
+/**
+ * Click intent that has not been confirmed by the Host yet. A snapshot fetched before
+ * the write commits is stale; without this overlay it would briefly undo the optimistic
+ * pin and the row would jump back and forth.
+ */
+const pendingPinIntents = new Map<string, boolean>();
+let pendingPinVersion = 0;
+let cachedPendingPinVersion = 0;
+const pendingPinListeners = new Set<() => void>();
+
+const setPendingPinIntent = (sessionId: string, nextPinned: boolean | null): void => {
+  if (nextPinned === null) pendingPinIntents.delete(sessionId);
+  else pendingPinIntents.set(sessionId, nextPinned);
+  pendingPinVersion += 1;
+  pendingPinListeners.forEach((listener) => listener());
+};
+
+const applyPendingPinIntents = (ids: ReadonlySet<string>): ReadonlySet<string> => {
+  if (pendingPinIntents.size === 0) return ids;
+  const next = new Set(ids);
+  for (const [sessionId, pinned] of pendingPinIntents) {
+    if (pinned) next.add(sessionId);
+    else next.delete(sessionId);
+  }
+  return next.size === 0 ? EMPTY_PINNED_SESSION_IDS : next;
+};
+
 export const readPinnedSessionIds = (
   client: Pick<QueryClient, 'getQueryData'> = queryClient,
   transport = getRuntimeTransportIdentity(),
 ): ReadonlySet<string> => {
   const snapshot = readSessionIndexSnapshotQuery(client, transport);
-  if (snapshot === cachedPinnedSnapshot && transport === cachedPinnedTransport) {
+  if (snapshot === cachedPinnedSnapshot && transport === cachedPinnedTransport && cachedPendingPinVersion === pendingPinVersion) {
     return cachedPinnedIds;
   }
-  const next = derivePinnedSessionIdsFromSnapshot(snapshot);
+  const next = applyPendingPinIntents(derivePinnedSessionIdsFromSnapshot(snapshot));
   cachedPinnedSnapshot = snapshot;
   cachedPinnedTransport = transport;
+  cachedPendingPinVersion = pendingPinVersion;
   cachedPinnedIds = samePinnedMembership(cachedPinnedIds, next) ? cachedPinnedIds : next;
   return cachedPinnedIds;
 };
@@ -136,6 +164,7 @@ const applyOptimisticPin = (
 ): SessionIndexSnapshot | null => {
   const previous = readSessionIndexSnapshotQuery(client, transport);
   if (!previous) return null;
+  setPendingPinIntent(sessionId, nextPinned);
   const pinnedValue = nextPinned ? new Date().toISOString() : null;
   const next = patchSessionIndexPinned(previous, sessionId, pinnedValue);
   if (next !== previous) {
@@ -163,7 +192,7 @@ export const togglePinnedSession = async (
   // Unsupported / unavailable: empty pins are legitimate; do not request or toast.
   if (!snapshot) return;
 
-  const currentlyPinned = derivePinnedSessionIdsFromSnapshot(snapshot).has(id);
+  const currentlyPinned = applyPendingPinIntents(derivePinnedSessionIdsFromSnapshot(snapshot)).has(id);
   const nextPinned = !currentlyPinned;
   const previous = applyOptimisticPin(client, transport, id, nextPinned);
   try {
@@ -182,17 +211,24 @@ export const togglePinnedSession = async (
         ? 'sessions.sidebar.session.pin.error'
         : 'sessions.sidebar.session.unpin.error'));
     throw error;
+  } finally {
+    if (previous) setPendingPinIntent(id, null);
   }
 };
 
 const subscribePinnedSessionIds = (onStoreChange: () => void): (() => void) => {
   const cache = queryClient.getQueryCache();
-  return cache.subscribe((event) => {
+  pendingPinListeners.add(onStoreChange);
+  const unsubscribe = cache.subscribe((event) => {
     if (event.type !== 'updated' && event.type !== 'removed') return;
     const key = event.query.queryKey;
     if (!Array.isArray(key) || key[1] !== 'sessionIndex' || key[2] !== 'snapshot') return;
     onStoreChange();
   });
+  return () => {
+    pendingPinListeners.delete(onStoreChange);
+    unsubscribe();
+  };
 };
 
 const getPinnedSessionIdsSnapshot = (): ReadonlySet<string> => readPinnedSessionIds();
@@ -231,6 +267,9 @@ export const useTogglePinnedSession = (): ((sessionId: string) => void) => {
           ? 'sessions.sidebar.session.pin.error'
           : 'sessions.sidebar.session.unpin.error'));
     },
+    onSettled: (_data, _error, variables, context) => {
+      if (context?.previous) setPendingPinIntent(variables.sessionId, null);
+    },
   });
 
   return useEvent((sessionId: string) => {
@@ -240,7 +279,7 @@ export const useTogglePinnedSession = (): ((sessionId: string) => void) => {
     const transport = getRuntimeTransportIdentity();
     const snapshot = readSessionIndexSnapshotQuery(client, transport);
     if (!snapshot) return;
-    const currentlyPinned = derivePinnedSessionIdsFromSnapshot(snapshot).has(id);
+    const currentlyPinned = applyPendingPinIntents(derivePinnedSessionIdsFromSnapshot(snapshot)).has(id);
     mutation.mutate({
       sessionId: id,
       nextPinned: !currentlyPinned,

@@ -129,6 +129,30 @@ describe('sessionIndexPinQueries', () => {
     expect(pinSessionMock).toHaveBeenCalledWith('ses_1');
   });
 
+  test('a stale snapshot landing while the pin write is in flight does not undo the pin', async () => {
+    writeSessionIndexSnapshotQuery(snapshot([{ id: 'ses_1' }]), { client, transport: 'transport-a', persist: false });
+    let release: () => void = () => {};
+    pinSessionMock.mockImplementationOnce(() => new Promise<undefined>((resolve) => { release = () => resolve(undefined); }));
+
+    const pending = togglePinnedSession('ses_1', { client, transport: 'transport-a' });
+    expect(readPinnedSessionIds(client, 'transport-a').has('ses_1')).toBe(true);
+
+    writeSessionIndexSnapshotQuery(snapshot([{ id: 'ses_1' }]), { client, transport: 'transport-a', persist: false });
+    expect(readPinnedSessionIds(client, 'transport-a').has('ses_1')).toBe(true);
+
+    release();
+    await pending;
+    writeSessionIndexSnapshotQuery(snapshot([{ id: 'ses_1', pinned: '2026-01-01T00:00:00.000Z' }]), { client, transport: 'transport-a', persist: false });
+    expect(readPinnedSessionIds(client, 'transport-a').has('ses_1')).toBe(true);
+  });
+
+  test('the pending intent is dropped when the write fails', async () => {
+    writeSessionIndexSnapshotQuery(snapshot([{ id: 'ses_1' }]), { client, transport: 'transport-a', persist: false });
+    pinSessionMock.mockRejectedValueOnce(new Error('boom'));
+    await expect(togglePinnedSession('ses_1', { client, transport: 'transport-a' })).rejects.toThrow('boom');
+    expect(readPinnedSessionIds(client, 'transport-a').has('ses_1')).toBe(false);
+  });
+
   test('patchSessionIndexPinned clears and sets pinned timestamps', () => {
     const base = snapshot([{ id: 'ses_1', pinned: '2026-01-01T00:00:00.000Z' }, { id: 'ses_2' }]);
     const cleared = patchSessionIndexPinned(base, 'ses_1', null);
