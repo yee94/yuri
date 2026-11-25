@@ -1,13 +1,14 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { stripSystemReminders } from '../opencode/system-reminder.js';
 
 export function projectSearchRecord({ info, parts = [] }) {
   const role = info?.clientRole ?? info?.role;
   if (role !== 'user' && role !== 'assistant') return null;
   if (role === 'assistant' && !info.finish && !info.time?.completed) return null;
   let text = parts.filter((part) => part.type === 'text' && !part.synthetic && !part.ignored && !part.slim)
-    .map((part) => typeof part.text === 'string' ? part.text : '').join('\n').trim();
+    .map((part) => typeof part.text === 'string' ? stripSystemReminders(part.text) : '').join('\n').trim();
   if (!text) return null;
   if (role === 'assistant' && text.length > 2048) text = text.slice(0, 1024) + '\n' + text.slice(-1023);
   return { info: { id: info.id, role, time: { created: Number(info.time?.created) || 0 }, finish: role === 'assistant' ? info.finish || 'stop' : undefined }, parts: [{ type: 'text', text }] };

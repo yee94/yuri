@@ -1,16 +1,13 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from './registry.js';
 import {
-  buildWorkspaceSystemInstruction,
   getWorkspacePaths,
-  installWorkspaceSessionInstruction,
   isBlankWorkspace,
   isMultiPathWorkspace,
   isWorkspaceId,
-  WORKSPACE_INSTRUCTION_KEY,
 } from './workspace.js';
 
 const tempDirs = [];
@@ -118,49 +115,5 @@ describe('multi-path & blank workspace registry', () => {
     expect(blanked.project.id).toBe(originalId);
     expect(isBlankWorkspace(blanked.project)).toBe(true);
     expect(blanked.project.paths).toEqual([]);
-  });
-
-  it('installs yuri.workspace system instruction only for multi-path or 0-path workspaces', async () => {
-    const put = vi.fn(async () => undefined);
-    const client = { session: { instructions: { entry: { put } } } };
-    const projects = [
-      { id: 'path_single', path: '/code/yuri' },
-      { id: 'ws_multi', path: '/code/yuri', paths: ['/code/yuri', '/code/agent-tracker'], label: 'yuri-runmark' },
-      { id: 'ws_blank', path: '/data/workspaces/ws_blank', paths: [], label: 'Notes' },
-    ];
-    const readSettings = async () => ({ projects });
-    const sanitizeProjects = (list) => list;
-
-    // Single-path project skips injection
-    const singleInstalled = await installWorkspaceSessionInstruction({
-      client,
-      sessionID: 'ses_1',
-      workspaceId: 'path_single',
-      directory: '/code/yuri',
-      readSettings,
-      sanitizeProjects,
-    });
-    expect(singleInstalled).toBe(false);
-    expect(put).not.toHaveBeenCalled();
-
-    // Multi-path workspace injects explicit directory list & guidelines
-    const multiInstalled = await installWorkspaceSessionInstruction({
-      client,
-      sessionID: 'ses_2',
-      workspaceId: 'ws_multi',
-      directory: '/code/yuri',
-      readSettings,
-      sanitizeProjects,
-    });
-    expect(multiInstalled).toBe(true);
-    expect(put).toHaveBeenCalledWith(expect.objectContaining({
-      sessionID: 'ses_2',
-      key: WORKSPACE_INSTRUCTION_KEY,
-      value: expect.stringContaining('/code/agent-tracker'),
-    }));
-
-    // 0-path blank workspace injects non-repo guidance
-    const blankInstruction = buildWorkspaceSystemInstruction(projects[2]);
-    expect(blankInstruction).toContain('no attached project directories');
   });
 });

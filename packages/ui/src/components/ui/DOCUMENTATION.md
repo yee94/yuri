@@ -1,3 +1,10 @@
+# Brand icons
+
+`ModelLogo` and `ProviderLogo` paint bundled marks as current-color foreground
+masks. Missing or failed marks use built-in monochrome foreground glyphs, never
+an Agent accent or other special color. `ModelLogo` still accepts an explicit
+caller-owned fallback.
+
 # Shared update presentation
 
 `UpdateDialogView` is the single update dialog renderer for client updates and
@@ -228,6 +235,11 @@ search and directory selection, share this backdrop; it remains the full-window
 dismissal target. Ordinary dialogs keep `DialogOverlay`'s black translucent scrim
 (`bg-black/50 dark:bg-black/75`), and mobile sheet/page backdrops retain their
 existing recipes.
+
+The workspace-directory editor opens above Settings, whose black scrim and
+dimmed popup would gray the thin glass fill, so `DirectoryExplorerSurface`'s
+`stacked` option gives that picker the solid `surface.elevated` fill; edge,
+shadow and radius stay the shared picker recipe.
 
 The add-project directory picker additionally uses a 180ms fade and 320ms scale
 transition from 6% size. Pointer requests carry the trigger's viewport center

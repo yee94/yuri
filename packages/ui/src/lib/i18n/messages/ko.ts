@@ -3449,6 +3449,8 @@ export const dict: Record<I18nKey, string> = {
   'workspace.paths.description': '0개 이상의 디렉터리를 연결할 수 있습니다. 기본 디렉터리가 기본 작업 디렉터리로 사용됩니다.',
   'workspace.paths.empty': '연결된 디렉터리가 없습니다. 폴더를 추가하거나 빈 워크스페이스로 사용하세요.',
   'workspace.paths.primaryBadge': '기본',
+  'workspace.paths.sameMachineHint': '다중 프로젝트에는 같은 컴퓨터의 디렉터리만 포함할 수 있습니다',
+  'workspace.paths.count': '디렉터리 {count}개',
   'workspace.paths.setPrimary': '기본으로 설정',
   'workspace.paths.removeAria': '디렉터리 {path} 제거',
   'workspace.paths.addPlaceholder': '/path/to/directory',
@@ -3461,5 +3463,4 @@ export const dict: Record<I18nKey, string> = {
   'workspace.create.nameRequired': '워크스페이스 이름을 입력하세요.',
   'workspace.create.submit': '워크스페이스 만들기',
   'workspace.create.stageDirAria': '{name}을(를) 워크스페이스에 추가',
-  'workspace.multiRepo.branchReadOnly': '다중 저장소 워크스페이스에서는 브랜치가 읽기 전용입니다. 변경은 에이전트에게 요청하세요.',
 };

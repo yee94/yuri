@@ -3450,6 +3450,8 @@ export const dict = {
   'workspace.paths.description': 'Attach zero or more directories. The primary directory is used as the default working directory.',
   'workspace.paths.empty': 'No directories attached yet. Add a folder or use this as a blank workspace.',
   'workspace.paths.primaryBadge': 'Primary',
+  'workspace.paths.sameMachineHint': 'Multiple projects can only include directories on one machine',
+  'workspace.paths.count': '{count} directories',
   'workspace.paths.setPrimary': 'Set primary',
   'workspace.paths.removeAria': 'Remove directory {path}',
   'workspace.paths.addPlaceholder': '/path/to/directory',
@@ -3462,7 +3464,6 @@ export const dict = {
   'workspace.create.nameRequired': 'Enter a workspace name.',
   'workspace.create.submit': 'Create workspace',
   'workspace.create.stageDirAria': 'Add {name} to workspace',
-  'workspace.multiRepo.branchReadOnly': 'Read-only across multiple repositories; ask the agent to switch branches.',
 } as const;
 
 export type I18nKey = keyof typeof dict;

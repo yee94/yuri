@@ -209,6 +209,8 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     expect(container.querySelectorAll('.yuri-directory-chip')).toHaveLength(2);
     expect(container.textContent).not.toContain('workspace.create.namePlaceholder');
     expect(button('directoryExplorerDialog.toggle.multipleProjects')).toBeUndefined();
+    expect(container.querySelector('[data-workspace-machine]')?.textContent).toContain('remoteProjects.local');
+    expect(container.querySelector('[data-workspace-machine-hint]')?.textContent).toBe('workspace.paths.sameMachineHint');
     expect(pathInput()).not.toBeNull();
     await act(async () => button('workspace.paths.setPrimary').click());
     if (!mobile) {
@@ -277,6 +279,9 @@ describe.each([false, true])('DirectoryExplorerDialog interactions (mobile=%s)',
     expect(fixture.list).toHaveBeenCalledWith('/workspace/');
     expect(button('settings.remoteInstances.sidebar.actions.addSshInstance')).toBeUndefined();
     expect(container.textContent).not.toContain('remoteProjects.machine');
+    await act(async () => button('directoryExplorerDialog.toggle.multipleProjects').click());
+    expect(container.querySelector('[data-workspace-machine]')?.textContent).toContain('remoteProjects.local');
+    expect(container.querySelector('[data-workspace-machine-hint]')).not.toBeNull();
   });
 
   test('local desktop footer replaces cloning with the shared new SSH connection editor even without saved hosts', async () => {

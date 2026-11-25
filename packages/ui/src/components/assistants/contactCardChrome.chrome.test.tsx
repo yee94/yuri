@@ -175,7 +175,7 @@ describe('contact card width', () => {
     expect(surface).toContain('flex min-w-0 flex-col gap-2')
     expect(surface).toContain('max-w-[min(84%,34rem)] items-start')
     expect(surface).toContain('sticky bottom-2 flex shrink-0 self-end justify-center pb-0.5')
-    expect(surface).toContain("isMobile ? 'mr-2.5 w-9' : 'mr-2 w-6'")
+    expect(surface).toContain("isMobile ? 'mr-2.5 w-9' : 'mr-2 w-8'")
   })
 
   test.skip('measures production cards and CSS at phone widths with enlarged text', async () => {

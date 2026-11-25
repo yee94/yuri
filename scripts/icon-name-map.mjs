@@ -23,10 +23,6 @@ export const CODEX_FOLDER_SVG =
 export const CODEX_FOLDER_PLUS_SVG =
   `${CODEX_FOLDER_SVG}<path d="M12 11v6" /><path d="M9 14h6" />`
 
-/** Stacked double-folder outline for multi-path Workspaces. */
-export const CODEX_FOLDERS_SVG =
-  `<path d="M3 10.5A2.5 2.5 0 0 1 5.5 8H9l1.4 1.6c.4.4.9.7 1.5.7h5.6A2.5 2.5 0 0 1 20 12.8v5.7a2.5 2.5 0 0 1-2.5 2.5h-12A2.5 2.5 0 0 1 3 18.5Z" /><path d="M7 8V6.5A2 2 0 0 1 9 4.5h3.2c.5 0 1 .2 1.4.6l1.1 1.2c.3.4.8.6 1.3.6h3.5A2 2 0 0 1 21.5 8.9v5.6a2 2 0 0 1-1.5 1.9" />`
-
 /** Compact sidebar toggle with softer corners for titlebar chrome. */
 export const ROUNDED_PANEL_LEFT_SVG =
   `<rect width="18" height="18" x="3" y="3" rx="4" /><path d="M9.5 3v18" />`
@@ -252,7 +248,7 @@ export const ICON_NAME_MAP = {
   "folder-open": { custom: CODEX_FOLDER_SVG },
   "folder-open-fill": { custom: CODEX_FOLDER_SVG },
   "folder-received": { lucide: "folder-input", fill: false },
-  "folders": { custom: CODEX_FOLDERS_SVG },
+  "folders": { lucide: "folders", fill: false },
   "fullscreen": { lucide: "maximize", fill: false },
   "fullscreen-exit": { lucide: "minimize", fill: false },
   "gamepad": { lucide: "gamepad-2", fill: false },

@@ -45,10 +45,6 @@ const MessageHeader: React.FC<MessageHeaderProps> = ({ isUser, providerID, model
                                     modelId={modelID}
                                     providerId={providerID}
                                     className="h-4 w-4"
-                                    fallback={(
-                                        <Icon name="brain-ai-3" className="h-4 w-4"
-                                            style={{ color: `var(${getAgentColor(agentName).var})` }}/>
-                                    )}
                                 />
                             </div>
                         )}

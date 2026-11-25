@@ -25,6 +25,7 @@ vi.mock('@/lib/i18n', () => ({
 
 vi.mock('@/hooks/useEffectiveDirectory', () => ({
   useEffectiveDirectory: () => '/repo',
+  useEffectiveWorkspaceDirectories: () => ['/repo'],
 }));
 
 vi.mock('@/apps/mobileAppContext', () => ({
@@ -33,12 +34,15 @@ vi.mock('@/apps/mobileAppContext', () => ({
 
 vi.mock('@/stores/useGitStore', () => ({
   useIsGitRepo: () => true,
+  useWorkspaceGitSummary: () => ({ gitEntries: [], isAnyGitRepo: false, hasChanges: false, insertions: 0, deletions: 0 }),
   useGitStore: (selector: (state: {
     directories: Map<string, { status: unknown; isGitRepo: boolean }>;
     fetchStatus: typeof fetchStatus;
+    ensureStatus: () => Promise<void>;
   }) => unknown) => selector({
     directories: new Map([['/repo', { status: gitState.status, isGitRepo: true }]]),
     fetchStatus,
+    ensureStatus: async () => undefined,
   }),
 }));
 

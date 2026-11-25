@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icon } from '@/components/icon/Icon';
 import { useModelLogo } from '@/hooks/useModelLogo';
 import { cn } from '@/lib/utils';
 
@@ -46,7 +47,7 @@ export const ModelLogo: React.FC<ModelLogoProps> = ({
   }, [src, handleInternalError, externalOnError]);
 
   if (!hasLogo || !src || failed) {
-    return <>{fallback ?? null}</>;
+    return <>{fallback ?? <Icon name="brain-ai-3" className={cn('text-foreground', className)} />}</>;
   }
 
   // Paint as a currentColor mask instead of brightness-0/invert.

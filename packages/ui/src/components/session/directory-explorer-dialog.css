@@ -5,6 +5,11 @@
   transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+.yuri-directory-dialog.yuri-directory-dialog--stacked,
+.dark .yuri-directory-dialog.yuri-directory-dialog--stacked {
+  background: var(--surface-elevated);
+}
+
 .yuri-directory-dialog[data-starting-style],
 .yuri-directory-dialog[data-ending-style] {
   opacity: 0;

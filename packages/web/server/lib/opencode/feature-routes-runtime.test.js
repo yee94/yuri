@@ -11,7 +11,7 @@ describe('feature routes runtime composition', () => {
   });
   it('wires session project registration to the shared registry and strict settings reader', async () => {
     const routes = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');
-    expect(routes).toMatch(/registerProjectsSkill\(app, \{[\s\S]*?registerProject: \(input\) => projectRegistry.register\(input\), readSettingsFromDiskStrict, sanitizeProjects/);
+    expect(routes).toMatch(/registerProjectsSkill\(app, \{[\s\S]*?registerProject: async \(input\) => \{\s*const result = await projectRegistry\.register\(input\);[\s\S]*?readSettingsFromDiskStrict, sanitizeProjects/);
   });
   it('passes the native connection adapter to shared-session admission and the protected bridge', async () => {
     const host = await fs.readFile(new URL('../../index.js', import.meta.url), 'utf8');
@@ -27,12 +27,6 @@ describe('feature routes runtime composition', () => {
     expect(host).toContain('getIsSharedOpenCodeService: () => openCodeLifecycleRuntime.isSharedOpenCodeService()');
     expect(routes).toMatch(/getIsSharedOpenCodeService = \(\) => false,[\s\S]*\} = routeDependencies;/);
     expect(routes).toMatch(/registerOpenCodeRoutes\(app, \{[^}]*getIsSharedOpenCodeService,/);
-  });
-
-  it('does not treat the shared local OpenCode service as an unmanaged external server for workspace admission', async () => {
-    const routes = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');
-    expect(routes).toMatch(/const installManagedWorkspaceInstruction = [^\n]+\n\s*if \(getIsExternalOpenCode\(\) && !getIsSharedOpenCodeService\(\)\)/);
-    expect(routes).toMatch(/registerScheduledTaskSessionSkill\(app, \{[^}]*installWorkspaceInstruction: installManagedWorkspaceInstruction/);
   });
 
   it('wires Host isolation persist into scheduled-task runtime from the composition root', async () => {
@@ -58,7 +52,7 @@ describe('feature routes runtime composition', () => {
   it('wires only project registration and live roots into the assistant extension tools', async () => {
     const source = await fs.readFile(new URL('./feature-routes-runtime.js', import.meta.url), 'utf8');
     const routes = await fs.readFile(new URL('../assistants/routes.js', import.meta.url), 'utf8');
-    expect(source).toContain('createProjectRegistry({ persistSettings, validateDirectoryPath })');
+    expect(source).toContain('createProjectRegistry({ persistSettings, validateDirectoryPath, yuriDataDir })');
     expect(source).toMatch(/projectRegistry.register\(input\);\s*await refreshAssistantAllowedRoots\(\)/);
     expect(source).toContain('registerProject: registerAssistantProject');
     expect(routes).toContain('registerProject: dependencies.registerProject');

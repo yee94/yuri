@@ -8,7 +8,6 @@ export const registerConversationRoutes = (app, dependencies) => {
     getOpenCodeAuthHeaders,
     markUserMessageSent,
     waitForOpenCodeReady,
-    installWorkspaceInstruction = null,
   } = dependencies;
 
   const service = createConversationsService({
@@ -16,7 +15,6 @@ export const registerConversationRoutes = (app, dependencies) => {
     getOpenCodeAuthHeaders,
     markUserMessageSent,
     waitForOpenCodeReady,
-    installWorkspaceInstruction,
   });
 
   const registry = createOperationRegistry();

@@ -31,7 +31,7 @@ import { registerSessionTurnPageRoutes } from '../session-turn-pages/routes.js';
 import { registerAssistantRoutes } from '../assistants/routes.js';
 import { createProjectRegistry } from '../projects/registry.js';
 import { registerWorkspaceRoutes } from '../projects/routes.js';
-import { getWorkspacePaths, installWorkspaceSessionInstruction } from '../projects/workspace.js';
+import { getWorkspacePaths } from '../projects/workspace.js';
 import { registerLlmRoutes } from '../llm/routes.js';
 import { registerMessageQueueRoutes } from '../message-queue/routes.js';
 import { getBrowserProviderHost } from '../browser-provider/host.js';
@@ -262,25 +262,12 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenCodeAuthHeaders,
     });
 
-    const installManagedWorkspaceInstruction = ({ client, sessionID, workspaceId, directory }) => {
-      if (getIsExternalOpenCode() && !getIsSharedOpenCodeService()) return Promise.resolve(false);
-      return installWorkspaceSessionInstruction({
-        client,
-        sessionID,
-        workspaceId,
-        directory,
-        readSettings: readSettingsFromDiskMigrated,
-        sanitizeProjects,
-      });
-    };
-
     registerScheduledTaskSessionSkill(app, {
       express, yuriDataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders,
       getIsSharedOpenCodeService, waitForOpenCodeReady, getRuntimeContract,
       readSettingsFromDiskMigrated, sanitizeProjects, validateDirectoryPath,
       scheduledTaskRouter,
       remoteConnectionsAdapter,
-      installWorkspaceInstruction: installManagedWorkspaceInstruction,
     });
     const hasAssistant = (assistantID) => assistantRoutesRuntime?.service?.hasAssistant(assistantID) ?? false;
     // Contacts run on this Host, so they get the same staged helpers as admitted Sessions, bound to their own ID.
@@ -303,7 +290,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     registerCustomizationSessionSkill(app, {
       express, yuriDataDir, getIsSharedOpenCodeService, getIsExternalOpenCode, waitForOpenCodeReady,
       createClient: () => makeOpenCodeV2Client({ baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract }),
-      installWorkspaceInstruction: installManagedWorkspaceInstruction,
     });
     app.use(scheduledTaskRouter);
 
@@ -324,7 +310,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenCodeAuthHeaders,
       markUserMessageSent,
       waitForOpenCodeReady,
-      installWorkspaceInstruction: installManagedWorkspaceInstruction,
     });
 
     // Yuri-owned turn-window messages API — must register before generic proxy.

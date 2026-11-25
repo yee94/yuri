@@ -3450,6 +3450,8 @@ export const dict: Record<I18nKey, string> = {
   'workspace.paths.description': '可关联 0 个或多个目录。主目录会作为默认的对话工作目录。',
   'workspace.paths.empty': '暂未关联目录。可随时添加目录，或作为空白工作区使用。',
   'workspace.paths.primaryBadge': '主目录',
+  'workspace.paths.sameMachineHint': '多项目只能包含同一台机器上的目录',
+  'workspace.paths.count': '{count} 个目录',
   'workspace.paths.setPrimary': '设为主目录',
   'workspace.paths.removeAria': '移除目录 {path}',
   'workspace.paths.addPlaceholder': '/path/to/directory',
@@ -3462,5 +3464,4 @@ export const dict: Record<I18nKey, string> = {
   'workspace.create.nameRequired': '请输入工作区名称。',
   'workspace.create.submit': '创建工作区',
   'workspace.create.stageDirAria': '将 {name} 加入工作区',
-  'workspace.multiRepo.branchReadOnly': '多仓库工作区下分支为只读展示，如需切分支请直接让 Agent 操作。',
 };

@@ -23,7 +23,6 @@ export const registerScheduledTaskSessionSkill = (app, {
   readSettingsFromDiskMigrated, sanitizeProjects, validateDirectoryPath,
   scheduledTaskRouter,
   remoteConnectionsAdapter = null,
-  installWorkspaceInstruction = null,
   registrationFile = resolveSharedServiceRegistrationPath(),
   createClient = () => makeOpenCodeV2Client({
     baseUrl: buildOpenCodeUrl('/', ''), authHeaders: getOpenCodeAuthHeaders(), getRuntimeContract,
@@ -91,14 +90,6 @@ export const registerScheduledTaskSessionSkill = (app, {
       });
       const projectBinding = { hostOrigin, upstreamOrigin, registrationFile };
       await installCustomization(client, created.id, { projectBinding, ...(remoteConnectionsAdapter ? { remoteBinding: projectBinding } : {}) });
-      if (typeof installWorkspaceInstruction === 'function') {
-        await installWorkspaceInstruction({
-          client,
-          sessionID: created.id,
-          workspaceId: body?.metadata?.yuri?.workspaceId ?? null,
-          directory: body?.location?.directory ?? created?.location?.directory ?? null,
-        }).catch(() => undefined);
-      }
       return res.json({ data: created });
     } catch {
       let retainedSessionID = created?.id;

@@ -127,7 +127,7 @@ import { useWorkspaceGitSummary } from '@/stores/useGitStore';
 import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 import { buildSessionTargetOptions } from '@/sync/session-worktree-contract';
 import { DraftSessionBranchSelector } from './DraftSessionBranchSelector';
-import { DraftWorkspaceBranches } from './DraftWorkspaceBranches';
+import { DraftWorkspaceDirectories } from './DraftWorkspaceDirectories';
 import { resolveDraftSessionBranchLabel } from './draftSessionBranchLabel';
 import { hasExtractableGitChangedFiles } from './changedFiles';
 import { useI18n } from '@/lib/i18n';
@@ -7924,7 +7924,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                 onNavigatePrevPicker={openDraftProjectPickerFromBranch}
                                 finalFocus={resolveDraftPickerFinalFocus}
                             />
-                        ) : isDraftMultiPathWorkspace ? <DraftWorkspaceBranches directories={selectedDraftWorkspacePaths} /> : null}
+                        ) : isDraftMultiPathWorkspace ? <DraftWorkspaceDirectories directories={selectedDraftWorkspacePaths} /> : null}
                     </div>
                 ) : null}
                 {isMobile && showDraftTargetSelectors ? (
@@ -7964,7 +7964,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                 maxWidthClassName="max-w-[50%]"
                                 presentation="mobile-sheet"
                             />
-                        ) : isDraftMultiPathWorkspace ? <DraftWorkspaceBranches directories={selectedDraftWorkspacePaths} /> : null}
+                        ) : isDraftMultiPathWorkspace ? <DraftWorkspaceDirectories directories={selectedDraftWorkspacePaths} /> : null}
                     </div>
                 ) : null}
                 {surface.active && currentSessionId && sessionRecoveryDirectory ? (

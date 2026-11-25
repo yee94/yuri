@@ -46,8 +46,8 @@ The existing OAuth flow still owns polling, codes, expiry and cancellation; this
 component does not emulate authorization or introduce another lifecycle.
 
 `ProviderModelRow` renders every model through the existing `ModelLogo` brand
-matching and local assets, falling back to the shared stack icon. Draft and saved
-catalogs use the same row grammar. Capability badges reflect available metadata.
+matching and local assets, falling back to the shared monochrome foreground stack
+icon. Draft and saved catalogs use the same row grammar. Capability badges reflect available metadata.
 Search is a mini name/ID input in the model toolbar, not a full-height card row;
 there is no capability filter. Added models come first, with plus/minus actions.
 Model name and mini limits share one compact line. Below 24rem of row width,

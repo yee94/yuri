@@ -192,7 +192,7 @@ const AddDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (prop
     </DirectoryExplorerSurface>;
   }
   const machinePicker = hasMachines ? <div className="flex min-w-0 items-center gap-2 py-1">
-    <Button variant="ghost" size="xs" className="-ml-1.5 shrink-0 gap-1 text-muted-foreground" onClick={machine.back} aria-label={t('header.actions.backAria')}>
+    <Button variant="ghost" size="xs" className="yuri-directory-name -ml-1.5 shrink-0 gap-1 text-muted-foreground" onClick={machine.back} aria-label={t('header.actions.backAria')}>
       <Icon name="arrow-left-s" className="size-4" />
       {t('remoteProjects.machine')}
     </Button>
@@ -730,7 +730,16 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
 
   const inputSection = (
     <div className="yuri-directory-inputs">
-      <fieldset disabled={isConfirming} className="min-w-0">{machinePicker}</fieldset>
+      <fieldset disabled={isConfirming} className="min-w-0">{machinePicker ?? (isWorkspaceMode ? (
+        <div data-workspace-machine className="flex min-w-0 items-center gap-2 py-1 text-muted-foreground">
+          <span className="yuri-directory-name shrink-0">{t('remoteProjects.machine')}</span>
+          <Icon name="arrow-right-s" className="size-3 shrink-0" />
+          <span className="yuri-directory-name min-w-0 truncate">{t('remoteProjects.local')}</span>
+        </div>
+      ) : null)}</fieldset>
+      {isWorkspaceMode ? (
+        <p data-workspace-machine-hint className="yuri-directory-name pb-1 text-muted-foreground">{t('workspace.paths.sameMachineHint')}</p>
+      ) : null}
       {isWorkspaceMode && !editProject ? (
         <div className="yuri-directory-workspace-name">
           <label htmlFor={workspaceNameId}>{t('workspace.create.namePlaceholder')}</label>
@@ -1021,7 +1030,7 @@ const LocalDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps & { ma
 
   return <DirectoryExplorerSurface open={open} onOpenChange={(next) => {
     if (next || (!isSavingWorkspace.current && !isOpeningFinder)) onOpenChange(next);
-  }} origin={origin} mobile={isMobile} title={editProject ? t('workspace.paths.sectionTitle') : undefined}
+  }} origin={origin} mobile={isMobile} stacked={isEditingWorkspace} title={editProject ? t('workspace.paths.sectionTitle') : undefined}
     trailing={headerTrailing} hints={isWorkspaceMode ? null : shortcutHints} footer={renderFooter()} initialFocus={false} error={discoveryError}>
     {content}
   </DirectoryExplorerSurface>;

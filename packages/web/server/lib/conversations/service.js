@@ -117,7 +117,6 @@ export const createConversationsService = (deps) => {
     getOpenCodeAuthHeaders,
     markUserMessageSent,
     waitForOpenCodeReady,
-    installWorkspaceInstruction = null,
     logger = console,
   } = deps;
 
@@ -198,15 +197,6 @@ export const createConversationsService = (deps) => {
         phase: 'create',
         error: safeErrorMessage('create'),
       };
-    }
-
-    if (typeof installWorkspaceInstruction === 'function') {
-      await installWorkspaceInstruction({
-        client,
-        sessionID,
-        workspaceId: sanitizedInput.metadata?.yuri?.workspaceId ?? null,
-        directory: sanitizedInput.directory,
-      }).catch(() => undefined);
     }
 
     // Phase 2: v2 prompt + delivery=steer (45s timeout). Host only orchestrates

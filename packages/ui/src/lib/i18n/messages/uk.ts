@@ -3450,6 +3450,8 @@ export const dict: Record<I18nKey, string> = {
   "workspace.paths.description": "Прикріпіть нуль або більше каталогів. Основний каталог використовується як робочий каталог за замовчуванням.",
   "workspace.paths.empty": "Каталогів ще не додано. Додайте папку або використовуйте порожній робочий простір.",
   "workspace.paths.primaryBadge": "Основний",
+  "workspace.paths.sameMachineHint": "Кілька проєктів можуть містити лише каталоги з одного комп’ютера",
+  "workspace.paths.count": "Каталоги: {count}",
   "workspace.paths.setPrimary": "Зробити основним",
   "workspace.paths.removeAria": "Видалити каталог {path}",
   "workspace.paths.addPlaceholder": "/path/to/directory",
@@ -3462,5 +3464,4 @@ export const dict: Record<I18nKey, string> = {
   "workspace.create.nameRequired": "Введіть назву робочого простору.",
   "workspace.create.submit": "Створити робочий простір",
   "workspace.create.stageDirAria": "Додати {name} до робочого простору",
-  "workspace.multiRepo.branchReadOnly": "Лише читання для кількох репозиторіїв; попросіть агента перемкнути гілку.",
 };

@@ -3449,6 +3449,8 @@ export const dict: Record<I18nKey, string> = {
   'workspace.paths.description': '可關聯 0 個或多個目錄。主目錄將作為預設的對話工作目錄。',
   'workspace.paths.empty': '尚未關聯目錄。可隨時新增目錄，或作為空白工作區使用。',
   'workspace.paths.primaryBadge': '主目錄',
+  'workspace.paths.sameMachineHint': '多專案只能包含同一台機器上的目錄',
+  'workspace.paths.count': '{count} 個目錄',
   'workspace.paths.setPrimary': '設為主目錄',
   'workspace.paths.removeAria': '移除目錄 {path}',
   'workspace.paths.addPlaceholder': '/path/to/directory',
@@ -3461,5 +3463,4 @@ export const dict: Record<I18nKey, string> = {
   'workspace.create.nameRequired': '請輸入工作區名稱。',
   'workspace.create.submit': '建立工作區',
   'workspace.create.stageDirAria': '將 {name} 加入工作區',
-  'workspace.multiRepo.branchReadOnly': '多儲存庫工作區下分支為唯讀顯示，如需切換分支請讓 Agent 操作。',
 };

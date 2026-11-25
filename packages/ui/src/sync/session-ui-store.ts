@@ -44,7 +44,7 @@ import { resolveProjectForSessionDirectory } from "@/lib/projectResolution"
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
 import { scopeProjectWorktrees } from "@/lib/worktrees/projectWorktreeScope"
 import { buildSessionWorktreeMetadataPatch } from "@/lib/worktrees/sessionWorktreeMetadata"
-import { isBlankWorkspace, isMultiPathWorkspace, isWorkspaceId } from "@/lib/workspacePaths"
+import { buildWorkspacePromptContext, isBlankWorkspace, isMultiPathWorkspace, isWorkspaceId } from "@/lib/workspacePaths"
 import { validateWorktreeDirectory } from "@/lib/gitApi"
 import { useWorktreeOrderStore } from "@/stores/useWorktreeOrderStore"
 import { createUuid } from "@/lib/uuid"
@@ -864,6 +864,8 @@ type MaterializedDraftSession = {
   directory: string | null
   agent?: string
   syntheticParts?: SyntheticContextPart[]
+  /** Hidden multi-path/0-path workspace context for the first prompt. */
+  workspaceContext?: string | null
 }
 
 type DraftSubmissionClaim = {
@@ -1275,7 +1277,8 @@ async function materializeClaimedDraftSession(selection: {
       targetFolderId: draft.targetFolderId,
       draftSyntheticParts: draft.syntheticParts,
     }, claimed)
-    return { materialized: finalized, claim: claimed }
+    const workspaceContext = buildWorkspacePromptContext(targetProject, directory ?? (created as { directory?: string }).directory ?? dir)
+    return { materialized: { ...finalized, workspaceContext }, claim: claimed }
   } catch {
     restoreDraftSubmission(claimed)
     return null
@@ -1339,7 +1342,17 @@ async function handleCombinedDraftSend(params: {
     const mappedAdditionalParts = mergedAdditionalParts?.map((p) => ({ text: p.text, synthetic: p.synthetic, files: p.attachments?.map((a: AttachedFile) => ({ type: "file" as const, mime: a.mimeType, url: a.dataUrl, filename: a.filename })) }))
     const agentMentions = agentMentionName ? [{ name: agentMentionName }] : undefined
     const { directory } = await resolveDraftDirectory(draft)
-    const parts = await opencodeClient.buildMessageParts({ text: content, files: files.length > 0 ? files : undefined, additionalParts: mappedAdditionalParts, agentMentions })
+    const { projects: allProjects, activeProjectId: currentActiveProjectId } = useProjectsStore.getState()
+    const draftWorkspaceProject = (draft.selectedProjectId
+      ? allProjects.find((entry) => entry.id === draft.selectedProjectId)
+      : null)
+      ?? (currentActiveProjectId ? allProjects.find((entry) => entry.id === currentActiveProjectId) : null)
+      ?? null
+    const workspaceContext = buildWorkspacePromptContext(draftWorkspaceProject, directory ?? opencodeClient.getDirectory())
+    const promptAdditionalParts = workspaceContext
+      ? [...(mappedAdditionalParts ?? []), { text: workspaceContext, synthetic: true }]
+      : mappedAdditionalParts
+    const parts = await opencodeClient.buildMessageParts({ text: content, files: files.length > 0 ? files : undefined, additionalParts: promptAdditionalParts, agentMentions })
     const skills = skillAttachmentsFromText(parts.flatMap((part) => part.type === 'text' && !part.synthetic ? [part.text] : []).join('\n'))
     const api = getRegisteredRuntimeAPIs()?.conversations
     if (!api?.createWithPrompt) { throw await localizedSendError("chat.chatInput.toast.messageSendFailed") }
@@ -1352,12 +1365,6 @@ async function handleCombinedDraftSend(params: {
     const preCreateStore = dirStoreForDirectory(resolvedDir, { bootstrap: false })
     const claimRuntimeCurrent = () =>
       sameRuntimeCapture(useInputStore.getState().captureDraftRuntime(), claimed.runtime)
-    const { projects: allProjects, activeProjectId: currentActiveProjectId } = useProjectsStore.getState()
-    const draftWorkspaceProject = (draft.selectedProjectId
-      ? allProjects.find((entry) => entry.id === draft.selectedProjectId)
-      : null)
-      ?? (currentActiveProjectId ? allProjects.find((entry) => entry.id === currentActiveProjectId) : null)
-      ?? null
     const draftWorkspaceMetadata = draftWorkspaceProject && (
       isWorkspaceId(draftWorkspaceProject.id)
       || isMultiPathWorkspace(draftWorkspaceProject)
@@ -2374,16 +2381,19 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
         optimisticParts: fallbackPendingMessage.parts,
         preserveOptimisticOnAmbiguous: options?.preserveOptimisticOnAmbiguous,
         onSendConfirmed: options?.onSendConfirmed,
-        additionalParts: mergedAdditionalParts?.map((p) => ({
-          text: p.text,
-          synthetic: p.synthetic,
-          files: p.attachments?.map((a: AttachedFile) => ({
-            type: "file" as const,
-            mime: a.mimeType,
-            url: a.dataUrl,
-            filename: a.filename,
+        additionalParts: !mergedAdditionalParts && !createdDraftSession.workspaceContext ? undefined : [
+          ...(mergedAdditionalParts ?? []).map((p) => ({
+            text: p.text,
+            synthetic: p.synthetic,
+            files: p.attachments?.map((a: AttachedFile) => ({
+              type: "file" as const,
+              mime: a.mimeType,
+              url: a.dataUrl,
+              filename: a.filename,
+            })),
           })),
-        })),
+          ...(createdDraftSession.workspaceContext ? [{ text: createdDraftSession.workspaceContext, synthetic: true }] : []),
+        ],
         })
         await finalizeClaimedDraftOwnership(claim, createdDraftSession.sessionId, "consume")
       } catch (error) {

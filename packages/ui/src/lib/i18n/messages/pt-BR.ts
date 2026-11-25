@@ -3450,6 +3450,8 @@ export const dict: Record<I18nKey, string> = {
   "workspace.paths.description": "Anexe zero ou mais diretórios. O diretório principal é usado como diretório de trabalho padrão.",
   "workspace.paths.empty": "Nenhum diretório anexado. Adicione uma pasta ou use como workspace vazio.",
   "workspace.paths.primaryBadge": "Principal",
+  "workspace.paths.sameMachineHint": "Vários projetos só podem incluir diretórios do mesmo computador",
+  "workspace.paths.count": "{count} diretórios",
   "workspace.paths.setPrimary": "Definir como principal",
   "workspace.paths.removeAria": "Remover diretório {path}",
   "workspace.paths.addPlaceholder": "/path/to/directory",
@@ -3462,5 +3464,4 @@ export const dict: Record<I18nKey, string> = {
   "workspace.create.nameRequired": "Digite um nome para o workspace.",
   "workspace.create.submit": "Criar workspace",
   "workspace.create.stageDirAria": "Adicionar {name} ao workspace",
-  "workspace.multiRepo.branchReadOnly": "Somente leitura em múltiplos repositórios; peça ao agente para trocar de branch.",
 };

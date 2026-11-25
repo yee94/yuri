@@ -3447,6 +3447,8 @@ export const dict = {
   'workspace.paths.description': 'Associez zéro ou plusieurs répertoires. Le répertoire principal sert de répertoire de travail par défaut.',
   'workspace.paths.empty': 'Aucun répertoire associé. Ajoutez un dossier ou utilisez cet espace de travail vide.',
   'workspace.paths.primaryBadge': 'Principal',
+  'workspace.paths.sameMachineHint': 'Plusieurs projets ne peuvent inclure que des dossiers d’une même machine',
+  'workspace.paths.count': '{count} dossiers',
   'workspace.paths.setPrimary': 'Définir comme principal',
   'workspace.paths.removeAria': 'Retirer le répertoire {path}',
   'workspace.paths.addPlaceholder': '/path/to/directory',
@@ -3459,7 +3461,6 @@ export const dict = {
   'workspace.create.nameRequired': 'Saisissez un nom pour l’espace de travail.',
   'workspace.create.submit': 'Créer l’espace de travail',
   'workspace.create.stageDirAria': 'Ajouter {name} à l’espace de travail',
-  'workspace.multiRepo.branchReadOnly': 'Lecture seule pour plusieurs dépôts ; demandez à l’agent de changer de branche.',
 } as const;
 
 export type I18nKey = keyof typeof dict;

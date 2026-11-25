@@ -1,11 +1,15 @@
 # Chat components
 
 In a new draft, the project chip uses the selected workspace's configured name.
-A multi-directory workspace exposes a read-only branch popover even if its
-directories belong to the same Git repository. The popover lists branches by
-attached directory, marks each current branch, and does not switch branches or
-change the draft's working directory. Branch queries and rows mount only when
-the popover opens; ordinary single-directory projects retain their branch picker.
+A multi-directory workspace replaces the branch picker with a read-only
+directories chip (double-folder icon and directory count). Its popover has one
+row per attached directory in configured order: the last path segment, a
+primary marker on the first directory, the full path middle-truncated, and the
+current branch (branch icon) only for a Git repository. Non-Git, loading or
+failed directories show no branch text. Branch queries mount only when the
+popover opens; it lists no other branches, switches nothing and does not change
+the draft's working directory. Ordinary single-directory projects retain their
+branch picker.
 
 ## BTW user messages
 

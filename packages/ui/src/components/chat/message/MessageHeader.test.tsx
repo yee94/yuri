@@ -46,6 +46,24 @@ describe('MessageHeader', () => {
     );
   });
 
+  test('uses a monochrome foreground icon when the model has no bundled logo', () => {
+    const html = renderToStaticMarkup(
+      <MessageHeader
+        isUser={false}
+        isMobile
+        providerID="unknown-provider"
+        modelID="unknown-model"
+        agentName="build"
+        modelName="Unknown model"
+      />,
+    );
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    const fallback = container.querySelector('use[href="#yuri-brain-ai-3"]')?.closest('svg');
+    expect(fallback?.classList.contains('text-foreground')).toBe(true);
+    expect(fallback?.getAttribute('style')).not.toContain('color:');
+  });
+
   test('keeps the agent badge content-sized next to the model name on the left', () => {
     const html = renderHeader(false);
     expect(html).toContain('GLM-5.3');

@@ -53,7 +53,7 @@ vi.mock('@/stores/useOpenInAppsStore', () => ({
   useOpenInAppsStore: (selector: (state: unknown) => unknown) => selector({ availableApps: harness.empty, initialize: harness.noop }),
 }));
 vi.mock('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => harness }));
-vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo', useEffectiveLocationKey: () => '/repo' }));
+vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo', useEffectiveLocationKey: () => '/repo', useEffectiveWorkspaceDirectories: () => ['/repo'] }));
 vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: false, isTablet: false, screenWidth: 1400 }) }));
 vi.mock('@/contexts/useThemeSystem', async () => {
   const { getDefaultTheme } = await import('@/lib/theme/themes');

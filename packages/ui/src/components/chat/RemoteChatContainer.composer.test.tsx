@@ -53,7 +53,7 @@ vi.mock('@/lib/native-ios-composer', async (original) => ({
 vi.mock('@/queries/remoteProjectQueries', async (original) => ({ ...await original<typeof import('@/queries/remoteProjectQueries')>(), useRemoteHostCatalog: () => ({ data: { supported: true, hubId: 'hub' } }), useRemoteProjectRuntime: () => ({ registry: fixture.registry }), getHostRuntimeRegistry: () => fixture.registry, supportsRemoteProjects: () => true }));
 vi.mock('@/lib/yuriEvents', () => ({ subscribeYuriEvents: () => () => {} }));
 vi.mock('@/sync/use-sync', () => ({ useSync: () => ({ ensureSessionRenderable: async () => undefined }) }));
-vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo', useEffectiveLocationKey: () => 'remote-location' }));
+vi.mock('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/repo', useEffectiveLocationKey: () => 'remote-location', useEffectiveWorkspaceDirectories: () => ['/repo'] }));
 vi.mock('@/sync/sync-context', async (original) => {
   const actual = await original<typeof import('@/sync/sync-context')>();
   const messages: never[] = [];

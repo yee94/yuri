@@ -33,7 +33,7 @@ const ExecutionModelIcon: React.FC<{
             className="size-3.5 shrink-0"
             fallback={(
                 <span role="img" aria-label={label} className="inline-flex size-3.5 shrink-0 items-center justify-center">
-                    <Icon name="brain-ai-3" className="size-3.5" />
+                    <Icon name="brain-ai-3" className="size-3.5 text-foreground" />
                 </span>
             )}
         />

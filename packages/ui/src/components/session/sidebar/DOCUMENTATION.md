@@ -135,9 +135,9 @@ collision handling and material.
 
 For a multi-path workspace, the project header and session hover card use one
 project icon slot. The default is the double-folder glyph; a customized project
-icon takes precedence. The session hover card shows the workspace name followed
-by all attached paths in configured order, without separate icons for paths.
-The project tooltip lists the same paths. The row's workspace or indexed
+icon takes precedence. The session hover card shows the workspace name, then
+branch, and lists all attached paths in configured order, one ordinary
+directory row (route icon) per path. The project tooltip lists the same paths. The row's workspace or indexed
 workspace binding is not replaced by the live session's executing project;
 a distinct session checkout is shown separately.
 

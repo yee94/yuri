@@ -3466,6 +3466,8 @@ export const dict: Record<I18nKey, string> = {
   'workspace.paths.description': 'Przypisz zero lub więcej katalogów. Katalog główny służy jako domyślny katalog roboczy.',
   'workspace.paths.empty': 'Brak przypisanych katalogów. Dodaj folder lub użyj pustej przestrzeni roboczej.',
   'workspace.paths.primaryBadge': 'Główny',
+  'workspace.paths.sameMachineHint': 'Wiele projektów może obejmować tylko katalogi z jednego komputera',
+  'workspace.paths.count': 'Katalogi: {count}',
   'workspace.paths.setPrimary': 'Ustaw jako główny',
   'workspace.paths.removeAria': 'Usuń katalog {path}',
   'workspace.paths.addPlaceholder': '/path/to/directory',
@@ -3478,5 +3480,4 @@ export const dict: Record<I18nKey, string> = {
   'workspace.create.nameRequired': 'Wpisz nazwę przestrzeni roboczej.',
   'workspace.create.submit': 'Utwórz przestrzeń roboczą',
   'workspace.create.stageDirAria': 'Dodaj {name} do przestrzeni roboczej',
-  'workspace.multiRepo.branchReadOnly': 'Tylko do odczytu dla wielu repozytoriów; poproś agenta o zmianę gałęzi.',
 } as const;

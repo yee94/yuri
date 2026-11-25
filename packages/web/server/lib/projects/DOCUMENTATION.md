@@ -32,12 +32,22 @@ writes, persistence, offline-project retention, corrupt
 reads and failed-write preservation. Assistant HTTP integration is covered in
 `../assistants/yuri-project.http.test.js`.
 
+A multi-path workspace belongs to exactly one machine: the Host that owns these
+settings. Member paths are validated against that Host's filesystem, the remote
+directory picker offers no multiple-projects mode, and remote projects do not
+open the workspace-directory editor, so a workspace cannot span machines. The picker shows the
+owning machine and this limit whenever multiple-projects mode is active,
+including while editing.
+
 New sessions created from a workspace send `metadata.yuri.workspaceId` in the
-OpenCode create request. Host admission installs workspace directory instructions
-before the first message for both shared and private local OpenCode, but not for
-an unmanaged external server. A later metadata update does not replay admission,
-and the working directory alone cannot
-disambiguate workspaces that share it.
+OpenCode create request. For multi-path and 0-path workspaces the shared UI
+(`buildWorkspacePromptContext` in `packages/ui/src/lib/workspacePaths.ts`)
+appends the attached-directory context to the first user message as one hidden
+`<system-reminder>` block, on both the combined and the create-then-prompt path,
+so it works with any OpenCode server. User bubbles, composer restoration,
+session titles (`../session-title`) and content search (`../content-search`)
+strip that block (`../opencode/system-reminder.js`). Later messages and metadata
+updates do not resend it.
 Settings hydration preserves explicit workspace IDs and ordered member paths,
 including empty member lists, alongside ordinary projects at the same path.
 

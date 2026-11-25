@@ -43,6 +43,7 @@ vi.mock('@/sync/session-ui-store', () => {
 vi.mock('@/sync/sync-context', () => ({
   useSessionMessages: () => [],
   useAllLiveSessions: () => mocks.emptySessions,
+  useSessionDirectory: () => undefined,
 }));
 
 vi.mock('@/queries/commandQueries', () => ({

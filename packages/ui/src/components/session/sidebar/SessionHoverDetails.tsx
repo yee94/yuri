@@ -14,7 +14,6 @@ import { useGitStore } from '@/stores/useGitStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import type { WorktreeMetadata } from '@/types/worktree';
 import { TaskProjectBadge, type TaskProjectMark } from './TaskCardParts';
-import { WorkspaceProjectPaths } from './WorkspaceProjectPresentation';
 
 /** Mounted only for the open hover card. Reads metadata, never fetches a transcript or probes git/hosts. */
 export function SessionHoverDetails({ session, title, projectLabel, project, projectId, indexedWorkspaceId, branch, worktree, directory, time, remote }: {
@@ -75,7 +74,8 @@ export function SessionHoverDetails({ session, title, projectLabel, project, pro
   const worktreeLabel = formatWorktreeFooterLabel(worktree);
   const branchDisplay = worktreeLabel || branch || null;
   const absolutePath = worktree?.path?.trim() || directory?.trim() || null;
-  const showExecutionPath = absolutePath && !workspacePaths?.includes(normalizeWorkspacePath(absolutePath));
+  const showExecutionPath = Boolean(absolutePath) && !workspacePaths?.includes(normalizeWorkspacePath(absolutePath!));
+  const pathLines = [...(workspacePaths ?? []), ...(showExecutionPath ? [absolutePath!] : [])];
   const mismatchedBranch = Boolean(branch && currentBranch && currentBranch !== 'HEAD' && currentBranch !== branch);
 
   return (
@@ -90,26 +90,22 @@ export function SessionHoverDetails({ session, title, projectLabel, project, pro
           <span className="min-w-0 break-words">{displayProjectLabel}</span>
         </div>
       ) : null}
-      {workspacePaths ? (
-        <div className="min-w-0 pl-[1.375rem] text-xs leading-4 text-muted-foreground">
-          <WorkspaceProjectPaths paths={workspacePaths} />
-        </div>
-      ) : null}
       {branchDisplay ? (
         <div className="flex min-w-0 items-center gap-2 text-xs leading-4 text-muted-foreground">
           <Icon name="git-branch" className="size-3.5 shrink-0" />
           <span className="min-w-0 break-words">{branchDisplay}</span>
         </div>
       ) : null}
-      {showExecutionPath ? (
+      {pathLines.map((line) => (
         <div
+          key={line}
           data-session-hover-path
           className="flex min-w-0 items-start gap-2 text-xs leading-4 text-muted-foreground"
         >
           <Icon name="route" className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0 break-all">{absolutePath}</span>
+          <span className="min-w-0 break-all">{line}</span>
         </div>
-      ) : null}
+      ))}
       {mismatchedBranch ? (
         <div
           data-session-hover-branch-note
@@ -131,7 +127,7 @@ export function SessionHoverDetails({ session, title, projectLabel, project, pro
             modelId={session.model?.id}
             providerId={session.model?.providerID}
             className="size-3.5 shrink-0"
-            fallback={<Icon name="ai-agent" className="size-3.5 shrink-0" />}
+            fallback={<Icon name="ai-agent" className="size-3.5 shrink-0 text-foreground" />}
           />
           <span className="min-w-0 break-words">{modelLabel}</span>
         </div>

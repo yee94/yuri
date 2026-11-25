@@ -120,6 +120,13 @@ describe('buildSentMessageComposerRestoration', () => {
     expect(payload.snapshot.text).toBe('  lead\n\n\tmid  \n\ntrail  ')
   })
 
+  test('drops injected system-reminder context from restored text', async () => {
+    const payload = await buildSentMessageComposerRestoration([
+      { type: 'text', text: 'what is in scope\n<system-reminder>\nworkspace dirs\n</system-reminder>' },
+    ])
+    expect(payload.snapshot.text).toBe('what is in scope')
+  })
+
   test('restores data URL and durable URL attachments', async () => {
     let n = 0
     const payload = await buildSentMessageComposerRestoration([

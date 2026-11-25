@@ -21,13 +21,14 @@ describe('provider logo contrast', () => {
         },
     );
 
-    it('keeps the themed stack fallback for providers without a bundled mark', () => {
+    it('uses the monochrome foreground stack for providers without a bundled mark', () => {
         const container = document.createElement('div');
         container.innerHTML = renderToStaticMarkup(
             <ProviderLogo providerId="unknown-provider" className="size-4 shrink-0" />,
         );
         expect(container.querySelector('[role="img"]')).toBeNull();
         expect(container.querySelector('use')?.getAttribute('href')).toBe('#yuri-stack');
-        expect(container.querySelector('svg')?.classList.contains('bg-foreground')).toBe(false);
+        expect(container.querySelector('svg')?.classList.contains('text-foreground')).toBe(true);
+        expect(container.querySelector('svg')?.classList.contains('text-muted-foreground')).toBe(false);
     });
 });

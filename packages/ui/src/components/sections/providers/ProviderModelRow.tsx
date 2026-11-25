@@ -22,7 +22,7 @@ export function ProviderModelRow({ id, name, providerId, added, disabled, capabi
   return (
     <div data-provider-model={id} data-added={added} className="yuri-provider-model-row yuri-settings-group-row !min-h-0 !py-1.5 flex min-w-0 items-center gap-2">
       <ModelLogo modelId={id} providerId={providerId} className="size-5 shrink-0" alt=""
-        fallback={<Icon name="stack" className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />} />
+        fallback={<Icon name="stack" className="size-5 shrink-0 text-foreground" aria-hidden="true" />} />
       <button type="button" disabled={disabled || !onSelect} onClick={onSelect}
         title={`${name || id} (${id})${typeof detail === 'string' ? ` · ${detail}` : ''}`}
         className="min-w-0 flex-1 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-foreground/20 disabled:cursor-default">

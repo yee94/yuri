@@ -368,7 +368,9 @@ test('Host-authoritative external worktrees appear under the owning project with
   await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project('a')} registry={entry} /></QueryClientProvider>));
   await flush(); await flush();
   expect(renderedIds()).toContain('external-session'); expect(renderedIds()).not.toContain('nested-session');
-  await click('External worktree session');
+  const externalRow = container.querySelector<HTMLButtonElement>('[data-remote-session="external-session"] button')!;
+  expect(externalRow.textContent).toBe('External worktree sessionExternal checkout');
+  await act(async () => externalRow.click()); await flush();
   expect(useSessionNavigationStore.getState().remoteSession).toMatchObject({ projectId: project('a').id, sessionId: 'external-session', location: { hubId: 'hub', hostId: 'a', directory: external } });
 });
 

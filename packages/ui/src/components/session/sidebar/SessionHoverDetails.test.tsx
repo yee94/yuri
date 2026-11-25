@@ -113,7 +113,7 @@ test.each(['task-branch', undefined])('matching or unknown checkout branch (%s) 
   expect(host.querySelector('use[href="#yuri-computer"]')).toBeNull();
 });
 
-test('shows one workspace icon and lists every attached path without member icons', async () => {
+test('shows one workspace icon and lists every attached path in the directory row', async () => {
   fixture.projects = [
     { id: 'ws_multi', label: 'Multi project', path: '/repo', paths: ['/repo', '/repo/packages/web', '/unregistered'] },
     { id: 'root', path: '/repo', icon: 'code' },
@@ -124,25 +124,24 @@ test('shows one workspace icon and lists every attached path without member icon
     <SessionHoverDetails session={scopedSession} title="Session" projectId="web" projectLabel="web" directory="/repo/packages/web" time="1h" />,
   ));
   expect(host.textContent).toContain('Multi project');
-  const rows = Array.from(host.querySelectorAll('[data-workspace-project-path]'));
-  expect(rows.map((row) => row.textContent)).toEqual(['/repo', '/repo/packages/web', '/unregistered']);
-  expect(rows.every((row) => !row.querySelector('svg'))).toBe(true);
+  const pathRows = Array.from(host.querySelectorAll('[data-session-hover-path]'));
+  expect(pathRows.map((row) => row.textContent)).toEqual(['/repo', '/repo/packages/web', '/unregistered']);
+  expect(pathRows.every((row) => row.querySelectorAll('use').length === 1)).toBe(true);
   const projectRow = host.querySelector('[data-session-hover-details]')?.children[1];
   expect(Array.from(projectRow?.querySelectorAll('use') ?? [], (icon) => icon.getAttribute('href'))).toEqual(['#yuri-folders']);
-  expect(host.querySelector('[data-session-hover-path]')).toBeNull();
 
   await act(async () => root.render(
     <SessionHoverDetails session={session} title="Session" projectId="ws_multi" directory="/repo/packages/web/src" time="1h" />,
   ));
-  expect(host.querySelectorAll('[data-workspace-project-path]')).toHaveLength(3);
-  expect(host.querySelector('[data-session-hover-path]')?.textContent).toBe('/repo/packages/web/src');
+  expect(Array.from(host.querySelectorAll('[data-session-hover-path]'), (row) => row.textContent))
+    .toEqual(['/repo', '/repo/packages/web', '/unregistered', '/repo/packages/web/src']);
 });
 
 test.each([
   { projectId: 'ws_multi', indexedWorkspaceId: null, liveWorkspaceId: 'web' },
   { projectId: 'web', indexedWorkspaceId: 'ws_multi', liveWorkspaceId: 'web' },
   { projectId: 'ws_multi', indexedWorkspaceId: null, liveWorkspaceId: 'missing' },
-])('keeps workspace name and every pwd ahead of branch details for row $projectId / live $liveWorkspaceId', async ({
+])('keeps workspace name then branch, with every pwd in one directory row for row $projectId / live $liveWorkspaceId', async ({
   projectId, indexedWorkspaceId, liveWorkspaceId,
 }) => {
   fixture.projects = [
@@ -155,10 +154,8 @@ test.each([
       projectLabel="web" branch="main" directory="/repo/packages/web" time="1h" />,
   ));
   const card = host.querySelector('[data-session-hover-details]')!;
-  const paths = Array.from(card.querySelectorAll('[data-workspace-project-path]'));
   expect(card.children[1]?.textContent).toBe('Workspace name');
-  expect(card.children[2]?.contains(paths[0])).toBe(true);
-  expect(paths.map((row) => row.textContent)).toEqual(['/repo/packages/web', '/repo/packages/ui']);
-  expect(card.children[3]?.textContent).toBe('main');
-  expect(card.querySelector('[data-session-hover-path]')).toBeNull();
+  expect(card.children[2]?.textContent).toBe('main');
+  expect(Array.from(card.querySelectorAll('[data-session-hover-path]'), (row) => row.textContent))
+    .toEqual(['/repo/packages/web', '/repo/packages/ui']);
 });

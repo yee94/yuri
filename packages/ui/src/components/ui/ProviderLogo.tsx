@@ -12,7 +12,7 @@ interface ProviderLogoProps {
 
 /** Generic stack mark when a provider has no local logo asset. */
 const ProviderLogoFallback: React.FC<{ className?: string }> = ({ className }) => (
-    <Icon name="stack" className={cn('text-muted-foreground', className)} />
+    <Icon name="stack" className={cn('text-foreground', className)} />
 );
 
 export const ProviderLogo: React.FC<ProviderLogoProps> = ({

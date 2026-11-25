@@ -1170,6 +1170,36 @@ describe('handleCombinedDraftSend', () => {
     expect(sent?.parts.some((part) => part.type === 'text' && part.text === '[skill:release] prepare notes')).toBe(true)
   })
 
+  test('multi-path workspace context rides hidden in the first combined prompt', async () => {
+    let sent: ConversationCreateWithPromptInput | undefined
+    registerRuntimeAPIs(makeCombinedAPI(async (input) => { sent = input; return successResult() }))
+    useProjectsStore.setState({ projects: [{ ...PROJECT, paths: [PROJECT.path, '/projects/notes'] }], activeProjectId: PROJECT.id })
+    useSessionUIStore.getState().openNewSessionDraft()
+    await useSessionUIStore.getState().sendMessage('what is in scope', 'openai', 'gpt-4o')
+    const context = (sent?.parts as any[]).find((part) => part.type === 'text' && part.synthetic === true)
+    expect(context?.text).toMatch(/^<system-reminder>\n[\s\S]*\/projects\/notes[\s\S]*<\/system-reminder>$/)
+    expect(sent?.metadata).toEqual({ yuri: { workspaceId: PROJECT.id } })
+  })
+
+  test('multi-path workspace context rides hidden in the first separate prompt', async () => {
+    registerRuntimeAPIs(null)
+    const send = vi.fn(async () => 'msg_workspace_context')
+    opencodeClient.sendMessage = send
+    useProjectsStore.setState({ projects: [{ ...PROJECT, paths: [PROJECT.path, '/projects/notes'] }], activeProjectId: PROJECT.id })
+    useSessionUIStore.getState().openNewSessionDraft({ selectedProjectId: PROJECT.id })
+    await useSessionUIStore.getState().sendMessage('what is in scope', 'openai', 'gpt-4o')
+    const additional = (send.mock.calls[0] as any)[0].additionalParts as Array<{ text: string; synthetic?: boolean }>
+    expect(additional.some((part) => part.synthetic === true && part.text.includes('/projects/notes'))).toBe(true)
+  })
+
+  test('single-path projects send no workspace context', async () => {
+    let sent: ConversationCreateWithPromptInput | undefined
+    registerRuntimeAPIs(makeCombinedAPI(async (input) => { sent = input; return successResult() }))
+    useSessionUIStore.getState().openNewSessionDraft()
+    await useSessionUIStore.getState().sendMessage('hello', 'openai', 'gpt-4o')
+    expect((sent?.parts as any[]).some((part) => part.type === 'text' && String(part.text).includes('<system-reminder>'))).toBe(false)
+  })
+
   test('11) whitespace slash, shell, missing capability — not call combined endpoint', async () => {
     let count = 0
     registerRuntimeAPIs(makeCombinedAPI(async () => { count++; return successResult() }))

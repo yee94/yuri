@@ -39,7 +39,7 @@ describe('DirectoryExplorerDialog mobile layout', () => {
 
   test('keeps the show-hidden action in the mobile sheet header and multiple-projects checkbox in header trailing', () => {
     expect(componentSource).toContain('trailing={headerTrailing}');
-    expect(componentSource).toContain('{multipleProjectsToggle}');
+    expect(componentSource).toContain('{!editProject ? multipleProjectsToggle : null}');
     expect(componentSource).toContain('{showHiddenToggle}');
     expect(componentSource).not.toContain('<div className="flex shrink-0 justify-end px-3">{showHiddenToggle}</div>');
     expect(componentSource).toContain('aria-pressed={showHidden}');

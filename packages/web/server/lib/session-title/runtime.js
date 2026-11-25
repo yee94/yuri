@@ -13,6 +13,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { stripSystemReminders } from '../opencode/system-reminder.js';
 
 const YURI_SETTINGS_FILE = path.join(
   process.env.YURI_DATA_DIR
@@ -203,7 +204,7 @@ const extractUserMessage = (payload) => {
     const properties = payload.properties ?? payload.data ?? {};
     const item = properties.item;
     if (typeof properties.sessionID !== 'string' || item?.type !== 'user') return null;
-    const text = typeof item.payload?.text === 'string' ? item.payload.text.slice(0, TRANSCRIPT_USER_CHAR_LIMIT) : '';
+    const text = typeof item.payload?.text === 'string' ? stripSystemReminders(item.payload.text).slice(0, TRANSCRIPT_USER_CHAR_LIMIT) : '';
     const files = Array.isArray(item.payload?.files) ? item.payload.files.slice(0, 8) : [];
     const parts = [
       ...(text.trim() ? [{ type: 'text', text }] : []),
@@ -243,7 +244,7 @@ const messagePartsToText = (message) => {
     : TRANSCRIPT_USER_CHAR_LIMIT;
   return parts
     .map((part) => {
-      if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+      if (part?.type === 'text' && typeof part.text === 'string') return stripSystemReminders(part.text);
       if (part?.type !== 'file') return '';
       const filename = typeof part.filename === 'string' ? part.filename.slice(0, 200) : '';
       const mime = typeof part.mime === 'string' ? part.mime.slice(0, 100) : '';

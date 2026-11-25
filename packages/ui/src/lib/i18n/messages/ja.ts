@@ -3448,6 +3448,8 @@ export const dict: Record<I18nKey, string> = {
   'workspace.paths.description': '0個以上のディレクトリを関連付けられます。プライマリディレクトリがデフォルトの作業ディレクトリになります。',
   'workspace.paths.empty': 'ディレクトリが関連付けられていません。フォルダを追加するか、空のワークスペースとして使用できます。',
   'workspace.paths.primaryBadge': 'プライマリ',
+  'workspace.paths.sameMachineHint': 'マルチプロジェクトには同じマシン上のディレクトリのみ含められます',
+  'workspace.paths.count': '{count} 個のディレクトリ',
   'workspace.paths.setPrimary': 'プライマリに設定',
   'workspace.paths.removeAria': 'ディレクトリ {path} を削除',
   'workspace.paths.addPlaceholder': '/path/to/directory',
@@ -3460,5 +3462,4 @@ export const dict: Record<I18nKey, string> = {
   'workspace.create.nameRequired': 'ワークスペース名を入力してください。',
   'workspace.create.submit': 'ワークスペースを作成',
   'workspace.create.stageDirAria': '{name} をワークスペースに追加',
-  'workspace.multiRepo.branchReadOnly': '複数リポジトリ構成ではブランチ表示は読み取り専用です。切り替えはエージェントに依頼してください。',
 };

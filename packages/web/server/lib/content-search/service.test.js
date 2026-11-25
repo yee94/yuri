@@ -96,7 +96,7 @@ test('indexes only admitted text and replaces FTS entries atomically', () => {
   services.push(service);
   const session = { id: 's', title: 'Title', directory: '/project', time: { updated: 1 } };
   service.replaceSession('host', session, [
-    { info: { id: 'u', role: 'user' }, parts: [{ type: 'text', text: 'visible needle' }, { type: 'text', text: 'synthetic-secret', synthetic: true }, { type: 'reasoning', text: 'reasoning-secret' }, { type: 'tool', text: 'tool-secret' }] },
+    { info: { id: 'u', role: 'user' }, parts: [{ type: 'text', text: 'visible needle\n<system-reminder>\nreminder-secret\n</system-reminder>' }, { type: 'text', text: 'synthetic-secret', synthetic: true }, { type: 'reasoning', text: 'reasoning-secret' }, { type: 'tool', text: 'tool-secret' }] },
     { info: { id: 'a', role: 'assistant' }, parts: [{ type: 'text', text: 'streaming-secret' }] },
     { info: { id: 'done', role: 'assistant', time: { completed: 1 } }, parts: [{ type: 'text', text: 'head-needle' + 'x'.repeat(3000) + 'tail-needle' }] },
   ]);
