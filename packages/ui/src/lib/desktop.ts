@@ -159,6 +159,7 @@ export type DesktopSettings = {
   gitProviderId?: string;
   gitModelId?: string;
   pwaAppName?: string;
+  sidebarBrandName?: string;
   pwaOrientation?: 'system' | 'portrait' | 'landscape';
   mobileKeyboardMode?: MobileKeyboardMode;
   desktopWindowControlsPosition?: DesktopWindowControlsPosition;

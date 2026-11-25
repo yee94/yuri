@@ -101,6 +101,17 @@ describe('settings helpers', () => {
       expect(helpers.sanitizeSettingsUpdate({ projectSortOrder })).not.toHaveProperty('projectSortOrder');
     }
   });
+
+  it('persists sidebarBrandName including explicit empty strings and truncates to 64 chars', () => {
+    const helpers = createTestHelpers();
+    expect(helpers.formatSettingsResponse(helpers.sanitizeSettingsUpdate({ sidebarBrandName: '开发机!' })).sidebarBrandName).toBe('开发机!');
+    expect(helpers.formatSettingsResponse(helpers.sanitizeSettingsUpdate({ sidebarBrandName: '' })).sidebarBrandName).toBe('');
+    const longName = 'A'.repeat(80);
+    expect(helpers.formatSettingsResponse(helpers.sanitizeSettingsUpdate({ sidebarBrandName: longName })).sidebarBrandName).toBe('A'.repeat(64));
+    for (const invalid of [undefined, null, 123, {}, []]) {
+      expect(helpers.sanitizeSettingsUpdate({ sidebarBrandName: invalid })).not.toHaveProperty('sidebarBrandName');
+    }
+  });
   it('persists summary AI configuration while withholding its API token from responses', () => {
     const helpers = createTestHelpers();
     const settings = helpers.sanitizeSettingsUpdate({

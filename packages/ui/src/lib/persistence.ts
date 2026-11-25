@@ -1209,6 +1209,9 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
     const normalized = candidate.pwaAppName.trim().replace(/\s+/g, ' ').slice(0, 64);
     result.pwaAppName = normalized.length > 0 ? normalized : '';
   }
+  if (typeof candidate.sidebarBrandName === 'string') {
+    result.sidebarBrandName = candidate.sidebarBrandName.slice(0, 64);
+  }
 
   const skillCatalogs = sanitizeSkillCatalogs(candidate.skillCatalogs);
   if (skillCatalogs) {

@@ -549,6 +549,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.pwaAppName === 'string') {
       result.pwaAppName = normalizePwaAppName(candidate.pwaAppName, undefined);
     }
+    if (typeof candidate.sidebarBrandName === 'string') {
+      result.sidebarBrandName = candidate.sidebarBrandName.slice(0, 64);
+    }
     if (typeof candidate.pwaOrientation === 'string') {
       result.pwaOrientation = normalizePwaOrientation(candidate.pwaOrientation, undefined);
     }
