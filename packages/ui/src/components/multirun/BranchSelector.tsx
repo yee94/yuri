@@ -17,6 +17,8 @@ import {
   LAST_WORKTREE_SOURCE_BRANCH_KEY,
   resolveWorktreeSourceBranchPreference,
 } from '@/lib/worktrees/worktreeSourceBranchPreference';
+import { recordRecentBranchUsage, resolveBranchRecencyMap } from '@/lib/worktrees/branchRecency';
+import { sortBranchesByRecency } from '@/lib/worktrees/branchSearch';
 import { useI18n } from '@/lib/i18n';
 
 export interface BranchSelectorProps {
@@ -70,21 +72,34 @@ export function useBranchOptions(directory: string | null): BranchSelectorState 
 
   const isLoading = isLoadingStatus || (isGitRepo === true && isLoadingBranches);
 
-  // Compute local and remote branch lists (same as NewWorktreeDialog)
+  const branchRecency = React.useMemo(
+    () => resolveBranchRecencyMap({ directory, branchInfo: branches?.branches }),
+    [branches?.branches, directory],
+  );
+
+  // Compute local and remote branch lists ordered by recency
   const localBranches = React.useMemo(() => {
     if (!branches?.all) return [];
-    return branches.all
-      .filter((branchName: string) => !branchName.startsWith('remotes/'))
-      .sort();
-  }, [branches]);
+    const local = branches.all.filter((branchName: string) => !branchName.startsWith('remotes/'));
+    return sortBranchesByRecency({
+      branches: local,
+      source: 'local',
+      currentBranch: branches.current,
+      branchRecency,
+    });
+  }, [branchRecency, branches]);
 
   const remoteBranches = React.useMemo(() => {
     if (!branches?.all) return [];
-    return branches.all
+    const remote = branches.all
       .filter((branchName: string) => branchName.startsWith('remotes/'))
-      .map((branchName: string) => branchName.replace(/^remotes\//, ''))
-      .sort();
-  }, [branches]);
+      .map((branchName: string) => branchName.replace(/^remotes\//, ''));
+    return sortBranchesByRecency({
+      branches: remote,
+      source: 'remote',
+      branchRecency,
+    });
+  }, [branchRecency, branches]);
 
   // isGitRepository: true if we got branches, false if fetch returned empty, null if not yet loaded
   const isGitRepository = React.useMemo<boolean | null>(() => {
@@ -166,7 +181,10 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
     <div>
       <Select
         value={value}
-        onValueChange={onChange}
+        onValueChange={(nextBranch) => {
+          recordRecentBranchUsage(directory, nextBranch);
+          onChange(nextBranch);
+        }}
         disabled={isDisabled}
       >
         <SelectTrigger

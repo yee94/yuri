@@ -38,7 +38,6 @@ import { useLiveSessionStatus, useSessionActivity } from '@/sync/sync-context';
 import { getSyncChildStores } from '@/sync/sync-refs';
 import { getSessionActivityReader } from '@/sync/session-activity';
 import { useSync } from '@/sync/use-sync';
-import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
 import { normalizePath } from '@/lib/pathNormalization';
 import type { WorktreeMetadata } from '@/types/worktree';
 
@@ -467,19 +466,18 @@ export function MobileProjectsHomeContainer({
 
   const handleSyncProjectSessions = useEvent((project: ProjectMeta) => {
     void (async () => {
-      let worktrees = project.worktrees;
-      try {
-        const result = await forceRefreshProjectWorktreeCatalog({
-          id: project.id,
-          path: project.path,
-        });
-        worktrees = result.worktrees;
-      } catch (error) {
-        console.warn('[MobileProjectsHome] Worktree refresh before session sync failed:', error);
-        worktrees = useSessionUIStore.getState().availableWorktreesByProject.get(project.path) ?? project.worktrees;
+      const directories = new Set<string>([project.path]);
+      const knownWorktrees = useSessionUIStore.getState().availableWorktreesByProject.get(project.path) ?? project.worktrees;
+      for (const worktree of knownWorktrees) {
+        const dir = normalizePath(worktree.path);
+        if (dir) directories.add(dir);
+      }
+      for (const session of model.ownership.sessionsByProject.get(project.id) ?? []) {
+        const dir = normalizePath((session as { directory?: string | null }).directory ?? null);
+        if (dir) directories.add(dir);
       }
       await syncGlobalSessionsForDirectories(
-        [project.path, ...worktrees.map((worktree) => worktree.path)],
+        [...directories],
         model.allSessions,
       );
     })();

@@ -1096,15 +1096,31 @@ class OpencodeService {
 
   async createSession(params?: { parentID?: string; title?: string; metadata?: Record<string, unknown> }, directory?: string | null): Promise<Session> {
     const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
-    void params?.metadata;
     if (params?.parentID) {
       // Official 2.x SessionForkInput is { sessionID, before? } (no boundary).
       const forked = await this.client.session.fork({
         sessionID: params.parentID,
       });
-      if (params.title) {
-        await this.client.session.update({ sessionID: forked.id, title: params.title });
-        return projectSession(await this.client.session.get({ sessionID: forked.id }));
+      if (params.title || (params.metadata && Object.keys(params.metadata).length > 0)) {
+        if (params.title) {
+          await this.client.session.update({ sessionID: forked.id, title: params.title });
+        }
+        const projectedForked = projectSession(await this.client.session.get({ sessionID: forked.id }));
+        if (params.metadata && Object.keys(params.metadata).length > 0) {
+          try {
+            return await this.updateSession(projectedForked.id, { metadata: params.metadata }, requestDirectory);
+          } catch (error) {
+            console.warn('[opencodeClient] Failed to persist initial forked session metadata:', error);
+            return {
+              ...projectedForked,
+              metadata: {
+                ...(projectedForked.metadata ?? {}),
+                ...params.metadata,
+              } as Session['metadata'],
+            };
+          }
+        }
+        return projectedForked;
       }
       return projectSession(forked);
     }
@@ -1112,7 +1128,22 @@ class OpencodeService {
       ...(requestDirectory ? { location: { directory: requestDirectory } } : {}),
       title: params?.title,
     });
-    return projectSession(created);
+    const projected = projectSession(created);
+    if (params?.metadata && Object.keys(params.metadata).length > 0) {
+      try {
+        return await this.updateSession(projected.id, { metadata: params.metadata }, requestDirectory);
+      } catch (error) {
+        console.warn('[opencodeClient] Failed to persist initial session metadata:', error);
+        return {
+          ...projected,
+          metadata: {
+            ...(projected.metadata ?? {}),
+            ...params.metadata,
+          } as Session['metadata'],
+        };
+      }
+    }
+    return projected;
   }
 
   async getSession(id: string, directory?: string | null): Promise<Session> {

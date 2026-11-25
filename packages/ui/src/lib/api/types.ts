@@ -185,6 +185,8 @@ export interface GitBranchDetails {
   tracking?: string;
   ahead?: number;
   behind?: number;
+  /** Unix timestamp (ms) of the branch's latest commit or local checkout activity. */
+  lastUsedAt?: number;
 }
 
 export interface GitBranch {

@@ -271,4 +271,24 @@ describe('MobileSessionRow status placement', () => {
     expect(rendered.get('completed-unread')).toContain('bg-[var(--status-info)]');
     expect(rendered.get('idle')).toContain('bg-muted-foreground/35');
   });
+
+  test('renders compact worktree footer when worktreeLabel is set without a subtitle', () => {
+    const html = renderToString(
+      <I18nProvider>
+        <MobileSessionRow
+          session={{
+            id: 'wt-row',
+            title: 'Worktree task',
+            worktreeLabel: 'feat/flat-sidebar · sidebar-wt',
+          }}
+          onSelect={noop}
+          onPin={noop}
+          onArchive={noop}
+          onOpenActions={noop}
+        />
+      </I18nProvider>,
+    );
+    expect(html).toContain('data-session-worktree-footer');
+    expect(html).toContain('feat/flat-sidebar · sidebar-wt');
+  });
 });

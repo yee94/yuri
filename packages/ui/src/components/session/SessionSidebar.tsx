@@ -30,7 +30,7 @@ import { isRuntimeInstanceChange, subscribeRuntimeEndpointChanged } from '@/lib/
 import { useGitRepoStatusMap, useGitStore } from '@/stores/useGitStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { isVSCodeRuntime } from '@/lib/desktop';
-import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
+import { sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
 import { NewWorktreeDialog } from './NewWorktreeDialog';
 import { ScheduledTasksDialogHost as ScheduledTasksDialog } from './ScheduledTasksDialogHost';
 import { ArchivedSessionsDialog } from '@/components/sections/yuri/ArchivedSessionsDialog';
@@ -88,7 +88,7 @@ import {
   type SessionFocusScope,
 } from '@/stores/useSessionFocusStore';
 import { type SessionGroup, type SessionNode } from './sidebar/types';
-import { derivePinnedSessions, listInProgressHomeSessions, rankByManualOrder, resolveTopSectionSecondaryMeta, PINNED_SESSION_ORDER_SCOPE } from './sidebar/pinnedSessions';
+import { derivePinnedSessions, rankByManualOrder, resolveTopSectionSecondaryMeta, PINNED_SESSION_ORDER_SCOPE } from './sidebar/pinnedSessions';
 import { usePinnedSessionIds, useTogglePinnedSession } from '@/queries/sessionIndexPinQueries';
 import { useSetSessionSettled, useSettledSessionIds, useTaskIndexMembership } from '@/queries/sessionIndexSettleQueries';
 import { unarchiveSession } from '@/sync/session-actions';
@@ -1225,28 +1225,11 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     const project = projects.find((entry) => entry.id === projectId);
     if (!project) return;
     void (async () => {
-      // Manual sync must re-discover worktrees first. The menu only knows the
-      // in-memory catalog; external `git worktree add` or OpenCode sessions in a
-      // new linked tree would otherwise never reach the session-index DB.
-      // Prefer this refresh's `result.worktrees` — `collectDirectoriesForProjectId`
-      // closes over a pre-await React snapshot of `availableWorktreesByProject`.
-      let worktrees: WorktreeMetadata[] = [];
-      if (!isVSCode) {
-        try {
-          const result = await forceRefreshProjectWorktreeCatalog({
-            id: project.id,
-            path: project.path,
-          });
-          worktrees = result.worktrees;
-        } catch (error) {
-          console.warn('[SessionSidebar] Worktree refresh before session sync failed:', error);
-          const projectPath = normalizePath(project.path);
-          worktrees = projectPath
-            ? (useSessionUIStore.getState().availableWorktreesByProject.get(projectPath) ?? [])
-            : [];
-        }
-      }
-      const directories = buildManualProjectSessionSyncDirectories(
+      const projectPath = normalizePath(project.path);
+      const worktrees = !isVSCode && projectPath
+        ? (useSessionUIStore.getState().availableWorktreesByProject.get(projectPath) ?? [])
+        : [];
+      const baseDirectories = buildManualProjectSessionSyncDirectories(
         project.path,
         worktrees,
         {
@@ -1255,6 +1238,14 @@ export const SessionSidebar = React.memo(function SessionSidebar({
           includeWorktrees: !isVSCode,
         },
       );
+      const directorySet = new Set(baseDirectories);
+      if (!isVSCode) {
+        for (const session of sessionOwnership.sessionsByProject.get(projectId) ?? []) {
+          const dir = normalizePath((session as Session & { directory?: string | null }).directory ?? null);
+          if (dir) directorySet.add(dir);
+        }
+      }
+      const directories = [...directorySet];
       if (directories.length === 0) return;
       await syncGlobalSessionsForDirectories(
         directories,
@@ -1730,31 +1721,19 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     ).catch(() => toast.error(t('sessions.order.saveFailed')));
   });
 
-  // Top in-progress group mirrors mobile home: non-pinned, non-archived
-  // busy/retry or top-level-unread rows. VS Code has no global pinned group
-  // but still lifts these rows. Search hides the whole top section.
-  const inProgressSessions = React.useMemo(() => {
-    if (hasSessionSearchQuery) return [];
-    return listInProgressHomeSessions(
-      sessions,
-      pinnedSessionIds,
-      runningSessionIds,
-      unseenBySession,
-    );
-  }, [hasSessionSearchQuery, pinnedSessionIds, runningSessionIds, sessions, unseenBySession]);
-
-  const { pinnedItems: localPinnedItems, inProgressItems } = React.useMemo(() => {
+  const localPinnedItems = React.useMemo(() => {
     const toItem = (session: Session) => {
       const existing = sessionSidebarMetaById.get(session.id);
       const sessionDirectory = normalizePath(
         (session as Session & { directory?: string | null }).directory ?? null,
       );
+      const resolvedSessionWorktree = worktreeMetadata.get(session.id) ?? sessionWorktreeToMetadata(session);
       // Pinned rows stay flat — leaf node only. Subagents of pinned parents stay
       // hidden (not under the pin, not re-surfaced as project roots).
       const node: SessionNode = {
         session,
         children: [],
-        worktree: worktreeMetadata.get(session.id) ?? null,
+        worktree: resolvedSessionWorktree,
       };
       if (
         hasSessionSearchQuery
@@ -1772,7 +1751,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       const secondaryMeta = resolveTopSectionSecondaryMeta({
         projectLabel,
         owner,
-        sessionWorktree: worktreeMetadata.get(session.id) ?? null,
+        sessionWorktree: resolvedSessionWorktree,
         worktrees: project
           ? (availableWorktreesByProject.get(project.normalizedPath) ?? [])
           : [],
@@ -1791,24 +1770,18 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       };
     };
 
-    const toItems = (source: Session[]) =>
-      source
-        .map(toItem)
-        .filter(
-          (item): item is NonNullable<ReturnType<typeof toItem>> => item !== null,
-        );
-
-    return {
-      // VS Code still renders no global pinned group.
-      pinnedItems: isVSCode ? [] : toItems(pinnedSessions),
-      inProgressItems: toItems(inProgressSessions),
-    };
+    // VS Code still renders no global pinned group.
+    if (isVSCode) return [];
+    return pinnedSessions
+      .map(toItem)
+      .filter(
+        (item): item is NonNullable<ReturnType<typeof toItem>> => item !== null,
+      );
   }, [
     availableWorktreesByProject,
     filterSessionNodesForSearch,
     gitRepoStatus,
     hasSessionSearchQuery,
-    inProgressSessions,
     isVSCode,
     normalizedSessionSearchQuery,
     pinnedSessions,
@@ -1851,10 +1824,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         (item) => item.node.session.id, sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]);
     },
     [localPinnedItems, remoteTaskList, remoteTopItems, sessionOrderByScope]);
-  const displayInProgressItems = React.useMemo(() => [...inProgressItems,
-    ...remoteTopItems.filter((item) => !item.pinned),
-  ].sort((a, b) => getSessionActivityUpdatedAt(b.node.session) - getSessionActivityUpdatedAt(a.node.session)),
-  [inProgressItems, remoteTopItems]);
 
   // Task view is a desktop/web surface (local and remote projects). Search keeps the
   // project tree, which is what the search filter operates on.
@@ -2193,12 +2162,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     if (hasSessionSearchQuery) {
       return [];
     }
-    // Pinned rows first, then the unlabeled in-progress rows; both live in the
-    // top `pinned` scope (VS Code included — its pinned list is simply empty).
-    // The task view renders running rows as task cards, so its top section
-    // contributes pinned rows only.
-    const topItems = taskViewActive ? pinnedItems : [...pinnedItems, ...displayInProgressItems];
-    return topItems.map((item, visibleIndex) => {
+    // Desktop top section renders pinned rows only (no in-progress lift).
+    return pinnedItems.map((item, visibleIndex) => {
       const session = item.node.session;
       return {
         scope: "pinned",
@@ -2211,7 +2176,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         visibleIndex,
       };
     });
-  }, [hasSessionSearchQuery, displayInProgressItems, pinnedItems, taskViewActive]);
+  }, [hasSessionSearchQuery, pinnedItems]);
 
   const [visiblePinnedShortcutSessionIds, setVisiblePinnedShortcutSessionIds] =
     React.useState<readonly string[] | null>(null);
@@ -2868,9 +2833,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   // shell-only because the web titlebar already owns that slot.
   const showSidebarActionButtons = !isVSCode && !hasSessionSearchQuery;
   const pinSidebarActionButtons = showSidebarActionButtons && isDesktop && !mobileVariant;
-  const topInProgressItems = taskViewActive ? [] : displayInProgressItems;
-  const showPinnedTopSection =
-    !hasSessionSearchQuery && (pinnedItems.length > 0 || topInProgressItems.length > 0);
+  const showPinnedTopSection = !hasSessionSearchQuery && pinnedItems.length > 0;
   const sidebarActionButtons = (
     <div className="space-y-0.5 py-1">
       <Button
@@ -2931,7 +2894,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       items={pinnedSectionItems}
       reorderEnabled
       onSessionsReordered={handlePinnedSessionsReordered}
-      inProgressItems={topInProgressItems}
       renderSessionNode={renderSessionNode}
       currentSessionId={currentSessionId}
       editingId={editingId}
@@ -3020,7 +2982,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         onRemoteNavigationTargets={handleRemoteNavigationTargets}
         topContent={topContent}
         tabLeadingContent={pinnedInsideTab ? pinnedSection : undefined}
-        hasLeadingSection={topContent !== null && !pinnedInsideTab && (pinnedItems.length > 0 || inProgressItems.length > 0)}
+        hasLeadingSection={topContent !== null && !pinnedInsideTab && pinnedItems.length > 0}
         headerAccessory={taskViewActive ? taskHeaderActions : projectHeaderActions}
         headerSwitch={sidebarViewSwitch}
         taskContent={taskContent}

@@ -726,17 +726,19 @@ RevertedMessageDock.displayName = 'RevertedMessageDock';
 const ATTACHMENT_EXPANSION_MENU_ENABLED = false;
 
 // Keep catalog enumeration inside the popup's presence boundary, not on each keystroke.
-function DraftProjectItems({ projects, query, renderLabel, onSelect, selectedId }: {
+function DraftProjectItems({ projects, query, renderLabel, onSelect, selectedId, highlightedIndex, onHighlightIndex }: {
     projects: ReturnType<typeof useProjectsStore.getState>['projects'];
     query: string;
     renderLabel: (project: ReturnType<typeof useProjectsStore.getState>['projects'][number]) => React.ReactNode;
     onSelect?: (id: string) => void;
     selectedId?: string;
+    highlightedIndex?: number;
+    onHighlightIndex?: (index: number) => void;
 }) {
     return projects.filter((project) => (
         matchesModelSearch(getProjectDisplayLabel(project), query)
         || matchesModelSearch(project.path, query)
-    )).map((project) => onSelect ? (
+    )).map((project, index) => onSelect ? (
         <button
             key={project.id}
             type="button"
@@ -749,7 +751,16 @@ function DraftProjectItems({ projects, query, renderLabel, onSelect, selectedId 
             ) : null}
         </button>
     ) : (
-        <SelectItem key={project.id} value={project.id} className="max-w-[24rem] truncate">
+        <SelectItem
+            key={project.id}
+            value={project.id}
+            data-draft-project-highlighted={highlightedIndex === index ? 'true' : undefined}
+            onMouseEnter={() => onHighlightIndex?.(index)}
+            className={cn(
+                'max-w-[24rem] truncate',
+                highlightedIndex === index && 'bg-interactive-selection text-interactive-selection-foreground',
+            )}
+        >
             {renderLabel(project)}
         </SelectItem>
     ));
@@ -1267,6 +1278,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const [mobileDraftPickerQuery, setMobileDraftPickerQuery] = React.useState('');
     const [desktopDraftProjectQuery, setDesktopDraftProjectQuery] = React.useState('');
     const [desktopDraftProjectPickerOpen, setDesktopDraftProjectPickerOpen] = React.useState(false);
+    const [desktopDraftProjectActiveIndex, setDesktopDraftProjectActiveIndex] = React.useState(0);
+    const desktopDraftProjectInputRef = React.useRef<HTMLInputElement | null>(null);
     // True while ANY MobileOverlayPanel is open (sessions sheet, model/agent
     // panels, pickers...).
     const [mobileOverlayHostBusy, setMobileOverlayHostBusy] = React.useState(false);
@@ -6424,6 +6437,78 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         }, { force: true });
     });
 
+    React.useEffect(() => {
+        if (!desktopDraftProjectPickerOpen) return;
+        setDesktopDraftProjectActiveIndex(0);
+        const frame = window.requestAnimationFrame(() => {
+            desktopDraftProjectInputRef.current?.focus();
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [desktopDraftProjectPickerOpen]);
+
+    useEventListener('yuri:open-draft-project-picker', () => {
+        if (!showDraftTargetSelectors) return;
+        if (isMobile) {
+            setMobileDraftPicker('project');
+            return;
+        }
+        if (selectedDraftProject) {
+            setDesktopDraftProjectPickerOpen(true);
+            return;
+        }
+        sessionEvents.requestDirectoryDialog();
+    }, typeof window !== 'undefined' ? window : undefined);
+
+    const handleDesktopDraftProjectKeyDown = useEvent((event: React.KeyboardEvent<HTMLInputElement>) => {
+        event.stopPropagation();
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            setDesktopDraftProjectPickerOpen(false);
+            window.requestAnimationFrame(() => textareaRef.current?.focus());
+            return;
+        }
+        if (
+            event.key !== 'ArrowDown'
+            && event.key !== 'ArrowUp'
+            && event.key !== 'Tab'
+            && event.key !== 'Enter'
+        ) {
+            return;
+        }
+        const matchingProjects = projects.filter((project) => (
+            matchesModelSearch(getProjectDisplayLabel(project), desktopDraftProjectQuery)
+            || matchesModelSearch(project.path, desktopDraftProjectQuery)
+        ));
+        const totalItems = matchingProjects.length + 1; // +1 for "New project" footer action
+        if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
+            event.preventDefault();
+            setDesktopDraftProjectActiveIndex((prev) => (prev + 1) % totalItems);
+            return;
+        }
+        if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+            event.preventDefault();
+            setDesktopDraftProjectActiveIndex((prev) => (prev - 1 + totalItems) % totalItems);
+            return;
+        }
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const clampedIndex = Math.max(0, Math.min(desktopDraftProjectActiveIndex, totalItems - 1));
+            if (clampedIndex < matchingProjects.length) {
+                const chosen = matchingProjects[clampedIndex];
+                if (chosen) {
+                    handleDraftProjectChange(chosen.id);
+                }
+                setDesktopDraftProjectPickerOpen(false);
+                setDesktopDraftProjectQuery('');
+                window.requestAnimationFrame(() => textareaRef.current?.focus());
+            } else {
+                setDesktopDraftProjectPickerOpen(false);
+                setDesktopDraftProjectQuery('');
+                window.requestAnimationFrame(() => sessionEvents.requestDirectoryDialog());
+            }
+        }
+    });
+
     const handleDraftDirectoryChange = useEvent((directory: string) => {
         const draft = useSessionUIStore.getState().newSessionDraft;
         // Only block while worktree creation is still in-flight. bootstrap /
@@ -7626,14 +7711,24 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                                 </SelectTrigger>
                                 <SelectContent fitContent>
                                     <Input
+                                        ref={desktopDraftProjectInputRef}
                                         autoFocus
                                         value={desktopDraftProjectQuery}
-                                        onChange={(event) => setDesktopDraftProjectQuery(event.target.value)}
-                                        onKeyDown={(event) => event.stopPropagation()}
+                                        onChange={(event) => {
+                                            setDesktopDraftProjectQuery(event.target.value);
+                                            setDesktopDraftProjectActiveIndex(0);
+                                        }}
+                                        onKeyDown={handleDesktopDraftProjectKeyDown}
                                         placeholder={t('chat.chatInput.draftPicker.searchProjects')}
                                         className="mb-1 h-8 min-w-56"
                                     />
-                                    <DraftProjectItems projects={projects} query={desktopDraftProjectQuery} renderLabel={renderProjectLabelWithIcon} />
+                                    <DraftProjectItems
+                                        projects={projects}
+                                        query={desktopDraftProjectQuery}
+                                        renderLabel={renderProjectLabelWithIcon}
+                                        highlightedIndex={desktopDraftProjectActiveIndex}
+                                        onHighlightIndex={setDesktopDraftProjectActiveIndex}
+                                    />
                                     {/* Fixed footer action: replace the removed sidebar "add project" toolbar button. */}
                                     <SelectSeparator />
                                     <button
@@ -7928,7 +8023,10 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                         rows: 1,
                     }}
                 >
-                    <LeaderKeyHint />
+                    <LeaderKeyHint
+                        showProjectAction={showDraftTargetSelectors}
+                        showBranchAction={Boolean(showDraftTargetSelectors && selectedDraftProject && shouldShowDraftBranchSelector)}
+                    />
                     {mobileComposerSnapVisible ? (
                         <MobileComposerHeightHandle
                             inputRef={textareaRef}

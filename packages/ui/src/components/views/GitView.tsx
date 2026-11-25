@@ -51,6 +51,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { BranchSelector } from './git/BranchSelector';
+import { resolveBranchRecencyMap } from '@/lib/worktrees/branchRecency';
+import { sortBranchesByRecency } from '@/lib/worktrees/branchSearch';
 import { WorktreeBranchDisplay } from './git/WorktreeBranchDisplay';
 import { SyncActions } from './git/SyncActions';
 import { StashesDialog } from './git/StashesDialog';
@@ -1226,20 +1228,33 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     }
   };
 
+  const branchRecency = React.useMemo(
+    () => resolveBranchRecencyMap({ directory: currentDirectory, branchInfo: branches?.branches }),
+    [branches?.branches, currentDirectory],
+  );
+
   const localBranches = React.useMemo(() => {
     if (!branches?.all) return [];
-    return branches.all
-      .filter((branchName: string) => !branchName.startsWith('remotes/'))
-      .sort();
-  }, [branches]);
+    const local = branches.all.filter((branchName: string) => !branchName.startsWith('remotes/'));
+    return sortBranchesByRecency({
+      branches: local,
+      source: 'local',
+      currentBranch: status?.current ?? branches.current,
+      branchRecency,
+    });
+  }, [branchRecency, branches, status?.current]);
 
   const remoteBranches = React.useMemo(() => {
     if (!branches?.all) return [];
-    return branches.all
+    const remote = branches.all
       .filter((branchName: string) => branchName.startsWith('remotes/'))
-      .map((branchName: string) => branchName.replace(/^remotes\//, ''))
-      .sort();
-  }, [branches]);
+      .map((branchName: string) => branchName.replace(/^remotes\//, ''));
+    return sortBranchesByRecency({
+      branches: remote,
+      source: 'remote',
+      branchRecency,
+    });
+  }, [branchRecency, branches]);
 
   const effectiveRemotes = React.useMemo<GitRemote[]>(() => {
     if (remotes.length > 0) {
@@ -1880,6 +1895,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
         localBranches={localBranches}
         remoteBranches={remoteBranches}
         branchInfo={branches?.branches}
+        directory={currentDirectory}
         onCheckout={handleCheckoutBranch}
         onCreate={handleCreateBranch}
         remotes={effectiveRemotes}

@@ -170,12 +170,10 @@ describe('worktreeManager list invalidation', () => {
     expect(await listing).toMatchObject([{ path: '/repo/src', worktreeRoot: '/repo', projectDirectory: '/feature/src', relativePath: 'src' }]);
   });
 
-  test('creates a nested project worktree session target without changing its Git checkout root', async () => {
+  test('creates a nested project worktree session target without changing its Git checkout root or listing worktrees', async () => {
     resolvedProjectRoot = '/repo';
-    const creating = createWorktree({ id: 'src', path: '/repo/src' }, { preferredName: 'feature', mode: 'new', branchName: 'feature' });
-    await waitForListCallCount(1);
-    listResolvers[0]([{ path: '/repo', branch: 'main' }]);
-    const result = await creating;
+    const result = await createWorktree({ id: 'src', path: '/repo/src' }, { preferredName: 'feature', mode: 'new', branchName: 'feature' });
+    expect(listCalls).toHaveLength(0);
     expect(result).toMatchObject({ path: '/repo-feature/src', worktreeRoot: '/repo-feature', projectDirectory: '/repo/src', relativePath: 'src' });
     await removeProjectWorktree({ id: 'src', path: '/repo/src' }, result);
     expect(removeWorktreeCalls[0][1].directory).toBe('/repo-feature');

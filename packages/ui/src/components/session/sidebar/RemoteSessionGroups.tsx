@@ -7,6 +7,7 @@ import { RemoteChildSessions } from './RemoteProjectResources';
 import type { RemoteProject } from '@/lib/remote-projects/types';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import { getDefaultProjectGroupVisibleCount } from './sessionNavigationModel';
+import { formatWorktreeFooterLabel } from '@/lib/worktrees/sessionWorktreeMetadata';
 
 /** Adapts Host-owned data and commands to the existing sidebar group renderer. */
 export function RemoteSessionGroups({ model, project, registry }: {
@@ -34,8 +35,9 @@ export function RemoteSessionGroups({ model, project, registry }: {
   const renderRow = (node: SessionNode, depth = 1, directory?: string | null): React.ReactNode => {
     const scope = node.session.directory || directory || project.path;
     const session = liveSessions.get(node.session.id) ?? { ...node.session, time: node.session.time ?? {} };
+    const worktreeLabel = node.worktree ? formatWorktreeFooterLabel(node.worktree) : null;
     return <React.Fragment key={node.session.id}>
-      <RemoteSummaryRow {...model.sessionProps(session, scope)} depth={depth} />
+      <RemoteSummaryRow {...model.sessionProps(session, scope)} worktreeLabel={worktreeLabel} depth={depth} />
       {'hasChildren' in session && session.hasChildren ? <RemoteChildSessions registry={registry} hostId={project.hostId} directory={scope} sessionId={node.session.id}
         disabled={!online} depth={depth + 1} pinnedSessionIds={snapshot?.pinnedSessionIds} onVisibleTargets={model.reportChildTargets}
         renderRow={(session, childScope, childDepth) => renderRow({ session, children: [], worktree: null }, childDepth, childScope)} /> : null}

@@ -42,6 +42,7 @@ import {
 import { createSessionOwnershipIndex } from '@/components/session/sidebar/sessionOwnership';
 import { selectVisibleSessions } from '@/components/session/sidebar/sessionNavigationModel';
 import { buildSessionTree } from '@/components/session/sidebar/sessionTree';
+import { formatWorktreeFooterLabel, sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
 import type { WorktreeMetadata } from '@/types/worktree';
 
 import type {
@@ -226,6 +227,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
   // Authoritative worktree catalog is owned by MobileApp (connect-time enumeration into
   // session-ui-store). Do not re-probe git/worktrees here — that was an unbounded cold-start cost.
   const worktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
+  const worktreeMetadata = useSessionUIStore((state) => state.worktreeMetadata);
   const worktreeOrderByProject = useWorktreeOrderStore((state) => state.orderByProject);
   const pinnedSessionIds = usePinnedSessionIds();
   const projectExpandedMap = useMobileSessionTreeStore((state) => state.projectExpanded);
@@ -318,7 +320,6 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
 
     for (const node of nodes) {
       ensureBucket(node, node.project.path, null);
-      for (const worktree of node.project.worktrees) ensureBucket(node, worktree.path, worktree);
     }
 
     for (const session of sessions) {
@@ -326,12 +327,10 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
       if (!owner) continue;
       const node = nodesById.get(owner.projectId);
       if (!node) continue;
-      const matchedWorktree = owner.kind === 'worktree'
-        ? findExactWorktreeMatch(node.project, owner.scopeDirectory)
-        : null;
-      const bucket = matchedWorktree
-        ? ensureBucket(node, matchedWorktree.path, matchedWorktree)
-        : ensureBucket(node, node.project.path, null);
+      // Flat mobile project list: all sessions for this project (root + linked
+      // worktrees) list directly under the single main bucket; worktree context
+      // renders as a compact per-session footer.
+      const bucket = ensureBucket(node, node.project.path, null);
       bucket.sessions.push(session);
     }
 
@@ -383,9 +382,11 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
       const owner = ownership.bySessionId.get(session.id);
       const project = owner ? projectById.get(owner.projectId) : undefined;
       if (!project) return [];
-      const worktree = owner?.kind === 'worktree'
-        ? findExactWorktreeMatch(project, owner.scopeDirectory)
-        : null;
+      const worktree = worktreeMetadata.get(session.id)
+        ?? sessionWorktreeToMetadata(session)
+        ?? (owner?.kind === 'worktree'
+          ? findExactWorktreeMatch(project, owner.scopeDirectory)
+          : null);
       const next: MobileSessionTreeNode = {
         id: session.id,
         directory: getSessionDirectory(session),
@@ -429,6 +430,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
     sessions,
     t,
     unseenBySession,
+    worktreeMetadata,
   ]);
 
   const bucketIndex = React.useMemo(() => {
@@ -488,10 +490,20 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
           const unseen = unseenBySession[session.id] ?? 0;
           // Subagents are filtered out of roots; keep unread only for top-level rows.
           const unread = unseen > 0 && !parentId;
+          const sessionDirectory = getSessionDirectory(session) || bucket.path;
+          const sessionWorktree = worktreeMetadata.get(session.id)
+            ?? sessionWorktreeToMetadata(session)
+            ?? (sessionDirectory && sessionDirectory !== node.project.path
+              ? findExactWorktreeMatch(node.project, sessionDirectory)
+              : null);
+          const worktreeLabel = sessionWorktree && normalizePath(sessionWorktree.path) !== node.project.path
+            ? (formatWorktreeFooterLabel(sessionWorktree) ?? undefined)
+            : undefined;
           const next: MobileSessionTreeNode = {
             id: session.id,
-            directory: bucket.path,
+            directory: sessionDirectory,
             title: session.title?.trim() || t('mobile.sessions.untitled'),
+            worktreeLabel,
             changes: formatSessionChangeCounts(readSessionChangeSummary(session)) ?? undefined,
             activityLabel: formatRelativeShort(getSessionTimestamp(session)) || undefined,
             unread,
@@ -599,6 +611,7 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
     unseenBySession,
     visibleCountByBucket,
     worktreeExpandedMap,
+    worktreeMetadata,
   ]);
 
   const projectHasWorktrees = (projectId: string): boolean => {

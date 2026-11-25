@@ -482,7 +482,9 @@ export async function createWorktreeSessionForNewBranch(
       await waitForWorktreeBootstrapIfEnabled(projectRef, metadata.worktreeRoot ?? metadata.path);
 
       const sessionStore = useSessionUIStore.getState();
-      const session = await sessionStore.createSession(undefined, metadata.path);
+      const { buildSessionWorktreeMetadataPatch } = await import('@/lib/worktrees/sessionWorktreeMetadata');
+      const worktreeMetadataPatch = buildSessionWorktreeMetadataPatch(createdMetadata, projectRef);
+      const session = await sessionStore.createSession(undefined, metadata.path, null, worktreeMetadataPatch);
       if (!session) {
         await removeProjectWorktree(projectRef, metadata, { deleteLocalBranch: true }).catch(() => undefined);
         throw new Error('Could not create a session for the worktree.');

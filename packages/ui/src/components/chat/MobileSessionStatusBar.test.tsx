@@ -240,7 +240,7 @@ describe('MobileSessionStatusBar phone navigation contracts', () => {
     expect(statusBarSource).toContain('startNewSessionDraft({ selectedProjectId: project.id, directoryOverride: project.path })');
     expect(statusBarSource).toContain('startNewSessionDraft({\n              selectedProjectId: worktreeDialogProjectId,');
     expect(statusBarSource).toContain('useMobileNavigationStore.getState().openSession({');
-    expect(statusBarSource).toContain('forceRefreshProjectWorktreeCatalog');
+    expect(statusBarSource).not.toContain('forceRefreshProjectWorktreeCatalog');
   });
 
   test('session action sheet exposes rename and submits smart title without waiting for generation', () => {

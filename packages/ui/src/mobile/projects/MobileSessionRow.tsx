@@ -21,6 +21,8 @@ export type MobileSessionRowModel = {
   kind?: 'session' | 'pagination';
   title: string;
   subtitle?: string;
+  /** Compact worktree branch · name footer for flat project lists. */
+  worktreeLabel?: string;
   /** Compact `+12 −3` from session.summary when those counts exist. */
   changes?: string;
   activityLabel?: string;
@@ -227,6 +229,17 @@ function MobileSessionRowImpl({
                   {highlightQuery ? renderHighlightedText(session.subtitle, highlightQuery) : session.subtitle}
                 </span> : null}
                 {subtitleSuffix}
+              </span>
+            ) : session.worktreeLabel ? (
+              <span
+                data-session-worktree-footer
+                className="flex min-w-0 items-center gap-1 text-[10px] leading-3.5 text-muted-foreground/70"
+                title={session.worktreeLabel}
+              >
+                <Icon name="git-branch" className="size-2.5 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1 truncate">
+                  {highlightQuery ? renderHighlightedText(session.worktreeLabel, highlightQuery) : session.worktreeLabel}
+                </span>
               </span>
             ) : null}
           </span>

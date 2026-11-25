@@ -267,18 +267,19 @@ it('desktop remote sessions use shared groups, activity-aware order, pagination 
   const rows = () => [...container.querySelectorAll('[data-session-row]')].map((row) => row.getAttribute('data-session-row'));
   try {
     await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={project} registry={registry} onNavigationTargets={targets} /></QueryClientProvider>));
-    await vi.waitFor(() => expect(rows()).toEqual(['first', 'second', 'third', 'checkout-session']));
+    await vi.waitFor(() => expect(rows()).toEqual(['checkout-session', 'first', 'second']));
     expect(container.textContent).not.toContain('remoteProjects.newFolder');
     expect(container.querySelector('input[type="checkbox"]')).toBeNull();
     expect(container.querySelector('[aria-label="remoteProjects.reorder"]')).toBeNull();
-    expect(container.querySelectorAll('.yuri-group')).toHaveLength(2);
+    expect(container.querySelectorAll('.yuri-group')).toHaveLength(1);
+    expect(container.querySelector('[data-session-row="checkout-session"] [data-session-worktree-footer]')?.textContent).toContain('checkout');
     updated = 10;
     await act(async () => { await queryClient.invalidateQueries({ queryKey: remoteHostSummariesQueryOptions(registry, hostId).queryKey }); });
-    await vi.waitFor(() => expect(rows()).toEqual(['fourth', 'first', 'second', 'checkout-session']));
+    await vi.waitFor(() => expect(rows()).toEqual(['fourth', 'checkout-session', 'first']));
     expect(targets.mock.lastCall?.[1].map((target: { sessionId: string }) => target.sessionId)).toEqual(rows());
     const more = [...container.querySelectorAll('button')].find((button) => button.textContent === 'sessions.sidebar.group.showMore')!;
     await act(async () => more.click());
-    expect(rows()).toEqual(['fourth', 'first', 'second', 'third', 'checkout-session']);
+    expect(rows()).toEqual(['fourth', 'checkout-session', 'first', 'second', 'third']);
     expect(targets.mock.lastCall?.[1].map((target: { sessionId: string }) => target.sessionId)).toEqual(rows());
   } finally { await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear(); }
 });

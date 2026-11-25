@@ -1,5 +1,6 @@
 import type { Session } from '@/lib/opencode/v2-types';
 import { normalizePath } from '@/lib/pathNormalization';
+import { readSessionWorktreeMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
 
 type Project = {
   id: string;
@@ -70,10 +71,12 @@ export const createSessionOwnershipIndex = (
 ): SessionOwnershipIndex => {
   const ownerByDirectory = new Map<string, DirectoryOwner>();
   const projectByRoot = new Map<string, Project>();
+  const projectById = new Map<string, Project>();
 
   for (const project of projects) {
     const projectRoot = normalizePath(project.normalizedPath);
     if (!projectRoot) continue;
+    projectById.set(project.id, { ...project, normalizedPath: projectRoot });
     const existingProject = projectByRoot.get(projectRoot);
     if (!existingProject || project.id.localeCompare(existingProject.id) < 0) {
       projectByRoot.set(projectRoot, project);
@@ -141,13 +144,31 @@ export const createSessionOwnershipIndex = (
     return owner;
   };
 
+  const resolveExplicitWorktreeOwner = (session: Session): DirectoryOwner | null => {
+    if (isVSCode) return null;
+    const worktreeMeta = readSessionWorktreeMetadata(session);
+    if (!worktreeMeta) return null;
+    const project = (worktreeMeta.projectId ? projectById.get(worktreeMeta.projectId) : undefined)
+      ?? projectByRoot.get(worktreeMeta.projectDirectory);
+    if (!project) return null;
+    const projectRoot = normalizePath(project.normalizedPath);
+    if (!projectRoot) return null;
+    const scopeDirectory = resolveSessionDirectory(session) ?? worktreeMeta.path;
+    return {
+      projectId: project.id,
+      projectRoot,
+      scopeDirectory,
+      kind: scopeDirectory === projectRoot ? 'project' : 'worktree',
+    };
+  };
+
   const bucket = (
     input: Session[],
     target: Map<string, Session[]>,
     scopeTarget?: Map<string, Set<string>>,
   ): void => {
     for (const session of input) {
-      const owner = resolveOwner(resolveSessionDirectory(session));
+      const owner = resolveExplicitWorktreeOwner(session) ?? resolveOwner(resolveSessionDirectory(session));
       if (!owner) continue;
       bySessionId.set(session.id, owner);
       const projectSessions = target.get(owner.projectId);

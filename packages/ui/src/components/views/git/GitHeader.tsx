@@ -107,7 +107,8 @@ interface GitHeaderProps {
   status: GitStatus | null;
   localBranches: string[];
   remoteBranches: string[];
-  branchInfo: Record<string, { ahead?: number; behind?: number }> | undefined;
+  branchInfo: Record<string, { ahead?: number; behind?: number; lastUsedAt?: number }> | undefined;
+  directory?: string | null;
   syncAction: SyncAction;
   remotes: GitRemote[];
   onSync: (remote: GitRemote) => void;
@@ -125,6 +126,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
   localBranches,
   remoteBranches,
   branchInfo,
+  directory,
   syncAction,
   remotes,
   onSync,
@@ -156,6 +158,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
               localBranches={localBranches}
               remoteBranches={remoteBranches}
               branchInfo={branchInfo}
+              directory={directory}
               onCheckout={onCheckoutBranch}
               onCreate={onCreateBranch}
               remotes={remotes}

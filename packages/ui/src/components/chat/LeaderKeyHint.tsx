@@ -15,9 +15,13 @@ const LEADER_ACTIONS = [
 
 /**
  * Subtle pending-state chrome for the Ctrl+X leader chord.
- * Renders above the composer while waiting for M / A / N / C.
+ * Renders above the composer while waiting for M / A / N / C (plus P / B on new-session drafts).
  */
-export const LeaderKeyHint: React.FC<{ className?: string }> = ({ className }) => {
+export const LeaderKeyHint: React.FC<{
+  className?: string;
+  showProjectAction?: boolean;
+  showBranchAction?: boolean;
+}> = ({ className, showProjectAction = false, showBranchAction = false }) => {
   const { t } = useI18n();
   const pending = useLeaderKeyStore((state) => state.pending);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
@@ -28,6 +32,12 @@ export const LeaderKeyHint: React.FC<{ className?: string }> = ({ className }) =
   if (!pending) {
     return null;
   }
+
+  const actions = [
+    ...LEADER_ACTIONS,
+    ...(showProjectAction ? [{ key: 'P', labelKey: 'chat.leaderKey.action.project' as const }] : []),
+    ...(showBranchAction ? [{ key: 'B', labelKey: 'chat.leaderKey.action.branch' as const }] : []),
+  ];
 
   return (
     <div
@@ -47,7 +57,7 @@ export const LeaderKeyHint: React.FC<{ className?: string }> = ({ className }) =
         className="opacity-[0.35] [&_[data-slot=kbd]]:rounded-md [&_[data-slot=kbd]]:border-0 [&_[data-slot=kbd]]:bg-[color-mix(in_srgb,var(--surface-foreground)_6%,transparent)] [&_[data-slot=kbd]]:text-muted-foreground/65 [&_[data-slot=kbd]]:shadow-none"
       />
       <span className="typography-micro text-[var(--surface-muted-foreground)]">·</span>
-      {LEADER_ACTIONS.map((action, index) => (
+      {actions.map((action, index) => (
         <React.Fragment key={action.key}>
           {index > 0 ? (
             <span className="typography-micro text-[var(--surface-muted-foreground)]">·</span>

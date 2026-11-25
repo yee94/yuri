@@ -62,19 +62,38 @@ afterAll(async () => {
   vi.unstubAllGlobals();
 });
 
-test('hover card shows known project, machine, branch and model without making a request', async () => {
+test('hover card shows known project, machine, branch, absolute path and model without warning color or making a request', async () => {
   vi.stubGlobal('fetch', fixture.fetch);
   queryClient.setQueryData(['desktop-host-inventory', 'hover-test'], {
     hosts: [{ id: 'machine', label: 'Build machine' }],
   });
   const before = fixture.fetch.mock.calls.length;
   await act(async () => root.render(
-    <SessionHoverDetails session={session} title="A long full task title" projectLabel="Project" branch="task-branch" directory="/repo" time="1h" />,
+    <SessionHoverDetails
+      session={session}
+      title="A long full task title"
+      projectLabel="Project"
+      branch="task-branch"
+      worktree={{ branch: 'task-branch', name: 'wt-slug', label: 'wt-slug', path: '/repo/.worktrees/wt-slug' }}
+      directory="/repo"
+      time="1h"
+    />,
   ));
-  for (const text of ['A long full task title', 'Project', 'Build machine', 'task-branch', 'Model display name', 'other-branch']) {
+  for (const text of [
+    'A long full task title',
+    'Project',
+    'Build machine',
+    'task-branch · wt-slug',
+    '/repo/.worktrees/wt-slug',
+    'Model display name',
+    'other-branch',
+  ]) {
     expect(host.textContent).toContain(text);
   }
   expect(host.textContent).toContain('sessions.sidebar.session.hover.differentBranch');
+  const note = host.querySelector('[data-session-hover-branch-note]');
+  expect(note?.className).toContain('text-muted-foreground');
+  expect(note?.className).not.toContain('text-status-warning');
   expect(fixture.fetch.mock.calls.length).toBe(before);
 });
 

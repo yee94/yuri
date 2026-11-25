@@ -62,6 +62,33 @@ const normalizeModel = (model) => {
 
 const modelFromJson = (value) => value ? normalizeModel(JSON.parse(value)) : null;
 
+const normalizeWorktree = (worktree, resolveDirectory = normalizeDirectory) => {
+  if (!worktree || typeof worktree !== 'object' || Array.isArray(worktree)) return null;
+  const projectDirectory = resolveDirectory(worktree.projectDirectory);
+  const path = resolveDirectory(worktree.path);
+  if (!projectDirectory || !path) return null;
+  const worktreeRoot = resolveDirectory(worktree.worktreeRoot) || path;
+  const bounded = (value) => typeof value === 'string' && value.trim().length > 0 && value.length <= 512;
+  return {
+    ...(bounded(worktree.projectId) ? { projectId: worktree.projectId.trim() } : {}),
+    projectDirectory,
+    worktreeRoot,
+    path,
+    ...(bounded(worktree.branch) ? { branch: worktree.branch.trim() } : {}),
+    ...(bounded(worktree.name) ? { name: worktree.name.trim() } : {}),
+    ...(bounded(worktree.relativePath) ? { relativePath: worktree.relativePath.trim().replace(/^\/+|\/+$/g, '') } : {}),
+  };
+};
+
+const worktreeFromJson = (value) => {
+  if (!value) return null;
+  try {
+    return normalizeWorktree(JSON.parse(value));
+  } catch {
+    return null;
+  }
+};
+
 const mergeModel = (summary, previous) => {
   const usePrevious = previous?.modelJson && (!summary.modelJson
     || summary.modelUpdatedAt < previous.modelUpdatedAt
@@ -92,6 +119,7 @@ const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirec
   const assistant = yuri?.assistant;
   const hideAssistantMarker = isContactAssignedSession(yuri);
   const model = normalizeModel(session.model);
+  const worktree = normalizeWorktree(yuri?.worktree, resolveDirectory);
   return {
     id: session.id,
     directory,
@@ -106,6 +134,7 @@ const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirec
     assistantName: hideAssistantMarker || typeof assistant?.name !== 'string' ? null : assistant.name,
     modelJson: model ? JSON.stringify(model) : null,
     modelUpdatedAt: model ? toTimestamp(session.time?.updated) : 0,
+    worktreeJson: worktree ? JSON.stringify(worktree) : null,
   };
 };
 
@@ -218,7 +247,7 @@ export const createSessionIndexService = ({
     db.exec('ALTER TABLE session_summary ADD COLUMN pinned_at INTEGER');
   }
   db.transaction(() => {
-    for (const [column, type] of [['model_json', 'TEXT'], ['model_updated_at', 'INTEGER NOT NULL DEFAULT 0'], ['model_sequence', 'INTEGER']]) {
+    for (const [column, type] of [['model_json', 'TEXT'], ['model_updated_at', 'INTEGER NOT NULL DEFAULT 0'], ['model_sequence', 'INTEGER'], ['worktree_json', 'TEXT']]) {
       if (!sessionSummaryColumns.has(column)) db.exec(`ALTER TABLE session_summary ADD COLUMN ${column} ${type}`);
     }
   })();
@@ -272,6 +301,7 @@ export const createSessionIndexService = ({
           has_children: Math.max(row.has_children, previous.has_children),
           pinned_at: row.pinned_at ?? previous.pinned_at,
           model_json: model.model_json, model_updated_at: model.model_updated_at, model_sequence: model.model_sequence,
+          worktree_json: newest.worktree_json ?? row.worktree_json ?? previous.worktree_json,
         });
       }
       db.prepare('DELETE FROM session_summary WHERE runtime_key = ? AND directory IN (?, ?)').run(key, source.directory, target);
@@ -319,14 +349,16 @@ export const createSessionIndexService = ({
   const existingSummaryState = db.prepare(`
     SELECT session_id, has_children AS hasChildren, activity_updated_at AS activityUpdatedAt,
       status, status_changed_at AS statusChangedAt, pinned_at AS pinnedAt,
-      model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence
+      model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence,
+      worktree_json AS worktreeJson
     FROM session_summary WHERE runtime_key = ? AND directory = ?
   `);
   const readSummary = db.prepare(`
     SELECT title, created_at AS createdAt, updated_at AS updatedAt,
       activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
       parent_id AS parentID, has_children AS hasChildren,
-      model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence
+      model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence,
+      worktree_json AS worktreeJson
     FROM session_summary
     WHERE runtime_key = ? AND directory = ? AND session_id = ?
   `);
@@ -338,12 +370,12 @@ export const createSessionIndexService = ({
     LIMIT 1 OFFSET ?
   `);
   const insertSummary = db.prepare(`
-    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, pinned_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence)
-    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, @pinnedAt, @status, @statusChangedAt, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence)
+    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, pinned_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json)
+    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, @pinnedAt, @status, @statusChangedAt, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson)
   `);
   const upsertSummary = db.prepare(`
-    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence)
-    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, NULL, 0, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence)
+    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json)
+    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, NULL, 0, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson)
     ON CONFLICT(runtime_key, directory, session_id) DO UPDATE SET
       title = excluded.title,
       created_at = excluded.created_at,
@@ -356,7 +388,8 @@ export const createSessionIndexService = ({
       assistant_name = excluded.assistant_name,
       model_json = excluded.model_json,
       model_updated_at = excluded.model_updated_at,
-      model_sequence = excluded.model_sequence
+      model_sequence = excluded.model_sequence,
+      worktree_json = COALESCE(excluded.worktree_json, session_summary.worktree_json)
   `);
   const writeModel = db.prepare(`UPDATE session_summary
     SET model_json = @modelJson, model_updated_at = @modelUpdatedAt, model_sequence = @modelSequence
@@ -486,6 +519,7 @@ export const createSessionIndexService = ({
       insertSummary.run({
         ...summary,
         ...mergeModel(summary, previous),
+        worktreeJson: summary.worktreeJson ?? previous?.worktreeJson ?? null,
         activityUpdatedAt: Math.max(summary.activityUpdatedAt, toTimestamp(previous?.activityUpdatedAt)),
         pinnedAt: previous?.pinnedAt != null ? toTimestamp(previous.pinnedAt) : null,
         status: typeof previous?.status === 'string' ? previous.status : null,
@@ -545,6 +579,7 @@ export const createSessionIndexService = ({
       ? toTimestamp(existing.activityUpdatedAt)
       : Math.max(toTimestamp(existing?.activityUpdatedAt), summary.activityUpdatedAt);
     const hasChildren = toBooleanInt(summary.hasChildren ?? Boolean(existing?.hasChildren));
+    const worktreeJson = summary.worktreeJson ?? existing?.worktreeJson ?? null;
     if (existing) {
       const unchanged = existing.title === summary.title
         && toTimestamp(existing.createdAt) === summary.createdAt
@@ -553,7 +588,8 @@ export const createSessionIndexService = ({
         && toTimestamp(existing.archivedAt) === summary.archivedAt
         && (existing.parentID ?? null) === summary.parentID
         && toBooleanInt(existing.hasChildren) === hasChildren
-        && existing.modelJson === model.modelJson;
+        && existing.modelJson === model.modelJson
+        && (existing.worktreeJson ?? null) === worktreeJson;
       if (unchanged) {
         if (existing.modelUpdatedAt !== model.modelUpdatedAt || existing.modelSequence !== model.modelSequence) {
           writeModel.run({ ...model, runtimeKey: key, id: summary.id });
@@ -575,6 +611,7 @@ export const createSessionIndexService = ({
     upsertSummary.run({
       ...summary,
       ...model,
+      worktreeJson,
       activityUpdatedAt,
       hasChildren,
       runtimeKey: key,
@@ -624,36 +661,40 @@ export const createSessionIndexService = ({
           pinned_at AS pinnedAt,
           status, status_changed_at AS statusChangedAt, parent_id AS parentID,
           has_children AS hasChildren, assistant_id AS assistantID, assistant_name AS assistantName,
-          model_json AS modelJson
+          model_json AS modelJson, worktree_json AS worktreeJson
         FROM session_summary WHERE runtime_key = ? AND directory = ?
         ORDER BY activity_updated_at DESC, id DESC
       `).all(key, directory.directory)
-        .map((session) => ({
-          id: session.id,
-          title: session.title,
-          ...(session.modelJson ? { model: modelFromJson(session.modelJson) } : {}),
-          directory: directory.directory,
-          time: {
-            created: session.createdAt,
-            updated: session.updatedAt,
-            ...(session.archivedAt ? { archived: session.archivedAt } : {}),
-            ...((pinById.get(session.id) ?? session.pinnedAt)
-              ? { pinned: pinById.get(session.id) ?? session.pinnedAt }
-              : {}),
-            ...(settledAtFor(session.id, session.activityUpdatedAt)
-              ? { settled: settledAtFor(session.id, session.activityUpdatedAt) }
-              : {}),
-          },
-          metadata: {
-            yuri: {
-              titleRefresh: { activityUpdatedAt: session.activityUpdatedAt },
-              sessionStatus: { type: session.status ?? 'idle', changedAt: session.statusChangedAt },
-              ...(session.assistantID ? { assistant: { assistantID: session.assistantID, ...(session.assistantName ? { name: session.assistantName } : {}) } } : {}),
+        .map((session) => {
+          const worktree = session.worktreeJson ? worktreeFromJson(session.worktreeJson) : null;
+          return ({
+            id: session.id,
+            title: session.title,
+            ...(session.modelJson ? { model: modelFromJson(session.modelJson) } : {}),
+            directory: directory.directory,
+            time: {
+              created: session.createdAt,
+              updated: session.updatedAt,
+              ...(session.archivedAt ? { archived: session.archivedAt } : {}),
+              ...((pinById.get(session.id) ?? session.pinnedAt)
+                ? { pinned: pinById.get(session.id) ?? session.pinnedAt }
+                : {}),
+              ...(settledAtFor(session.id, session.activityUpdatedAt)
+                ? { settled: settledAtFor(session.id, session.activityUpdatedAt) }
+                : {}),
             },
-          },
-          ...(session.parentID ? { parentID: session.parentID } : {}),
-          ...(session.hasChildren ? { hasChildren: true } : {}),
-        }))
+            metadata: {
+              yuri: {
+                titleRefresh: { activityUpdatedAt: session.activityUpdatedAt },
+                sessionStatus: { type: session.status ?? 'idle', changedAt: session.statusChangedAt },
+                ...(session.assistantID ? { assistant: { assistantID: session.assistantID, ...(session.assistantName ? { name: session.assistantName } : {}) } } : {}),
+                ...(worktree ? { worktree } : {}),
+              },
+            },
+            ...(session.parentID ? { parentID: session.parentID } : {}),
+            ...(session.hasChildren ? { hasChildren: true } : {}),
+          });
+        })
         .filter(isVisibleSession),
     }));
     return {
@@ -693,18 +734,21 @@ export const createSessionIndexService = ({
       SELECT directory, session_id AS id, title, created_at AS createdAt, updated_at AS updatedAt,
         activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
         parent_id AS parentID, has_children AS hasChildren,
-        assistant_id AS assistantID, assistant_name AS assistantName, model_json AS modelJson
+        assistant_id AS assistantID, assistant_name AS assistantName, model_json AS modelJson,
+        worktree_json AS worktreeJson
       FROM session_summary
       WHERE runtime_key = ? AND session_id = ?
       ORDER BY activity_updated_at DESC, updated_at DESC
       LIMIT 1
     `).get(key, sessionID);
     if (!row || typeof row.directory !== 'string' || !row.directory) return null;
+    const worktree = row.worktreeJson ? worktreeFromJson(row.worktreeJson) : null;
     return {
       id: row.id,
       directory: normalizeDirectory(row.directory),
       title: typeof row.title === 'string' ? row.title : '',
       ...(row.modelJson ? { model: modelFromJson(row.modelJson) } : {}),
+      ...(worktree ? { metadata: { yuri: { worktree } } } : {}),
       createdAt: toTimestamp(row.createdAt),
       updatedAt: toTimestamp(row.updatedAt),
       activityUpdatedAt: toTimestamp(row.activityUpdatedAt),

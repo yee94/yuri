@@ -1,17 +1,13 @@
 import React from 'react';
-import { useEvent } from '@reactuses/core';
-import { BranchSelector, type BranchSelectorWorktreeOption } from '@/components/views/git/BranchSelector';
+import { useEvent, useEventListener } from '@reactuses/core';
+import {
+  BranchSelector,
+  type BranchSelectorFollowUpStep,
+  type BranchSelectorWorktreeOption,
+} from '@/components/views/git/BranchSelector';
 import { Icon } from '@/components/icon/Icon';
 import { SELECTOR_CHIP_HOVER_CLASS } from '@/components/chat/message/parts/toolRowChrome';
 import { toast } from '@/components/ui';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { NewWorktreeDialog } from '@/components/session/NewWorktreeDialog';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
@@ -19,14 +15,21 @@ import type { GitRemote } from '@/lib/api/types';
 import { normalizePath } from '@/lib/pathNormalization';
 import { cn } from '@/lib/utils';
 import { createWorktreeDraftForBranch } from '@/lib/worktreeSessionCreator';
+import { listProjectWorktrees } from '@/lib/worktrees/worktreeManager';
+import type { WorktreeMetadata } from '@/types/worktree';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useGitStore, useIsGitRepo } from '@/stores/useGitStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { refreshGitBranchesQuery, useGitBranchesQuery, useGitRemotesQuery } from '@/queries/gitBranchQueries';
 import { isDirectoryBasenameLabel } from './draftSessionBranchLabel';
+import { recordRecentBranchUsage, resolveBranchRecencyMap } from '@/lib/worktrees/branchRecency';
 import {
   canQueryDraftGitBranches,
+  collectExistingWorktreeBranchNames,
+  findExistingWorktreePathForBranch,
+  mergeDraftWorktreeOptions,
+  normalizeDraftBranchRef,
   resolveDraftBranchListDirectory,
   splitGitBranchList,
 } from './draftSessionBranchQueries';
@@ -43,10 +46,8 @@ export type DraftSessionBranchSelectorProps = {
   presentation?: 'dropdown' | 'mobile-sheet';
 };
 
-const normalizeBranchRef = (branch: string): string => branch.replace(/^remotes\//, '').trim();
-
 const branchShortName = (branch: string): string => {
-  const normalized = normalizeBranchRef(branch);
+  const normalized = normalizeDraftBranchRef(branch);
   const slash = normalized.lastIndexOf('/');
   return slash >= 0 ? normalized.slice(slash + 1) : normalized;
 };
@@ -97,6 +98,10 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
   const [pendingBranch, setPendingBranch] = React.useState<string | null>(null);
   const [isActing, setIsActing] = React.useState(false);
   const [newWorktreeDialogOpen, setNewWorktreeDialogOpen] = React.useState(false);
+  const [discoveredWorktreesState, setDiscoveredWorktreesState] = React.useState<{
+    directory: string | null;
+    worktrees: WorktreeMetadata[];
+  }>({ directory: null, worktrees: [] });
   const projects = useProjectsStore((state) => state.projects);
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
 
@@ -133,12 +138,57 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
     return activeProjectId;
   }, [activeProjectId, projectDirectory, projects]);
 
-  const { localBranches, remoteBranches } = React.useMemo(
-    () => splitGitBranchList(listBranches?.all),
-    [listBranches],
+  React.useEffect(() => {
+    if (!branchSelectorOpen || !listDirectory || !canQueryListBranches) return;
+    let cancelled = false;
+    void listProjectWorktrees({
+      id: worktreeDialogProjectId ?? listDirectory,
+      path: listDirectory,
+    })
+      .then((worktrees) => {
+        if (cancelled) return;
+        setDiscoveredWorktreesState({ directory: listDirectory, worktrees });
+      })
+      .catch(() => {
+        // Keep current worktree options if on-demand discovery fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [branchSelectorOpen, canQueryListBranches, listDirectory, worktreeDialogProjectId]);
+
+  const discoveredWorktrees = React.useMemo(
+    () => (discoveredWorktreesState.directory === listDirectory ? discoveredWorktreesState.worktrees : []),
+    [discoveredWorktreesState, listDirectory],
+  );
+
+  const mergedWorktreeOptions = React.useMemo(
+    () => mergeDraftWorktreeOptions(worktreeOptions, discoveredWorktrees),
+    [discoveredWorktrees, worktreeOptions],
+  );
+
+  const existingWorktreeBranches = React.useMemo(
+    () => collectExistingWorktreeBranchNames(discoveredWorktrees, worktreeOptions, projectRootOption),
+    [discoveredWorktrees, projectRootOption, worktreeOptions],
+  );
+
+  const remoteNames = React.useMemo(
+    () => remotes.map((remote) => remote.name).filter(Boolean),
+    [remotes],
   );
 
   const currentBranch = selectedBranches?.current?.trim() || selectedStatusBranch || null;
+
+  const { localBranches, remoteBranches } = React.useMemo(
+    () => splitGitBranchList(listBranches?.all, {
+      currentBranch,
+      branchRecency: resolveBranchRecencyMap({
+        directory: listDirectory,
+        branchInfo: listBranches?.branches,
+      }),
+    }),
+    [currentBranch, listBranches, listDirectory],
+  );
   // Parent may still pass a directory basename while branches load (or after a
   // missing-option fallback). Prefer the live git current branch over that.
   const chipLabel = (
@@ -159,18 +209,9 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
     }));
   });
 
-  const findExistingWorktree = useEvent((branch: string) => {
-    const normalized = normalizeBranchRef(branch);
-    const shortName = branchShortName(normalized);
-    return worktreeOptions.find((option) => {
-      const labelValue = option.label.trim();
-      return labelValue === normalized || labelValue === shortName;
-    }) ?? null;
-  });
-
   const checkoutBranch = useEvent(async (branch: string) => {
     if (!selectedDirectory || !git) return;
-    const normalized = normalizeBranchRef(branch);
+    const normalized = normalizeDraftBranchRef(branch);
     if (currentBranch === normalized || currentBranch === branchShortName(normalized)) return;
     try {
       await git.checkoutBranch(selectedDirectory, normalized);
@@ -184,23 +225,64 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
     }
   });
 
-  const handleBranchSelected = useEvent((branch: string) => {
-    const normalized = normalizeBranchRef(branch);
+  useEventListener('yuri:open-draft-branch-picker', () => {
+    setPendingBranch(null);
+    setBranchSelectorOpen(true);
+  }, typeof window !== 'undefined' ? window : undefined);
+
+  const handleBranchSelectorOpenChange = useEvent((nextOpen: boolean) => {
+    if (!nextOpen && isActing) return;
+    setBranchSelectorOpen(nextOpen);
+    if (!nextOpen) {
+      setPendingBranch(null);
+    }
+  });
+
+  const handleBranchSelected = useEvent(async (branch: string) => {
+    const normalized = normalizeDraftBranchRef(branch);
     if (!normalized) return;
+    recordRecentBranchUsage(listDirectory, normalized);
     if (
       currentBranch === normalized
       || currentBranch === branchShortName(normalized)
     ) {
+      setBranchSelectorOpen(false);
       return;
     }
 
-    const existing = findExistingWorktree(normalized);
-    if (existing) {
-      onSelectDirectory(existing.value);
+    let worktreesForLookup = discoveredWorktrees;
+    if (
+      discoveredWorktreesState.directory !== listDirectory
+      && listDirectory
+      && canQueryListBranches
+    ) {
+      try {
+        worktreesForLookup = await listProjectWorktrees({
+          id: worktreeDialogProjectId ?? listDirectory,
+          path: listDirectory,
+        });
+        setDiscoveredWorktreesState({ directory: listDirectory, worktrees: worktreesForLookup });
+      } catch {
+        // Fall back to already-known worktreeOptions when on-demand listing fails.
+      }
+    }
+
+    const existingPath = findExistingWorktreePathForBranch({
+      branch: normalized,
+      discoveredWorktrees: worktreesForLookup,
+      worktreeOptions,
+      projectRootOption,
+      remoteNames,
+    });
+    if (existingPath && normalizePath(existingPath) !== normalizePath(selectedDirectory)) {
+      onSelectDirectory(existingPath);
+      setPendingBranch(null);
+      setBranchSelectorOpen(false);
+      toast.success(t('chat.chatInput.branchSwitch.usingExistingWorktree', { branch: normalized }));
       return;
     }
 
-    // Draft conversations get a chooser: isolate via worktree, or checkout here.
+    // Draft conversations drill into a level-2 inline select: checkout here or new worktree.
     setPendingBranch(normalized);
   });
 
@@ -210,6 +292,7 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
     try {
       await checkoutBranch(pendingBranch);
       setPendingBranch(null);
+      setBranchSelectorOpen(false);
     } finally {
       setIsActing(false);
     }
@@ -225,17 +308,44 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
       });
       if (path) {
         setPendingBranch(null);
+        setBranchSelectorOpen(false);
       }
     } finally {
       setIsActing(false);
     }
   });
 
+  const followUpStep = React.useMemo<BranchSelectorFollowUpStep | null>(() => {
+    if (!pendingBranch) return null;
+    return {
+      title: pendingBranch,
+      pending: isActing,
+      onBack: () => {
+        if (!isActing) setPendingBranch(null);
+      },
+      actions: [
+        {
+          id: 'checkout-here',
+          icon: 'arrow-left-right',
+          label: t('chat.chatInput.branchSwitch.checkoutHere'),
+          onSelect: handleCheckoutHere,
+        },
+        {
+          id: 'create-worktree',
+          icon: 'git-branch',
+          label: t('chat.chatInput.branchSwitch.createWorktree'),
+          onSelect: handleCreateWorktree,
+        },
+      ],
+    };
+  }, [handleCheckoutHere, handleCreateWorktree, isActing, pendingBranch, t]);
+
   const handleCreate = useEvent(async (branchName: string, remote?: GitRemote) => {
     if (!selectedDirectory || !git) return;
     const remoteName = remote?.name ?? 'origin';
     try {
       await git.createBranch(selectedDirectory, branchName, currentBranch ?? 'HEAD');
+      recordRecentBranchUsage(listDirectory, branchName);
       toast.success(t('gitView.toast.createdBranch', { name: branchName }));
       // After creating a brand-new branch, ask the same draft-only chooser.
       setPendingBranch(branchName);
@@ -355,20 +465,24 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
         localBranches={localBranches}
         remoteBranches={remoteBranches}
         branchInfo={listBranches?.branches}
+        directory={listDirectory}
         onCheckout={handleBranchSelected}
+        keepOpenOnCheckout
+        followUpStep={followUpStep}
         onCreate={handleCreate}
         remotes={remotes}
         trigger={chipTrigger}
         triggerLabel={chipLabel}
         hideTooltip
         projectRootOption={projectRootOption}
-        worktreeOptions={worktreeOptions}
+        worktreeOptions={mergedWorktreeOptions}
+        existingWorktreeBranches={existingWorktreeBranches}
         selectedDirectory={directory}
         onSelectDirectory={onSelectDirectory}
         onCreateWorktree={handleOpenCreateWorktreeDialog}
         open={branchSelectorOpen}
         presentation={presentation}
-        onOpenChange={setBranchSelectorOpen}
+        onOpenChange={handleBranchSelectorOpenChange}
       />
 
       {newWorktreeDialogOpen ? (
@@ -379,67 +493,6 @@ export const DraftSessionBranchSelector: React.FC<DraftSessionBranchSelectorProp
           onWorktreeCreated={handleWorktreeCreated}
         />
       ) : null}
-
-      <Dialog
-        open={Boolean(pendingBranch)}
-        onOpenChange={(open) => {
-          if (!open && !isActing) setPendingBranch(null);
-        }}
-      >
-        <DialogContent showCloseButton={false} className="max-w-sm gap-4">
-          <DialogHeader>
-            <DialogTitle>
-              {t('chat.chatInput.branchSwitch.title', { branch: pendingBranch ?? '' })}
-            </DialogTitle>
-            <DialogDescription>
-              {t('chat.chatInput.branchSwitch.description')}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              disabled={isActing}
-              onClick={() => { void handleCheckoutHere(); }}
-              className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-border px-3 py-2.5 text-left hover:bg-interactive-hover disabled:opacity-50"
-            >
-              <span className="inline-flex items-center gap-1.5 typography-ui-label font-medium text-foreground">
-                {isActing ? <Icon name="loader-4" className="size-3.5 animate-spin" /> : <Icon name="arrow-left-right" className="size-3.5 text-muted-foreground" />}
-                {t('chat.chatInput.branchSwitch.checkoutHere')}
-              </span>
-              <span className="typography-micro text-muted-foreground">
-                {t('chat.chatInput.branchSwitch.checkoutHereDescription')}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              disabled={isActing}
-              onClick={() => { void handleCreateWorktree(); }}
-              className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-border px-3 py-2.5 text-left hover:bg-interactive-hover disabled:opacity-50"
-            >
-              <span className="inline-flex items-center gap-1.5 typography-ui-label font-medium text-foreground">
-                {isActing ? <Icon name="loader-4" className="size-3.5 animate-spin" /> : <Icon name="git-branch" className="size-3.5 text-muted-foreground" />}
-                {t('chat.chatInput.branchSwitch.createWorktree')}
-              </span>
-              <span className="typography-micro text-muted-foreground">
-                {t('chat.chatInput.branchSwitch.createWorktreeDescription')}
-              </span>
-            </button>
-          </div>
-
-          <DialogFooter>
-            <button
-              type="button"
-              disabled={isActing}
-              onClick={() => setPendingBranch(null)}
-              className="inline-flex h-8 items-center justify-center rounded-md border border-border px-3 typography-ui-label text-foreground hover:bg-interactive-hover/50 disabled:opacity-50"
-            >
-              {t('chat.chatInput.branchSwitch.cancel')}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 };

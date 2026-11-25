@@ -3231,6 +3231,52 @@ export async function commit(directory, message, options = {}) {
   });
 }
 
+const parseRefCommitterDates = (raw) => {
+  const timestamps = new Map();
+  if (typeof raw !== 'string' || !raw) return timestamps;
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line) continue;
+    const tabIndex = line.indexOf('\t');
+    if (tabIndex <= 0) continue;
+    const refName = line.slice(0, tabIndex).trim();
+    const seconds = Number(line.slice(tabIndex + 1).trim());
+    if (!refName || !Number.isFinite(seconds) || seconds <= 0) continue;
+    const ms = Math.trunc(seconds * 1000);
+    if (refName.startsWith('refs/heads/')) {
+      const name = refName.slice('refs/heads/'.length);
+      if (name) timestamps.set(name, Math.max(timestamps.get(name) ?? 0, ms));
+    } else if (refName.startsWith('refs/remotes/')) {
+      const remoteName = refName.slice('refs/remotes/'.length);
+      if (remoteName && !remoteName.endsWith('/HEAD')) {
+        const key = `remotes/${remoteName}`;
+        timestamps.set(key, Math.max(timestamps.get(key) ?? 0, ms));
+      }
+    }
+  }
+  return timestamps;
+};
+
+const parseReflogCheckoutDates = (raw) => {
+  const timestamps = new Map();
+  if (typeof raw !== 'string' || !raw) return timestamps;
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line) continue;
+    const tabIndex = line.indexOf('\t');
+    if (tabIndex <= 0) continue;
+    const seconds = Number(line.slice(0, tabIndex).trim());
+    const subject = line.slice(tabIndex + 1).trim();
+    if (!Number.isFinite(seconds) || seconds <= 0 || !subject) continue;
+    const match = subject.match(/^checkout: moving from (.+?) to (.+)$/);
+    if (!match) continue;
+    const ms = Math.trunc(seconds * 1000);
+    const target = match[2]?.trim();
+    if (target && !/^[0-9a-f]{7,40}$/i.test(target)) {
+      timestamps.set(target, Math.max(timestamps.get(target) ?? 0, ms));
+    }
+  }
+  return timestamps;
+};
+
 export async function getBranches(directory) {
   try {
     const { git } = await createRepositoryGitContext(directory);
@@ -3241,10 +3287,31 @@ export async function getBranches(directory) {
     // refs; startup must not wait on ls-remote or hide refs when a remote is offline.
     const filteredAll = result.all.filter(branch => !(branch.startsWith('remotes/') && branch.endsWith('/HEAD')));
 
+    // Local-only recency enrichment (commit date + recent local checkouts) so
+    // large repositories can rank recently used branches first without touching remotes.
+    const [refDatesRaw, reflogRaw] = await Promise.all([
+      git.raw(['for-each-ref', '--format=%(refname)%09%(committerdate:unix)', 'refs/heads', 'refs/remotes']).catch(() => ''),
+      git.raw(['reflog', '-n', '100', '--format=%ct%x09%gs']).catch(() => ''),
+    ]);
+    const refDates = parseRefCommitterDates(refDatesRaw);
+    const checkoutDates = parseReflogCheckoutDates(reflogRaw);
+    const enrichedBranches = { ...(result.branches || {}) };
+    for (const branchName of filteredAll) {
+      const commitTs = refDates.get(branchName) ?? 0;
+      const checkoutTs = checkoutDates.get(branchName) ?? 0;
+      const lastUsedAt = Math.max(commitTs, checkoutTs);
+      if (lastUsedAt > 0) {
+        const existing = enrichedBranches[branchName];
+        if (existing) {
+          enrichedBranches[branchName] = { ...existing, lastUsedAt };
+        }
+      }
+    }
+
     return {
       all: filteredAll,
       current,
-      branches: result.branches
+      branches: enrichedBranches
     };
   } catch (error) {
     if (isNotGitRepositoryError(error)) {

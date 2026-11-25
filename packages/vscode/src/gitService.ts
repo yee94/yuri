@@ -696,7 +696,7 @@ export async function getGitBranches(directory: string): Promise<GitBranchResult
  * Fallback: Get branches using raw git commands
  */
 async function getGitBranchesRaw(directory: string): Promise<GitBranchResult> {
-  const result = await execGit(['branch', '-a', '-v', '--format=%(refname:short)|%(objectname:short)|%(upstream:short)|%(HEAD)'], directory);
+  const result = await execGit(['branch', '-a', '-v', '--format=%(refname:short)|%(objectname:short)|%(upstream:short)|%(HEAD)|%(committerdate:unix)'], directory);
   
   if (result.exitCode !== 0) {
     if (/not a git repository/i.test(result.stderr)) {
@@ -711,11 +711,13 @@ async function getGitBranchesRaw(directory: string): Promise<GitBranchResult> {
   let current = '';
 
   for (const line of lines) {
-    const [name, commit, tracking, head] = line.split('|');
+    const [name, commit, tracking, head, committerDate] = line.split('|');
     if (name) {
       all.push(name);
       const isCurrent = head === '*';
       if (isCurrent) current = name;
+      const seconds = Number(committerDate);
+      const lastUsedAt = Number.isFinite(seconds) && seconds > 0 ? Math.trunc(seconds * 1000) : undefined;
       
       branches[name] = {
         current: isCurrent,
@@ -723,6 +725,7 @@ async function getGitBranchesRaw(directory: string): Promise<GitBranchResult> {
         commit: commit || '',
         label: name.replace(/^remotes\//, ''),
         tracking: tracking || undefined,
+        ...(lastUsedAt ? { lastUsedAt } : {}),
       };
     }
   }

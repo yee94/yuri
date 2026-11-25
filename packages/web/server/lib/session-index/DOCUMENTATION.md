@@ -79,9 +79,11 @@ a partially cleared pin from legacy summary backfill.
 `service.js` exclusively owns the WAL database and stores at most the
 newest 20 root-session summaries per runtime and directory. It also retains the
 minimal session `model: { providerID, id, variant? }` reference (each string is
-bounded to 512 characters), never messages, attachments, permissions, provider
-configuration, or model catalog metadata. Missing/invalid model fields in light
-refreshes preserve the prior reference. Model columns are added transactionally
+bounded to 512 characters) and optional `worktree_json` (`metadata.yuri.worktree`
+binding `{ projectId?, projectDirectory, worktreeRoot, path, branch?, name?, relativePath? }`),
+never messages, attachments, permissions, provider
+configuration, or model catalog metadata. Missing/invalid model or worktree fields in light
+refreshes preserve the prior reference. Model and worktree columns are added transactionally
 without clearing existing summaries, pins or historical synchronization markers.
 Native `session.model.selected` updates only an existing runtime-scoped model
 reference, not activity, directory recency or session ordering. Persisted event

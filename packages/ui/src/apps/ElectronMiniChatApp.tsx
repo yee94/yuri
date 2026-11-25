@@ -14,15 +14,12 @@ import { opencodeClient } from '@/lib/opencode/client';
 import type { RuntimeAPIs } from '@/lib/api/types';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useConfigStore } from '@/stores/useConfigStore';
-import { useProjectsStore } from '@/stores/useProjectsStore';
-import { useGitStore } from '@/stores/useGitStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { SyncProvider, useSessions } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
 import { SyncRuntimeEffects } from './AppEffects';
 import { useAppFontEffects } from './useAppFontEffects';
 import { useMiniChatKeyboardShortcuts } from '@/hooks/useMiniChatKeyboardShortcuts';
-import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
 
 const MINI_CHAT_PRESENCE_CHANNEL = 'yuri:mini-chat-presence';
 
@@ -54,7 +51,6 @@ const MiniChatBootstrap: React.FC<{ config: MiniChatConfig }> = ({ config }) => 
   const sessions = useSessions();
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const setDirectory = useDirectoryStore((state) => state.setDirectory);
-  const projects = useProjectsStore((state) => state.projects);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const draftOpen = useSessionUIStore((state) => Boolean(state.newSessionDraft?.open));
   const draftDirectory = useSessionUIStore((state) => {
@@ -168,37 +164,6 @@ const MiniChatBootstrap: React.FC<{ config: MiniChatConfig }> = ({ config }) => 
       preserveDirectoryOverride: Boolean(config.directory),
     });
   }, [config, currentSessionId, draftOpen, openNewSessionDraft]);
-
-  React.useEffect(() => {
-    if (projects.length === 0) return;
-    let cancelled = false;
-
-    const discoverWorktrees = async () => {
-      // Same catalog path as desktop sidebar / topology. Never bulk-replace the
-      // whole map from a partial list (that wiped sibling projects' worktrees).
-      await Promise.all(projects.map(async (project) => {
-        const projectPath = project.path.replace(/\\/g, '/').replace(/\/+$/, '');
-        if (!projectPath) return;
-        try {
-          const cachedIsGitRepo = useGitStore.getState().directories.get(projectPath)?.isGitRepo;
-          const isGitRepo = cachedIsGitRepo ?? await import('@/lib/gitApi').then((m) => m.checkIsGitRepository(projectPath));
-          if (!isGitRepo || cancelled) return;
-          await forceRefreshProjectWorktreeCatalog(
-            { id: project.id, path: projectPath },
-            { isCurrent: () => !cancelled },
-          );
-        } catch {
-          // Best-effort; draft selector falls back to the project root.
-        }
-      }));
-    };
-
-    void discoverWorktrees();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [projects]);
 
   // Dismiss the HTML splash (see mini-chat.html) once the real content is ready,
   // so the window doesn't flash through white/connecting states. Fades out when

@@ -25,7 +25,6 @@ import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
 import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP, ProjectIconImage } from '@/lib/projectMeta';
 import { cn } from '@/lib/utils';
-import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
 import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { getSessionActivityUpdatedAt } from '@/lib/sessionActivity';
 import {
@@ -69,7 +68,6 @@ import { RemoteProjectSection } from '@/components/session/sidebar/RemoteProject
 import {
   getMobileSessionDefaultVisibleCount,
   getMobileSessionShowMoreIncrement,
-  mergeMobileWorktreeRefreshResults,
 } from './mobileSessionPagination';
 import { MobileResizableSheet } from '@/components/ui/MobileResizableSheet';
 
@@ -618,11 +616,6 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   React.useEffect(() => {
     if (!open) return;
     if (projects.length === 0) {
-      useSessionUIStore.setState((state) => {
-        const next = mergeMobileWorktreeRefreshResults(state.availableWorktreesByProject, new Set(), []);
-        if (next === state.availableWorktreesByProject) return {};
-        return { availableWorktreesByProject: next, availableWorktrees: [] };
-      });
       setGitProjectPaths((previous) => (previous.size === 0 ? previous : new Set()));
       setRootBranchesByProject((previous) => (previous.size === 0 ? previous : new Map()));
       return;
@@ -645,18 +638,9 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
               path,
               gitStatus: 'success' as const,
               isGitRepo,
-              worktreeStatus: 'success' as const,
-              worktrees: [],
             };
           }
-          // Same authoritative catalog path as desktop SessionSidebar sync /
-          // topology: invalidate + write per project. Cached listProjectWorktrees
-          // alone can leave mobile on a stale empty catalog.
-          const [worktreeResult, rootBranchResult] = await Promise.allSettled([
-            forceRefreshProjectWorktreeCatalog(
-              { id: project.id, path },
-              { isCurrent: () => !cancelled },
-            ),
+          const [rootBranchResult] = await Promise.allSettled([
             getRootBranch(path),
           ]);
           return {
@@ -664,10 +648,6 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
             path,
             gitStatus: 'success' as const,
             isGitRepo,
-            worktreeStatus: worktreeResult.status === 'fulfilled' ? 'success' as const : 'failed' as const,
-            // forceRefresh already wrote the store; merge still needs the payload
-            // so non-git clears and failed probes keep prior entries correctly.
-            worktrees: worktreeResult.status === 'fulfilled' ? worktreeResult.value.worktrees : undefined,
             rootBranchStatus: rootBranchResult.status === 'fulfilled' ? 'success' as const : 'failed' as const,
             rootBranch: rootBranchResult.status === 'fulfilled' ? rootBranchResult.value : undefined,
           };
@@ -675,23 +655,6 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
       );
       if (cancelled) return;
       const projectPaths = new Set(projects.map((project) => normalizePath(project.path)).filter(Boolean));
-      const worktreeResults = entries.flatMap((entry) => (
-        entry?.worktreeStatus
-          ? [{ path: entry.path, status: entry.worktreeStatus, worktrees: entry.worktrees }]
-          : []
-      ));
-      useSessionUIStore.setState((state) => {
-        const next = mergeMobileWorktreeRefreshResults(
-          state.availableWorktreesByProject,
-          projectPaths,
-          worktreeResults,
-        );
-        if (next === state.availableWorktreesByProject) return {};
-        return {
-          availableWorktreesByProject: next,
-          availableWorktrees: Array.from(next.values()).flat(),
-        };
-      });
       setGitProjectPaths((previous) => {
         const next = new Set([...previous].filter((path) => projectPaths.has(path)));
         for (const entry of entries) {
@@ -1228,13 +1191,6 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
 
   const syncProjectSessions = (project: ProjectMeta) => {
     void (async () => {
-      // Re-list git worktrees before session-index sync so newly created trees
-      // land in the SQLite catalog, not only the already-cached sidebar paths.
-      try {
-        await forceRefreshProjectWorktreeCatalog({ id: project.id, path: project.path });
-      } catch (error) {
-        console.warn('[MobileSessions] Worktree refresh before session sync failed:', error);
-      }
       const latest = useSessionUIStore.getState().availableWorktreesByProject.get(project.path) ?? project.worktrees;
       const directories = [project.path, ...latest.map((worktree) => worktree.path)];
       await syncGlobalSessionsForDirectories(directories, sessions);

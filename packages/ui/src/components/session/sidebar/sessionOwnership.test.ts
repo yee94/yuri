@@ -126,4 +126,63 @@ describe('createSessionOwnershipIndex', () => {
     expect(ownership.directoryResolutions).toBeLessThan(14_561 * 2);
     expect([...ownership.sessionsByProject.values()].reduce((total, bucket) => total + bucket.length, 0)).toBe(14_561);
   });
+
+  test('binds monorepo subdirectory worktree sessions via durable metadata without auto-discovered worktrees', () => {
+    const sessions = [
+      {
+        id: 'sub-wt-session',
+        directory: '/worktrees/feat-a/packages/web',
+        metadata: {
+          yuri: {
+            worktree: {
+              projectId: 'web-sub',
+              projectDirectory: '/monorepo/packages/web',
+              worktreeRoot: '/worktrees/feat-a',
+              path: '/worktrees/feat-a/packages/web',
+              branch: 'feat/a',
+              name: 'feat-a',
+              relativePath: 'packages/web',
+            },
+          },
+        },
+      },
+      {
+        id: 'api-wt-session',
+        directory: '/worktrees/feat-b/packages/api',
+        metadata: {
+          yuri: {
+            worktree: {
+              projectDirectory: '/monorepo/packages/api',
+              worktreeRoot: '/worktrees/feat-b',
+              path: '/worktrees/feat-b/packages/api',
+              branch: 'feat/b',
+              name: 'feat-b',
+            },
+          },
+        },
+      },
+    ] as unknown as Session[];
+
+    const projects = [
+      { id: 'web-sub', normalizedPath: '/monorepo/packages/web' },
+      { id: 'api-sub', normalizedPath: '/monorepo/packages/api' },
+    ];
+
+    const ownership = createSessionOwnershipIndex(sessions, projects, new Map(), false);
+
+    expect(ownership.bySessionId.get('sub-wt-session')).toEqual({
+      projectId: 'web-sub',
+      projectRoot: '/monorepo/packages/web',
+      scopeDirectory: '/worktrees/feat-a/packages/web',
+      kind: 'worktree',
+    });
+    expect(ownership.bySessionId.get('api-wt-session')).toEqual({
+      projectId: 'api-sub',
+      projectRoot: '/monorepo/packages/api',
+      scopeDirectory: '/worktrees/feat-b/packages/api',
+      kind: 'worktree',
+    });
+    expect(ownership.sessionsByProject.get('web-sub')?.map((s) => s.id)).toEqual(['sub-wt-session']);
+    expect(ownership.sessionsByProject.get('api-sub')?.map((s) => s.id)).toEqual(['api-wt-session']);
+  });
 });

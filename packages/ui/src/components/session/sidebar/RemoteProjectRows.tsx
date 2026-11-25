@@ -53,7 +53,7 @@ export function PendingRemoteProjectRow({ project, loading, error, mobile, reord
     openSidebarMenuKey={menu} setOpenSidebarMenuKey={setMenu} />;
 }
 
-export function RemoteSummaryRow({ session, active, search, selected, pending, pinDisabled = pending, pinned, unread, status, dragItem, secondaryMeta, subtitleSuffix, leading, card, depth = 1, onSelect, onMultiSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
+export function RemoteSummaryRow({ session, active, search, selected, pending, pinDisabled = pending, pinned, unread, status, dragItem, secondaryMeta, worktreeLabel, subtitleSuffix, leading, card, depth = 1, onSelect, onMultiSelect, onRename, onPin, onUnread, onArchive, onDelete, folders, onFolder }: RemoteSummaryRowProps) {
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [hoverOpen, setHoverOpen] = React.useState(false);
@@ -115,6 +115,15 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
             {secondaryMeta?.projectLabel ? <span className={cn('truncate', subtitleSuffix && 'max-w-[60%] shrink-0')}>{renderHighlightedText(secondaryMeta.projectLabel, search)}</span> : null}
             {secondaryMeta?.branchLabel ? <span className="inline-flex min-w-0 items-center gap-0.5"><Icon name="git-branch" className="h-3 w-3 flex-shrink-0" /><span className="truncate">{renderHighlightedText(secondaryMeta.branchLabel, search)}</span></span> : null}
             {subtitleSuffix}
+          </span>
+        ) : worktreeLabel ? (
+          <span
+            data-session-worktree-footer
+            className="mt-0.5 flex w-full min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-3.5 text-muted-foreground/70"
+            title={worktreeLabel}
+          >
+            <Icon name="git-branch" className="size-2.5 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">{renderHighlightedText(worktreeLabel, search)}</span>
           </span>
         ) : null}
         </>}

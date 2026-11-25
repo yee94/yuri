@@ -476,6 +476,23 @@ export const useKeyboardShortcuts = () => {
           return;
         }
 
+        if ((key === 'p' || key === 'b') && canRunChatChord) {
+          const sessionState = useSessionUIStore.getState();
+          const onNewSessionDraft = Boolean(sessionState.newSessionDraft?.open || !sessionState.currentSessionId);
+          if (onNewSessionDraft) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            consumeLeaderTextInput();
+            clearLeaderKey();
+            const eventName = key === 'p' ? 'yuri:open-draft-project-picker' : 'yuri:open-draft-branch-picker';
+            window.requestAnimationFrame(() => {
+              window.dispatchEvent(new CustomEvent(eventName));
+            });
+            return;
+          }
+        }
+
         // Unknown follow-up: consume the key so it does not land in the input, then exit.
         e.preventDefault();
         e.stopPropagation();

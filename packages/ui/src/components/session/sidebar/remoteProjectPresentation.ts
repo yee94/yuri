@@ -31,6 +31,7 @@ export type RemoteProjectShellProps = {
 
 export type RemoteSummaryRowProps = {
   secondaryMeta?: TopSectionSecondaryMeta | null;
+  worktreeLabel?: string | null;
   subtitleSuffix?: React.ReactNode;
   /** Desktop top section: icon-only marker before the title instead of a subtitle line. */
   leading?: React.ReactNode;

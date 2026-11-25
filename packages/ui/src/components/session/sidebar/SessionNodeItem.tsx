@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Icon } from "@/components/icon/Icon";
 import { formatSessionChangeCounts, readSessionChangeSummary } from '@/lib/sessionChangeSummary';
+import { formatWorktreeFooterLabel } from '@/lib/worktrees/sessionWorktreeMetadata';
 import { buildExportFilename, downloadAsMarkdown, formatSessionAsMarkdown, getExportRevealLabelKey, revealExportedMarkdown, saveAsMarkdownDesktop } from '@/lib/exportSession';
 import type { ChildSessionExport } from '@/lib/exportSession';
 import {
@@ -1457,6 +1458,52 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       ) : null}
                       {shortcutNumber ? <SessionShortcutHint number={shortcutNumber} /> : null}
                     </div>
+                    {!isCardRow && !isSlimRow && !isVSCode ? (() => {
+                      const worktreeFooterLabel = formatWorktreeFooterLabel(node.worktree);
+                      if (isPinnedContext) {
+                        const pinnedProjectLabel = secondaryMeta?.projectLabel?.trim() || null;
+                        const pinnedBranchLabel = worktreeFooterLabel || secondaryMeta?.branchLabel?.trim() || null;
+                        if (!pinnedProjectLabel && !pinnedBranchLabel) return null;
+                        const pinnedMetaTitle = [pinnedProjectLabel, pinnedBranchLabel].filter(Boolean).join(' · ');
+                        return (
+                          <div
+                            data-session-pinned-meta
+                            className="mt-0.5 flex w-full min-w-0 items-center gap-1.5 overflow-hidden text-[10px] leading-3.5 text-muted-foreground/70"
+                            title={pinnedMetaTitle}
+                          >
+                            {pinnedProjectLabel ? (
+                              <span className="inline-flex min-w-0 max-w-[55%] shrink-0 items-center gap-1">
+                                <Icon name="folder" className="size-2.5 shrink-0" aria-hidden="true" />
+                                <span className="truncate">
+                                  {renderHighlightedText(pinnedProjectLabel, normalizedSessionSearchQuery)}
+                                </span>
+                              </span>
+                            ) : null}
+                            {pinnedBranchLabel ? (
+                              <span className="inline-flex min-w-0 flex-1 items-center gap-1">
+                                <Icon name="git-branch" className="size-2.5 shrink-0" aria-hidden="true" />
+                                <span className="min-w-0 flex-1 truncate">
+                                  {renderHighlightedText(pinnedBranchLabel, normalizedSessionSearchQuery)}
+                                </span>
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      }
+                      if (!worktreeFooterLabel) return null;
+                      return (
+                        <div
+                          data-session-worktree-footer
+                          className="mt-0.5 flex w-full min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-3.5 text-muted-foreground/70"
+                          title={worktreeFooterLabel}
+                        >
+                          <Icon name="git-branch" className="size-2.5 shrink-0" aria-hidden="true" />
+                          <span className="min-w-0 flex-1 truncate">
+                            {renderHighlightedText(worktreeFooterLabel, normalizedSessionSearchQuery)}
+                          </span>
+                        </div>
+                      );
+                    })() : null}
                     {isCardRow ? (
                       <div className={cn('flex h-4 w-full min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-4', rowIsEmphasized ? 'text-foreground/60' : 'text-muted-foreground/60')}>
                         {hasSecondaryBranchLabel ? (
@@ -1495,7 +1542,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                   side="right"
                   align="start"
                   sideOffset={8}
-                  className="w-64 max-w-[min(16rem,calc(100vw-2rem))] px-3 py-2.5 text-left shadow-md"
+                  className="w-72 max-w-[min(18rem,calc(100vw-2rem))] px-3 py-2.5 text-left shadow-md"
                 >
                   {/* Hover card title: wrap (no truncate) so the full session name stays readable. */}
                   {hoverDetailsOpen ? (
@@ -1506,6 +1553,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       projectLabel={secondaryMeta?.projectLabel}
                       project={secondaryMeta?.project}
                       branch={node.worktree?.branch ?? secondaryMeta?.branchLabel}
+                      worktree={node.worktree}
                       directory={sessionDirectory}
                     />
                   ) : null}
@@ -1796,6 +1844,10 @@ const areSessionNodeItemPropsEqual = (prev: Props, next: Props): boolean => {
   if ((prev.node.session as Session & { hasChildren?: boolean }).hasChildren
     !== (next.node.session as Session & { hasChildren?: boolean }).hasChildren) return false;
   if (getNodeSessionDirectory(prev.node) !== getNodeSessionDirectory(next.node)) return false;
+  if ((prev.node.worktree?.path ?? null) !== (next.node.worktree?.path ?? null)) return false;
+  if ((prev.node.worktree?.branch ?? null) !== (next.node.worktree?.branch ?? null)) return false;
+  if ((prev.node.worktree?.name ?? null) !== (next.node.worktree?.name ?? null)) return false;
+  if ((prev.node.worktree?.label ?? null) !== (next.node.worktree?.label ?? null)) return false;
   if (!isSecondaryMetaEqual(prev.secondaryMeta, next.secondaryMeta)) return false;
 
   if (prev.liveSessionById !== next.liveSessionById

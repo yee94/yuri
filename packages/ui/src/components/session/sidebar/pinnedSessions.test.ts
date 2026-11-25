@@ -120,11 +120,11 @@ describe('listInProgressHomeSessions', () => {
   });
 });
 
-describe('SessionSidebar pinned/in-progress top section contract', () => {
-  test('sidebar derives in-progress rows and passes them to the top section', () => {
-    expect(sidebarSource).toContain('listInProgressHomeSessions');
-    expect(sidebarSource).toContain('inProgressItems=');
+describe('SessionSidebar pinned top section contract', () => {
+  test('sidebar renders pinned rows in the top section without lifting in-progress rows', () => {
+    expect(sidebarSource).toContain('derivePinnedSessions');
     expect(sidebarSource).toContain('resolveTopSectionSecondaryMeta');
+    expect(sidebarSource).not.toContain('inProgressItems=');
   });
 });
 

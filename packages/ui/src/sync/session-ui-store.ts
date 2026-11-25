@@ -43,6 +43,7 @@ import { getWorktreeSetupWaitEnabled } from "@/lib/yuriConfig"
 import { resolveProjectForSessionDirectory } from "@/lib/projectResolution"
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
 import { scopeProjectWorktrees } from "@/lib/worktrees/projectWorktreeScope"
+import { buildSessionWorktreeMetadataPatch } from "@/lib/worktrees/sessionWorktreeMetadata"
 import { validateWorktreeDirectory } from "@/lib/gitApi"
 import { useWorktreeOrderStore } from "@/stores/useWorktreeOrderStore"
 import { createUuid } from "@/lib/uuid"
@@ -1181,11 +1182,50 @@ async function materializeClaimedDraftSession(selection: {
   const { draft } = claimed
   const trimmedAgent = typeof selection.agent === "string" && selection.agent.trim().length > 0 ? selection.agent.trim() : undefined
   try {
-    const { directory } = await resolveDraftDirectory(draft)
+    const { directory, projectId } = await resolveDraftDirectory(draft)
     const dir = directory ?? opencodeClient.getDirectory()
+    const normalizedDir = normalizePath(dir)
+    const projects = useProjectsStore.getState().projects
+    const targetProject = (projectId ? projects.find((entry) => entry.id === projectId) : undefined)
+      ?? (draft.selectedProjectId ? projects.find((entry) => entry.id === draft.selectedProjectId) : undefined)
+      ?? null
+    const worktreesByProject = useSessionUIStore.getState().availableWorktreesByProject
+    let matchedWorktree: WorktreeMetadata | null = null
+    if (normalizedDir) {
+      const targetProjectPath = normalizePath(targetProject?.path ?? null)
+      if (targetProjectPath && normalizedDir !== targetProjectPath) {
+        matchedWorktree = (worktreesByProject.get(targetProjectPath) ?? [])
+          .find((entry) => normalizePath(entry.path) === normalizedDir) ?? null
+      }
+      if (!matchedWorktree) {
+        for (const [projectPath, entries] of worktreesByProject.entries()) {
+          if (normalizePath(projectPath) === normalizedDir) continue
+          const found = entries.find((entry) => normalizePath(entry.path) === normalizedDir)
+          if (found) {
+            matchedWorktree = found
+            break
+          }
+        }
+      }
+    }
+    const worktreeProject = targetProject
+      ?? (matchedWorktree
+        ? projects.find((entry) => normalizePath(entry.path) === normalizePath(matchedWorktree?.projectDirectory))
+        : null)
+      ?? null
+    const worktreeMetadataPatch = matchedWorktree
+      ? buildSessionWorktreeMetadataPatch(matchedWorktree, worktreeProject)
+      : undefined
     // Draft finalization owns selection; the general create action closes the draft too early.
-    const created = await opencodeClient.createSession({ title: draft.title, parentID: draft.parentID ?? undefined }, dir)
+    const created = await opencodeClient.createSession({
+      title: draft.title,
+      parentID: draft.parentID ?? undefined,
+      ...(worktreeMetadataPatch ? { metadata: worktreeMetadataPatch } : {}),
+    }, dir)
     if (!created?.id) throw new Error("Failed to create session")
+    if (matchedWorktree) {
+      useSessionUIStore.getState().setWorktreeMetadata(created.id, matchedWorktree)
+    }
     if (draft.permissionAutoAcceptEnabled !== true) {
       const sessionDirectory = directory ?? created.directory
       if (sessionDirectory) registerSessionDirectory(created.id, sessionDirectory)

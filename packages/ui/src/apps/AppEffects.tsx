@@ -10,9 +10,7 @@ import { getMessageQueueCutover } from '@/sync/message-queue-cutover';
 import { useQueueAbortOptimisticReconcile } from '@/sync/queue-abort-optimistic';
 import { setExternallyViewedSession } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
-import { useWorktreeOrderSync } from '@/sync/worktree-order-sync';
 import { restoreWebviewZoomFactor } from '@/lib/webviewZoom';
-import { startWorktreeTopologySync } from '@/lib/worktrees/worktreeTopologySync';
 import { mountSpeechSettingsSync } from '@/sync/speech-settings-sync';
 
 const MINI_CHAT_PRESENCE_CHANNEL = 'yuri:mini-chat-presence';
@@ -40,8 +38,6 @@ const SyncOptimisticBridge: React.FC = () => {
       (input) => confirmRef.current(input),
     );
   }, []);
-
-  React.useEffect(() => startWorktreeTopologySync(), []);
 
   return null;
 };
@@ -102,7 +98,6 @@ export const SyncAppEffects = React.memo(function SyncAppEffects({ embeddedBackg
   usePwaManifestSync();
   useWindowControlsOverlayLayout();
   useKeyboardShortcuts();
-  useWorktreeOrderSync();
 
   React.useEffect(() => {
     restoreWebviewZoomFactor();

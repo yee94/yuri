@@ -32,6 +32,7 @@ import { useSelectionStore } from '@/sync/selection-store';
 import * as sessionActions from '@/sync/session-actions';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { validateWorktreeCreate, createWorktree } from '@/lib/worktrees/worktreeManager';
+import { buildSessionWorktreeMetadataPatch } from '@/lib/worktrees/sessionWorktreeMetadata';
 import { resolveRootTrackingRemote, withWorktreeUpstreamDefaults } from '@/lib/worktrees/worktreeCreate';
 import { waitForWorktreeBootstrap } from '@/lib/worktrees/worktreeBootstrap';
 import { getWorktreeSetupCommands, getWorktreeSetupWaitEnabled } from '@/lib/yuriConfig';
@@ -39,7 +40,12 @@ import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { generateBranchSlug } from '@/lib/git/branchNameGenerator';
 import { renderMagicPrompt } from '@/lib/magicPrompts';
 import { parseModelIdentifier } from '@/lib/modelIdentifier';
-import { rankBranchesForQuery } from '@/lib/worktrees/branchSearch';
+import {
+  DEFAULT_BRANCH_RENDER_LIMIT,
+  rankBranchesForQuery,
+  sortBranchesByRecency,
+} from '@/lib/worktrees/branchSearch';
+import { recordRecentBranchUsage, resolveBranchRecencyMap } from '@/lib/worktrees/branchRecency';
 import {
   LAST_WORKTREE_SOURCE_BRANCH_KEY,
   resolveWorktreeSourceBranchPreference,
@@ -270,21 +276,34 @@ function NewWorktreeDialogContent({
   const isLoadingBranches = useGitStore((state) => projectDirectory ? state.directories.get(projectDirectory)?.isLoadingBranches ?? false : false);
   const fetchBranches = useGitStore((state) => state.fetchBranches);
 
-  // Compute local and remote branch lists (same pattern as GitView)
+  const branchRecency = React.useMemo(
+    () => (open ? resolveBranchRecencyMap({ directory: projectDirectory, branchInfo: branches?.branches }) : undefined),
+    [branches?.branches, open, projectDirectory],
+  );
+
+  // Compute local and remote branch lists ordered by recency
   const localBranches = React.useMemo(() => {
     if (!branches?.all) return [];
-    return branches.all
-      .filter((branchName: string) => !branchName.startsWith('remotes/'))
-      .sort();
-  }, [branches]);
+    const local = branches.all.filter((branchName: string) => !branchName.startsWith('remotes/'));
+    return sortBranchesByRecency({
+      branches: local,
+      source: 'local',
+      currentBranch: branches.current,
+      branchRecency,
+    });
+  }, [branchRecency, branches]);
   
   const remoteBranches = React.useMemo(() => {
     if (!branches?.all) return [];
-    return branches.all
+    const remote = branches.all
       .filter((branchName: string) => branchName.startsWith('remotes/'))
-      .map((branchName: string) => branchName.replace(/^remotes\//, ''))
-      .sort();
-  }, [branches]);
+      .map((branchName: string) => branchName.replace(/^remotes\//, ''));
+    return sortBranchesByRecency({
+      branches: remote,
+      source: 'remote',
+      branchRecency,
+    });
+  }, [branchRecency, branches]);
   
   // Get existing worktrees for the current project to avoid conflicts
   const availableWorktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
@@ -360,20 +379,36 @@ function NewWorktreeDialogContent({
   }, [findScrollableContainer, resetScrollToTop]);
 
   const existingBranchRankedGroups = React.useMemo(() => {
-    return rankBranchesForQuery({
+    const ranked = rankBranchesForQuery({
       localBranches,
       remoteBranches,
       query: existingBranchQuery,
+      currentBranch: branches?.current,
+      branchRecency,
     });
-  }, [localBranches, remoteBranches, existingBranchQuery]);
+    const searching = existingBranchQuery.trim().length > 0;
+    return {
+      matching: ranked.matching.slice(0, DEFAULT_BRANCH_RENDER_LIMIT),
+      otherLocal: searching ? [] : ranked.otherLocal.slice(0, DEFAULT_BRANCH_RENDER_LIMIT),
+      otherRemote: searching ? [] : ranked.otherRemote.slice(0, DEFAULT_BRANCH_RENDER_LIMIT),
+    };
+  }, [branchRecency, branches?.current, localBranches, remoteBranches, existingBranchQuery]);
 
   const sourceBranchRankedGroups = React.useMemo(() => {
-    return rankBranchesForQuery({
+    const ranked = rankBranchesForQuery({
       localBranches,
       remoteBranches,
       query: sourceBranchQuery,
+      currentBranch: branches?.current,
+      branchRecency,
     });
-  }, [localBranches, remoteBranches, sourceBranchQuery]);
+    const searching = sourceBranchQuery.trim().length > 0;
+    return {
+      matching: ranked.matching.slice(0, DEFAULT_BRANCH_RENDER_LIMIT),
+      otherLocal: searching ? [] : ranked.otherLocal.slice(0, DEFAULT_BRANCH_RENDER_LIMIT),
+      otherRemote: searching ? [] : ranked.otherRemote.slice(0, DEFAULT_BRANCH_RENDER_LIMIT),
+    };
+  }, [branchRecency, branches?.current, localBranches, remoteBranches, sourceBranchQuery]);
 
   const hasExistingBranchQuery = existingBranchQuery.trim().length > 0;
   const hasSourceBranchQuery = sourceBranchQuery.trim().length > 0;
@@ -927,6 +962,10 @@ function NewWorktreeDialogContent({
       });
 
       const metadata = await createWorktree(projectRef, resolvedArgs);
+      recordRecentBranchUsage(projectDirectory, metadata.branch || normalizedBranch);
+      if (mode === 'new-branch' && sourceBranch) {
+        recordRecentBranchUsage(projectDirectory, sourceBranch);
+      }
 
       let createdSessionId: string | null = null;
 
@@ -941,10 +980,12 @@ function NewWorktreeDialogContent({
             ? `#${linkedPrState.number} ${linkedPrState.title}`.trim()
             : t('session.newWorktree.newSessionTitle');
 
-        const session = await sessionActions.createSession(sessionTitle, metadata.path, null);
+        const worktreeMetadataPatch = buildSessionWorktreeMetadataPatch(metadata, projectRef);
+        const session = await sessionActions.createSession(sessionTitle, metadata.path, null, worktreeMetadataPatch);
         if (!session?.id) {
           throw new Error('Failed to create session');
         }
+        useSessionUIStore.getState().setWorktreeMetadata(session.id, metadata);
 
         createdSessionId = session.id;
         onWorktreeCreated?.(metadata.path, { sessionId: createdSessionId });
@@ -1217,6 +1258,7 @@ function NewWorktreeDialogContent({
                                 <button
                                   key={`${branch.source}-${branch.value}`}
                                   onClick={() => {
+                                    recordRecentBranchUsage(projectDirectory, branch.value);
                                     setExistingBranchState(prev => ({
                                       ...prev,
                                       selectedBranch: branch.value,
@@ -1481,6 +1523,7 @@ function NewWorktreeDialogContent({
                                 <button
                                   key={`${branch.source}-${branch.value}`}
                                   onClick={() => {
+                                    recordRecentBranchUsage(projectDirectory, branch.value);
                                     setNewBranchState(prev => ({ ...prev, sourceBranch: branch.value }));
                                     setSourceBranchPickerOpen(false);
                                   }}
@@ -1694,6 +1737,7 @@ function NewWorktreeDialogContent({
                                       key={`${branch.source}-${branch.value}`}
                                       value={branch.value}
                                       onSelect={() => {
+                                        recordRecentBranchUsage(projectDirectory, branch.value);
                                         setExistingBranchState((prev) => ({
                                           ...prev,
                                           selectedBranch: branch.value,
@@ -1935,6 +1979,7 @@ function NewWorktreeDialogContent({
                                       key={`${branch.source}-${branch.value}`}
                                       value={branch.value}
                                       onSelect={() => {
+                                        recordRecentBranchUsage(projectDirectory, branch.value);
                                         setNewBranchState((prev) => ({ ...prev, sourceBranch: branch.value }));
                                         setSourceBranchDropdownOpen(false);
                                       }}

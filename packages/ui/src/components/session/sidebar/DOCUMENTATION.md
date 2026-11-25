@@ -6,6 +6,23 @@ Remote edits persist through the captured Hub's project-reference endpoint and
 render stored icons through the corresponding Host. Local default-model and
 worktree-management controls do not run against a remote directory.
 
+## Flat worktree sessions and explicit ownership
+
+Project lists on desktop and mobile render a flat list of active sessions under
+each project root (no nested worktree subgroup headers). Startup, reconnect,
+mini-chat bootstrap, mobile sheets, and manual project sync do not automatically
+enumerate Git worktrees via `git worktree list`; worktree APIs remain on-demand
+for explicit user actions (creating/validating/removing worktrees and Settings).
+
+Sessions created inside a linked worktree persist `metadata.yuri.worktree`
+(`projectId`, `projectDirectory`, `worktreeRoot`, `path`, `branch`, `name`,
+`relativePath`) through the Host metadata store and SQLite session index.
+`createSessionOwnershipIndex` binds sessions using explicit
+`metadata.yuri.worktree` ownership first (isolating monorepo subdirectory
+projects without polling sibling checkouts), then directory/worktree fallbacks.
+Linked-worktree rows render a compact footer (`[data-session-worktree-footer]`)
+showing the branch icon, branch name, and distinct worktree name.
+
 ## Task navigation icons and hover details
 
 The desktop task-view header's add button opens the existing add-project dialog,

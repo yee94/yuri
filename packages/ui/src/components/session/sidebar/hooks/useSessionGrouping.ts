@@ -4,14 +4,12 @@ import type { WorktreeMetadata } from '@/types/worktree';
 import type { SessionGroup, SessionNode } from '../types';
 import {
   getArchivedScopeKey,
-  normalizeForBranchComparison,
   normalizePath,
 } from '../utils';
-import { formatDirectoryName, formatPathForDisplay } from '@/lib/utils';
+import { formatPathForDisplay } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
-import { resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
-import { getSessionActivityUpdatedAt } from '@/lib/sessionActivity';
 import { buildSessionTree } from '../sessionTree';
+import { formatWorktreeFooterLabel, sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
 
 type Args = {
   homeDirectory: string | null;
@@ -23,41 +21,50 @@ type Args = {
 
 export const useSessionGrouping = (args: Args) => {
   const { t } = useI18n();
-  const buildGroupSearchText = React.useCallback((group: SessionGroup): string => {
-    return [group.label, group.branch ?? '', group.description ?? '', group.directory ?? ''].join(' ').toLowerCase();
-  }, []);
+  const buildGroupSearchText = React.useMemo(
+    () => (group: SessionGroup): string => {
+      return [group.label, group.branch ?? '', group.description ?? '', group.directory ?? ''].join(' ').toLowerCase();
+    },
+    [],
+  );
 
-  const buildSessionSearchText = React.useCallback((session: Session): string => {
-    const sessionDirectory = normalizePath((session as Session & { directory?: string | null }).directory ?? null) ?? '';
-    const sessionTitle = (session.title || t('sessions.sidebar.session.untitled')).trim();
-    return `${sessionTitle} ${sessionDirectory}`.toLowerCase();
-  }, [t]);
+  const buildSessionSearchText = React.useMemo(
+    () => (session: Session, worktree?: WorktreeMetadata | null): string => {
+      const sessionDirectory = normalizePath((session as Session & { directory?: string | null }).directory ?? null) ?? '';
+      const sessionTitle = (session.title || t('sessions.sidebar.session.untitled')).trim();
+      const worktreeText = worktree
+        ? [worktree.branch ?? '', worktree.name ?? '', worktree.label ?? '', formatWorktreeFooterLabel(worktree) ?? ''].join(' ')
+        : '';
+      return `${sessionTitle} ${sessionDirectory} ${worktreeText}`.toLowerCase();
+    },
+    [t],
+  );
 
-  const filterSessionNodesForSearch = React.useCallback(
-    (nodes: SessionNode[], query: string): SessionNode[] => {
+  const filterSessionNodesForSearch = React.useMemo(() => {
+    const filterNodes = (nodes: SessionNode[], query: string): SessionNode[] => {
       if (!query) {
         return nodes;
       }
 
       return nodes.flatMap((node) => {
-        const nodeMatches = buildSessionSearchText(node.session).includes(query);
+        const nodeMatches = buildSessionSearchText(node.session, node.worktree).includes(query);
         if (nodeMatches) {
           return [node];
         }
 
-        const filteredChildren = filterSessionNodesForSearch(node.children, query);
+        const filteredChildren = filterNodes(node.children, query);
         if (filteredChildren.length === 0) {
           return [];
         }
 
         return [{ ...node, children: filteredChildren }];
       });
-    },
-    [buildSessionSearchText],
-  );
+    };
+    return filterNodes;
+  }, [buildSessionSearchText]);
 
-  const buildGroupedSessions = React.useCallback(
-    (
+  const buildGroupedSessions = React.useMemo(
+    () => (
       projectSessions: Session[],
       projectRoot: string | null,
       availableWorktrees: WorktreeMetadata[],
@@ -75,16 +82,21 @@ export const useSessionGrouping = (args: Args) => {
       });
 
       const getSessionWorktree = (session: Session): WorktreeMetadata | null => {
+        if (args.isVSCode) return null;
         const sessionDirectory = normalizePath((session as Session & { directory?: string | null }).directory ?? null);
-        const sessionWorktreeMeta = args.worktreeMetadata.get(session.id) ?? null;
-        if (sessionWorktreeMeta) return sessionWorktreeMeta;
-        if (sessionDirectory) {
-          const worktree = worktreeByPath.get(sessionDirectory) ?? null;
-          if (worktree && sessionDirectory !== normalizedProjectRoot) {
-            return worktree;
-          }
+        const candidate = args.worktreeMetadata.get(session.id)
+          ?? sessionWorktreeToMetadata(session)
+          ?? (sessionDirectory ? worktreeByPath.get(sessionDirectory) ?? null : null);
+        if (!candidate) return null;
+        const candidatePath = normalizePath(candidate.path);
+        if (candidatePath && normalizedProjectRoot && candidatePath === normalizedProjectRoot) {
+          return null;
         }
-        return null;
+        const liveBranch = candidatePath ? args.gitBranches.get(candidatePath)?.trim() || null : null;
+        if (liveBranch && liveBranch !== 'HEAD' && liveBranch !== candidate.branch) {
+          return { ...candidate, branch: liveBranch };
+        }
+        return candidate;
       };
 
       // Keep the full parent/child forest in the project area even when a
@@ -95,129 +107,50 @@ export const useSessionGrouping = (args: Args) => {
         getWorktree: getSessionWorktree,
       });
 
-      const groupedNodes = new Map<string, SessionNode[]>();
-      const archivedKey = '__archived__';
-
-      const getGroupKey = (session: Session) => {
-        if (session.time?.archived) return archivedKey;
-        // VS Code groups by open workspace, not by worktree: every non-archived
-        // session in a project belongs to that project's single (root) group.
-        // Worktrees aren't registered in VS Code, so the desktop directory-match
-        // below would otherwise dump these sessions into the archived bucket.
-        if (args.isVSCode) return normalizedProjectRoot ?? '__project_root__';
-        const metadataPath = normalizePath(args.worktreeMetadata.get(session.id)?.path ?? null);
-        const normalizedDir = metadataPath ?? resolveGlobalSessionDirectory(session);
-        if (!normalizedDir) return archivedKey;
-        if (normalizedDir !== normalizedProjectRoot && worktreeByPath.has(normalizedDir)) return normalizedDir;
-        if (normalizedDir === normalizedProjectRoot) return normalizedProjectRoot ?? '__project_root__';
-        return archivedKey;
-      };
+      const activeNodes: SessionNode[] = [];
+      const archivedNodes: SessionNode[] = [];
 
       forestRoots.forEach((node) => {
-        const groupKey = getGroupKey(node.session);
-        if (!groupedNodes.has(groupKey)) groupedNodes.set(groupKey, []);
-        groupedNodes.get(groupKey)?.push(node);
-      });
-
-      const rootKey = normalizedProjectRoot ?? '__project_root__';
-      const groups: SessionGroup[] = [{
-        id: 'root',
-        label: (projectIsRepo && projectRootBranch && projectRootBranch !== 'HEAD')
-          ? t('sessions.sidebar.grouping.projectRootWithBranch', { branch: projectRootBranch })
-          : t('sessions.sidebar.grouping.projectRoot'),
-        branch: projectRootBranch ?? null,
-        description: normalizedProjectRoot ? formatPathForDisplay(normalizedProjectRoot, args.homeDirectory) : null,
-        isMain: true,
-        isArchivedBucket: false,
-        worktree: null,
-        directory: normalizedProjectRoot,
-        folderScopeKey: normalizedProjectRoot,
-        sessions: groupedNodes.get(rootKey) ?? [],
-      }];
-
-      // Calculate activity info for each worktree to determine sorting priority
-      const worktreeActivityInfo = new Map<string, { hasActiveSession: boolean; lastUpdatedAt: number }>();
-      availableWorktrees.forEach((meta) => {
-        const directory = normalizePath(meta.path) ?? meta.path;
-        const sessionsInWorktree = groupedNodes.get(directory) ?? [];
-        const hasActiveSession = sessionsInWorktree.length > 0;
-        // Calculate the latest update time among all sessions in this worktree
-        const lastUpdatedAt = sessionsInWorktree.reduce((max, node) => {
-          const updatedAt = getSessionActivityUpdatedAt(node.session);
-          if (!Number.isFinite(updatedAt)) {
-            return max;
-          }
-          return Math.max(max, updatedAt);
-        }, 0);
-
-        worktreeActivityInfo.set(directory, { hasActiveSession, lastUpdatedAt });
-      });
-
-      // Sort worktrees: active first (by last updated desc), then inactive (by label asc)
-      const sortedWorktrees = [...availableWorktrees].sort((a, b) => {
-        const aDir = normalizePath(a.path) ?? a.path;
-        const bDir = normalizePath(b.path) ?? b.path;
-        const aInfo = worktreeActivityInfo.get(aDir) ?? { hasActiveSession: false, lastUpdatedAt: 0 };
-        const bInfo = worktreeActivityInfo.get(bDir) ?? { hasActiveSession: false, lastUpdatedAt: 0 };
-
-        // First priority: active status (active first)
-        if (aInfo.hasActiveSession !== bInfo.hasActiveSession) {
-          return aInfo.hasActiveSession ? -1 : 1;
+        if (node.session.time?.archived) {
+          archivedNodes.push(node);
+        } else {
+          activeNodes.push(node);
         }
-
-        // Second priority: for active worktrees, sort by last updated (desc)
-        if (aInfo.hasActiveSession && bInfo.hasActiveSession) {
-          return bInfo.lastUpdatedAt - aInfo.lastUpdatedAt;
-        }
-
-        // Third priority: for inactive worktrees, sort by label (asc)
-        const aLabel = (a.label || a.branch || a.name || a.path || '').toLowerCase();
-        const bLabel = (b.label || b.branch || b.name || b.path || '').toLowerCase();
-        return aLabel.localeCompare(bLabel);
       });
 
-      // VS Code groups strictly by open workspace — no per-worktree subgroups.
-      const worktreeGroups = args.isVSCode ? [] : sortedWorktrees;
-      worktreeGroups.forEach((meta) => {
-        const directory = normalizePath(meta.path) ?? meta.path;
-        const currentBranch = args.gitBranches.get(directory)?.trim() || null;
-        const metadataBranch = meta.branch?.trim() || null;
-        const shouldSyncLabelWithBranch = Boolean(
-          currentBranch && metadataBranch && meta.label && normalizeForBranchComparison(meta.label) === normalizeForBranchComparison(metadataBranch),
-        );
-        const label = shouldSyncLabelWithBranch
-          ? currentBranch!
-          : (meta.label || meta.name || formatDirectoryName(directory, args.homeDirectory) || directory);
-
-        groups.push({
-          id: `worktree:${directory}`,
-          label,
-          branch: currentBranch || metadataBranch,
-          description: formatPathForDisplay(directory, args.homeDirectory),
-          isMain: false,
+      // Flat project sidebar: all active sessions (project root + linked
+      // worktrees) list directly under the project's single root group.
+      // Per-session worktree identity renders on each session's compact footer.
+      const groups: SessionGroup[] = [
+        {
+          id: 'root',
+          label: (projectIsRepo && projectRootBranch && projectRootBranch !== 'HEAD')
+            ? t('sessions.sidebar.grouping.projectRootWithBranch', { branch: projectRootBranch })
+            : t('sessions.sidebar.grouping.projectRoot'),
+          branch: projectRootBranch ?? null,
+          description: normalizedProjectRoot ? formatPathForDisplay(normalizedProjectRoot, args.homeDirectory) : null,
+          isMain: true,
           isArchivedBucket: false,
-          worktree: meta,
-          directory,
-          folderScopeKey: directory,
-          sessions: groupedNodes.get(directory) ?? [],
-        });
-      });
-
-      const archivedSessions = groupedNodes.get(archivedKey) ?? [];
-      // Keep an empty archived bucket available so opening it can trigger the
-      // first lazy archived-session request for this project.
-      groups.push({
-        id: 'archived',
-        label: t('sessions.sidebar.grouping.archived'),
-        branch: null,
-        description: t('sessions.sidebar.grouping.archivedDescription'),
-        isMain: false,
-        isArchivedBucket: true,
-        worktree: null,
-        directory: null,
-        folderScopeKey: !args.isVSCode && normalizedProjectRoot ? getArchivedScopeKey(normalizedProjectRoot) : null,
-        sessions: archivedSessions,
-      });
+          worktree: null,
+          directory: normalizedProjectRoot,
+          folderScopeKey: normalizedProjectRoot,
+          sessions: activeNodes,
+        },
+        // Keep an empty archived bucket available so opening it can trigger the
+        // first lazy archived-session request for this project.
+        {
+          id: 'archived',
+          label: t('sessions.sidebar.grouping.archived'),
+          branch: null,
+          description: t('sessions.sidebar.grouping.archivedDescription'),
+          isMain: false,
+          isArchivedBucket: true,
+          worktree: null,
+          directory: null,
+          folderScopeKey: !args.isVSCode && normalizedProjectRoot ? getArchivedScopeKey(normalizedProjectRoot) : null,
+          sessions: archivedNodes,
+        },
+      ];
 
       return groups;
     },

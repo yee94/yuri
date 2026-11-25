@@ -39,7 +39,6 @@ import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useNotificationStore } from '@/sync/notification-store';
 import { useI18n } from '@/lib/i18n';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import { forceRefreshProjectWorktreeCatalog } from '@/lib/worktrees/worktreeManager';
 import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { deleteSessionsWithUndo, showArchivedSessionsUndoToast } from '@/lib/sessionMutationUndo';
@@ -54,7 +53,6 @@ import {
 } from '@/components/ui/mobileLongPress';
 import { MobileDeleteWorktreeDialog } from '@/apps/MobileDeleteWorktreeDialog';
 import { MobileProjectEditSurface } from '@/apps/MobileProjectEditSurface';
-import { mergeMobileWorktreeRefreshResults } from '@/apps/mobileSessionPagination';
 import {
   buildProjectMenuItems,
   buildSessionMenuItems,
@@ -966,58 +964,6 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     }
   }, [open, visibleSessionDirectories]);
 
-  // Refresh worktree groups when the sheet opens so project filter shows the
-  // tree (root + worktrees). Without this the catalog can stay empty after a
-  // cold start until another surface (iPad sheet / app bootstrap) fills it.
-  React.useEffect(() => {
-    if (!open || localProjects.length === 0) return;
-    let cancelled = false;
-    void (async () => {
-      const entries = await Promise.all(localProjects.map(async (project) => {
-        const path = normalize(project.path);
-        if (!path) return null;
-        let isGitRepo = false;
-        try {
-          isGitRepo = await git.checkIsGitRepository(path);
-        } catch {
-          return { path, status: 'failed' as const };
-        }
-        if (!isGitRepo) {
-          return { path, status: 'success' as const, worktrees: [] as WorktreeMetadata[] };
-        }
-        try {
-          // Align with PC/topology: force-refresh invalidates the 30s list cache
-          // and merges into availableWorktreesByProject per project.
-          const result = await forceRefreshProjectWorktreeCatalog(
-            { id: project.id, path },
-            { isCurrent: () => !cancelled },
-          );
-          return { path, status: 'success' as const, worktrees: result.worktrees };
-        } catch {
-          return { path, status: 'failed' as const };
-        }
-      }));
-      if (cancelled) return;
-      const projectPaths = new Set(localProjects.map((project) => normalize(project.path)).filter(Boolean));
-      const results = entries.flatMap((entry) => (entry ? [entry] : []));
-      useSessionUIStore.setState((state) => {
-        const next = mergeMobileWorktreeRefreshResults(
-          state.availableWorktreesByProject,
-          projectPaths,
-          results,
-        );
-        if (next === state.availableWorktreesByProject) return {};
-        return {
-          availableWorktreesByProject: next,
-          availableWorktrees: Array.from(next.values()).flat(),
-        };
-      });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [git, open, localProjects]);
-
   const formatProjectLabel = React.useCallback((project: ProjectEntry): string => {
     if (project.hostId) return `${project.label || formatDirectoryName(project.path) || project.path} · ${remoteCatalog.registry?.getHost(project.hostId)?.name ?? project.hostId}`;
     return formatDirectoryName(project.path) || project.path;
@@ -1406,11 +1352,6 @@ export const MobileSessionStatusBar: React.FC<MobileSessionStatusBarProps> = ({
     }
     closeActionMenu();
     void (async () => {
-      try {
-        await forceRefreshProjectWorktreeCatalog({ id: target.project.id, path: target.project.path });
-      } catch (error) {
-        console.warn('[MobileStatus] Worktree refresh before session sync failed:', error);
-      }
       const latest = useSessionUIStore.getState().availableWorktreesByProject.get(target.project.path) ?? target.worktrees;
       await syncGlobalSessionsForDirectories(
         [target.project.path, ...latest.map((worktree) => worktree.path)],

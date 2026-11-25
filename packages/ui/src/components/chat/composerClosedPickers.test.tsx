@@ -156,8 +156,8 @@ describe('closed composer picker work', () => {
         expect(worktreeMap.mock.calls.length).toBe(0);
         presence.visible = true;
         await act(async () => render());
-        expect(host.textContent).toContain('local-299');
-        expect(host.textContent).toContain('remote-299');
+        expect(host.textContent).toContain('local-1');
+        expect(host.textContent).toContain('remote-1');
         expect(host.textContent).toContain('tree-299');
         const row = Array.from(host.querySelectorAll('[cmdk-item]')).find((element) => element.textContent === 'local-1');
         expect(row).toBeDefined();
@@ -198,6 +198,11 @@ describe('closed composer picker work', () => {
             setMobileDraftPicker: vi.fn(), setMobileDraftPickerQuery: vi.fn(),
             handleDraftProjectChange: vi.fn(), selectedDraftProject: projects[0],
             SelectItem: 'div', SelectSeparator: 'hr', Input: 'input', Icon: 'i',
+            cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
+            desktopDraftProjectInputRef: { current: null },
+            desktopDraftProjectActiveIndex: 0,
+            setDesktopDraftProjectActiveIndex: vi.fn(),
+            handleDesktopDraftProjectKeyDown: vi.fn(),
             setDesktopDraftProjectQuery: vi.fn(), setDesktopDraftProjectPickerOpen: vi.fn(),
             t: (key: string) => key, matchesModelSearch: () => true,
             getProjectDisplayLabel: (project: { path: string }) => project.path,

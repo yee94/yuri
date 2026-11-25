@@ -952,4 +952,43 @@ describe('Electron session index', () => {
     expect(service.snapshot().pinnedSessionIds ?? []).toEqual([]);
     service.close();
   });
+
+  it('persists metadata.yuri.worktree across refreshes and projects it in snapshot and lookup', () => {
+    const runtimeRef = { value: 'http://runtime-a.test' };
+    const service = createService(runtimeRef);
+    const worktree = {
+      projectId: 'proj-web',
+      projectDirectory: '/monorepo/packages/web',
+      worktreeRoot: '/worktrees/feat-sidebar',
+      path: '/worktrees/feat-sidebar/packages/web',
+      branch: 'feat/flat-sidebar',
+      name: 'feat-sidebar',
+      relativePath: 'packages/web',
+    };
+
+    expect(service.upsert({
+      id: 'ses_wt',
+      directory: '/worktrees/feat-sidebar/packages/web',
+      title: 'Worktree session',
+      time: { created: 100, updated: 200 },
+      metadata: { yuri: { worktree } },
+    })).toBe(true);
+
+    // Subsequent light refresh without metadata.yuri.worktree must preserve stored worktree binding.
+    service.replaceDirectory({
+      directory: '/worktrees/feat-sidebar/packages/web',
+      sessions: [{ id: 'ses_wt', title: 'Worktree session updated', time: { created: 100, updated: 300 } }],
+      cursor: null,
+      hasMore: false,
+      now: 1000,
+    });
+
+    const snap = service.snapshot();
+    const indexedSession = snap.directories[0].sessions[0];
+    expect(indexedSession.metadata?.yuri?.worktree).toEqual(worktree);
+
+    const hit = service.findBySessionId('ses_wt');
+    expect(hit?.metadata?.yuri?.worktree).toEqual(worktree);
+    service.close();
+  });
 });

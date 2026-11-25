@@ -15,6 +15,7 @@ export function reuseMobileSessionTreeNode(
     && previous.kind === next.kind
     && previous.title === next.title
     && previous.subtitle === next.subtitle
+    && previous.worktreeLabel === next.worktreeLabel
     && previous.changes === next.changes
     && previous.activityLabel === next.activityLabel
     && previous.unread === next.unread

@@ -8,26 +8,63 @@ import { getBranches } from './service.js';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
-test('branch listing never contacts remotes and keeps locally known refs while offline', async () => {
+test('branch listing never contacts remotes and enriches locally known refs with offline recency', async () => {
   vi.stubEnv('SSH_AUTH_SOCK', '/test/ssh-agent');
   git.raw.mockImplementation(async (args) => {
     if (args.join(' ') === 'rev-parse --show-toplevel') return '/repo\n';
-    throw new Error('Unexpected remote command');
+    if (args[0] === 'for-each-ref') {
+      return [
+        'refs/heads/main\t1700000100',
+        'refs/heads/feature/local\t1700000500',
+        'refs/remotes/origin/main\t1700000050',
+      ].join('\n');
+    }
+    if (args[0] === 'reflog') {
+      return [
+        '1700000900\tcheckout: moving from main to feature/local',
+        '1700000200\tcheckout: moving from feature/local to main',
+      ].join('\n');
+    }
+    throw new Error(`Unexpected command: ${args.join(' ')}`);
   });
   git.getRemotes.mockRejectedValue(new Error('offline'));
   const branches = {
     all: ['main', 'feature/local', 'remotes/origin/main', 'remotes/origin/feature/remote', 'remotes/origin/HEAD'],
     current: 'main',
-    branches: { main: { current: true, name: 'main', commit: 'abc', label: 'main' } },
+    branches: {
+      main: { current: true, name: 'main', commit: 'abc', label: 'main' },
+      'feature/local': { current: false, name: 'feature/local', commit: 'def', label: 'feature/local' },
+      'remotes/origin/main': { current: false, name: 'remotes/origin/main', commit: 'abc', label: 'remotes/origin/main' },
+    },
   };
   git.branch.mockResolvedValue(branches);
-  expect(await getBranches('/repo')).toEqual({
-    ...branches, all: branches.all.filter((name) => name !== 'remotes/origin/HEAD'),
-  });
+  const result = await getBranches('/repo');
+  expect(result.all).toEqual(['main', 'feature/local', 'remotes/origin/main', 'remotes/origin/feature/remote']);
+  expect(result.branches.main.lastUsedAt).toBe(1700000200 * 1000);
+  expect(result.branches['feature/local'].lastUsedAt).toBe(1700000900 * 1000);
+  expect(result.branches['remotes/origin/main'].lastUsedAt).toBe(1700000050 * 1000);
   expect(git.getRemotes).not.toHaveBeenCalled();
-  expect(git.raw.mock.calls).toEqual([[['rev-parse', '--show-toplevel']]]);
+  expect(git.raw.mock.calls.every(([args]) => ['rev-parse', 'for-each-ref', 'reflog'].includes(args[0]))).toBe(true);
   git.branch.mockResolvedValue({ ...branches, all: ['main', 'remotes/origin/new'] });
   expect((await getBranches('/repo')).all).toEqual(['main', 'remotes/origin/new']);
+});
+
+test('offline recency probe failures degrade gracefully without failing branch listing', async () => {
+  git.raw.mockImplementation(async (args) => {
+    if (args.join(' ') === 'rev-parse --show-toplevel') return '/repo\n';
+    throw new Error('reflog unavailable');
+  });
+  git.branch.mockResolvedValue({
+    all: ['main'],
+    current: 'main',
+    branches: { main: { current: true, name: 'main', commit: 'abc', label: 'main' } },
+  });
+  const result = await getBranches('/repo');
+  expect(result).toEqual({
+    all: ['main'],
+    current: 'main',
+    branches: { main: { current: true, name: 'main', commit: 'abc', label: 'main' } },
+  });
 });
 
 test('branch failures remain errors instead of an authoritative empty list', async () => {

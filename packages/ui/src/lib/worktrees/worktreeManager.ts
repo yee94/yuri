@@ -506,7 +506,10 @@ export async function createWorktree(project: ProjectRef, args: CreateWorktreeAr
   const projectDirectory = normalizePath(project.path);
   const metadataProjectDirectory = normalizePath(await resolveGitPrimaryRoot(projectDirectory));
   _worktreeRepositories.set(worktreeCacheKey(projectDirectory), metadataProjectDirectory);
-  const checkoutEntries = projectDirectory === normalizePath(metadataProjectDirectory)
+  const directRelativePath = projectDirectory !== metadataProjectDirectory && projectDirectory.startsWith(`${metadataProjectDirectory}/`)
+    ? projectDirectory.slice(metadataProjectDirectory.length + 1).replace(/^\/+|\/+$/g, '')
+    : null;
+  const checkoutEntries = projectDirectory === metadataProjectDirectory || directRelativePath !== null
     ? [] : await git.worktree.list(metadataProjectDirectory);
   const payload = toCreatePayload(args, projectDirectory);
 
@@ -519,25 +522,29 @@ export async function createWorktree(project: ProjectRef, args: CreateWorktreeAr
     throw new Error('Worktree create missing name/path');
   }
 
+  const createdWorktreeRoot = normalizePath(returnedPath);
   const createdMetadata: WorktreeMetadata = {
     source: 'sdk',
     name: returnedName,
-    path: normalizePath(returnedPath),
-    projectDirectory: metadataProjectDirectory,
+    path: directRelativePath ? `${createdWorktreeRoot}/${directRelativePath}` : createdWorktreeRoot,
+    projectDirectory: directRelativePath ? projectDirectory : metadataProjectDirectory,
     branch: returnedBranch,
     label: returnedBranch || returnedName,
-    worktreeRoot: normalizePath(returnedPath),
+    worktreeRoot: createdWorktreeRoot,
+    ...(directRelativePath ? { relativePath: directRelativePath } : {}),
     worktreeStatus: getWorktreeStatusFromBootstrap(created?.bootstrapStatus),
     headState: returnedBranch ? 'branch' : 'unborn',
     worktreeSource: 'created-for-session',
   };
-  const metadata = scopeProjectWorktrees(projectDirectory, [
-    ...checkoutEntries.filter((entry) => Boolean(entry.path)).map((entry) => ({
-      path: entry.path!, worktreeRoot: entry.path!, projectDirectory: metadataProjectDirectory,
-      branch: entry.branch ?? '', label: entry.branch ?? '',
-    })),
-    createdMetadata,
-  ]).find((entry) => entry.worktreeRoot === createdMetadata.worktreeRoot) ?? createdMetadata;
+  const metadata = directRelativePath
+    ? createdMetadata
+    : (scopeProjectWorktrees(projectDirectory, [
+      ...checkoutEntries.filter((entry) => Boolean(entry.path)).map((entry) => ({
+        path: entry.path!, worktreeRoot: entry.path!, projectDirectory: metadataProjectDirectory,
+        branch: entry.branch ?? '', label: entry.branch ?? '',
+      })),
+      createdMetadata,
+    ]).find((entry) => entry.worktreeRoot === createdMetadata.worktreeRoot) ?? createdMetadata);
   const worktreeRoot = metadata.worktreeRoot ?? metadata.path;
 
   if (created?.bootstrapStatus) {
