@@ -13,6 +13,7 @@ import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import {
   readSessionIndexSnapshotQuery,
+  refreshSessionIndexSnapshotQuery,
   writeSessionIndexSnapshotQuery,
 } from './sessionIndexQueries';
 
@@ -145,6 +146,25 @@ const applyOptimisticSettle = (
     writeSessionIndexSnapshotQuery(next, { client, transport, persist: false });
   }
   return previous;
+};
+
+/**
+ * A real user send revives a settled session; the send itself never waits on this.
+ * The Host write publishes a fresh snapshot, so an older in-flight GET cannot
+ * leave the session on the shelf. A failed write falls back to the Host snapshot.
+ */
+export const unsettleSessionOnSend = (
+  sessionId: string,
+  client: Pick<QueryClient, 'getQueryData' | 'setQueryData' | 'fetchQuery' | 'getQueryCache'> = queryClient,
+  transport = getRuntimeTransportIdentity(),
+): void => {
+  if (!readSettledSessionIds(client, transport).has(sessionId)) return;
+  const generation = getRuntimeGeneration();
+  applyOptimisticSettle(client, transport, sessionId, false);
+  unsettleSession(sessionId).catch(() => {
+    if (transport !== getRuntimeTransportIdentity() || generation !== getRuntimeGeneration()) return;
+    refreshSessionIndexSnapshotQuery(client, transport).catch(() => {});
+  });
 };
 
 const subscribeSettledSessionIds = (onStoreChange: () => void): (() => void) => (

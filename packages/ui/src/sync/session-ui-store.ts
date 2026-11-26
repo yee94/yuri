@@ -34,6 +34,7 @@ import { useSessionFoldersStore } from "@/stores/useSessionFoldersStore"
 import { commandQueryOptions, readCommandsSnapshot } from "@/queries/commandQueries"
 import { queryClient } from "@/lib/queryRuntime"
 import { installedSkillsQueryOptions, readInstalledSkillsSnapshot } from "@/queries/installedSkillsQueries"
+import { unsettleSessionOnSend } from "@/queries/sessionIndexSettleQueries"
 import { getDeferredSafeStorage } from "@/stores/utils/safeStorage"
 import { markPendingUserSendAnimation } from "@/lib/userSendAnimation"
 import { normalizePath } from "@/lib/pathNormalization"
@@ -2483,7 +2484,10 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     if (targetSessionId && !options?.ticket && options?.delivery !== 'queue') {
       markPendingUserSendAnimation(targetSessionId)
     }
-    if (targetSessionId) unarchiveSessionOnSend(targetSessionId)
+    if (targetSessionId) {
+      unarchiveSessionOnSend(targetSessionId)
+      unsettleSessionOnSend(targetSessionId)
+    }
 
     const files = attachments?.map((a) => ({
       type: "file" as const,

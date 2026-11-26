@@ -9,11 +9,13 @@ const fixture = vi.hoisted(() => ({
   transport: 'settle-test',
   generation: 1,
   settle: vi.fn<(id: string) => Promise<void>>(),
+  unsettle: vi.fn<(id: string) => Promise<void>>(),
   error: vi.fn(),
 }));
 vi.mock('@/lib/session-index-api', async (original) => ({
   ...await original<typeof import('@/lib/session-index-api')>(),
   settleSession: fixture.settle,
+  unsettleSession: fixture.unsettle,
 }));
 vi.mock('@/lib/runtime-switch', async (original) => ({
   ...await original<typeof import('@/lib/runtime-switch')>(),
@@ -22,7 +24,7 @@ vi.mock('@/lib/runtime-switch', async (original) => ({
 }));
 vi.mock('@/components/ui', () => ({ toast: { error: fixture.error } }));
 
-import { patchSessionIndexSettled, readSettledSessionIds, useSetSessionSettled } from './sessionIndexSettleQueries';
+import { patchSessionIndexSettled, readSettledSessionIds, unsettleSessionOnSend, useSetSessionSettled } from './sessionIndexSettleQueries';
 import { readSessionIndexSnapshotQuery, writeSessionIndexSnapshotQuery } from './sessionIndexQueries';
 
 const snapshot = (settledIds: string[], revision = 1): SessionIndexSnapshot => ({
@@ -78,6 +80,51 @@ describe('settle patch', () => {
     expect(patchSessionIndexSettled(before, 'a1', 5)).toBe(before);
     expect(patchSessionIndexSettled(before, 'a0', null)).toBe(before);
     expect(patchSessionIndexSettled(before, 'missing', 7)).toBe(before);
+  });
+});
+
+const hostSnapshot = (settledIds: string[]): SessionIndexSnapshot => {
+  const next = snapshot(settledIds);
+  for (const directory of next.directories) {
+    Object.assign(directory, { cursor: null, hasMore: false, lastSyncedAt: 1, lastFullSyncedAt: 1, lastAccessedAt: 1 });
+    for (const row of directory.sessions) Object.assign(row, { title: row.id, directory: directory.directory });
+  }
+  return next;
+};
+
+describe('unsettle on send', () => {
+  test('leaves the shelf at once and writes the Host override only for settled sessions', async () => {
+    fixture.unsettle.mockReset();
+    fixture.unsettle.mockResolvedValue(undefined);
+    const client = new QueryClient();
+    writeSessionIndexSnapshotQuery(hostSnapshot(['a1']), { client, transport: 'send-test', persist: false });
+
+    unsettleSessionOnSend('a0', client, 'send-test');
+    expect(fixture.unsettle).not.toHaveBeenCalled();
+
+    unsettleSessionOnSend('a1', client, 'send-test');
+    expect(readSessionIndexSnapshotQuery(client, 'send-test')?.directories[0].sessions[1].time.settled).toBeNull();
+    expect(readSettledSessionIds(client, 'send-test').has('a1')).toBe(false);
+    expect(fixture.unsettle).toHaveBeenCalledExactlyOnceWith('a1');
+    client.clear();
+  });
+
+  test('a failed Host write falls back to the Host snapshot without a toast', async () => {
+    fixture.unsettle.mockReset();
+    fixture.unsettle.mockRejectedValue(new Error('write failed'));
+    fixture.error.mockClear();
+    fixture.transport = 'send-fail';
+    const client = new QueryClient();
+    const fetchQuery = vi.spyOn(client, 'fetchQuery').mockResolvedValue(null);
+    writeSessionIndexSnapshotQuery(hostSnapshot(['a1']), { client, transport: 'send-fail', persist: false });
+    try {
+      unsettleSessionOnSend('a1', client, 'send-fail');
+      await vi.waitFor(() => expect(fetchQuery).toHaveBeenCalledOnce());
+      expect(fixture.error).not.toHaveBeenCalled();
+    } finally {
+      fixture.transport = 'settle-test';
+      client.clear();
+    }
   });
 });
 

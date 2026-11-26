@@ -156,7 +156,10 @@ must not keep an old session active.
 and `active` overrides, then `publishChange()`. Manual un-settle therefore holds the
 session active until its next real activity. A user `message.updated` or user
 `session.inbox.enqueued` event clears the override in `event-ingest.js`; assistant
-completion and idle events do not. `remove` (delete or archive) drops the override.
+completion and idle events do not. A UI send into a settled session also patches its
+cached snapshot and issues the `DELETE` without waiting, so the shelf updates immediately
+and the published change supersedes any older in-flight snapshot GET.
+`remove` (delete or archive) drops the override.
 For Remote Projects the state lives only in the Hub's index, following the pin
 precedent.
 

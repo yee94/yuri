@@ -650,6 +650,15 @@ function getGlobalSessionSnapshot(sessionId: string): Session | null {
   return [...global.activeSessions, ...global.archivedSessions].find((session) => session.id === sessionId) ?? null
 }
 
+function findLiveStoreSession(sessionId: string): Session | null {
+  if (!_childStores) return null
+  for (const store of _childStores.children.values()) {
+    const found = store.getState().session.find((session) => session.id === sessionId)
+    if (found) return found
+  }
+  return null
+}
+
 function restoreGlobalSessionSnapshot(session: Session | null): void {
   if (!session) return
   useGlobalSessionsStore.getState().upsertSession(session)
@@ -1378,7 +1387,8 @@ export async function unarchiveSession(sessionId: string): Promise<boolean> {
 
 /** A real user send revives an archived session; the send itself never waits on this. */
 export function unarchiveSessionOnSend(sessionId: string): void {
-  const archived = getGlobalSessionSnapshot(sessionId)?.time?.archived
+  // Archived lists load per directory, so the open session may only be in its live store.
+  const archived = (getGlobalSessionSnapshot(sessionId) ?? findLiveStoreSession(sessionId))?.time?.archived
   if (typeof archived !== "number" || archived <= 0) return
   void unarchiveSession(sessionId)
 }
