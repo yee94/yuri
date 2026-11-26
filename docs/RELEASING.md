@@ -116,6 +116,10 @@ gh workflow run release.yml --repo yee94/yuri --ref <release-branch> \
 
 此路径保留桌面、Android、npm、Relay 与正常 Release 发布，跳过整个 `mobile-native-targets` job（包括 OTA bundle、nativeTargets 与部署）。iOS 仍由原生变更计划决定。不要另行推送 `v*` tag，以免触发不带该输入的第二次发布；Release 的 tag 由 CI 按本次 `github.sha` 创建。默认 tag 发布仍包含同版本 OTA。对于 OpenCode 2 预览分支，使用该分支的实际 ref，不合并到稳定发布分支。
 
+### OTA 源站不可用时自动跳过
+
+EdgeOne 构建要从 Vercel 源站（`YURI_OTA_BASE_URL`）镜像全部 OTA 产物，源站不可用时两端都无法发布新 OTA。`release.yml` 在 `mobile-native-targets` 之前先运行 `ota-origin-check`，探测本通道的 `/ota/channels/<channel>.json`；非 2xx（如 Vercel 额度用尽返回 402）时输出 warning 并跳过 `mobile-native-targets`，安装包、npm 与 Relay 照常发布，Release 不因此失败。源站恢复后，在该次 run 中重跑 `Check OTA origin availability` job，依赖它的 OTA job 会随之重跑；不要为补发 OTA 重新推送同版本 tag。
+
 ### 明确不发布 TestFlight
 
 用户明确要求跳过 iOS / TestFlight 时（例如稳定版只发桌面与 Android），同样通过 `workflow_dispatch` 传入 `skip_ios=true`：

@@ -612,13 +612,41 @@ jobs:
       ota_channel: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
     secrets: inherit
 
+  # EdgeOne mirrors every OTA artifact from the Vercel origin, so OTA cannot be
+  # published while that origin is unavailable. Skip OTA with a warning instead
+  # of failing a release whose installers are already public; re-run later.
+  ota-origin-check:
+    name: Check OTA origin availability
+    needs: [create-release, finalize-release]
+    if: ${{ !cancelled() && needs.finalize-release.result == 'success' && (github.event_name != 'workflow_dispatch' || (!inputs.dry_run && !inputs.skip_ota)) }}
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.probe.outputs.available }}
+    steps:
+      - name: Probe OTA channel manifest on the origin
+        id: probe
+        shell: bash
+        env:
+          OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
+          OTA_CHANNEL: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
+        run: |
+          set -uo pipefail
+          URL="${OTA_BASE_URL}/ota/channels/${OTA_CHANNEL}.json"
+          STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --retry 2 --retry-delay 5 "$URL" || echo 000)"
+          if [[ "$STATUS" =~ ^2 ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=OTA skipped::OTA origin returned HTTP ${STATUS} for ${URL}. Installers are published; after the origin recovers, re-run the 'Check OTA origin availability' job (its dependent OTA job re-runs with it)."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # After a native mobile release, publish the matching web bundle as active OTA
   # and move nativeTargets. Fresh installs must never be rolled back to an older
   # activeBundle. Does not touch desktop latest feeds or /releases/latest.
   mobile-native-targets:
     name: Publish shared desktop and mobile OTA
-    needs: [create-release, finalize-release]
-    if: ${{ !cancelled() && needs.finalize-release.result == 'success' && (github.event_name != 'workflow_dispatch' || (!inputs.dry_run && !inputs.skip_ota)) }}
+    needs: [create-release, finalize-release, ota-origin-check]
+    if: ${{ !cancelled() && needs.finalize-release.result == 'success' && needs.ota-origin-check.outputs.available == 'true' && (github.event_name != 'workflow_dispatch' || (!inputs.dry_run && !inputs.skip_ota)) }}
     runs-on: ubuntu-latest
     concurrency:
       group: mobile-ota-production
