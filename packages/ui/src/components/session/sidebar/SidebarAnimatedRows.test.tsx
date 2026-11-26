@@ -79,6 +79,48 @@ describe('SidebarAnimatedRows', () => {
     expect(collapsedRows()).toHaveLength(0);
   });
 
+  test('rapid swaps animate only the moved rows, clipped to their new slots, without reading layout', async () => {
+    const animate = vi.fn((_frames: Keyframe[]) => ({ cancel: vi.fn() }));
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect');
+    try {
+      await show(['a', 'b', 'c']);
+      animate.mockClear();
+      measure.mockClear();
+      for (let i = 0; i < 50; i += 1) await show(['a', 'b', 'c']);
+      expect(animate).not.toHaveBeenCalled();
+      expect(measure).not.toHaveBeenCalled();
+
+      await show(['b', 'a', 'c']);
+      const calls = animate.mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls.map(([frames]) => frames[0].clipPath)).toEqual(['inset(0 0 12px)', 'inset(12px 0 0)']);
+      expect(measure).not.toHaveBeenCalled();
+
+      const firstSwap = animate.mock.results.map(({ value }) => value);
+      await show(['b', 'a', 'c']);
+      for (const animation of firstSwap) expect(animation.cancel).not.toHaveBeenCalled();
+      await show(['a', 'b', 'c']);
+      expect(animate).toHaveBeenCalledTimes(4);
+      for (const animation of firstSwap) expect(animation.cancel).toHaveBeenCalledOnce();
+      expect(measure).not.toHaveBeenCalled();
+
+      const bulk = ['a', 'b', 'c', ...ids(27)];
+      await show(bulk);
+      animate.mockClear();
+      measure.mockClear();
+      await show([...bulk].reverse());
+      expect(animate).not.toHaveBeenCalled();
+      expect(measure).not.toHaveBeenCalled();
+      expect(rowEls().map((el) => el.dataset.row)).toEqual([...bulk].reverse());
+    } finally {
+      measure.mockRestore();
+      if (original) Object.defineProperty(HTMLElement.prototype, 'animate', original);
+      else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
+    }
+  });
+
   test('a removed row unmounts once its exit finishes', async () => {
     await show(ids(5));
     await show(ids(5).slice(1));

@@ -14,7 +14,7 @@ import {
 } from './imageSource';
 
 export type ImageSaveTarget = {
-  kind?: 'image' | 'video';
+  kind?: 'image' | 'video' | 'audio';
   /** Browser-consumable URL currently shown (blob / yuri-asset / http / data). */
   displayUrl?: string;
   /** Original message source (file://, absolute path, http, data, …). */
@@ -35,6 +35,9 @@ const DEFAULT_MIME = 'image/png';
 
 type YuriMediaPlugin = {
   saveFile: (options: { dataBase64: string; mimeType: string; filename: string }) => Promise<{ cancelled?: boolean }>;
+  stageFile: (options: { id: string; dataBase64: string; append: boolean }) => Promise<void>;
+  saveStagedFile: (options: { id: string; filename: string }) => Promise<{ cancelled?: boolean }>;
+  discardStagedFile: (options: { id: string }) => Promise<void>;
   saveImage: (options: {
     dataBase64: string;
     mimeType?: string;
@@ -52,12 +55,14 @@ const extensionForMime = (mimeType: string): string => {
   if (normalized === 'image/svg+xml') return 'svg';
   if (normalized === 'image/png') return 'png';
   if (normalized === 'video/quicktime') return 'mov';
+  if (normalized === 'audio/mpeg' || normalized === 'audio/mp3') return 'mp3';
+  if (normalized === 'audio/mp4' || normalized === 'audio/x-m4a') return 'm4a';
   const subtype = normalized.split('/')[1];
   return subtype && /^[a-z0-9.+-]+$/i.test(subtype) ? subtype : 'png';
 };
 
 const sanitizeFilename = (value: string | undefined, mimeType: string): string => {
-  const fallback = `${mimeType.startsWith('video/') ? 'video' : 'image'}.${extensionForMime(mimeType)}`;
+  const fallback = `${mimeType.startsWith('video/') ? 'video' : mimeType.startsWith('audio/') ? 'audio' : 'image'}.${extensionForMime(mimeType)}`;
   const raw = (value || '').trim() || fallback;
   const base = raw.split(/[\\/]/).pop() || fallback;
   const cleaned = base.replace(/[^\w.\- ()[\]]+/g, '_').replace(/^\.+/, '');
@@ -166,8 +171,8 @@ export const materializeImageBlob = async (
 
   const mimeType = (
     target.mimeType
-    || (blob.type && /^(image|video)\//.test(blob.type) ? blob.type : '')
-    || (target.kind === 'video' ? 'video/mp4' : '')
+    || (blob.type && /^(image|video|audio)\//.test(blob.type) ? blob.type : '')
+    || (target.kind === 'video' ? 'video/mp4' : target.kind === 'audio' ? 'audio/mpeg' : '')
     || DEFAULT_MIME
   ).split(';')[0].trim() || DEFAULT_MIME;
 
@@ -177,6 +182,49 @@ export const materializeImageBlob = async (
     mimeType,
   };
 };
+
+// Multiple of 3 so every chunk's base64 decodes independently on the native side.
+const STAGE_CHUNK_BYTES = 3 * 1024 * 1024;
+
+const isUnimplemented = (error: unknown): boolean => (
+  typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'UNIMPLEMENTED'
+);
+
+/**
+ * Stream bytes to a native cache file in bounded chunks, then open the save
+ * picker. Returns null when the installed native shell predates staging.
+ */
+const saveFileByStaging = async (
+  blob: Blob,
+  filename: string,
+  signal?: AbortSignal,
+  onProgress?: (fraction: number) => void,
+): Promise<{ cancelled?: boolean } | null> => {
+  if (typeof YuriMedia.stageFile !== 'function') return null;
+  const id = crypto.randomUUID();
+  let staged = false;
+  try {
+    for (let offset = 0; offset < blob.size; offset += STAGE_CHUNK_BYTES) {
+      signal?.throwIfAborted();
+      const dataBase64 = await blobToBase64(blob.slice(offset, offset + STAGE_CHUNK_BYTES));
+      try {
+        await YuriMedia.stageFile({ id, dataBase64, append: offset > 0 });
+      } catch (error) {
+        if (offset === 0 && isUnimplemented(error)) return null;
+        throw error;
+      }
+      staged = true;
+      onProgress?.(Math.min(1, (offset + STAGE_CHUNK_BYTES) / blob.size));
+    }
+    signal?.throwIfAborted();
+    staged = false;
+    return await YuriMedia.saveStagedFile({ id, filename });
+  } finally {
+    if (staged) void YuriMedia.discardStagedFile({ id }).catch(() => {});
+  }
+};
+
+const isMediaFileKind = (target: ImageSaveTarget): boolean => target.kind === 'video' || target.kind === 'audio';
 
 const isNativeMediaAvailable = (): boolean => {
   if (!isCapacitorApp() || typeof Capacitor === 'undefined') return false;
@@ -195,7 +243,7 @@ export const saveImageToDevice = async (
   onProgress?: DownloadProgress,
 ): Promise<ImageSaveResult> => {
   const resolved = resolveImageSource(target.sourceUrl, target.effectiveDirectory ?? '');
-  if (isVSCodeRuntime() && target.kind === 'video' && !isNativeMediaAvailable()) {
+  if (isVSCodeRuntime() && isMediaFileKind(target) && !isNativeMediaAvailable()) {
     const files = getRegisteredRuntimeAPIs()?.files;
     if (needsRuntimeImageStream(resolved) && files?.downloadFile) {
       signal?.throwIfAborted();
@@ -209,17 +257,25 @@ export const saveImageToDevice = async (
     await downloadRuntimeFile({ path: resolved.path, filename: target.filename, signal }, onProgress);
     return 'downloaded';
   }
-  const { blob, filename, mimeType } = await materializeImageBlob(target, signal, onProgress);
+  const stagesNativeFile = isMediaFileKind(target) && isNativeMediaAvailable();
+  // Native file saves also write to device storage; keep the tail of the
+  // progress ring for that phase so the ring never sits at 100% while waiting.
+  const downloadProgress: DownloadProgress | undefined = stagesNativeFile && onProgress
+    ? (percent) => onProgress(percent === null ? null : Math.floor(percent * 0.9))
+    : onProgress;
+  const { blob, filename, mimeType } = await materializeImageBlob(target, signal, downloadProgress);
   signal?.throwIfAborted();
 
   if (isNativeMediaAvailable()) {
-    const dataBase64 = await blobToBase64(blob);
-    signal?.throwIfAborted();
-    if (target.kind === 'video') {
-      const result = await YuriMedia.saveFile({ dataBase64, mimeType, filename });
+    if (stagesNativeFile) {
+      const result = await saveFileByStaging(blob, filename, signal,
+        (fraction) => onProgress?.(90 + Math.floor(fraction * 9)))
+        ?? await YuriMedia.saveFile({ dataBase64: await blobToBase64(blob), mimeType, filename });
       if (result?.cancelled) throw new DOMException('Save cancelled', 'AbortError');
       return 'saved';
     }
+    const dataBase64 = await blobToBase64(blob);
+    signal?.throwIfAborted();
     await YuriMedia.saveImage({ dataBase64, mimeType, filename });
     return 'saved';
   }

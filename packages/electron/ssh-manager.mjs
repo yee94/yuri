@@ -1204,6 +1204,8 @@ export class ElectronSshManager {
     this.ephemeralUiPasswords = new Map();
     /** @type {Map<string, { syncRunId: string, promise: Promise<unknown> }>} targetId → in-flight sync */
     this.syncInFlight = new Map();
+    /** @type {Map<string, { state: 'running' | 'failed', from: string, to: string, installMethod: string, error?: string }>} */
+    this.backgroundUpdates = new Map();
   }
 
   readSettingsRoot() {
@@ -1272,11 +1274,77 @@ export class ElectronSshManager {
       retryAttempt,
       requiresUserAction,
       ...(errorCode ? { errorCode } : {}),
+      ...this.backgroundUpdateField(id),
       updatedAtMs: nowMillis(),
     };
+    this.publishStatus(id, status);
+  }
+
+  publishStatus(id, status) {
     this.statuses.set(id, status);
     this.emit(SSH_STATUS_EVENT, status);
     for (const listener of this.statusListeners.get(id) || []) listener(status);
+  }
+
+  backgroundUpdateField(id) {
+    const update = this.backgroundUpdates.get(id);
+    if (!update) return {};
+    return { backgroundUpdate: { state: update.state, from: update.from, to: update.to, ...(update.error ? { error: update.error } : {}) } };
+  }
+
+  setBackgroundUpdate(id, update) {
+    if (update) this.backgroundUpdates.set(id, update);
+    else this.backgroundUpdates.delete(id);
+    const current = this.statuses.get(id);
+    if (!current) return;
+    const { backgroundUpdate: _previous, ...rest } = current;
+    this.publishStatus(id, { ...rest, ...this.backgroundUpdateField(id), updatedAtMs: nowMillis() });
+  }
+
+  /**
+   * Installs the client's release beside the running portable release, then
+   * rebuilds the SSH session so the retained daemon is replaced on its port.
+   * Failure keeps the old daemon serving and records a retryable state.
+   */
+  async runBackgroundUpdate(id, { from, to, installMethod }) {
+    if (this.backgroundUpdates.get(id)?.state === 'running') return;
+    const session = this.sessions.get(id);
+    if (!session) return;
+    this.setBackgroundUpdate(id, { state: 'running', from, to, installMethod });
+    this.appendLog(id, `Updating remote Yuri from ${from} to ${to} in the background`);
+    let installed = false;
+    try {
+      await this.installYuriManaged(session.parsed, session.controlPath, to, installMethod);
+      installed = true;
+      if (this.sessions.get(id) !== session || this.connecting.has(id)) {
+        // A disconnect or another connect owns the session; the next bootstrap uses the new release.
+        this.setBackgroundUpdate(id, null);
+        return;
+      }
+      this.appendLog(id, `Remote Yuri ${to} installed; reconnecting to replace the ${from} daemon`);
+      await this.disconnectInternal(id, false, { preserveRemote: true });
+      await this.connect(id);
+    } catch (error) {
+      if (!installed && this.sessions.get(id) !== session) {
+        this.setBackgroundUpdate(id, null);
+        return;
+      }
+      const message = summarizeManagedSshBootstrapError(error instanceof Error ? error.message : String(error));
+      this.appendLogWithLevel(id, 'WARN', `Background remote Yuri update failed: ${message}`);
+      this.setBackgroundUpdate(id, { state: 'failed', from, to, installMethod, error: message });
+    }
+  }
+
+  async retryBackgroundUpdate(id) {
+    const trimmed = String(id || '').trim();
+    const update = this.backgroundUpdates.get(trimmed);
+    if (!update || update.state !== 'failed') return;
+    if (this.sessions.has(trimmed) && this.statuses.get(trimmed)?.phase === 'ready' && !this.connecting.has(trimmed)) {
+      await this.runBackgroundUpdate(trimmed, update);
+      return;
+    }
+    // The session was lost (for example the reconnect failed); a fresh bootstrap resumes the update.
+    await this.connect(trimmed);
   }
 
   subscribeStatus(id, listener) {
@@ -2739,9 +2807,13 @@ find_opencode
     const servers = installedVersion ? await this.discoverManagedRemoteServers(parsed, controlPath) : [];
     const existing = servers.find((server) => server.port === instance.remoteYuri.preferredPort) || servers[0];
     const desiredPort = instance.remoteYuri.preferredPort || existing?.port || randomPortCandidate(instance.id);
+    // Portable releases install side by side, so an outdated registered release keeps
+    // serving now and the client's release is installed after the session is ready.
+    const deferUpdate = portable && portableRegistered && Boolean(installedVersion) && installedVersion !== this.appVersion;
+    const runVersion = deferUpdate ? installedVersion : this.appVersion;
     let uiPassword = this.configuredYuriPassword(instance) || this.ephemeralUiPasswords.get(instance.id) || null;
     let reusable = existing?.port === desiredPort
-      && installedVersion === this.appVersion && existing.info.yuriVersion === this.appVersion
+      && installedVersion === runVersion && existing.info.yuriVersion === runVersion
       && portableRegistered
       && Boolean(uiPassword);
     if (reusable) {
@@ -2760,7 +2832,7 @@ find_opencode
       if (firstInstall) await this.setInitialConfigSyncPending(instance.id, true);
       this.setStatus(instance.id, 'installing', 'Installing Yuri on remote host');
       await this.installYuriManaged(parsed, controlPath, this.appVersion, installMethod);
-    } else if (installedVersion !== this.appVersion || !portableRegistered) {
+    } else if (!deferUpdate && (installedVersion !== this.appVersion || !portableRegistered)) {
       this.setStatus(instance.id, 'updating', `Updating remote Yuri from ${installedVersion} to ${this.appVersion}`);
       await this.installYuriManaged(parsed, controlPath, this.appVersion, installMethod);
     }
@@ -2783,7 +2855,12 @@ find_opencode
     if (!(await this.remoteServerRunning(parsed, controlPath, remotePort, uiPassword))) {
       throw new Error('Managed Yuri server failed to become reachable');
     }
-    return { remotePort, startedByUs: true, uiPassword };
+    return {
+      remotePort,
+      startedByUs: true,
+      uiPassword,
+      ...(deferUpdate ? { pendingUpdate: { from: installedVersion, to: this.appVersion, installMethod } } : {}),
+    };
   }
 
   async setInitialConfigSyncPending(id, pending) {
@@ -2888,7 +2965,7 @@ find_opencode
       throw new Error(`Unsupported remote OS: ${remoteOs}`);
     }
 
-    const { remotePort, startedByUs, uiPassword } = await this.ensureRemoteServer(instance, parsed, controlPath, remoteOs);
+    const { remotePort, startedByUs, uiPassword, pendingUpdate } = await this.ensureRemoteServer(instance, parsed, controlPath, remoteOs);
     this.setStatus(id, 'forwarding', 'Setting up port forwards', null, null, remotePort, startedByUs, 0, false);
 
     const bindHost = sanitizeBindHost(instance.localForward?.bindHost);
@@ -2969,6 +3046,8 @@ find_opencode
     }
 
     this.clearRetryAttempt(id);
+    // A session running the client's release completes any earlier background update.
+    if (!pendingUpdate) this.backgroundUpdates.delete(id);
     this.setStatus(
       id,
       'ready',
@@ -2984,6 +3063,7 @@ find_opencode
     // Failure must not block the main ready path (same class as extra portForwards).
     await this.rebuildLanForwardIfConfigured(id, session);
     this.spawnMonitor(id);
+    if (pendingUpdate) void this.runBackgroundUpdate(id, pendingUpdate);
   }
 
   spawnMonitor(id) {
@@ -3145,6 +3225,7 @@ find_opencode
     if (!trimmed || trimmed === LOCAL_HOST_ID) {
       throw new Error('SSH instance id is required');
     }
+    this.backgroundUpdates.delete(trimmed);
     await this.disconnectInternal(trimmed, true);
   }
 

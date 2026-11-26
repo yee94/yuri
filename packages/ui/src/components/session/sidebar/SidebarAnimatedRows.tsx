@@ -58,11 +58,13 @@ export function withoutRemovedRows<T extends { id: string }>(deferred: T[], curr
   return removed === 0 ? deferred : deferred.filter((item) => currentIds.has(item.id));
 }
 
-/**
- * A `layout` row is measured on every render of its list, so reordering is animated only
- * in lists of a size the task, pinned and in-progress views actually reach.
- */
+// Bulk sorts would start too many animations in the same frame.
 const MAX_REORDER_ANIMATED_ROWS = 300;
+const MAX_ANIMATED_REORDER_CHANGES = 24;
+const REORDER_SLIDE_PX = 12;
+
+type ReorderCue = { offset: number };
+type AnimatedRowProps = { children: React.ReactNode; reorder?: ReorderCue };
 
 type RowsMode = { animate: boolean; animateEnter: boolean; animateReorder: boolean };
 
@@ -77,27 +79,55 @@ const RowsModeContext = React.createContext<RowsMode>(STATIC_MODE);
  */
 export function SidebarAnimatedRows({ children }: { children: React.ReactNode }): React.ReactNode {
   const reduceMotion = useReducedMotion();
-  const previousKeys = React.useRef<ReadonlySet<React.Key>>(new Set());
-  const keys: React.Key[] = [];
-  React.Children.forEach(children, (child) => {
-    if (React.isValidElement(child) && child.key != null) keys.push(child.key);
-  });
+  const reorderLocked = React.useContext(SessionListReorderLockContext);
+  const previousPositions = React.useRef<ReadonlyMap<React.Key, number>>(new Map());
+  const previous = previousPositions.current;
+  const positions = new Map<React.Key, number>();
   let added = 0;
-  for (const key of keys) if (!previousKeys.current.has(key)) added += 1;
-  const removed = previousKeys.current.size - (keys.length - added);
-  const animateEnter = previousKeys.current.size > 0 && added <= MAX_ANIMATED_ROW_CHANGES;
+  let moved = 0;
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child) || child.key == null) return;
+    const oldIndex = previous.get(child.key);
+    if (oldIndex === undefined) added += 1;
+    else if (oldIndex !== positions.size) moved += 1;
+    positions.set(child.key, positions.size);
+  });
+  const removed = previous.size - (positions.size - added);
+  const animateEnter = previous.size > 0 && added <= MAX_ANIMATED_ROW_CHANGES;
   const bulkExit = removed > MAX_ANIMATED_ROW_CHANGES;
   React.useLayoutEffect(() => {
-    previousKeys.current = new Set(keys);
+    previousPositions.current = positions;
   });
-  const animateReorder = keys.length <= MAX_REORDER_ANIMATED_ROWS;
+  // Presence already moves the neighbours of added/removed rows by animating height.
+  const animateReorder = !reorderLocked && added === 0 && removed === 0
+    && positions.size <= MAX_REORDER_ANIMATED_ROWS && moved <= MAX_ANIMATED_REORDER_CHANGES;
   const mode = React.useMemo<RowsMode>(
     () => (reduceMotion ? STATIC_MODE : { animate: true, animateEnter, animateReorder }),
     [animateEnter, animateReorder, reduceMotion],
   );
+  let rows = children;
+  if (mode.animate && animateReorder && moved > 0) {
+    const reorderedRows: React.ReactNode[] = [];
+    // Keep the original keys: Children.map would prefix them only on reorder commits.
+    React.Children.forEach(children, (child) => {
+      if (!React.isValidElement<AnimatedRowProps>(child) || child.type !== SidebarAnimatedRow || child.key == null) {
+        reorderedRows.push(child);
+        return;
+      }
+      const previousIndex = previous.get(child.key);
+      const currentIndex = positions.get(child.key);
+      if (previousIndex === undefined || currentIndex === undefined || previousIndex === currentIndex) {
+        reorderedRows.push(child);
+      } else {
+        const offset = previousIndex < currentIndex ? -REORDER_SLIDE_PX : REORDER_SLIDE_PX;
+        reorderedRows.push(React.cloneElement(child, { reorder: { offset } }));
+      }
+    });
+    rows = reorderedRows;
+  }
   return (
     <RowsModeContext.Provider value={mode}>
-      <AnimatePresence initial={false} custom={bulkExit}>{children}</AnimatePresence>
+      <AnimatePresence initial={false} custom={bulkExit}>{rows}</AnimatePresence>
     </RowsModeContext.Provider>
   );
 }
@@ -106,16 +136,36 @@ export function SidebarAnimatedRows({ children }: { children: React.ReactNode })
  * Collapses a row's height and fades it in/out so siblings slide into the gap.
  * Overflow is clipped only while the height animates, so focus rings stay visible at rest.
  */
-export function SidebarAnimatedRow({ children }: { children: React.ReactNode }): React.ReactNode {
+export function SidebarAnimatedRow({ children, reorder }: AnimatedRowProps): React.ReactNode {
   const mode = React.useContext(RowsModeContext);
   // A removed row stays mounted for its exit; it must not take clicks or focus meanwhile.
   const present = useIsPresent();
-  // A drag-to-reorder moves rows through dnd-kit's own transforms; animating the same move again would replay it.
-  const reorderLocked = React.useContext(SessionListReorderLockContext);
+  const row = React.useRef<HTMLDivElement>(null);
+  const animation = React.useRef<Animation | undefined>(undefined);
+  const canReorder = mode.animate && mode.animateReorder && present;
+  React.useLayoutEffect(() => {
+    if (!canReorder || reorder) {
+      animation.current?.cancel();
+      animation.current = undefined;
+    }
+    if (!canReorder || !reorder) return;
+    const { offset } = reorder;
+    // Clip the translated edge by the same amount so adjacent rows never cross visually.
+    const clipPath = offset < 0 ? `inset(${-offset}px 0 0)` : `inset(0 0 ${offset}px)`;
+    animation.current = row.current?.animate?.([
+      { transform: `translateY(${offset}px)`, clipPath },
+      { transform: 'translateY(0px)', clipPath: 'inset(0px)' },
+    ], {
+      duration: ROW_TRANSITION.duration * 1000,
+      easing: `cubic-bezier(${ROW_TRANSITION.ease.join(',')})`,
+      fill: 'backwards',
+    });
+  }, [canReorder, reorder]);
+  React.useLayoutEffect(() => () => animation.current?.cancel(), []);
   if (!mode.animate) return <div>{children}</div>;
   return (
     <motion.div
-      layout={mode.animateReorder && !reorderLocked && present ? 'position' : false}
+      ref={row}
       style={ROW_STYLE}
       variants={ROW_VARIANTS}
       initial={mode.animateEnter ? 'collapsed' : false}

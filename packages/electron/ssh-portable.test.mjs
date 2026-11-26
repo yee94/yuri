@@ -66,12 +66,12 @@ printf '%s\\n' "$PATH"
   expect(fs.existsSync(path.join(home, '.profile'))).toBe(false);
 });
 
-it('drains the old SSH daemon before changing release and never starts after failed verification', async () => {
+const upgradeFixture = (registered) => {
   const manager = new ElectronSshManager({ settingsFilePath: '/unused', appVersion: '1.2.3', emit() {} });
   const calls = [];
   manager.currentRemoteYuriVersion = async () => '1.2.2';
   manager.runManagedRemoteCommand = async (_p, _c, script) => {
-    if (script.includes('echo yes || echo no')) return 'yes';
+    if (script.includes('echo yes || echo no')) return registered ? 'yes' : 'no';
     if (script.includes('verify.mjs')) throw new Error('Native preflight failed');
     throw new Error('Unexpected command');
   };
@@ -79,10 +79,23 @@ it('drains the old SSH daemon before changing release and never starts after fai
   manager.stopRemoteServer = async () => { calls.push('stop'); };
   manager.installYuriManaged = async () => { calls.push('install'); };
   manager.startRemoteServerManaged = vi.fn();
-  await expect(manager.ensureRemoteServer({
+  const run = () => manager.ensureRemoteServer({
     id: 'upgrade', remoteYuri: { mode: 'managed', installMethod: 'download_release' },
-  }, {}, '')).rejects.toThrow('Native preflight failed');
+  }, {}, '');
+  return { manager, calls, run };
+};
+
+it('drains the old SSH daemon before a blocking release change and never starts after failed verification', async () => {
+  const { manager, calls, run } = upgradeFixture(false);
+  await expect(run()).rejects.toThrow('Native preflight failed');
   expect(calls).toEqual(['stop', 'install']);
+  expect(manager.startRemoteServerManaged).not.toHaveBeenCalled();
+});
+
+it('a registered outdated portable release defers installation and still never starts after failed verification', async () => {
+  const { manager, calls, run } = upgradeFixture(true);
+  await expect(run()).rejects.toThrow('Native preflight failed');
+  expect(calls).toEqual(['stop']);
   expect(manager.startRemoteServerManaged).not.toHaveBeenCalled();
 });
 

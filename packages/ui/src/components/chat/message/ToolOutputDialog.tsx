@@ -65,7 +65,7 @@ import { closeImageViewerAfterMobileTap } from './imageViewerTapGuard';
 import { MediaPreviewOverlay, MediaPreviewToolbar, PreviewCloseButton } from './MediaPreviewOverlay';
 import { VideoPreviewDialog } from './VideoPreviewDialog';
 import { MediaSaveButton } from './MediaSaveButton';
-import { isVideoSource } from '../video';
+import { isMediaSource } from '../video';
 
 /** Ignore accidental close from the same gesture / history thrash that opened the viewer. */
 const IMAGE_VIEWER_OPEN_CLOSE_GUARD_MS = 400;
@@ -1293,7 +1293,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
         setDiffViewMode('unified');
     }, [popup.open, popup.title]);
 
-    const video = popup.video ?? (popup.image && isVideoSource(popup.image.url, popup.image.mimeType) ? popup.image : undefined);
+    const video = popup.video ?? (popup.image && isMediaSource(popup.image.url, popup.image.mimeType) ? popup.image : undefined);
     if (popup.image || popup.mermaid || video) {
         return <MediaPreviewOverlay open={popup.open} title={popup.title} kind={video ? 'video' : popup.image ? 'image' : 'mermaid'}
             source={popup.previewSource} isMobile={isMobile} onOpenChange={onOpenChange}>

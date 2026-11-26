@@ -20,7 +20,7 @@ import {
 } from './attachmentCitations';
 import { attachmentCitationDisplay } from '@/composer/inline-visual';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
-import { isVideoSource } from './video';
+import { isMediaSource } from './video';
 import { useResolvedImageResource, useRuntimeTransportIdentity, imageRequiresManualLoadOverRelay, isRelayTransport } from './imageSource';
 import { LoadingImage } from '@/components/ui/LoadingImage';
 import { ImageLoadingPlaceholder } from '@/components/ui/ImageLoadingPlaceholder';
@@ -1092,7 +1092,7 @@ export const MessageFilesDisplay = memo(({ files, messageID, sessionID, onShowPo
               return (
                 <Tooltip key={`file-${filePartDedupeKey(file)}`}>
                   <TooltipTrigger asChild>
-                    {file.url && isVideoSource(file.url, file.mime) ? (
+                    {file.url && isMediaSource(file.url, file.mime) ? (
                       <Button variant="secondary" size="sm" onClick={() => onShowPopup?.({
                         open: true, title: fileName, content: '', video: { url: file.url!, mimeType: file.mime, filename: fileName, directory: effectiveDirectory },
                       })}>{fileName}</Button>

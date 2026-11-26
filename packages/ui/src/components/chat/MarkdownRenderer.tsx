@@ -8,7 +8,7 @@ import { MarkstreamFallbackBoundary } from './MarkstreamFallbackBoundary';
 import { useMarkdownHydrationEnabled } from './markdown/markdownHydrationContext';
 import { MarkdownLoadingPlaceholder } from './markdown/MarkdownLoadingSkeleton';
 import { markdownHeightCacheKey, recallMarkdownHeight } from './markdown/markdownHeightCache';
-import { isVideoSource } from './video';
+import { isMediaSource } from './video';
 import { resolveEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { stripLeadingFrontmatter } from '@/lib/markdown/frontmatter';
 
@@ -98,7 +98,7 @@ export const MarkdownRenderer: React.FC<React.ComponentPropsWithoutRef<typeof Ma
     if (!props.onShowPopup || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
     const url = anchor?.getAttribute('href');
-    if (!url || !isVideoSource(url)) return;
+    if (!url || !isMediaSource(url)) return;
     event.preventDefault();
     event.stopPropagation();
     const filename = anchor?.textContent?.trim() || url.split(/[/?#]/).filter(Boolean).pop() || url;

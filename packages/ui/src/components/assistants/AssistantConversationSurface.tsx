@@ -368,9 +368,8 @@ export const AssistantConversationSurface: React.FC<AssistantConversationSurface
   const stopSendFlightRef = React.useRef<(() => void) | null>(null)
   const [sendFlight, setSendFlight] = React.useState<{ scope: string; messageID: string; phase: 'scrolling' | 'flying' } | null>(null)
   const captureSendFlightSource = (): ContactSendFlightSource | null => {
-    const surface = composerRef.current?.querySelector<HTMLElement>('[data-assistant-contact-composer-surface]')
-    const field = surface?.querySelector('textarea')
-    return surface && field ? captureContactSendFlightSource(surface, field, !isMobile) : null
+    const field = composerRef.current?.querySelector<HTMLElement>('[data-assistant-contact-composer-surface]')?.querySelector('textarea')
+    return field ? captureContactSendFlightSource(field) : null
   }
   React.useLayoutEffect(() => {
     const pending = pendingSendFlightRef.current

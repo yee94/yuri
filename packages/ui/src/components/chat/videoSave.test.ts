@@ -41,11 +41,12 @@ test('video save reports byte percentages over a full Range response before nati
   const progress = vi.fn();
   const saved = saveImageToDevice({ kind: 'video', sourceUrl: 'file:///workspace/clip.mp4' }, undefined, progress);
   stream.enqueue(new Uint8Array([1, 2]));
-  await vi.waitFor(() => expect(progress).toHaveBeenLastCalledWith(50));
+  // Native saves reserve the last 10% of the ring for the device write.
+  await vi.waitFor(() => expect(progress).toHaveBeenLastCalledWith(45));
   expect(mocks.saveFile).not.toHaveBeenCalled();
   stream.enqueue(new Uint8Array([3, 4])); stream.close();
   await expect(saved).resolves.toBe('saved');
-  expect(progress).toHaveBeenLastCalledWith(100);
+  expect(progress).toHaveBeenLastCalledWith(90);
   expect(mocks.fetch).toHaveBeenCalledWith('/api/fs/raw', expect.objectContaining({ headers: { Range: 'bytes=0-' } }));
   expect(mocks.saveFile).toHaveBeenCalledWith(expect.objectContaining({ dataBase64: 'AQIDBA==' }));
 });

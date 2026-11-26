@@ -1269,6 +1269,96 @@ describe('managed SSH server lifecycle', () => {
     expect(calls).toEqual(['stop:23469', 'start:23469']);
   });
 
+  const portableFixture = () => {
+    const context = fixture();
+    const { manager, running, instance } = context;
+    instance.remoteYuri.installMethod = 'download_release';
+    running.get(23469).yuriVersion = '1.2.2';
+    manager.currentRemoteYuriVersion = async () => '1.2.2';
+    const statusCommand = manager.runManagedRemoteCommand;
+    manager.runManagedRemoteCommand = async (parsed, control, command) => {
+      if (command.includes('YURI_SSH_PORTABLE') && command.includes('echo yes')) return 'yes\n';
+      if (command.includes('verify.mjs')) return '';
+      return statusCommand(parsed, control, command);
+    };
+    return context;
+  };
+
+  test('an outdated portable release keeps serving and defers the update until the session is ready', async () => {
+    const { manager, calls, instance } = portableFixture();
+    const result = await manager.ensureRemoteServer(instance, {}, 'control');
+    expect(calls).toEqual([]);
+    expect(result).toMatchObject({ remotePort: 23469, pendingUpdate: { from: '1.2.2', to: '1.2.3', installMethod: 'download_release' } });
+  });
+
+  test('an unregistered portable runtime still updates before the session starts', async () => {
+    const { manager, calls, instance } = portableFixture();
+    const command = manager.runManagedRemoteCommand;
+    manager.runManagedRemoteCommand = async (parsed, control, script) => (script.includes('echo yes') ? 'no\n' : command(parsed, control, script));
+    const result = await manager.ensureRemoteServer(instance, {}, 'control');
+    expect(calls).toEqual(['stop:23469', 'install', 'start:23469']);
+    expect(result.pendingUpdate).toBeUndefined();
+  });
+
+  const backgroundFixture = () => {
+    const statuses = [];
+    const manager = new ElectronSshManager({ settingsFilePath: '/unused/settings.json', appVersion: '1.2.3', emit: (_event, status) => statuses.push(status) });
+    const session = { parsed: {}, controlPath: 'control' };
+    manager.sessions.set('target', session);
+    manager.setStatus('target', 'ready');
+    manager.disconnectInternal = vi.fn(async (id) => { manager.sessions.delete(id); });
+    manager.connect = vi.fn(async (id) => { manager.sessions.set(id, session); manager.backgroundUpdates.delete(id); manager.setStatus(id, 'ready'); });
+    const pending = { from: '1.2.2', to: '1.2.3', installMethod: 'download_release' };
+    return { manager, statuses, session, pending };
+  };
+
+  test('background update installs beside the running release, then reconnects to replace the daemon', async () => {
+    const { manager, statuses, pending } = backgroundFixture();
+    manager.installYuriManaged = vi.fn(async () => {
+      expect(manager.statuses.get('target').backgroundUpdate).toMatchObject({ state: 'running', from: '1.2.2', to: '1.2.3' });
+    });
+    await manager.runBackgroundUpdate('target', pending);
+    expect(manager.installYuriManaged).toHaveBeenCalledWith({}, 'control', '1.2.3', 'download_release');
+    expect(manager.disconnectInternal).toHaveBeenCalledWith('target', false, { preserveRemote: true });
+    expect(manager.connect).toHaveBeenCalledWith('target');
+    expect(statuses.at(-1).backgroundUpdate).toBeUndefined();
+  });
+
+  test('a failed background install keeps the session and publishes a retryable failure', async () => {
+    const { manager, pending } = backgroundFixture();
+    manager.installYuriManaged = vi.fn(async () => { throw new Error('network unreachable'); });
+    await manager.runBackgroundUpdate('target', pending);
+    expect(manager.sessions.has('target')).toBe(true);
+    expect(manager.disconnectInternal).not.toHaveBeenCalled();
+    expect(manager.statuses.get('target')).toMatchObject({ phase: 'ready', backgroundUpdate: { state: 'failed', to: '1.2.3' } });
+
+    manager.installYuriManaged = vi.fn(async () => {});
+    await manager.retryBackgroundUpdate('target');
+    expect(manager.installYuriManaged).toHaveBeenCalledTimes(1);
+    expect(manager.connect).toHaveBeenCalledWith('target');
+    expect(manager.statuses.get('target').backgroundUpdate).toBeUndefined();
+  });
+
+  test('retry after a lost session runs a fresh bootstrap', async () => {
+    const { manager, pending } = backgroundFixture();
+    manager.installYuriManaged = vi.fn(async () => {});
+    manager.connect = vi.fn(async () => { throw new Error('reconnect failed'); });
+    await manager.runBackgroundUpdate('target', pending);
+    expect(manager.statuses.get('target').backgroundUpdate).toMatchObject({ state: 'failed' });
+    manager.sessions.delete('target');
+    manager.connect = vi.fn(async () => {});
+    await manager.retryBackgroundUpdate('target');
+    expect(manager.connect).toHaveBeenCalledWith('target');
+    expect(manager.installYuriManaged).toHaveBeenCalledTimes(1);
+  });
+
+  test('disconnect clears background update state', async () => {
+    const { manager } = backgroundFixture();
+    manager.backgroundUpdates.set('target', { state: 'failed', from: '1.2.2', to: '1.2.3', installMethod: 'download_release' });
+    await manager.disconnect('target');
+    expect(manager.backgroundUpdates.has('target')).toBe(false);
+  });
+
   test('external mode remains probe-only', async () => {
     const { manager, calls, instance } = fixture();
     instance.remoteYuri = { mode: 'external', preferredPort: 23469 };

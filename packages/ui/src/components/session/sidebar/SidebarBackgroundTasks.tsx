@@ -10,10 +10,13 @@ import { dismissImport, importJobsQueryOptions, resumeImport } from '@/queries/h
 import { resumeSessionContentIndex, sessionContentIndexStatusOptions } from '@/queries/sessionContentSearchQueries';
 import { hostUpdateQueryOptions, isHostUpdateActive, resumeHostUpdate } from '@/queries/hostUpdateQueries';
 import { refreshProjectOrderSnapshot } from '@/queries/projectOrderQueries';
+import { useSshBackgroundUpdate } from '@/queries/sshBackgroundUpdateQueries';
+import { desktopSshRetryBackgroundUpdate } from '@/lib/desktopSsh';
+import { toast } from '@/components/ui/toast';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 
 type Task = { id: string; label: string; detail: string; completed: number; total: number; stale: boolean; bytes?: boolean; hideCounts?: boolean;
-  failed?: boolean; failures?: number; resume?: () => Promise<unknown>; dismiss?: () => Promise<unknown>; dismissOnError?: string };
+  failed?: boolean; failures?: number; resume?: () => Promise<unknown>; resumeAsRetry?: boolean; dismiss?: () => Promise<unknown>; dismissOnError?: string };
 
 function TaskRing({ task }: { task: Task }) {
   const value = task.total > 0 ? Math.min(99, Math.floor(Math.max(0, task.completed) / task.total * 100)) : undefined;
@@ -62,7 +65,8 @@ function TaskDetails({ task }: { task: Task }) {
       flight.current = true;
       mutation.mutate(removing ? 'dismiss' : 'resume');
     }}>{t(removing ? mutation.isPending ? 'backgroundTasks.removing' : 'backgroundTasks.dismiss'
-      : mutation.isPending ? 'backgroundTasks.resuming' : 'backgroundTasks.resume')}</Button>}
+      : task.resumeAsRetry ? mutation.isPending ? 'backgroundTasks.retrying' : 'backgroundTasks.retry'
+        : mutation.isPending ? 'backgroundTasks.resuming' : 'backgroundTasks.resume')}</Button>}
     {task.stale && <p className="col-span-2 col-start-2 typography-micro text-muted-foreground">{t('backgroundTasks.progressUnavailable')}</p>}
     {mutation.isError && <p role="alert" className="col-span-2 col-start-2 typography-micro text-[var(--status-error)]">{t(mutation.variables === 'dismiss' ? 'backgroundTasks.dismissFailed' : mutation.error.message === 'update_plan_changed' ? 'backgroundTasks.updateChanged'
       : mutation.error.message === 'resume_request_missing' ? 'backgroundTasks.originalSelectionMissing' : 'backgroundTasks.resumeFailed')}</p>}
@@ -92,6 +96,13 @@ function RuntimeBackgroundTasks({ compactWithRestart }: { compactWithRestart: bo
     refetchInterval: (query) => query.state.data === null ? false : query.state.data?.phase === 'indexing' || query.state.data?.phase === 'pending' ? 3000 : 15_000 });
   const update = useQuery({ ...hostUpdateQueryOptions(transport, generation),
     refetchInterval: (query) => isHostUpdateActive(query.state.data?.operation) ? 2000 : query.state.error?.message === 'host_update_unsupported' ? false : 15_000 });
+  const sshUpdate = useSshBackgroundUpdate(transport, (failure) => {
+    toast.error(t('backgroundTasks.remoteUpdateFailedToast', { to: failure.to }), {
+      id: `ssh-update:${failure.hostId}:${failure.to}`,
+      description: failure.error,
+      action: { label: t('backgroundTasks.retry'), onClick: () => { void desktopSshRetryBackgroundUpdate(failure.hostId).catch(() => {}); } },
+    });
+  });
   const observed = React.useRef(new Set<string>());
   React.useEffect(() => {
     if (!jobs.data || jobs.isError) return;
@@ -128,6 +139,12 @@ function RuntimeBackgroundTasks({ compactWithRestart }: { compactWithRestart: bo
     completed: operation.progress ?? 0, total: operation.progress == null ? 0 : 100, stale: update.isError, hideCounts: true,
     failed: operation.status === 'failed', resume: () => resumeHostUpdate(operation, transport, generation),
   });
+  if (sshUpdate) {
+    const retry = () => desktopSshRetryBackgroundUpdate(sshUpdate.hostId);
+    tasks.push({ id: `ssh-update:${sshUpdate.hostId}`, label: t('backgroundTasks.remoteUpdate'),
+      detail: t(sshUpdate.state === 'failed' ? 'backgroundTasks.remoteUpdateFailed' : 'backgroundTasks.remoteUpdateRunning', { from: sshUpdate.from, to: sshUpdate.to }),
+      completed: 0, total: 0, stale: false, hideCounts: true, failed: sshUpdate.state === 'failed', resume: retry, resumeAsRetry: true });
+  }
   if (!tasks.length && !opened) return null;
   const number = (value: number) => new Intl.NumberFormat(locale).format(value);
   return <Popover.Root open={opened} onOpenChange={setOpened}>

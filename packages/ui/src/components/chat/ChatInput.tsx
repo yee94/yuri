@@ -195,6 +195,8 @@ import {
     shouldConsumeRootAttachmentsOnSubmit,
 } from './chat-input-recovery';
 import { shouldOptimisticPrimarySend } from './optimisticPrimarySend';
+import { captureContactSendFlightSource } from '@/components/assistants/contactSendFlight';
+import { registerUserSendFlight } from '@/lib/userSendAnimation';
 import { resolveStagedEditBlurDisarm } from './stagedMessageEditDisarm';
 import {
     composerSendPhase,
@@ -3396,6 +3398,26 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             useComposerQuoteStore.getState().restore(composerQuoteScope, quotesAtSubmit);
             quotesClearedForSubmit = false;
         };
+        // Primary sends fly a plain-text stand-in from the composer into the new
+        // user bubble; reference/mention chips travel as their visible labels.
+        // Capture before the draft clears; the native iOS field has no DOM frame.
+        const sendFlightSource = clearedComposerBeforeDispatch
+            && !replacingMessage
+            && !nativeComposerOwnedInput
+            && shouldOptimisticPrimarySend({
+                surfaceKind: surface.kind,
+                currentSessionId,
+                queuedOnly,
+                delivery,
+                resourcePolicy,
+                inputMode,
+                localCommand,
+                nativeGoal,
+            })
+            && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+            && textareaRef.current
+            ? captureContactSendFlightSource(textareaRef.current)
+            : null;
         if (clearedComposerBeforeDispatch) {
             replacePlainDocument('');
             if (quotesRideAlong && composerQuoteScope) {
@@ -3465,6 +3487,9 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     modelID: optimisticConfig.modelID,
                     agent: optimisticConfig.agent,
                     variant: optimisticConfig.variant,
+                    onMessageID: sendFlightSource
+                        ? (messageID) => registerUserSendFlight(messageID, sendFlightSource)
+                        : undefined,
                     files: rootAttachments.map((attachment) => ({
                         type: 'file' as const,
                         mime: attachment.mimeType,

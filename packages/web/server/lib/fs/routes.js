@@ -111,6 +111,12 @@ const FILE_MIME_MAP = Object.freeze({
   '.ttf': 'font/ttf',
   '.eot': 'application/vnd.ms-fontobject',
   '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.opus': 'audio/ogg',
+  '.oga': 'audio/ogg',
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
   '.mov': 'video/quicktime',
@@ -928,7 +934,7 @@ export const registerFsRoutes = (app, dependencies) => {
       if (resolved.granted) {
         res.setHeader('Referrer-Policy', 'no-referrer');
       }
-      if (stats.size > 32 * 1024 * 1024 || mimeType.startsWith('video/') || req.headers?.range || req.method === 'HEAD') {
+      if (stats.size > 32 * 1024 * 1024 || mimeType.startsWith('video/') || mimeType.startsWith('audio/') || req.headers?.range || req.method === 'HEAD') {
         // Path authorization above remains authoritative; Express owns range parsing,
         // 206/416, stream backpressure and cancellation when the player seeks away.
         return res.type(mimeType).sendFile(canonicalPath, { acceptRanges: true, dotfiles: 'allow', cacheControl: false });

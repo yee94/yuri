@@ -144,3 +144,17 @@ test('browser Relay playback above the retention budget keeps the uncached Blob 
   expect(host.querySelector('video')?.getAttribute('src')).toBe('blob:large-video');
   expect(create).toHaveBeenCalledWith(expect.objectContaining({ size: blob.size }));
 });
+
+test('relay audio plays through an audio element and saves as audio', async () => {
+  mocks.fetch.mockResolvedValue(new Response(new Blob(['mp3'], { type: 'audio/mpeg' })));
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:song');
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  await act(async () => root.render(<QueryClientProvider client={client}>
+    <VideoPreviewDialog video={{ url: '/workspace/song.mp3', filename: 'song.mp3' }} onClose={() => {}} isMobile />
+  </QueryClientProvider>));
+  await vi.waitFor(() => expect(host.querySelector('audio')?.getAttribute('src')).toBe('blob:song'));
+  expect(host.querySelector('video')).toBeNull();
+  expect(mocks.fetch).toHaveBeenCalledWith('/api/fs/raw', expect.objectContaining({ query: { path: '/workspace/song.mp3' } }));
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-media-save]')!.click());
+  expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ kind: 'audio', sourceUrl: '/workspace/song.mp3' }), expect.any(AbortSignal), expect.any(Function));
+});

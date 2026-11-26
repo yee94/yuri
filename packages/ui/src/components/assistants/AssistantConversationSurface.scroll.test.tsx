@@ -338,13 +338,29 @@ describe('AssistantConversationSurface scroll ownership', () => {
       expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
       expect(bubble.style.visibility).toBe('');
     } else {
-      await act(async () => { scroll.onUpdate(8760); scroll.onComplete(); });
-      expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeTruthy();
-      const flight = sendMotion.numbers.find(animation => animation.from === 0 && animation.to === 1)!;
-      expect(flight).toBeTruthy();
-      await act(async () => { flight.onUpdate(1); flight.onComplete(); });
-      expect(bubble.style.visibility).toBe('');
-      expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
+      let finish!: () => void;
+      // happy-dom has no Web Animations; the flight needs only `finished` and `cancel`.
+      const animate = vi.fn(() => ({
+        finished: new Promise<void>((resolve) => { finish = resolve; }),
+        cancel: vi.fn(),
+        pause: vi.fn(),
+        play: vi.fn(),
+        effect: { setKeyframes: vi.fn() },
+      }) as unknown as Animation);
+      HTMLElement.prototype.animate = animate as unknown as HTMLElement['animate'];
+      bubble.getBoundingClientRect = () => DOMRect.fromRect({ x: 290, y: 200, width: 90, height: 44 });
+      try {
+        await act(async () => { scroll.onUpdate(8760); scroll.onComplete(); });
+        // The flight clock starts on the next frame.
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+        expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeTruthy();
+        expect(animate).toHaveBeenCalledTimes(1);
+        await act(async () => { finish(); await Promise.resolve(); });
+        expect(bubble.style.visibility).toBe('');
+        expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
+      } finally {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+      }
     }
   });
 

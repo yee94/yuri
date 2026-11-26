@@ -73,7 +73,7 @@ const fixture = (ssh = true, packaged = true, local = true, paired = false, appl
 
 describe('SSH preparation before opening desktop windows', () => {
   for (const packaged of [false, true]) {
-    for (const command of ['desktop_new_window', 'desktop_new_window_for_host', 'desktop_new_window_at_url']) {
+    for (const command of ['desktop_new_window_for_host', 'desktop_new_window_at_url']) {
       it(`${command} waits for preparation and fresh runtime (${packaged ? 'bundled' : 'HMR'})`, async () => {
         const f = fixture(true, packaged);
         const pending = f.invoke(command, { hostId: 'ssh-test', url: 'http://127.0.0.1:4000', clientToken: 'old-test-token' });
@@ -97,11 +97,11 @@ describe('SSH preparation before opening desktop windows', () => {
     }
   }
 
-  it('opens a new window on the source window machine instead of the global default', async () => {
-    const f = fixture(true, true, true, false, true, 'local');
+  it.each([null, 'local', 'ssh-test'])('a plain new window opens on the local Host regardless of source window or default (source=%s)', async (sourceHostId) => {
+    const f = fixture(true, true, true, true, true, sourceHostId);
     await f.invoke('desktop_new_window');
     expect(f.connect).not.toHaveBeenCalled();
-    expect(f.createWindow).toHaveBeenCalledWith('yuri-ui://app/index.html', expect.objectContaining({ apiBaseUrl: 'http://localhost:3000' }));
+    expect(f.createWindow).toHaveBeenCalledExactlyOnceWith('yuri-ui://app/index.html', { apiBaseUrl: 'http://localhost:3000', clientToken: '', requestHeaders: {} });
   });
 
   it('leaves non-SSH hosts on their ordinary connection path', async () => {
@@ -186,7 +186,7 @@ describe('SSH preparation before opening desktop windows', () => {
     await expect(pending).resolves.toMatchObject({ url: 'http://127.0.0.1:5000', clientToken: 'new-test-token' });
   });
 
-  it.each(['desktop_host_prepare', 'desktop_new_window_for_host', 'desktop_new_window', 'desktop_new_window_at_url'])('%s retains SSH initialization for an explicit local entry even with Relay pairing', async (command) => {
+  it.each(['desktop_host_prepare', 'desktop_new_window_for_host', 'desktop_new_window_at_url'])('%s retains SSH initialization for an explicit local entry even with Relay pairing', async (command) => {
     const f = fixture(true, true, true, true);
     const pending = f.invoke(command, { hostId: 'ssh-test', url: 'http://127.0.0.1:4000' });
     expect(f.connect).toHaveBeenCalledExactlyOnceWith('ssh-test');

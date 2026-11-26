@@ -552,8 +552,9 @@ export const useChatAutoFollow = ({
 
     // `force` true = user-intent jump (clears released and always scrolls).
     // `force` false = passive follow (only while still following — idle ok).
-    // `chase` (passive only) = the content grew: ease there instead of pinning in
-    // one frame. Viewport resizes (keyboard, composer) keep the instant pin.
+    // `chase` = ease there instead of pinning in one frame: passive content growth,
+    // and forced send/work-start re-pins whose rows just grew the transcript.
+    // Viewport resizes (keyboard, composer) and session entry keep the instant pin.
     const scrollToBottom = useEvent((force: boolean, behavior: ScrollBehavior = 'auto', chase = false) => {
         if (!enabled) return;
         const el = scrollRef.current;
@@ -573,7 +574,7 @@ export const useChatAutoFollow = ({
             markAuto(el);
             return;
         }
-        if (force) stopChase();
+        if (force && !chase) stopChase();
         else if (chasingRef.current || (chase && startChase())) return;
         scrollToBottomNow(force ? behavior : 'auto');
     });
@@ -618,7 +619,8 @@ export const useChatAutoFollow = ({
         // Single movement to the just-sent message. Force re-pins to the bottom
         // whether we were following or scrolled up; the content ResizeObserver
         // keeps us pinned as the optimistic message and its reply stream in.
-        scrollToBottom(true);
+        // The movement eases like growth-follow; reduced motion stays instant.
+        scrollToBottom(true, 'auto', true);
     });
 
     const releaseAutoFollow = useEvent(() => {
@@ -848,7 +850,7 @@ export const useChatAutoFollow = ({
             && !historyViewportPreservationRef.current
             && stateRef.current === 'following'
         ) {
-            scrollToBottom(true);
+            scrollToBottom(true, 'auto', true);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionIsWorking is the real input; scrollToBottom is useEvent-stable.
     }, [sessionIsWorking]);

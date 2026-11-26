@@ -227,6 +227,27 @@ const dismissalMessages = {
   uk: dismissCopy('Прибрати', 'Видалення…', 'Не вдалося прибрати запис. Спробуйте ще раз.'),
 };
 
+const remoteUpdateCopy = (label: string, running: string, failed: string, toast: string, retry: string, retrying: string) => ({
+  'backgroundTasks.remoteUpdate': label,
+  'backgroundTasks.remoteUpdateRunning': running,
+  'backgroundTasks.remoteUpdateFailed': failed,
+  'backgroundTasks.remoteUpdateFailedToast': toast,
+  'backgroundTasks.retry': retry,
+  'backgroundTasks.retrying': retrying,
+});
+const remoteUpdateMessages = {
+  en: remoteUpdateCopy('Remote update', 'Updating {from} → {to}', 'Update to {to} failed; {from} keeps running', 'Remote machine update to {to} failed', 'Retry', 'Retrying…'),
+  'zh-CN': remoteUpdateCopy('远程更新', '正在从 {from} 更新到 {to}', '更新到 {to} 失败，{from} 继续运行', '远程机器更新到 {to} 失败', '重试', '正在重试…'),
+  'zh-TW': remoteUpdateCopy('遠端更新', '正在從 {from} 更新至 {to}', '更新至 {to} 失敗，{from} 繼續執行', '遠端機器更新至 {to} 失敗', '重試', '正在重試…'),
+  ja: remoteUpdateCopy('リモート更新', '{from} から {to} に更新中', '{to} への更新に失敗しました。{from} は引き続き動作しています', 'リモートマシンの {to} への更新に失敗しました', '再試行', '再試行中…'),
+  ko: remoteUpdateCopy('원격 업데이트', '{from}에서 {to}(으)로 업데이트하는 중', '{to} 업데이트에 실패했습니다. {from}이(가) 계속 실행됩니다', '원격 머신을 {to}(으)로 업데이트하지 못했습니다', '다시 시도', '다시 시도하는 중…'),
+  es: remoteUpdateCopy('Actualización remota', 'Actualizando de {from} a {to}', 'Falló la actualización a {to}; {from} sigue en ejecución', 'Falló la actualización de la máquina remota a {to}', 'Reintentar', 'Reintentando…'),
+  fr: remoteUpdateCopy('Mise à jour distante', 'Mise à jour de {from} vers {to}', 'Échec de la mise à jour vers {to} ; {from} reste actif', 'Échec de la mise à jour de la machine distante vers {to}', 'Réessayer', 'Nouvelle tentative…'),
+  pl: remoteUpdateCopy('Aktualizacja zdalna', 'Aktualizowanie z {from} do {to}', 'Aktualizacja do {to} nie powiodła się; {from} nadal działa', 'Nie udało się zaktualizować zdalnej maszyny do {to}', 'Ponów', 'Ponawianie…'),
+  'pt-BR': remoteUpdateCopy('Atualização remota', 'Atualizando de {from} para {to}', 'Falha ao atualizar para {to}; {from} continua em execução', 'Falha ao atualizar a máquina remota para {to}', 'Tentar novamente', 'Tentando novamente…'),
+  uk: remoteUpdateCopy('Віддалене оновлення', 'Оновлення з {from} до {to}', 'Не вдалося оновити до {to}; {from} продовжує працювати', 'Не вдалося оновити віддалену машину до {to}', 'Повторити', 'Повторна спроба…'),
+};
+
 const aiRecommendationCopy = (title: string, description: string, example: string, copy: string, copied: string, manualHeading: string) => ({
   'historyImport.ai.title': title,
   'historyImport.ai.description': description,
@@ -319,14 +340,14 @@ const aiRecommendationMessages = {
 };
 
 export const historyImportMessages = {
-  en: { ...historyImportTaskMessages.en, ...recoveryMessages.en, ...dismissalMessages.en, ...aiRecommendationMessages.en, ...importedCopy('Duplicate conversations will not be imported again', 'Already imported') },
-  'zh-CN': { ...historyImportTaskMessages['zh-CN'], ...recoveryMessages['zh-CN'], ...dismissalMessages['zh-CN'], ...aiRecommendationMessages['zh-CN'], ...importedCopy('重复对话不会再次导入', '已导入') },
-  'zh-TW': { ...historyImportTaskMessages['zh-TW'], ...recoveryMessages['zh-TW'], ...dismissalMessages['zh-TW'], ...aiRecommendationMessages['zh-TW'], ...importedCopy('重複對話不會再次匯入', '已匯入') },
-  ja: { ...historyImportTaskMessages.ja, ...recoveryMessages.ja, ...dismissalMessages.ja, ...aiRecommendationMessages.ja, ...importedCopy('重複する会話は再度取り込まれません', '取り込み済み') },
-  ko: { ...historyImportTaskMessages.ko, ...recoveryMessages.ko, ...dismissalMessages.ko, ...aiRecommendationMessages.ko, ...importedCopy('중복 대화는 다시 가져오지 않습니다', '이미 가져옴') },
-  es: { ...historyImportTaskMessages.es, ...recoveryMessages.es, ...dismissalMessages.es, ...aiRecommendationMessages.es, ...importedCopy('Las conversaciones duplicadas no se volverán a importar', 'Ya importada') },
-  fr: { ...historyImportTaskMessages.fr, ...recoveryMessages.fr, ...dismissalMessages.fr, ...aiRecommendationMessages.fr, ...importedCopy('Les conversations en double ne seront pas réimportées', 'Déjà importée') },
-  pl: { ...historyImportTaskMessages.pl, ...recoveryMessages.pl, ...dismissalMessages.pl, ...aiRecommendationMessages.pl, ...importedCopy('Zduplikowane rozmowy nie zostaną ponownie zaimportowane', 'Już zaimportowano') },
-  'pt-BR': { ...historyImportTaskMessages['pt-BR'], ...recoveryMessages['pt-BR'], ...dismissalMessages['pt-BR'], ...aiRecommendationMessages['pt-BR'], ...importedCopy('Conversas duplicadas não serão importadas novamente', 'Já importada') },
-  uk: { ...historyImportTaskMessages.uk, ...recoveryMessages.uk, ...dismissalMessages.uk, ...aiRecommendationMessages.uk, ...importedCopy('Дублікати розмов не імпортуватимуться повторно', 'Уже імпортовано') },
+  en: { ...historyImportTaskMessages.en, ...recoveryMessages.en, ...remoteUpdateMessages.en, ...dismissalMessages.en, ...aiRecommendationMessages.en, ...importedCopy('Duplicate conversations will not be imported again', 'Already imported') },
+  'zh-CN': { ...historyImportTaskMessages['zh-CN'], ...recoveryMessages['zh-CN'], ...remoteUpdateMessages['zh-CN'], ...dismissalMessages['zh-CN'], ...aiRecommendationMessages['zh-CN'], ...importedCopy('重复对话不会再次导入', '已导入') },
+  'zh-TW': { ...historyImportTaskMessages['zh-TW'], ...recoveryMessages['zh-TW'], ...remoteUpdateMessages['zh-TW'], ...dismissalMessages['zh-TW'], ...aiRecommendationMessages['zh-TW'], ...importedCopy('重複對話不會再次匯入', '已匯入') },
+  ja: { ...historyImportTaskMessages.ja, ...recoveryMessages.ja, ...remoteUpdateMessages.ja, ...dismissalMessages.ja, ...aiRecommendationMessages.ja, ...importedCopy('重複する会話は再度取り込まれません', '取り込み済み') },
+  ko: { ...historyImportTaskMessages.ko, ...recoveryMessages.ko, ...remoteUpdateMessages.ko, ...dismissalMessages.ko, ...aiRecommendationMessages.ko, ...importedCopy('중복 대화는 다시 가져오지 않습니다', '이미 가져옴') },
+  es: { ...historyImportTaskMessages.es, ...recoveryMessages.es, ...remoteUpdateMessages.es, ...dismissalMessages.es, ...aiRecommendationMessages.es, ...importedCopy('Las conversaciones duplicadas no se volverán a importar', 'Ya importada') },
+  fr: { ...historyImportTaskMessages.fr, ...recoveryMessages.fr, ...remoteUpdateMessages.fr, ...dismissalMessages.fr, ...aiRecommendationMessages.fr, ...importedCopy('Les conversations en double ne seront pas réimportées', 'Déjà importée') },
+  pl: { ...historyImportTaskMessages.pl, ...recoveryMessages.pl, ...remoteUpdateMessages.pl, ...dismissalMessages.pl, ...aiRecommendationMessages.pl, ...importedCopy('Zduplikowane rozmowy nie zostaną ponownie zaimportowane', 'Już zaimportowano') },
+  'pt-BR': { ...historyImportTaskMessages['pt-BR'], ...recoveryMessages['pt-BR'], ...remoteUpdateMessages['pt-BR'], ...dismissalMessages['pt-BR'], ...aiRecommendationMessages['pt-BR'], ...importedCopy('Conversas duplicadas não serão importadas novamente', 'Já importada') },
+  uk: { ...historyImportTaskMessages.uk, ...recoveryMessages.uk, ...remoteUpdateMessages.uk, ...dismissalMessages.uk, ...aiRecommendationMessages.uk, ...importedCopy('Дублікати розмов не імпортуватимуться повторно', 'Уже імпортовано') },
 };

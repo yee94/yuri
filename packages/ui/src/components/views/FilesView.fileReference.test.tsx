@@ -20,6 +20,13 @@ const harness = vi.hoisted(() => ({
   resizeObservers: new Map<Element, ResizeObserverCallback>(),
   explorerRenders: 0,
   filePreview: vi.fn(),
+  relay: false,
+  readRuntimeFile: vi.fn(),
+}));
+
+vi.mock('@/lib/relay/runtime-tunnel', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/relay/runtime-tunnel')>(),
+  isRelayModeActive: () => harness.relay,
 }));
 
 vi.mock('@/lib/preview/project-file-preview', () => ({ resolveProjectFilePreview: (...args: unknown[]) => harness.filePreview(...args) }));
@@ -42,6 +49,7 @@ vi.mock('@/lib/runtime-fetch', () => ({ runtimeFetch: vi.fn(async () => new Resp
 vi.mock('@/lib/runtime-file-resource', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/runtime-file-resource')>(),
   directFileResource: () => ({ url: 'about:blank' }),
+  readRuntimeFile: (...args: unknown[]) => harness.readRuntimeFile(...args),
 }));
 vi.mock('@/lib/runtime-auth', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/runtime-auth')>(),
@@ -180,6 +188,8 @@ beforeEach(() => {
   harness.local = false;
   harness.machineLocal = false;
   harness.pluginPreview = false;
+  harness.relay = false;
+  harness.readRuntimeFile.mockReset();
   harness.themeDark = false;
   harness.openDesktopPath.mockReset().mockResolvedValue(true);
   harness.files.downloadFile.mockReset().mockResolvedValue(undefined);
@@ -255,6 +265,21 @@ test.each(['collapsed', 'expanded'] as const)('Markdown %s preview controls use 
   await act(async () => toggle.click());
   expect(toggle.classList.contains('bg-[var(--interactive-selection)]')).toBe(false);
   expect(toggle.getAttribute('aria-label')).toBe('filesView.editor.switchToPreviewMode');
+});
+
+test.each([
+  { relay: false, expected: 'about:blank' },
+  { relay: true, expected: 'blob:relay-image' },
+])('web API adapter image preview reads bytes through the runtime tunnel only in Relay ($relay)', async ({ relay, expected }) => {
+  harness.relay = relay;
+  harness.readRuntimeFile.mockResolvedValue(new Response(new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' })));
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:relay-image');
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  await open('/repo/shot.png');
+  await act(async () => reactRoot.render(<FilePanel />));
+  await act(async () => { await Promise.resolve(); });
+  expect(host.querySelector('img')?.getAttribute('src')).toBe(expected);
+  expect(harness.readRuntimeFile).toHaveBeenCalledTimes(relay ? 1 : 0);
 });
 
 describe('binary file fallback', () => {

@@ -20,6 +20,20 @@ import { getPendingAdmissionsForScope, getQueueForScope, legacyQueueScope, queue
 import { isSessionInboxChip, type SessionComposerPendingItem, type SessionInboxChip } from '@/sync/session-inbox-overlay';
 import { draftKeyString, type DraftKey } from '@/sync/input-draft-types';
 import { editSessionInboxIntoDraft } from '@/sync/session-inbox-edit';
+import { captureTextSendFlightSource } from '@/components/assistants/contactSendFlight';
+import { registerUserSendFlight } from '@/lib/userSendAnimation';
+
+// Queued and steered sends fly from their chip into the transcript row. A stable
+// module-level ref callback does nothing on mount; on the chip's way out it
+// records the text frame, and the flight aspect takes it from there.
+const captureQueuedChipFlight = (node: HTMLSpanElement | null) => {
+    if (!node) return;
+    return () => {
+        const messageID = node.dataset.yuriQueueMessageId;
+        const source = messageID ? captureTextSendFlightSource(node) : null;
+        if (messageID && source) registerUserSendFlight(messageID, source);
+    };
+};
 import { useMessageQueueServerScope } from '@/sync/use-message-queue-server';
 import { MessageQueueServerError, type MessageQueueItem } from '@/lib/message-queue-server';
 import { isMessageQueuePendingAdmissionItem, type MessageQueueServerDisplayItem, type MessageQueueServerMutationResult, type MessageQueueServerRuntimeCapture } from '@/sync/message-queue-server-runtime';
@@ -139,6 +153,8 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
         composerDocument: visibleComposerDocument,
     }), [visibleAttachments, visibleComposerDocument, visibleContent]);
 
+    const flightMessageID = 'messageID' in message ? message.messageID : undefined;
+
     const removeAction = (
         <button
             type="button"
@@ -189,7 +205,7 @@ const QueuedMessageChip = memo(({ message, server, frozen, hasDispatchLock, pend
                 <Icon name={reorderPending ? 'loader-4' : 'draggable'} className={cn(isMobile ? 'size-3' : 'size-3.5', reorderPending && 'animate-spin')} aria-hidden="true" />
             </button>
             {isMobile ? removeAction : null}
-            <span className={cn(
+            <span ref={captureQueuedChipFlight} data-yuri-queue-message-id={flightMessageID} className={cn(
                 // items-baseline keeps chip labels on the same line as plain text
                 // ("hey"). MessageReferenceChip exposes its label baseline
                 // (icon is a separate 1em well), matching sent-message rendering.

@@ -1,42 +1,34 @@
-import { animate, cubicBezier } from 'motion/react'
+import { cubicBezier } from 'motion/react'
 
 /**
- * Send transition ported from Telegram-iOS `ChatMessageTransitionNode` (text
- * input → bubble, default bezier parameters), itself a reproduction of iMessage:
- * the composer field's background frame morphs into the bubble frame,
- * bottom-anchored, with horizontal and vertical edges on separate curves; the
- * single outer background changes color into the bubble fill while the typed text
- * travels into the bubble and cross-fades into the rendered text.
+ * Send transition after Telegram-iOS `ChatMessageTransitionNode` (text input →
+ * bubble, default bezier parameters): the bubble starts with its text over the
+ * composer's typed text and travels to its transcript slot, with horizontal and
+ * vertical motion on separate curves.
+ *
+ * The moving element is a fixed-size snapshot of the real bubble animated with
+ * a compositor-only Web Animation (transform + opacity). No frame reads layout
+ * or writes size, so a busy main thread cannot drop flight frames, and the
+ * landing frame is the real bubble at its integer layout position.
  */
 export const CONTACT_SEND_FLIGHT_DURATION_S = 0.3
 export const CONTACT_SEND_FLIGHT_VERTICAL_EASE = [0.19919472913616398, 0.010644531250000006, 0.27920937042459737, 0.91025390625] as const
 const HORIZONTAL_EASE = [0.23, 1, 0.32, 1] as const
 const verticalCurve = cubicBezier(...CONTACT_SEND_FLIGHT_VERTICAL_EASE)
 const horizontalCurve = cubicBezier(...HORIZONTAL_EASE)
-const BACKGROUND_COLOR_DURATION_S = 0.15
-const SOURCE_TEXT_FADE_S = 0.1
-const TARGET_TEXT_FADE_S = 0.08
+// Split-axis curves cannot share one CSS easing; sampled keyframes with linear
+// interpolation reproduce both on the compositor.
+const KEYFRAME_SAMPLES = 20
 
 type Box = { left: number; top: number; width: number; height: number }
-type Radii = [string, string, string, string]
 
-/** Composer geometry and paint, captured synchronously before the draft clears. */
+/** Composer text geometry and plain text, captured synchronously before the draft clears. */
 export type ContactSendFlightSource = {
-  compact?: boolean
-  background: Box
-  backgroundColor: string
-  radii: Radii
-  text: string
   textBox: Box
-  textStyle: Partial<CSSStyleDeclaration>
+  text: string
 }
 
-const box = (rect: DOMRect): Box => ({ left: rect.left, top: rect.top, width: rect.width, height: rect.height })
 const px = (value: string) => Number.parseFloat(value) || 0
-const lerp = (from: number, to: number, progress: number) => from + (to - from) * progress
-const readRadii = (style: CSSStyleDeclaration): Radii => [
-  style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius,
-]
 const contentBox = (element: HTMLElement): Box => {
   const rect = element.getBoundingClientRect()
   const style = window.getComputedStyle(element)
@@ -49,60 +41,91 @@ const contentBox = (element: HTMLElement): Box => {
     height: rect.bottom - px(style.borderBottomWidth) - px(style.paddingBottom) - top,
   }
 }
-const textStyleOf = (style: CSSStyleDeclaration): Partial<CSSStyleDeclaration> => ({
-  color: style.color,
-  fontFamily: style.fontFamily,
-  fontSize: style.fontSize,
-  fontWeight: style.fontWeight,
-  fontFeatureSettings: style.fontFeatureSettings,
-  letterSpacing: style.letterSpacing,
-  lineHeight: style.lineHeight,
-  whiteSpace: 'pre-wrap',
-  overflowWrap: 'anywhere',
-})
 
-export const captureContactSendFlightSource = (
-  surface: HTMLElement,
-  field: HTMLTextAreaElement,
-  compact = false,
-): ContactSendFlightSource | null => {
+export const captureContactSendFlightSource = (field: HTMLTextAreaElement): ContactSendFlightSource | null => {
   if (!field.value.trim()) return null
-  const material = surface.querySelector<HTMLElement>('[data-composer-material]') ?? surface
-  const surfaceStyle = window.getComputedStyle(material)
   const textBox = contentBox(field)
-  // Reference-highlighting composers paint text through an overlay and keep the field transparent.
-  const painted = field.parentElement?.querySelector<HTMLElement>('[data-composer-highlight]')
-  const textStyle = textStyleOf(window.getComputedStyle(field))
-  if (painted) textStyle.color = window.getComputedStyle(painted).color
-  return {
-    compact,
-    background: box(material.getBoundingClientRect()),
-    backgroundColor: surfaceStyle.backgroundColor,
-    radii: readRadii(surfaceStyle),
-    text: field.value,
-    // The field's own scroll offset (Telegram `scrollOffset`) shifts its visible text up.
-    textBox: { ...textBox, top: textBox.top - field.scrollTop },
-    textStyle,
-  }
+  // Reference composers paint chips as labels in a highlight overlay; that is the text the user saw.
+  const painted = field.closest('[data-composer-input-shell]')?.querySelector<HTMLElement>('[data-composer-highlight]')
+  const text = (painted?.textContent?.trim() ? painted.textContent : field.value).trim()
+  // The field's own scroll offset (Telegram `scrollOffset`) shifts its visible text up.
+  return { textBox: { ...textBox, top: textBox.top - field.scrollTop }, text }
 }
 
-const layer = (style: Partial<CSSStyleDeclaration>): HTMLDivElement => {
-  const node = document.createElement('div')
-  Object.assign(node.style, { position: 'absolute', pointerEvents: 'none', margin: '0px', ...style })
-  return node
+/** Source for text painted by an ordinary element, such as a queued-message chip. */
+export const captureTextSendFlightSource = (element: HTMLElement): ContactSendFlightSource | null => {
+  if (!element.isConnected || !element.textContent?.trim()) return null
+  const textBox = contentBox(element)
+  return textBox.width > 0 && textBox.height > 0 ? { textBox, text: element.textContent.trim() } : null
 }
 
-const fade = (node: HTMLElement, from: number, to: number, duration: number) => {
-  node.style.opacity = String(from)
-  return animate(node, { opacity: [from, to] }, { duration, ease: 'linear' })
-}
+const BOX_STYLES = [
+  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius',
+] as const
+const TEXT_STYLES = ['color', 'font-family', 'font-size', 'font-weight', 'font-feature-settings', 'letter-spacing', 'line-height'] as const
 
 /**
- * Starts the morph from the captured composer into `bubble`. The real bubble
- * keeps its layout and is only hidden while the overlay paints it, so the
- * transcript scroll owner stays authoritative; the bubble rectangle is re-read
- * every frame and the overlay lands wherever that scroll moved it. Returns an
- * idempotent stop that removes the overlay and reveals the bubble.
+ * A plain stand-in for the bubble: one div with its shape, fill and type, and
+ * the sent text as a single text node. Nothing Markdown, chip or measurement
+ * related travels, so the flight element costs one paint.
+ */
+const proxy = (bubble: HTMLElement, rect: DOMRect, text: string): HTMLElement => {
+  const style = window.getComputedStyle(bubble)
+  // Contact bubbles paint their fill through an SVG outline; session bubbles use background-color.
+  const outline = bubble.querySelector('.yuri-contact-bubble-outline path')
+  const fill = outline ? window.getComputedStyle(outline).fill : style.backgroundColor
+  // Rendered bodies can set their own type scale below the bubble.
+  const firstText = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
+  }).nextNode()
+  const typeStyle = window.getComputedStyle(firstText?.parentElement ?? bubble)
+  const clone = document.createElement('div')
+  for (const name of BOX_STYLES) clone.style.setProperty(name, style.getPropertyValue(name))
+  for (const name of TEXT_STYLES) clone.style.setProperty(name, typeStyle.getPropertyValue(name))
+  clone.textContent = text
+  Object.assign(clone.style, {
+    backgroundColor: fill,
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    overflow: 'hidden',
+    position: 'fixed',
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+    margin: '0px',
+    maxWidth: 'none',
+    boxSizing: 'border-box',
+    zIndex: '60',
+    pointerEvents: 'none',
+    visibility: 'visible',
+    willChange: 'transform',
+  })
+  clone.setAttribute('aria-hidden', 'true')
+  clone.setAttribute('inert', '')
+  clone.setAttribute('data-assistant-contact-send-flight', '')
+  return clone
+}
+
+const flightKeyframes = (dx: number, dy: number): Keyframe[] => Array.from({ length: KEYFRAME_SAMPLES + 1 }, (_, index) => {
+  const progress = index / KEYFRAME_SAMPLES
+  const x = dx * (1 - horizontalCurve(progress))
+  const y = dy * (1 - verticalCurve(progress))
+  return {
+    offset: progress,
+    transform: `translate3d(${x}px, ${y}px, 0)`,
+  }
+})
+
+/**
+ * Flies `bubble` out of the captured composer text. The real bubble keeps its
+ * layout and stays hidden while its snapshot travels, so the transcript scroll
+ * owner remains the only scroll writer. The opaque snapshot covers the typed
+ * text in the mount frame; the clock starts on the next frame, after re-aiming
+ * at wherever the scroll owner settled the bubble. Later transcript scrolls
+ * move the snapshot's landing slot with the bubble.
+ * Returns an idempotent stop that removes the snapshot and reveals the bubble.
  */
 export const startContactSendFlight = (
   source: ContactSendFlightSource,
@@ -110,91 +133,75 @@ export const startContactSendFlight = (
   hidden: HTMLElement = bubble,
   onSettled?: () => void,
 ): (() => void) => {
-  const bubbleStyle = window.getComputedStyle(bubble)
-  const outline = bubble.querySelector('.yuri-contact-bubble-outline path')
-  const bubbleColor = outline ? window.getComputedStyle(outline).fill : bubbleStyle.backgroundColor
-  const targetRadii = readRadii(bubbleStyle)
-  const initialTarget = box(bubble.getBoundingClientRect())
-  const initialText = contentBox(bubble)
-  const background = source.compact ? {
-    ...source.background,
-    left: source.textBox.left - px(bubbleStyle.paddingLeft),
-    width: Math.min(source.background.width, Math.max(120, initialTarget.width + 32)),
-  } : source.background
-  // Telegram's source frame: the bubble's size, bottom-left aligned to the field background.
-  const sourceOrigin = {
-    left: background.left,
-    top: background.top + background.height - initialTarget.height,
-  }
-  const textOffset = {
-    x: (source.textBox.left - sourceOrigin.left) - (initialText.left - initialTarget.left),
-    y: (source.textBox.top - sourceOrigin.top) - (initialText.top - initialTarget.top),
-  }
-
-  const clip = layer({ position: 'fixed', left: '0px', top: '0px', overflow: 'hidden', zIndex: '60', willChange: 'transform, width, height' })
-  clip.setAttribute('aria-hidden', 'true')
-  clip.setAttribute('data-assistant-contact-send-flight', '')
-  clip.style.backgroundColor = source.backgroundColor
-  const sourceText = layer({ ...source.textStyle, left: '0px', top: '0px', width: `${source.textBox.width}px` })
-  sourceText.textContent = source.text
-  const targetText = layer({ ...textStyleOf(bubbleStyle), left: '0px', top: '0px', width: `${initialText.width}px` })
-  targetText.textContent = (bubble.querySelector('[data-assistant-contact-body]') ?? bubble).textContent ?? ''
-  clip.append(sourceText, targetText)
-
-  const place = (elapsed: number) => {
-    const v = verticalCurve(elapsed)
-    const h = horizontalCurve(elapsed)
-    const target = box(bubble.getBoundingClientRect())
-    const s = background
-    const left = lerp(s.left, target.left, h)
-    const right = lerp(s.left + s.width, target.left + target.width, h)
-    const bottom = lerp(s.top + s.height, target.top + target.height, v)
-    const height = lerp(s.height, target.height, v)
-    const top = bottom - height
-    clip.style.transform = `translate3d(${left}px, ${top}px, 0)`
-    clip.style.width = `${right - left}px`
-    clip.style.height = `${height}px`
-    clip.style.borderRadius = targetRadii.map((radius, index) => (
-      `${lerp(px(source.radii[index]), px(radius), v)}px`
-    )).join(' ')
-    // The text node sits inside the moving bubble container and travels from the
-    // field's text origin to its own on the vertical curve (both axes).
-    const containerLeft = target.left + (sourceOrigin.left - initialTarget.left) * (1 - h)
-    const containerTop = target.top + (sourceOrigin.top - initialTarget.top) * (1 - v)
-    const textLeft = containerLeft + (initialText.left - initialTarget.left) + textOffset.x * (1 - v) - left
-    const textTop = containerTop + (initialText.top - initialTarget.top) + textOffset.y * (1 - v) - top
-    const translate = `translate3d(${textLeft}px, ${textTop}px, 0)`
-    sourceText.style.transform = translate
-    targetText.style.transform = translate
-  }
-
   let stopped = false
-  const running: Array<{ stop: () => void }> = []
+  let playing = false
+  let startFrame = 0
+  let clone: HTMLElement | null = null
+  let animation: Animation | null = null
   const stop = () => {
     if (stopped) return
     stopped = true
-    running.forEach((controls) => controls.stop())
-    clip.remove()
+    cancelAnimationFrame(startFrame)
+    window.removeEventListener('scroll', follow, true)
+    animation?.cancel()
+    clone?.remove()
     hidden.style.visibility = ''
     onSettled?.()
   }
+  // Anchor the clone on the bubble's current slot and start the path on the
+  // composer text. Returns false when there is nowhere to fly.
+  const aim = (): boolean => {
+    const rect = bubble.getBoundingClientRect()
+    const target = contentBox(bubble)
+    const dx = source.textBox.left - target.left
+    const dy = source.textBox.top - target.top
+    if (!dx && !dy) return false
+    clone!.style.left = `${rect.left}px`
+    clone!.style.top = `${rect.top}px`
+    const keyframes = flightKeyframes(dx, dy)
+    const effect = animation?.effect as KeyframeEffect | null | undefined
+    if (effect?.setKeyframes) effect.setKeyframes(keyframes)
+    else {
+      animation?.cancel()
+      animation = clone!.animate(keyframes, {
+        duration: CONTACT_SEND_FLIGHT_DURATION_S * 1000,
+        easing: 'linear',
+        fill: 'both',
+      })
+      animation.finished.then(stop, () => undefined)
+    }
+    return true
+  }
+  // Before the clock starts the clone must stay on the typed text, so a scroll
+  // re-aims the whole path; once flying, it only moves the landing slot.
+  function follow() {
+    if (!playing) { aim(); return }
+    clone!.style.top = `${bubble.getBoundingClientRect().top}px`
+  }
 
   hidden.style.visibility = 'hidden'
-  place(0)
-  document.body.appendChild(clip)
-  running.push(
-    animate(clip, { backgroundColor: [source.backgroundColor, bubbleColor] }, {
-      duration: BACKGROUND_COLOR_DURATION_S,
-      ease: 'linear',
-    }),
-    fade(sourceText, 1, 0, SOURCE_TEXT_FADE_S),
-    fade(targetText, 0, 1, TARGET_TEXT_FADE_S),
-    animate(0, 1, {
-      duration: CONTACT_SEND_FLIGHT_DURATION_S,
-      ease: 'linear',
-      onUpdate: place,
-      onComplete: stop,
-    }),
-  )
+  if (!bubble.isConnected || typeof bubble.animate !== 'function') {
+    stop()
+    return stop
+  }
+  // The clone replaces the cleared field text in the mount frame, fully opaque,
+  // so the bubble is visibly leaving the composer rather than appearing mid-air.
+  clone = proxy(bubble, bubble.getBoundingClientRect(), source.text)
+  document.body.appendChild(clone)
+  if (!aim()) {
+    stop()
+    return stop
+  }
+  animation!.pause()
+  window.addEventListener('scroll', follow, { capture: true, passive: true })
+  // The send commit that mounted the bubble usually stalls the next frame; start
+  // the clock there so the stall cannot consume progress. Re-aim first: the
+  // send-park scroll may have moved the landing slot since mount.
+  startFrame = requestAnimationFrame(() => {
+    if (stopped) return
+    if (!aim()) { stop(); return }
+    playing = true
+    animation!.play()
+  })
   return stop
 }

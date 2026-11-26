@@ -5011,37 +5011,14 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const localUiUrl = shouldUsePackagedUi()
         ? buildPackagedUiUrl('/index.html')
         : (state.localUiOrigin || state.sidecarUrl || state.localOrigin);
-      // A new window opens on the machine of the window it was requested from;
-      // the global default only applies when no live source window is bound.
-      const sourceHostId = browserWindow && !browserWindow.isDestroyed() ? desktopWindowHostId(browserWindow) : null;
-      const targetHostId = sourceHostId && (sourceHostId === LOCAL_HOST_ID || config.hosts.some((entry) => entry.id === sourceHostId))
-        ? sourceHostId
-        : config.defaultHostId;
-      const host = targetHostId && targetHostId !== LOCAL_HOST_ID
-        ? await prepareDesktopHost(targetHostId, browserWindow)
-        : null;
-      const relayHost = host && host.relay && typeof host.relay === 'object' ? host : null;
-      if (relayHost) {
-        const localApiBaseUrl = state.sidecarUrl || state.apiBaseUrl || state.localOrigin || '';
-        const localToken = resolveStoredClientTokenForUrl(localApiBaseUrl, config) || state.clientToken || '';
-        await createAdditionalWindow(localUiUrl, {
-          apiBaseUrl: localApiBaseUrl,
-          clientToken: localToken,
-          requestHeaders: {},
-          relayHostId: relayHost.id,
-        });
-        return null;
-      }
-      const apiBaseUrl = host?.apiUrl || host?.url || state.sidecarUrl || state.apiBaseUrl || state.localOrigin || '';
-      const clientToken = host?.clientToken
-        || resolveStoredClientTokenForUrl(apiBaseUrl, config)
-        || state.clientToken
-        || readDesktopLocalClientToken();
-      const requestHeaders = sanitizeRuntimeRequestHeaders(host?.requestHeaders || state.requestHeaders || {});
+      // A plain new window always opens on the local Host; remote Hosts open
+      // only through an explicit host choice (desktop_new_window_for_host / _at_url).
+      const apiBaseUrl = state.sidecarUrl || state.localOrigin || '';
+      const clientToken = resolveStoredClientTokenForUrl(apiBaseUrl, config) || readDesktopLocalClientToken();
       await createAdditionalWindow(localUiUrl, {
         apiBaseUrl: normalizeHostUrl(apiBaseUrl) || apiBaseUrl,
         clientToken: sanitizeClientTokenForStorage(clientToken),
-        requestHeaders,
+        requestHeaders: {},
       });
       return null;
     }
@@ -5283,6 +5260,15 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case 'desktop_ssh_status': {
       const id = String(args.id || '').trim();
       return await sshManager.statusesWithDefaults(id || undefined);
+    }
+
+    case 'desktop_ssh_background_update_retry': {
+      const id = String(args.id || '').trim();
+      // Progress and failure are published through SSH status events.
+      void sshManager.retryBackgroundUpdate(id).catch((error) => {
+        log.warn('[ssh] background update retry failed', error instanceof Error ? error.message : String(error));
+      });
+      return null;
     }
 
     case 'desktop_ssh_logs':

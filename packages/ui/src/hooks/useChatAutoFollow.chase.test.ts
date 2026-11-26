@@ -53,6 +53,7 @@ async function mount(options: { reducedMotion?: boolean } = {}) {
         scroller, writes, step, run,
         top: () => top,
         grow: (by: number) => act(async () => { height += by; api.notifyContentChange('text'); }),
+        send: (by: number) => act(async () => { height += by; api.scrollToBottomOnSend(); }),
         api: () => api,
         cleanup: async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); },
     };
@@ -125,6 +126,40 @@ describe('bottom chase (growth while following)', () => {
         try {
             await h.grow(400);
             expect(h.top()).toBe(1100);
+            expect(frames.size).toBe(0);
+        } finally { await h.cleanup(); }
+    });
+
+    test('send eases to the new bottom instead of jumping, even from a released viewport', async () => {
+        const h = await mount();
+        try {
+            await act(async () => { h.scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })); });
+            expect(h.api().state).toBe('released');
+            await h.send(200);
+            expect(h.api().state).toBe('following');
+            expect(h.writes).toEqual([]);
+            await h.run();
+            expect(h.top()).toBe(900);
+            expect(h.writes.length).toBeGreaterThan(3);
+            expect(h.writes.every((value, index, all) => index === 0 || value >= all[index - 1])).toBe(true);
+        } finally { await h.cleanup(); }
+    });
+
+    test('send under reduced motion pins immediately', async () => {
+        const h = await mount({ reducedMotion: true });
+        try {
+            await h.send(200);
+            expect(h.top()).toBe(900);
+            expect(frames.size).toBe(0);
+        } finally { await h.cleanup(); }
+    });
+
+    test('an explicit go-to-bottom during a chase still lands in the same frame', async () => {
+        const h = await mount();
+        try {
+            await h.grow(600);
+            await h.step();
+            await act(async () => { h.api().goToBottom('smooth'); });
             expect(frames.size).toBe(0);
         } finally { await h.cleanup(); }
     });

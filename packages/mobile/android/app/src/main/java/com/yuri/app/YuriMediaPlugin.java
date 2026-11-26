@@ -216,6 +216,73 @@ public class YuriMediaPlugin extends Plugin {
         });
     }
 
+    @PluginMethod
+    public void stageFile(PluginCall call) {
+        final String id = call.getString("id");
+        final String dataBase64 = call.getString("dataBase64");
+        final boolean append = Boolean.TRUE.equals(call.getBoolean("append", false));
+        if (!isValidStageId(id)) {
+            call.reject("A valid id is required");
+            return;
+        }
+        if (dataBase64 == null || dataBase64.isEmpty()) {
+            call.reject("dataBase64 is required");
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                byte[] bytes = Base64.decode(dataBase64, Base64.DEFAULT);
+                File dir = new File(getContext().getCacheDir(), SAVE_CACHE_DIR);
+                if (!dir.exists() && !dir.mkdirs()) throw new Exception("Could not create export cache");
+                try (FileOutputStream out = new FileOutputStream(stagedFile(id), append)) {
+                    out.write(bytes);
+                    out.flush();
+                }
+                call.resolve();
+            } catch (Exception error) {
+                deleteSaveCache(stagedFile(id).getAbsolutePath());
+                call.reject(error.getMessage() != null ? error.getMessage() : "Could not stage file", error);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void saveStagedFile(PluginCall call) {
+        final String id = call.getString("id");
+        if (!isValidStageId(id)) {
+            call.reject("A valid id is required");
+            return;
+        }
+        final File file = stagedFile(id);
+        if (!file.isFile() || file.length() == 0) {
+            call.reject("File data is empty");
+            return;
+        }
+        final String filename = sanitizeExportFilename(call.getString("filename", "export.bin"));
+        Activity activity = getActivity();
+        if (activity == null) {
+            deleteSaveCache(file.getAbsolutePath());
+            call.reject("No activity to present the save picker");
+            return;
+        }
+        activity.runOnUiThread(() -> presentSavePicker(call, file, filename));
+    }
+
+    @PluginMethod
+    public void discardStagedFile(PluginCall call) {
+        String id = call.getString("id");
+        if (isValidStageId(id)) deleteSaveCache(stagedFile(id).getAbsolutePath());
+        call.resolve();
+    }
+
+    private static boolean isValidStageId(String id) {
+        return id != null && id.matches("[A-Za-z0-9-]{1,80}");
+    }
+
+    private File stagedFile(String id) {
+        return new File(new File(getContext().getCacheDir(), SAVE_CACHE_DIR), "staged-" + id + ".bin");
+    }
+
     private void presentSavePicker(PluginCall call, File cacheFile, String filename) {
         deleteSaveCache(pendingSavePath);
         pendingSavePath = cacheFile.getAbsolutePath();

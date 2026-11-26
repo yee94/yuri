@@ -9,8 +9,8 @@ export const yuriMediaContract = {
     ],
   },
   methods: {
-    ios: ['saveImage', 'saveFile', 'transcode'],
-    android: ['transcode', 'saveImage', 'saveFile', 'pickMedia'],
+    ios: ['saveImage', 'saveFile', 'transcode', 'stageFile', 'saveStagedFile', 'discardStagedFile'],
+    android: ['transcode', 'saveImage', 'saveFile', 'pickMedia', 'stageFile', 'saveStagedFile', 'discardStagedFile'],
   },
   events: {
     ios: [],

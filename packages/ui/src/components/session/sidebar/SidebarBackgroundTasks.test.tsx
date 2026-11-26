@@ -7,7 +7,13 @@ import { useUpdateStore } from '@/stores/useUpdateStore';
 import { historyImportMessages } from '@/lib/i18n/messages/history-import';
 
 const fixture = vi.hoisted(() => ({ transport: 'host-one', generation: 1, local: true, fetch: vi.fn(), refresh: vi.fn(), move: vi.fn(), open: vi.fn(),
-  listeners: new Set<() => void>(), renders: vi.fn() }));
+  listeners: new Set<() => void>(), renders: vi.fn(), sshUpdate: null as null | { hostId: string; state: 'running' | 'failed'; from: string; to: string; error?: string },
+  onSshFailed: null as null | ((update: { hostId: string; state: 'failed'; from: string; to: string; error?: string }) => void), sshRetry: vi.fn(), toastError: vi.fn() }));
+vi.mock('@/queries/sshBackgroundUpdateQueries', () => ({ useSshBackgroundUpdate: (_transport: string, onFailed: NonNullable<typeof fixture.onSshFailed>) => {
+  fixture.onSshFailed = onFailed; return fixture.sshUpdate;
+} }));
+vi.mock('@/lib/desktopSsh', () => ({ desktopSshRetryBackgroundUpdate: (...args: unknown[]) => fixture.sshRetry(...args) }));
+vi.mock('@/components/ui/toast', () => ({ toast: { error: (...args: unknown[]) => fixture.toastError(...args) } }));
 vi.mock('@/lib/runtime-switch', () => ({
   getRuntimeGeneration: () => fixture.generation, getRuntimeTransportIdentity: () => fixture.transport, getRuntimeKey: () => fixture.transport,
   subscribeRuntimeEndpointChanged: (listener: () => void) => { fixture.listeners.add(listener); return () => fixture.listeners.delete(listener); },
@@ -44,6 +50,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); vi.useFakeTimers();
   fixture.transport = 'host-one'; fixture.generation = 1; fixture.local = true; fixture.listeners.clear();
   fixture.refresh.mockReset().mockResolvedValue({ projects: [] }); fixture.move.mockReset(); fixture.open.mockReset(); fixture.renders.mockReset();
+  fixture.sshUpdate = null; fixture.onSshFailed = null; fixture.sshRetry.mockReset().mockResolvedValue(undefined); fixture.toastError.mockReset();
   useUpdateStore.setState({ downloading: false, downloaded: false, info: null, downloadError: null, downloadVersion: null, progress: null });
   vi.mocked(useUpdateStore.getState().downloadUpdate).mockReset().mockResolvedValue(undefined);
   fixture.fetch.mockReset().mockImplementation(async (url: string) => response(url));
@@ -76,6 +83,38 @@ test('multiple tasks show only adjacent rings in a right-aligned fit-width group
   expect(dialog?.querySelector('[data-background-task-details]')?.className).toContain('max-h-64');
   expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeNull();
   expect(fixture.move).not.toHaveBeenCalled();
+});
+
+test('a background SSH Host update shows progress, and its failure offers Retry in the task and a notification', async () => {
+  fixture.fetch.mockImplementation(async (url: string) => response(url, null, index({ phase: 'ready' })));
+  fixture.sshUpdate = { hostId: 'devbox', state: 'running', from: '1.2.2', to: '1.2.3' };
+  await render();
+  expect(host.querySelector('[data-sidebar-background-tasks]')?.textContent).toBe('backgroundTasks.remoteUpdate');
+  await act(async () => host.querySelector('button')!.click());
+  await tick();
+  const running = document.querySelector('[data-background-task="ssh-update:devbox"]')!;
+  expect(running.textContent).toContain('backgroundTasks.remoteUpdateRunning');
+  expect(running.querySelector(':scope > button')).toBeNull();
+
+  fixture.sshUpdate = { hostId: 'devbox', state: 'failed', from: '1.2.2', to: '1.2.3', error: 'network unreachable' };
+  await act(async () => fixture.onSshFailed!({ ...fixture.sshUpdate!, state: 'failed' }));
+  expect(fixture.toastError).toHaveBeenCalledExactlyOnceWith('backgroundTasks.remoteUpdateFailedToast', expect.objectContaining({
+    id: 'ssh-update:devbox:1.2.3', description: 'network unreachable', action: expect.objectContaining({ label: 'backgroundTasks.retry' }) }));
+  fixture.toastError.mock.calls[0][1].action.onClick();
+  expect(fixture.sshRetry).toHaveBeenLastCalledWith('devbox');
+
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  await render();
+  await act(async () => host.querySelector('button')!.click());
+  await tick();
+  const failed = document.querySelector('[data-background-task="ssh-update:devbox"]')!;
+  expect(failed.textContent).toContain('backgroundTasks.remoteUpdateFailed');
+  const retry = failed.querySelector<HTMLButtonElement>(':scope > button')!;
+  expect(retry.textContent).toBe('backgroundTasks.retry');
+  await act(async () => retry.click());
+  await tick();
+  expect(fixture.sshRetry).toHaveBeenCalledTimes(2);
 });
 
 test('task details dismiss with Escape and return focus to the compact trigger', async () => {

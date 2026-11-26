@@ -90,7 +90,16 @@ export type DesktopSshInstanceStatus = {
   retryAttempt: number;
   requiresUserAction: boolean;
   errorCode?: string;
+  /** Managed portable release update that runs after the session is ready. */
+  backgroundUpdate?: DesktopSshBackgroundUpdate;
   updatedAtMs: number;
+};
+
+export type DesktopSshBackgroundUpdate = {
+  state: 'running' | 'failed';
+  from: string;
+  to: string;
+  error?: string;
 };
 
 export type DesktopSshImportCandidate = {
@@ -282,11 +291,23 @@ const parsePhase = (value: unknown): DesktopSshPhase => {
   }
 };
 
+const parseBackgroundUpdate = (value: unknown): DesktopSshBackgroundUpdate | null => {
+  if (!isRecord(value)) return null;
+  const state = readString(value, 'state');
+  const from = readString(value, 'from');
+  const to = readString(value, 'to');
+  if ((state !== 'running' && state !== 'failed') || !from || !to) return null;
+  const error = readString(value, 'error');
+  return { state, from, to, ...(error ? { error } : {}) };
+};
+
 const parseStatus = (value: unknown): DesktopSshInstanceStatus | null => {
   if (!isRecord(value)) return null;
   const id = readString(value, 'id');
   if (!id) return null;
+  const backgroundUpdate = parseBackgroundUpdate(value.backgroundUpdate);
   return {
+    ...(backgroundUpdate ? { backgroundUpdate } : {}),
     id,
     phase: parsePhase(readString(value, 'phase')),
     ...(readString(value, 'detail') ? { detail: readString(value, 'detail') || undefined } : {}),
@@ -412,6 +433,12 @@ export const desktopSshStatus = async (id?: string): Promise<DesktopSshInstanceS
   return raw
     .map((item) => parseStatus(item))
     .filter((item): item is DesktopSshInstanceStatus => Boolean(item));
+};
+
+export const desktopSshRetryBackgroundUpdate = async (id: string): Promise<void> => {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  await invoke('desktop_ssh_background_update_retry', { id });
 };
 
 export const desktopSshLogs = async (id: string, limit?: number): Promise<string[]> => {

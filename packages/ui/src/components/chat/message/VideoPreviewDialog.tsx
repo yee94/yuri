@@ -8,6 +8,7 @@ import { fileResourceBrowserUrl } from '@/lib/runtime-file-download';
 import { getRuntimeAuthGeneration, subscribeRuntimeAuthGeneration } from '@/lib/runtime-auth';
 import { openNativeVideoSource } from '@/lib/native-video';
 import { resolveImageSource, needsRuntimeImageStream, useRuntimeTransportIdentity } from '../imageSource';
+import { isAudioSource } from '../video';
 import { MediaSaveButton } from './MediaSaveButton';
 import { MediaPreviewToolbar, PreviewCloseButton } from './MediaPreviewOverlay';
 import type { ToolPopupContent } from './types';
@@ -76,13 +77,15 @@ export function VideoPreviewDialog({ video, onClose, isMobile }: {
   const source = needsBlob ? (activeNative?.url || resource.data?.url || (objectUrl?.blob === resource.data?.blob ? objectUrl?.url : '')) : resolved.source;
   const [failedSource, setFailedSource] = React.useState<string>();
   const failed = activeNative?.error || resource.isError || Boolean(source && failedSource === source);
+  const audio = !video.mimeType?.toLowerCase().startsWith('video/') && isAudioSource(video.filename || video.url, video.mimeType);
+  const MediaElement = audio ? 'audio' : 'video';
 
   return <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4">
     <PreviewCloseButton onClose={onClose} isMobile={isMobile} />
     {!source && !failed && <p role="status">{t('common.loading')}</p>}
     {failed && <p role="alert">{t('filesView.error.readFileFailed')}</p>}
-    {source && <video key={source} src={source} controls playsInline preload="metadata"
-      aria-label={video.filename} className="max-h-[80dvh] w-full max-w-5xl object-contain"
+    {source && <MediaElement key={source} src={source} controls playsInline preload="metadata"
+      aria-label={video.filename} className={audio ? 'w-full max-w-xl' : 'max-h-[80dvh] w-full max-w-5xl object-contain'}
       onLoadedMetadata={(event) => {
         if (resumeTimeRef.current !== null && Number.isFinite(resumeTimeRef.current)) {
           event.currentTarget.currentTime = resumeTimeRef.current;
@@ -106,7 +109,7 @@ export function VideoPreviewDialog({ video, onClose, isMobile }: {
       }}
       controlsList="nodownload" onContextMenu={(event) => event.preventDefault()}
     />}
-    <MediaPreviewToolbar isMobile={isMobile}><MediaSaveButton isMobile={isMobile} key={sourceKey} target={{ kind: 'video', sourceUrl: video.url,
+    <MediaPreviewToolbar isMobile={isMobile}><MediaSaveButton isMobile={isMobile} key={sourceKey} target={{ kind: audio ? 'audio' : 'video', sourceUrl: video.url,
       displayUrl: activeNative?.url || resource.data?.url ? undefined : source, filename: video.filename,
       mimeType: video.mimeType, effectiveDirectory: directory, prefetchedBlob: resource.data?.blob }} /></MediaPreviewToolbar>
   </div>;

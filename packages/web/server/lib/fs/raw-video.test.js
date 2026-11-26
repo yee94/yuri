@@ -73,3 +73,30 @@ test('raw video supports first-byte probing, tail seeking, HEAD and unsatisfiabl
   expect(invalid.status).toBe(416);
   expect(invalid.headers.get('content-range')).toBe('bytes */10');
 });
+
+test('raw audio carries a playable audio MIME and serves byte ranges', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yuri-audio-range-'));
+  cleanups.push(() => fs.rm(directory, { recursive: true, force: true }));
+  const app = express();
+  registerFsRoutes({ get: (route, handler) => { if (route === '/api/fs/raw') app.get(route, handler); }, post() {}, put() {} }, {
+    os, path, fsPromises: fs, spawn() {}, crypto: globalThis.crypto,
+    normalizeDirectoryPath: value => value, resolveProjectDirectory: async () => ({ directory }),
+    buildAugmentedPath: () => '', resolveGitBinaryForSpawn: () => 'git', yuriUserConfigRoot: directory,
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  cleanups.push(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
+  for (const [name, mime] of [['song.mp3', 'audio/mpeg'], ['voice.m4a', 'audio/mp4'], ['take.wav', 'audio/wav'], ['track.flac', 'audio/flac']]) {
+    const file = path.join(directory, name);
+    await fs.writeFile(file, Buffer.from('0123456789'));
+    const url = `http://127.0.0.1:${server.address().port}/api/fs/raw?path=${encodeURIComponent(file)}`;
+    const full = await fetch(url);
+    expect(full.headers.get('content-type')).toContain(mime);
+    expect(full.headers.get('accept-ranges')).toBe('bytes');
+    await full.arrayBuffer();
+    const ranged = await fetch(url, { headers: { Range: 'bytes=2-4' } });
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get('content-range')).toBe('bytes 2-4/10');
+    expect(await ranged.text()).toBe('234');
+  }
+});

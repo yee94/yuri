@@ -17,7 +17,11 @@ class YuriMediaPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "saveImage", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "transcode", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stageFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveStagedFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "discardStagedFile", returnType: CAPPluginReturnPromise),
     ]
+    private let stageQueue = DispatchQueue(label: "com.yuri.media.stage", qos: .userInitiated)
 
     private let maxBytes = 32 * 1024 * 1024
     private let transcodeQueue = DispatchQueue(label: "com.yuri.media.transcode", qos: .userInitiated)
@@ -155,19 +159,95 @@ class YuriMediaPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject(error.localizedDescription)
             return
         }
+        presentSavePicker(call, fileURL: tempURL)
+    }
 
+    @objc func stageFile(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), Self.isValidStageId(id) else {
+            call.reject("A valid id is required")
+            return
+        }
+        guard let dataBase64 = call.getString("dataBase64"), !dataBase64.isEmpty else {
+            call.reject("dataBase64 is required")
+            return
+        }
+        let append = call.getBool("append") ?? false
+        let url = Self.stagedURL(id)
+        stageQueue.async {
+            do {
+                guard let data = Data(base64Encoded: dataBase64, options: [.ignoreUnknownCharacters]) else {
+                    throw NSError(domain: "YuriMedia", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid base64"])
+                }
+                if append, let handle = try? FileHandle(forWritingTo: url) {
+                    defer { try? handle.close() }
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: data)
+                } else {
+                    try data.write(to: url)
+                }
+                call.resolve()
+            } catch {
+                try? FileManager.default.removeItem(at: url)
+                call.reject(error.localizedDescription)
+            }
+        }
+    }
+
+    @objc func saveStagedFile(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), Self.isValidStageId(id) else {
+            call.reject("A valid id is required")
+            return
+        }
+        let staged = Self.stagedURL(id)
+        let size = (try? FileManager.default.attributesOfItem(atPath: staged.path)[.size] as? NSNumber)?.intValue ?? 0
+        guard size > 0 else {
+            call.reject("File data is empty")
+            return
+        }
+        let filename = Self.sanitizeFilename(call.getString("filename") ?? "export.bin")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("staged-\(id)", isDirectory: true)
+        let named = dir.appendingPathComponent(filename)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: named)
+            try FileManager.default.moveItem(at: staged, to: named)
+        } catch {
+            try? FileManager.default.removeItem(at: staged)
+            call.reject(error.localizedDescription)
+            return
+        }
+        presentSavePicker(call, fileURL: named, cleanupURL: dir)
+    }
+
+    @objc func discardStagedFile(_ call: CAPPluginCall) {
+        if let id = call.getString("id"), Self.isValidStageId(id) {
+            try? FileManager.default.removeItem(at: Self.stagedURL(id))
+        }
+        call.resolve()
+    }
+
+    private static func isValidStageId(_ id: String) -> Bool {
+        id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil
+    }
+
+    private static func stagedURL(_ id: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("staged-\(id).bin")
+    }
+
+    private func presentSavePicker(_ call: CAPPluginCall, fileURL: URL, cleanupURL: URL? = nil) {
+        let cleanup = cleanupURL ?? fileURL
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             guard let presenter = self.bridge?.viewController else {
-                try? FileManager.default.removeItem(at: tempURL)
+                try? FileManager.default.removeItem(at: cleanup)
                 call.reject("No view controller to present the save picker")
                 return
             }
 
-            let picker = UIDocumentPickerViewController(forExporting: [tempURL], asCopy: true)
+            let picker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
             picker.shouldShowFileExtensions = true
             let delegate = SaveFilePickerDelegate { [weak self] saved in
-                try? FileManager.default.removeItem(at: tempURL)
+                try? FileManager.default.removeItem(at: cleanup)
                 self?.saveFileDelegate = nil
                 call.resolve(["cancelled": !saved])
             }

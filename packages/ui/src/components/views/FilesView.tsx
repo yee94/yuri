@@ -9,6 +9,7 @@ import { ImageLoadingPlaceholder } from '@/components/ui/ImageLoadingPlaceholder
 import { useEvent } from '@reactuses/core';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { acquireRuntimeImage, directFileResource, readRuntimeFile, readRuntimeFileBlob } from '@/lib/runtime-file-resource';
+import { isRelayModeActive } from '@/lib/relay/runtime-tunnel';
 import { queryClient } from '@/lib/queryRuntime';
 import { fileSearchQueryOptions } from '@/queries/fileQueries';
 import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
@@ -764,6 +765,8 @@ export const FilesView: React.FC<FilesViewProps> = (props) => {
 const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = true, targetPath }) => {
   const { t } = useI18n();
   const { files, runtime, projectScope } = useRuntimeAPIs();
+  // Relay hosts are reachable only through the runtimeFetch tunnel, so browser-owned asset URLs cannot load there.
+  const readsImageBytes = runtime.isDesktop || Boolean(projectScope) || isRelayModeActive();
   const { currentTheme, availableThemes, lightThemeId, darkThemeId } = useThemeSystem();
   const { isMobile, isTablet, screenWidth } = useDeviceInfo({ includeScreenWidth: true });
   const alwaysShowActions = isMobile || isTablet;
@@ -1906,7 +1909,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     }
 
     // Desktop: binary images are loaded via readFileBinary (data URL).
-    if ((runtime.isDesktop || projectScope) && selectedIsImage && !isSvg) {
+    if (readsImageBytes && selectedIsImage && !isSvg) {
       setFileContent('');
       setDraftContent('');
       setFileLoading(true);
@@ -1914,7 +1917,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     }
 
     // Web: binary images should not be read as utf8.
-    if (!runtime.isDesktop && !projectScope && selectedIsImage && !isSvg) {
+    if (!readsImageBytes && selectedIsImage && !isSvg) {
       setFileContent('');
       setDraftContent('');
       setLoadedFilePath(node.path);
@@ -3283,7 +3286,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     [lightTheme.metadata.id, darkTheme.metadata.id],
   );
 
-  const imageAssetAuthKey = selectedFile?.path && isSelectedImage && !runtime.isDesktop && !projectScope && !isSelectedSvg
+  const imageAssetAuthKey = selectedFile?.path && isSelectedImage && !readsImageBytes && !isSelectedSvg
     ? `${selectedFile.path}|${selectedFileReadOptions.allowOutsideWorkspace ? 'outside' : 'workspace'}|${selectedFileReadOptions.outsideFileGrant ?? ''}`
     : '';
 
@@ -3325,7 +3328,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
   const isPdfAssetAuthLoading = Boolean(projectPdfKey ? projectPdfSource?.key !== projectPdfKey : pdfAssetAuthKey && !isDirectPdfReady);
 
   const imageSrc = selectedFile?.path && isSelectedImage
-    ? (runtime.isDesktop || projectScope
+    ? (readsImageBytes
       ? (isSelectedSvg
         ? `data:${getImageMimeType(selectedFile.path)};utf8,${encodeURIComponent(fileContent)}`
         : desktopImageSrc)
@@ -3414,7 +3417,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
     let releaseProjectImage: (() => void) | undefined;
 
     const resolveDesktopImage = async () => {
-      if ((!runtime.isDesktop && !projectScope) || !selectedFile?.path || !isSelectedImage || isSelectedSvg) {
+      if (!readsImageBytes || !selectedFile?.path || !isSelectedImage || isSelectedSvg) {
         if (desktopImageBlobUrlRef.current) {
           URL.revokeObjectURL(desktopImageBlobUrlRef.current);
           desktopImageBlobUrlRef.current = '';
@@ -3484,7 +3487,7 @@ const FilesViewContent: React.FC<FilesViewProps> = ({ mode = 'full', isActive = 
       imageReadController.abort();
       releaseProjectImage?.();
     };
-  }, [files, isSelectedImage, isSelectedSvg, root, runtime.isDesktop, selectedFile?.path, selectedFileReadOptions, t, projectScope]);
+  }, [files, isSelectedImage, isSelectedSvg, root, readsImageBytes, selectedFile?.path, selectedFileReadOptions, t, projectScope]);
 
   React.useEffect(() => {
     return () => {

@@ -6,7 +6,7 @@ import { ImageLoadingPlaceholder } from '@/components/ui/ImageLoadingPlaceholder
 import { Icon } from '@/components/icon/Icon'
 import { useResolvedImageSource, useRuntimeTransportIdentity } from '@/components/chat/imageSource'
 import type { ToolPopupContent } from '@/components/chat/message/types'
-import { isVideoSource } from '@/components/chat/video'
+import { isMediaSource } from '@/components/chat/video'
 import { getAssistantAttachmentBlob, getAssistantAttachmentDisplay } from '@/lib/assistant-attachment-cache'
 import type { AssistantAttachmentDescriptor } from '@/lib/assistant-attachment-upload'
 import type { AssistantContactFilePart } from '@/queries/assistantDTO'
@@ -27,7 +27,7 @@ function CachedAttachment({ assistantID, descriptor, onShowPopup, onOpenImage }:
   const { attachmentID, sha256, size, mime, filename } = descriptor
   const stableDescriptor = React.useMemo(() => ({ type: 'file' as const, attachmentID, sha256, size, mime, filename }), [attachmentID, sha256, size, mime, filename])
   const image = mime.startsWith('image/')
-  const video = isVideoSource(filename ?? '', mime)
+  const video = isMediaSource(filename ?? '', mime)
   const [attempt, setAttempt] = React.useState(0)
   const [url, setUrl] = React.useState('')
   const [failed, setFailed] = React.useState(false)
@@ -131,7 +131,7 @@ function LegacyAttachment({ part, onShowPopup }: { part: AssistantContactFilePar
       image: { url: source, filename: name, gallery: [{ url: source, filename: name }], index: 0 },
     })
   })
-  if (isVideoSource(safeSource, part.mime) && safeSource && onShowPopup) return (
+  if (isMediaSource(safeSource, part.mime) && safeSource && onShowPopup) return (
     <Button variant="secondary" size="sm" onClick={() => onShowPopup({
       open: true, title: part.filename || t('assistants.contact.attachment.file'), content: '',
       video: { url: safeSource, filename: part.filename, mimeType: part.mime },
