@@ -310,6 +310,8 @@ export function createAssistantChannelsRuntime({
             const live = store.get(binding.assistant_id, binding.provider);
             // A late ready callback must not resurrect a replaced/auth-sticky lane.
             if (!live || live.epoch !== binding.epoch || isSticky(live)) return;
+            // The lane starts from this connection; never flush proactive backlog.
+            store.dropProactive(binding.epoch);
             entry.ready = true;
             failures = 0;
             store.patch(binding.epoch, {
@@ -438,7 +440,8 @@ export function createAssistantChannelsRuntime({
       return;
     }
     const deliveries = [];
-    const receiverSignal = receivers.get(channelKey(binding.assistant_id, binding.provider))?.controller.signal;
+    const receiver = receivers.get(channelKey(binding.assistant_id, binding.provider));
+    const receiverSignal = receiver?.controller.signal;
     const signal = receiverSignal ? AbortSignal.any([lifetime.signal, receiverSignal]) : lifetime.signal;
     const assertCurrent = () => {
       if (!isCurrent(binding) || service.channelPage(binding.assistant_id, { tipOnly: true }).generation !== page.generation) throw new ChannelError('cancelled');
@@ -446,6 +449,8 @@ export function createAssistantChannelsRuntime({
     for (const message of page.messages) {
       const receipt = store.receipt(message.turnID, binding.epoch);
       if (isMessageChannelTurn(message.turnID) && !receipt) continue;
+      // Proactive output produced while this lane is not live is skipped, not backfilled.
+      if (!receipt && !receiver?.ready) continue;
       // A channel reply uses its own durable sender, not another later sender.
       if (receipt && !receipt.target && !binding.owner_id) continue;
       const output = await prepareChannelOutput(message, { service, assistantID: binding.assistant_id,
@@ -453,7 +458,7 @@ export function createAssistantChannelsRuntime({
       deliveries.push(...output.map((part, index) => ({
         id: `yuri_${digest(`${binding.epoch}:${page.generation}:${message.messageID}:${index}`)}`,
         ...part,
-        ...(receipt ? { target: receipt.target || '' } : {}),
+        ...(receipt ? { target: receipt.target || '' } : { proactive: true }),
       })));
     }
     assertCurrent();
@@ -533,7 +538,7 @@ export function createAssistantChannelsRuntime({
         } else {
           store.failDelivery(delivery.id);
           if (delivery.image && delivery.attempts >= 2) {
-            store.enqueue(binding.epoch, `${delivery.id}:image-failed`, channelImageFailure(binding.language), delivery.target);
+            store.enqueue(binding.epoch, `${delivery.id}:image-failed`, channelImageFailure(binding.language), delivery.target, '', delivery.proactive === 1);
           }
           // A send failure never proves the connection is ready/connected.
           store.patch(binding.epoch, {

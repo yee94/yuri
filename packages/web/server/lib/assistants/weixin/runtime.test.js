@@ -225,6 +225,32 @@ describe('Weixin Host runtime', () => {
     expect(f.api.sendText.mock.calls.filter(([, delivery]) => delivery.text === 'Note saved')).toHaveLength(1);
   });
 
+  it('never backfills proactive output produced while no reply context was live', async () => {
+    const f = fixture();
+    await f.bind();
+    f.reply('bot', 'missed without context', 1);
+    await vi.waitFor(() => expect(f.service.channelPage).toHaveBeenCalledWith('bot', expect.objectContaining({ afterOrdinal: 1 })), { interval: 10 });
+    f.updates.push([inbound('wake')]);
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledOnce());
+    f.pages.get('bot').messages.push({ ordinal: 2, messageID: 'live', text: 'live result', cards: [], status: 'complete' });
+    await vi.waitFor(() => expect(f.api.sendText).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(f.api.sendText.mock.calls.map(([, delivery]) => delivery.text)).toEqual(['live result']);
+  });
+
+  it('drops blocked proactive output when a new reply context arrives instead of resending it', async () => {
+    const f = fixture({ configureAPI: (api) => api.sendText.mockRejectedValueOnce(new WeixinError('reply_unavailable')) });
+    f.updates.push([inbound()]);
+    await f.bind();
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledOnce());
+    f.reply('bot', 'expired push', 1);
+    await vi.waitFor(() => expect(f.runtime.status('bot').error).toBe('reply_unavailable'));
+    f.updates.push([inbound('next')]);
+    await vi.waitFor(() => expect(f.service.send).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(f.api.sendText.mock.calls.map(([, delivery]) => delivery.text)).toEqual(['expired push']);
+  });
+
   it('shutdown cancels a hanging platform read before closing storage', async () => {
     const f = fixture({ configureAPI: (api) => api.getUpdates.mockImplementation((_binding, signal) => abortable(signal)) });
     await f.bind();

@@ -110,7 +110,10 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
         if (signal.aborted || !isCurrent(binding)) return;
         // Persist receipt and context before acknowledging the platform cursor.
         store.accept(binding, cursor || binding.cursor, messages);
-        if (messages.some((message) => message.context)) store.unblock(binding.epoch);
+        if (messages.some((message) => message.context)) {
+          store.dropProactive(binding.epoch);
+          store.unblock(binding.epoch);
+        }
         const lastError = store.get(binding.assistant_id)?.error;
         store.patch(binding.epoch, {
           status: 'connected', error: store.hasUnknown(binding.epoch) ? 'delivery_unknown'
@@ -177,12 +180,17 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
     const assertCurrent = () => {
       if (!isCurrent(binding) || service.channelPage(binding.assistant_id, { tipOnly: true }).generation !== page.generation) throw new WeixinError('cancelled');
     };
+    // Proactive output produced while the reply lane is not live is skipped, not backfilled.
+    const live = binding.status === 'connected' && Boolean(binding.context_token) && !store.hasBlocked(binding.epoch);
     for (const message of page.messages) {
-      if (isMessageChannelTurn(message.turnID) && !store.hasReceipt(message.turnID, binding.epoch)) continue;
+      const reply = isMessageChannelTurn(message.turnID);
+      if (reply && !store.hasReceipt(message.turnID, binding.epoch)) continue;
+      if (!reply && !live) continue;
       const output = await prepareChannelOutput(message, { service, assistantID: binding.assistant_id,
         generation: page.generation, language: binding.language, failureText: feedback(binding.language, 'failed'), signal, assertCurrent });
       deliveries.push(...output.map((part, index) => ({
         id: `yuri_${digest(`${binding.epoch}:${page.generation}:${message.messageID}:${index}`)}`, ...part,
+        ...(reply ? {} : { proactive: true }),
       })));
     }
     assertCurrent();
@@ -227,7 +235,7 @@ export function createWeixinRuntime({ directory, service, refreshAllowedRoots = 
       // Network ambiguity is user-retryable, not an automatic duplicate reply.
       store.markDelivery(delivery.id, error?.ambiguous ? 'unknown' : 'blocked');
       if (delivery.image && !error?.ambiguous) {
-        store.enqueue(binding.epoch, `${delivery.id}:image-failed`, channelImageFailure(binding.language));
+        store.enqueue(binding.epoch, `${delivery.id}:image-failed`, channelImageFailure(binding.language), '', delivery.proactive === 1);
       }
       setError(binding, error?.ambiguous ? new WeixinError('delivery_unknown') : error);
     }

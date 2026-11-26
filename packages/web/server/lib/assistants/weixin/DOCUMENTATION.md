@@ -225,6 +225,11 @@ it and definitively blocked replies remain durable but do not block later pendin
 output, Bot execution or receiving. Later successful sends do not hide unresolved
 delivery errors. New inbound context may unblock a known rejected reply but never
 automatically retries an unknown send.
+Source-less proactive output (scheduled results, background notifications) is
+queued only while the lane is live: `connected`, with a reply context and no
+blocked row. Output produced outside that window is skipped while the feed cursor
+advances, and new inbound context deletes pending/blocked proactive rows before
+unblocking replies, so a returning user never receives a backlog of old pushes.
 Authentication expiry stays expired until new authorization; receiver network errors
 retry with 1–30 second capped backoff. Users can manually retry other blocked sends.
 The platform's reply-context lifetime and active-push quota are not specified here.

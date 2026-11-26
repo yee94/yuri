@@ -77,6 +77,9 @@ export function createAssistantChannelStore(directory) {
   if (!db.prepare("SELECT name FROM pragma_table_info('outbox')").all().some((column) => column.name === 'image')) {
     db.exec("ALTER TABLE outbox ADD COLUMN image TEXT NOT NULL DEFAULT ''");
   }
+  if (!db.prepare("SELECT name FROM pragma_table_info('outbox')").all().some((column) => column.name === 'proactive')) {
+    db.exec('ALTER TABLE outbox ADD COLUMN proactive INTEGER NOT NULL DEFAULT 0');
+  }
 
   const get = (assistantID, provider) => db.prepare(
     'SELECT * FROM channel WHERE assistant_id=? AND provider=?',
@@ -88,9 +91,9 @@ export function createAssistantChannelStore(directory) {
     db.prepare(`UPDATE channel SET ${keys.map((key) => `${key}=?`).join(',')} WHERE epoch=?`)
       .run(...keys.map((key) => values[key]), epoch);
   };
-  const enqueue = (epoch, id, text, target = '', image = '') => db.prepare(
-    'INSERT OR IGNORE INTO outbox(id,epoch,target,text,image) VALUES (?,?,?,?,?)',
-  ).run(id, epoch, target, text, image);
+  const enqueue = (epoch, id, text, target = '', image = '', proactive = false) => db.prepare(
+    'INSERT OR IGNORE INTO outbox(id,epoch,target,text,image,proactive) VALUES (?,?,?,?,?,?)',
+  ).run(id, epoch, target, text, image, proactive ? 1 : 0);
   const dropChannelQueues = (epoch) => {
     db.prepare('DELETE FROM inbox WHERE epoch=?').run(epoch);
     db.prepare('DELETE FROM outbox WHERE epoch=?').run(epoch);
@@ -99,6 +102,7 @@ export function createAssistantChannelStore(directory) {
   return {
     get,
     patch,
+    enqueue,
     listByAssistant: (assistantID) => db.prepare(
       'SELECT * FROM channel WHERE assistant_id=? ORDER BY provider',
     ).all(assistantID),
@@ -199,7 +203,7 @@ export function createAssistantChannelStore(directory) {
         db.prepare('DELETE FROM outbox WHERE epoch=?').run(binding.epoch);
       }
       for (const delivery of deliveries) {
-        enqueue(binding.epoch, delivery.id, delivery.text, delivery.target ?? current.target ?? '', delivery.image ? JSON.stringify(delivery.image) : '');
+        enqueue(binding.epoch, delivery.id, delivery.text, delivery.target ?? current.target ?? '', delivery.image ? JSON.stringify(delivery.image) : '', delivery.proactive);
       }
       db.prepare('UPDATE channel SET generation=?,ordinal=?,updated_at=? WHERE epoch=?')
         .run(page.generation, page.ordinal, updatedAt, binding.epoch);
@@ -224,6 +228,11 @@ export function createAssistantChannelStore(directory) {
     ).get(epoch)),
     retry: (epoch) => db.prepare(
       "UPDATE outbox SET state='pending',attempts=0 WHERE epoch=? AND state='blocked'",
+    ).run(epoch),
+    // Proactive output is never backfilled after a disconnect; replies to
+    // this channel's own input stay queued.
+    dropProactive: (epoch) => db.prepare(
+      "DELETE FROM outbox WHERE epoch=? AND proactive=1 AND state IN ('pending','blocked')",
     ).run(epoch),
     unlink: db.transaction((assistantID, provider) => {
       const binding = get(assistantID, provider);

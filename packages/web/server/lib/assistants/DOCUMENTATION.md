@@ -168,7 +168,9 @@ while keeping them in the Yuri transcript. The feed cursor still advances over
 excluded rows. Routing uses the original admission, never the latest user message;
 existing stored transcripts need no migration. External-channel turns retain their
 receipt-owned routing, and source-less proactive turns such as scheduled-task
-result reviews remain eligible for delivery to all bound channels.
+result reviews remain eligible for delivery to all bound channels, but only to
+lanes that are live when the output is produced. A disconnect or expired reply
+context is never backfilled with proactive output on reconnect.
 Internal card parts (`session`, `assistant`, `schedule` and future card types) are
 unsupported channel output and silently skipped by the shared projector. They are
 not downgraded to titles, anchors or deeplinks, do not enter the outbox and do not

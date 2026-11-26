@@ -592,19 +592,45 @@ describe('enterprise channel runtime', () => {
     expect(f.adapter.send.mock.calls[0][0].text).toBe('new owner reply');
   });
 
-  it('does not send before the adapter authenticates and resumes durable output on ready', async () => {
+  it('does not send before the adapter authenticates and never backfills proactive output from that gap', async () => {
     const f = fixture({ autoReady: false, intervalMs: 10 });
     await f.save();
     f.pages.set('bot', {
       generation: 0,
-      messages: [{ ordinal: 1, messageID: 'r1', text: 'queued reply', cards: [], status: 'complete' }],
+      messages: [{ ordinal: 1, messageID: 'r1', text: 'missed while offline', cards: [], status: 'complete' }],
     });
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(f.adapter.send).not.toHaveBeenCalled();
     expect(f.runtime.status('bot', 'wecom').status).toBe('connecting');
     f.connections.at(-1).onReady();
+    await f.connected();
+    f.pages.get('bot').messages.push({ ordinal: 2, messageID: 'r2', text: 'live result', cards: [], status: 'complete' });
     await vi.waitFor(() => expect(f.adapter.send).toHaveBeenCalledTimes(1), { interval: 10 });
-    expect(f.adapter.send.mock.calls[0][0].text).toBe('queued reply');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(f.adapter.send.mock.calls.map(([part]) => part.text)).toEqual(['live result']);
+  });
+
+  it('drops queued proactive output on reconnect but keeps replies to this channel input', async () => {
+    const directory = root();
+    const store = createAssistantChannelStore(directory);
+    let epoch;
+    try {
+      const binding = store.bind({ assistant_id: 'bot', provider: 'wecom', client_id: 'client', client_secret: 'secret', owner_id: 'owner', language: 'zh-CN', generation: 0, ordinal: 5, updated_at: 1 });
+      epoch = binding.epoch;
+      store.enqueue(epoch, 'stale-proactive', 'stale result', '', '', true);
+      store.enqueue(epoch, 'blocked-proactive', 'blocked result', '', '', true);
+      store.markDelivery('blocked-proactive', 'blocked');
+      store.enqueue(epoch, 'own-reply', 'own reply', JSON.stringify({ userID: 'owner' }));
+    } finally { store.close(); }
+    const f = fixture({ directory, autoReady: false });
+    await vi.waitFor(() => expect(f.connections).toHaveLength(1), { interval: 10 });
+    f.connections.at(-1).onReady();
+    await vi.waitFor(() => expect(f.adapter.send).toHaveBeenCalledTimes(1), { interval: 10 });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(f.adapter.send.mock.calls.map(([part]) => part.text)).toEqual(['own reply']);
+    const db = new Database(path.join(directory, 'channel.sqlite'));
+    try { expect(db.prepare('SELECT id FROM outbox WHERE epoch=? ORDER BY sequence').all(epoch).map((row) => row.id)).toEqual(['own-reply']); }
+    finally { db.close(); }
   });
 
   it('acknowledges a durable duplicate at the backlog limit instead of rejecting it', async () => {

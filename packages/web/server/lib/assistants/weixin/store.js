@@ -40,6 +40,9 @@ export function createWeixinStore(directory) {
   if (!db.prepare('PRAGMA table_info(outbox)').all().some((column) => column.name === 'image')) {
     db.exec("ALTER TABLE outbox ADD COLUMN image TEXT NOT NULL DEFAULT ''");
   }
+  if (!db.prepare('PRAGMA table_info(outbox)').all().some((column) => column.name === 'proactive')) {
+    db.exec('ALTER TABLE outbox ADD COLUMN proactive INTEGER NOT NULL DEFAULT 0');
+  }
   const get = (assistantID) => db.prepare('SELECT * FROM binding WHERE assistant_id=?').get(assistantID) ?? null;
   const patch = (epoch, values) => {
     const allowed = new Set(['cursor', 'context_token', 'generation', 'ordinal', 'status', 'error', 'updated_at']);
@@ -47,7 +50,7 @@ export function createWeixinStore(directory) {
     if (!keys.length) return;
     db.prepare(`UPDATE binding SET ${keys.map((key) => `${key}=?`).join(',')} WHERE epoch=?`).run(...keys.map((key) => values[key]), epoch);
   };
-  const enqueue = (epoch, id, text, image = '') => db.prepare('INSERT OR IGNORE INTO outbox(id,epoch,text,image) VALUES (?,?,?,?)').run(id, epoch, text, image);
+  const enqueue = (epoch, id, text, image = '', proactive = false) => db.prepare('INSERT OR IGNORE INTO outbox(id,epoch,text,image,proactive) VALUES (?,?,?,?,?)').run(id, epoch, text, image, proactive ? 1 : 0);
   const unlink = db.transaction((assistantID) => {
     const binding = get(assistantID);
     if (!binding) return;
@@ -104,7 +107,7 @@ export function createWeixinStore(directory) {
     collect: db.transaction((binding, page, deliveries) => {
       if (get(binding.assistant_id)?.epoch !== binding.epoch) return;
       if (binding.generation !== page.generation) db.prepare('DELETE FROM outbox WHERE epoch=?').run(binding.epoch);
-      for (const delivery of deliveries) enqueue(binding.epoch, delivery.id, delivery.text, delivery.image ? JSON.stringify(delivery.image) : '');
+      for (const delivery of deliveries) enqueue(binding.epoch, delivery.id, delivery.text, delivery.image ? JSON.stringify(delivery.image) : '', delivery.proactive);
       patch(binding.epoch, { generation: page.generation, ordinal: page.ordinal });
     }),
     nextDelivery: (epoch) => db.prepare("SELECT * FROM outbox WHERE epoch=? AND state='pending' ORDER BY sequence LIMIT 1").get(epoch),
@@ -112,6 +115,8 @@ export function createWeixinStore(directory) {
     sent: (id) => db.prepare("UPDATE outbox SET state='sent',text='',image='' WHERE id=?").run(id),
     retry: (epoch) => db.prepare("UPDATE outbox SET state='pending' WHERE epoch=? AND state IN ('unknown','blocked')").run(epoch),
     unblock: (epoch) => db.prepare("UPDATE outbox SET state='pending' WHERE epoch=? AND state='blocked'").run(epoch),
+    // Proactive output is never backfilled once the reply context returns.
+    dropProactive: (epoch) => db.prepare("DELETE FROM outbox WHERE epoch=? AND proactive=1 AND state IN ('pending','blocked')").run(epoch),
     hasUnknown: (epoch) => Boolean(db.prepare("SELECT 1 FROM outbox WHERE epoch=? AND state='unknown' LIMIT 1").get(epoch)),
     hasBlocked: (epoch) => Boolean(db.prepare("SELECT 1 FROM outbox WHERE epoch=? AND state='blocked' LIMIT 1").get(epoch)),
     acquire: (owner, now) => Boolean(db.prepare(`INSERT INTO lease(id,owner,expires_at) VALUES (1,?,?)

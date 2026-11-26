@@ -275,6 +275,12 @@ removes all three rows, receipts and deliveries in one transaction.
   them from every external channel. Only proactive turns without a channel origin,
   such as scheduled-task result reviews, may be pushed to all eligible bound
   platforms. Selection never uses the latest conversation turn.
+  Proactive output is queued (outbox `proactive=1`) only while the lane has
+  reported `onReady`; output produced while disconnected is skipped and the feed
+  watermark still advances. Each `onReady` deletes pending/blocked proactive rows
+  before sending, so a reconnect starts from that moment instead of flushing a
+  backlog. Replies to this channel's own admitted input, and their
+  interrupted/failed notices, stay queued across reconnects.
   Each enterprise receipt keeps its own private reply target, so a later sender
   cannot redirect an earlier reply. The inbox target column is added in place for
   existing databases; legacy receipts without a target and without a fixed owner
