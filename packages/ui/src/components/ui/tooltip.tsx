@@ -78,6 +78,8 @@ function Tooltip({
   ...props
 }: TooltipRootProps) {
   const [longPressOpen, setLongPressOpen] = React.useState(false)
+  const [rootGeneration, setRootGeneration] = React.useState(0)
+  const openRef = React.useRef(false)
   const longPressTimeoutRef = React.useRef<number | null>(null)
   const closeTimeoutRef = React.useRef<number | null>(null)
   const startPointRef = React.useRef<{ x: number; y: number } | null>(null)
@@ -101,6 +103,7 @@ function Tooltip({
 
   const setTooltipOpen = React.useCallback((nextOpen: boolean) => {
     if (!controlled) {
+      openRef.current = nextOpen
       setLongPressOpen(nextOpen)
     }
   }, [controlled])
@@ -173,11 +176,21 @@ function Tooltip({
     return () => {
       clearLongPressTimeout()
       clearCloseTimeout()
+      startPointRef.current = null
+      suppressClickRef.current = false
+      // A hidden React.Activity (cached session view) keeps an open tooltip open: the pointer-leave never
+      // arrives, and Base UI's store subscriptions miss changes made while hidden. Reset to a fresh root.
+      if (!controlled && openRef.current) {
+        openRef.current = false
+        setLongPressOpen(false)
+        setRootGeneration((generation) => generation + 1)
+      }
     }
-  }, [clearCloseTimeout, clearLongPressTimeout])
+  }, [clearCloseTimeout, clearLongPressTimeout, controlled])
 
   const handleOpenChange = React.useCallback((nextOpen: boolean, event: TooltipChangeEventDetails) => {
     if (!controlled) {
+      openRef.current = nextOpen
       setLongPressOpen(nextOpen)
     }
 
@@ -186,7 +199,7 @@ function Tooltip({
 
   const tooltip = (
     <LongPressTooltipContext.Provider value={contextValue}>
-      <BaseTooltip.Root open={tooltipOpen} onOpenChange={handleOpenChange} {...props} />
+      <BaseTooltip.Root key={rootGeneration} open={tooltipOpen} onOpenChange={handleOpenChange} {...props} />
     </LongPressTooltipContext.Provider>
   )
 

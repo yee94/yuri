@@ -30,7 +30,7 @@ import { isRuntimeInstanceChange, subscribeRuntimeEndpointChanged } from '@/lib/
 import { useGitRepoStatusMap, useGitStore } from '@/stores/useGitStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { isVSCodeRuntime } from '@/lib/desktop';
-import { sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
+import { formatWorktreeFooterLabel, sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
 import { NewWorktreeDialog } from './NewWorktreeDialog';
 import { ScheduledTasksDialogHost as ScheduledTasksDialog } from './ScheduledTasksDialogHost';
 import { ArchivedSessionsDialog } from '@/components/sections/yuri/ArchivedSessionsDialog';
@@ -1961,10 +1961,10 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       const projectPath = owner ? projectPathById.get(owner.projectId) ?? null : null;
       const projectGit = projectPath ? gitRepoStatus.get(projectPath) : undefined;
       const sessionWorktree = worktreeMetadata.get(session.id) ?? null;
-      const rawBranch = existing?.secondaryMeta?.branchLabel
+      const rawBranch = formatWorktreeFooterLabel(sessionWorktree)
+        ?? existing?.secondaryMeta?.branchLabel
         ?? (owner ? projectRootBranches.get(owner.projectId) : null)
         ?? projectGit?.branch
-        ?? (sessionWorktree as { branch?: string | null } | null)?.branch
         ?? null;
       const trimmedBranch = rawBranch?.trim() || null;
       const branchLabel = trimmedBranch && trimmedBranch !== "HEAD" && trimmedBranch !== projectLabel ? trimmedBranch : null;
