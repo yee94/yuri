@@ -130,6 +130,8 @@ const registry = {
   }
 };
 
+export const isQuotaProviderId = (id) => Object.hasOwn(registry, id);
+
 export const listConfiguredQuotaProviders = async () => {
   const configured = [];
 

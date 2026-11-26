@@ -263,19 +263,19 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
     }
     return refs;
   };
-  const favoriteModelsHost = (hostId) => {
+  const requireProjectHost = (hostId) => {
     if (!store.projects(hostId).length) throw remoteFailure('project_not_found', 404);
     return hostId;
   };
   app.get('/api/hosts/:hostId/model-favorites', async (req, res) => {
     try {
-      const settings = await gateway.json(favoriteModelsHost(req.params.hostId), '/api/config/settings', { signal: req.remoteHostSignal });
+      const settings = await gateway.json(requireProjectHost(req.params.hostId), '/api/config/settings', { signal: req.remoteHostSignal });
       res.json({ favoriteModels: readFavoriteModels(settings?.favoriteModels, false) });
     } catch (error) { report(res, error); }
   });
   app.put('/api/hosts/:hostId/model-favorites', parseMutation, async (req, res) => {
     try {
-      const hostId = favoriteModelsHost(req.params.hostId);
+      const hostId = requireProjectHost(req.params.hostId);
       const favoriteModels = readFavoriteModels(req.body?.favoriteModels, true);
       const settings = await gateway.json(hostId, '/api/config/settings', { method: 'PUT', signal: req.remoteHostSignal,
         headers: { 'content-type': 'application/json' }, body: JSON.stringify({ favoriteModels }) });
@@ -356,6 +356,33 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
   });
   app.post('/api/hosts/:hostId/api/preview/targets/:id/extend', parseMutation, (_req, _res, next) => next());
   app.delete('/api/hosts/:hostId/api/preview/targets/:id', parseMutation, (_req, _res, next) => next());
+  app.get('/api/hosts/:hostId/api/config/settings', async (req, res) => {
+    try {
+      const { usageDropdownProviders, usageSelectedModels, usageDisplayMode, usageAutoRefresh, usageRefreshIntervalMs } =
+        await gateway.json(requireProjectHost(req.params.hostId), '/api/config/settings', { signal: req.remoteHostSignal },
+          { instanceId: req.get('x-yuri-target-instance') });
+      if (!req.remoteHostSignal.aborted) {
+        res.json({ usageDropdownProviders, usageSelectedModels, usageDisplayMode, usageAutoRefresh, usageRefreshIntervalMs });
+      }
+    } catch (error) { if (!req.remoteHostSignal.aborted) report(res, error); }
+  });
+  app.get('/api/hosts/:hostId/api/quota/:providerId', async (req, res, next) => {
+    try {
+      const { hostId, providerId } = req.params;
+      const { isQuotaProviderId } = await import('../quota/providers/index.js');
+      if (providerId !== 'magpie' && !isQuotaProviderId(providerId)) return next();
+      requireProjectHost(hostId);
+      let route = `/api/quota/${providerId}`;
+      if (providerId === 'magpie') {
+        const directory = req.query.directory;
+        gateway.assertProjectDirectory(hostId, directory);
+        route += `?directory=${encodeURIComponent(directory)}`;
+      }
+      const usage = await gateway.json(hostId, route, { signal: req.remoteHostSignal },
+        { instanceId: req.get('x-yuri-target-instance') });
+      if (!req.remoteHostSignal.aborted) res.json(usage);
+    } catch (error) { if (!req.remoteHostSignal.aborted) report(res, error); }
+  });
   app.use('/api/hosts/:hostId', async (req, res) => {
     const controller = new AbortController();
     const abort = () => controller.abort();

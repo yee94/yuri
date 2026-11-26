@@ -545,6 +545,46 @@ describe('Remote Host production HTTP contract', () => {
     expect(remote.requests).toBe(before);
   });
 
+  it('reads mobile metadata usage from the selected remote project without exposing host settings or credential routes', async () => {
+    const { hub, remote } = await aggregate();
+    const prefix = '/api/hosts/remote-1';
+    const preferences = {
+      usageDropdownProviders: ['codex', 'magpie:source:codex'],
+      usageSelectedModels: { codex: ['model'] },
+      usageDisplayMode: 'remaining',
+      usageAutoRefresh: true,
+      usageRefreshIntervalMs: 60_000,
+    };
+    const quota = { providerId: 'codex', configured: true, ok: true };
+    remote.app.get('/api/config/settings', (_req, res) => res.json({ ...preferences, unrelatedSetting: 'private' }));
+    remote.app.get('/api/quota/codex', (_req, res) => res.json(quota));
+    remote.app.get('/api/quota/magpie', (req, res) => res.json({ directory: req.query.directory, sources: [] }));
+    expect((await hub.call(`${prefix}/projects`, 'POST', { path: '/remote/repo' })).status).toBe(200);
+    const mobile = await hub.clients.createClient({ clientKind: 'mobile', authMethod: 'pairing', pairingId: 'test-mobile' });
+    const callMobile = (route, method = 'GET') => fetch(`${hub.url}${prefix}${route}`, {
+      method, headers: { Authorization: `Bearer ${mobile.token}`, 'x-yuri-target-instance': remote.store.hubId },
+    });
+
+    for (const [route, expected] of [
+      ['/api/config/settings', preferences],
+      ['/api/quota/codex', quota],
+      ['/api/quota/magpie?directory=%2Fremote%2Frepo', { directory: '/remote/repo', sources: [] }],
+    ]) {
+      const response = await callMobile(route);
+      expect(response.status, route).toBe(200);
+      expect(await response.json()).toEqual(expected);
+    }
+    const forbidden = [
+      ['/api/config/settings', 'PUT'], ['/api/config/settings/bootstrap', 'GET'],
+      ['/api/quota/codex', 'POST'], ['/api/quota/providers', 'GET'],
+      ['/api/quota/credentials/codex', 'GET'], ['/api/quota/credentials/cursor/import', 'POST'],
+    ];
+    for (const [route, method] of forbidden) {
+      expect((await callMobile(route, method)).status, `${method} ${route}`).toBe(403);
+    }
+    expect((await callMobile('/api/quota/magpie?directory=%2Fother%2Frepo')).status).toBe(404);
+  });
+
   it('preserves the production terminal greeting while downstream authorization is completing', async () => {
     const { hub, remote } = await aggregate({ requireClientAuth: true, productionTerminal: true });
     const directFrames = [];
@@ -1721,6 +1761,16 @@ describe('Remote Host production HTTP contract', () => {
     const created = await hub.call('/api/hosts/relay-only/projects', 'POST', { path: '/same/path' });
     expect({ status: created.status, body: await created.json() }).toMatchObject({ status: 200,
       body: { project: { hostId: 'relay-only', path: '/same/path' } } });
+    if (iteration === 0) {
+      remote.app.get('/api/config/settings', (_req, res) => res.json({ usageDropdownProviders: ['codex'], unrelatedSetting: 'private' }));
+      remote.app.get('/api/quota/codex', (_req, res) => res.json({ providerId: 'codex', configured: true, ok: true }));
+      const settings = await hub.call('/api/hosts/relay-only/api/config/settings');
+      expect(settings.status).toBe(200);
+      expect(await settings.json()).toEqual({ usageDropdownProviders: ['codex'] });
+      const quota = await hub.call('/api/hosts/relay-only/api/quota/codex');
+      expect(quota.status).toBe(200);
+      expect(await quota.json()).toMatchObject({ providerId: 'codex', ok: true });
+    }
     const { hosts: authenticatedHosts } = await runRemoteProjectOperation(hub.gateway, 'remote-hosts', {});
     const target = authenticatedHosts[0].target;
     const registered = await runRemoteProjectOperation(hub.gateway, 'add-remote', { target, path: '/agent-relay-project' });

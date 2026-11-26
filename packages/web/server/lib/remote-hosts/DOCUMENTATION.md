@@ -96,6 +96,12 @@ patches. These are exact method/path capabilities, not a blanket
 allowance for `/api/yuri/sessions/*`; normal client/Host authorization and target
 authority fences still apply.
 
+For mobile session metadata, host-scoped `GET /api/config/settings` returns only
+usage display preferences. Host-scoped `GET /api/quota/:providerId` accepts
+registered quota providers and Magpie for an associated project directory.
+Both reads use the selected Host and its instance fence; quota credential routes
+and settings writes remain outside the client proxy.
+
 `task-client.js` exports `makeRemoteTaskOpenCodeClient(lease)` for trusted
 in-process Assistant and bound-project consumers. It preserves official SDK
 Request method, headers, JSON body, query and abort signal through `lease.request`.
