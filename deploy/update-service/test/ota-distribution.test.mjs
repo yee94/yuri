@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,6 +15,17 @@ import { onRequest as capgoCheck } from '../edge-functions/v1/ota/check.js';
 const exec = promisify(execFile);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const hash = (data) => createHash('sha256').update(data).digest('hex');
+const RELEASE = 'https://release.example.com/ota/bundles/';
+
+async function writeMetadata(output, assets) {
+  const channelsDirectory = path.join(output, 'ota/channels');
+  await mkdir(channelsDirectory, { recursive: true });
+  for (const name of ['/ota/channels/beta.json', '/ota/channels/stable.json', '/CHANGELOG.md']) {
+    const bytes = assets.get(name);
+    if (bytes) await writeFile(path.join(output, name), bytes);
+  }
+  return channelsDirectory;
+}
 
 function fixture() {
   const assets = new Map();
@@ -56,7 +67,7 @@ function fixture() {
   return assets;
 }
 
-function assetFetch(assets, { proxy = false, proxyChangelog = false, badRange = false, corruptRange = false, changedManifest = false } = {}) {
+function assetFetch(assets, { proxy = false, proxyChangelog = false, badRange = false, corruptRange = false } = {}) {
   const calls = [];
   let inFlight = 0;
   let maxInFlight = 0;
@@ -65,10 +76,6 @@ function assetFetch(assets, { proxy = false, proxyChangelog = false, badRange = 
     calls.push({ origin: url.origin, path: url.pathname, range: init.headers?.Range });
     const data = assets.get(url.pathname);
     if (!data) return new Response('missing', { status: 404 });
-    if (changedManifest && url.pathname === '/ota/channels/beta.json'
-      && calls.filter((call) => call.path === url.pathname).length > 1) {
-      return new Response(JSON.stringify({ ...JSON.parse(data), generation: 4 }));
-    }
     const headers = proxy || (proxyChangelog && url.pathname === '/CHANGELOG.md') ? { 'x-ota-proxy': 'edgeone' } : {};
     if (init.headers?.Range && !badRange) {
       const end = Number(init.headers.Range.match(/-(\d+)/)[1]);
@@ -95,13 +102,21 @@ test('complete EdgeOne snapshot retains both channels, majors, encrypted/mobile/
   const assets = fixture();
   const source = assetFetch(assets);
   try {
-    const marker = await mirrorOtaDistribution({ outputDirectory: dir, upstreamOrigin: 'https://origin.example.com', ...source });
+    const channelsDirectory = await writeMetadata(dir, assets);
+    const marker = await mirrorOtaDistribution({ outputDirectory: dir, channelsDirectory, bundleBaseUrl: RELEASE, ...source });
+    assert.ok(source.calls.every((call) => call.path.endsWith('.zip')), 'EdgeOne never fetches remote metadata');
     assert.equal(marker.files.length, assets.size);
     assert.doesNotMatch(JSON.stringify(marker), /sessionKey|opaque-encrypted-checksum/);
     for (const [filePath, bytes] of assets) assert.deepEqual(await readFile(path.join(dir, filePath)), bytes);
     assert.ok(source.maxInFlight() <= 3);
     const bundleCalls = source.calls.filter((call) => call.path.endsWith('.zip'));
     assert.equal(bundleCalls.length, new Set(bundleCalls.map((call) => call.path)).size);
+    assert.ok(bundleCalls.every((call) => call.origin === 'https://release.example.com'), 'bundles never come from the origin');
+    const origin = assetFetch(assets);
+    await verifyOtaDistribution({ baseUrl: 'https://origin.example.com', snapshotDirectory: dir, bundleBaseUrl: RELEASE, ...origin });
+    const originZipCalls = origin.calls.filter((call) => call.path.endsWith('.zip'));
+    assert.equal(originZipCalls.length, bundleCalls.length * 2, 'origin verification checks full and Range release downloads');
+    assert.ok(originZipCalls.every((call) => call.origin === 'https://release.example.com'));
     assets.set('/ota-distribution.json', await readFile(path.join(dir, 'ota-distribution.json')));
     const edge = assetFetch(assets);
     const verified = await verifyOtaDistribution({ baseUrl: 'https://edge.example.com', snapshotDirectory: dir, requireLocal: true, ...edge });
@@ -116,8 +131,8 @@ test('complete EdgeOne snapshot retains both channels, majors, encrypted/mobile/
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('corrupt, missing, truncated or concurrently changed sources cannot produce a readiness marker', async () => {
-  for (const failure of ['missing', 'corrupt', 'size', 'manifest', 'changelog', 'conflict', 'race']) {
+test('corrupt, missing or truncated sources cannot produce a readiness marker', async () => {
+  for (const failure of ['missing', 'corrupt', 'size', 'manifest', 'changelog', 'conflict']) {
     const dir = await mkdtemp(path.join(tmpdir(), 'ota-distribution-fail-'));
     const assets = fixture();
     const beta = JSON.parse(assets.get('/ota/channels/beta.json'));
@@ -129,8 +144,9 @@ test('corrupt, missing, truncated or concurrently changed sources cannot produce
     if (failure === 'changelog') assets.delete('/CHANGELOG.md');
     assets.set('/ota/channels/beta.json', Buffer.from(JSON.stringify(beta)));
     try {
-      await assert.rejects(() => mirrorOtaDistribution({ outputDirectory: dir, upstreamOrigin: 'https://origin.example.com',
-        ...assetFetch(assets, { changedManifest: failure === 'race' }) }));
+      const channelsDirectory = await writeMetadata(dir, assets);
+      await assert.rejects(() => mirrorOtaDistribution({ outputDirectory: dir, channelsDirectory,
+        bundleBaseUrl: RELEASE, ...assetFetch(assets) }));
       await assert.rejects(() => readFile(path.join(dir, 'ota-distribution.json')), /ENOENT/);
     } finally { await rm(dir, { recursive: true, force: true }); }
   }
@@ -140,7 +156,8 @@ test('verification rejects the legacy proxy, broken Range, stale markers and mis
   const dir = await mkdtemp(path.join(tmpdir(), 'ota-distribution-verify-'));
   const assets = fixture();
   try {
-    await mirrorOtaDistribution({ outputDirectory: dir, upstreamOrigin: 'https://origin.example.com', ...assetFetch(assets) });
+    const channelsDirectory = await writeMetadata(dir, assets);
+    await mirrorOtaDistribution({ outputDirectory: dir, channelsDirectory, bundleBaseUrl: RELEASE, ...assetFetch(assets) });
     assets.set('/ota-distribution.json', await readFile(path.join(dir, 'ota-distribution.json')));
     const verify = (options = {}) => verifyOtaDistribution({ baseUrl: 'https://edge.example.com', snapshotDirectory: dir,
       requireLocal: true, ...assetFetch(assets, options) });
@@ -166,23 +183,27 @@ test('verification rejects the legacy proxy, broken Range, stale markers and mis
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('actual build hydrates live origin instead of git seeds, and check/download work with origin offline', async () => {
+test('actual EdgeOne build uses checked-out metadata and checks/downloads work with the ZIP origin offline', async () => {
   const assets = fixture();
-  const dir = `.test-dist-full-${process.pid}-${Date.now()}`;
-  const out = path.join(projectRoot, dir);
+  const checkout = await mkdtemp(path.join(tmpdir(), 'ota-edgeone-build-'));
+  const out = path.join(checkout, 'dist');
   let originRequests = 0;
   const server = createServer((req, res) => {
     originRequests += 1;
-    const bytes = assets.get(req.url);
+    const bytes = req.url.endsWith('.zip') ? assets.get(req.url) : null;
     res.writeHead(bytes ? 200 : 404).end(bytes ?? 'missing');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   let closed = false;
   let edgeServer;
   try {
-    await exec(process.execPath, ['scripts/build.mjs'], { cwd: projectRoot,
-      env: { ...process.env, YURI_UPDATE_OUTPUT_DIR: dir, YURI_UPDATE_OTA_FULL_SNAPSHOT: '1',
-        YURI_UPDATE_SKIP_CHANGELOG_COPY: '1', YURI_OTA_UPSTREAM_ORIGIN: `http://127.0.0.1:${server.address().port}` } });
+    await Promise.all(['lib', 'scripts', 'edge-functions', 'api', 'edgeone.json', 'vercel.json', 'package.json', 'release-manifest.json']
+      .map((entry) => cp(path.join(projectRoot, entry), path.join(checkout, entry), { recursive: true })));
+    await writeMetadata(checkout, assets);
+    await exec(process.execPath, ['scripts/build.mjs'], { cwd: checkout,
+      env: { ...process.env, YURI_UPDATE_OUTPUT_DIR: 'dist', YURI_UPDATE_OTA_FULL_SNAPSHOT: '1',
+        YURI_OTA_UPSTREAM_ORIGIN: 'http://127.0.0.1:1',
+        YURI_OTA_BUNDLE_BASE_URL: `http://127.0.0.1:${server.address().port}/ota/bundles/` } });
     const assertNoExactFunctionCollision = async (directory, segments = []) => {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
         if (entry.name.includes('[')) continue;
@@ -259,6 +280,6 @@ test('actual build hydrates live origin instead of git seeds, and check/download
   } finally {
     if (edgeServer) await new Promise((resolve) => edgeServer.close(resolve));
     if (!closed) await new Promise((resolve) => server.close(resolve));
-    await rm(out, { recursive: true, force: true });
+    await rm(checkout, { recursive: true, force: true });
   }
 });

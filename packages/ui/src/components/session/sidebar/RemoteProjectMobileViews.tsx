@@ -5,6 +5,7 @@ import { MobileProjectSurface } from '@/mobile/projects/MobileProjectCard';
 import { MobileSessionRow } from '@/mobile/projects/MobileSessionRow';
 import { MobileActionSheet } from '@/mobile/projects/MobileRowActionsSheet';
 import { MobileTaskCardSurface } from '@/mobile/projects/MobileTaskCard';
+import { readRemoteTaskRunStartedAt } from '@/lib/remote-projects/summaries';
 import { formatSessionCompactDateLabel } from './utils';
 import type { RemoteProjectShellProps, RemoteSummaryRowProps } from './remoteProjectPresentation';
 
@@ -40,7 +41,7 @@ export function MobileRemoteSummaryRow({ session, active, search, pending, pinDi
       id: dragItem.id, title, active, pinned, unread: Boolean(unread), project: null,
       projectLabel: secondaryMeta?.projectLabel ?? '', branch: secondaryMeta?.branchLabel ?? undefined,
       activityLabel: activityTime ? formatSessionCompactDateLabel(activityTime) : undefined,
-    }} running={running} unread={Boolean(unread)} runStartedAt={null} projectLabelSuffix={subtitleSuffix} projectBadge={card?.badge}
+    }} running={running} unread={Boolean(unread)} runStartedAt={running ? readRemoteTaskRunStartedAt(session) : null} projectLabelSuffix={subtitleSuffix} projectBadge={card?.badge}
       onSelect={onSelect} onOpenActions={() => setActionsOpen(true)} onPin={pinDisabled ? undefined : onPin}
       onArchive={pending ? undefined : onArchive} onToggleRead={pending || running ? undefined : onUnread} /> :
     <MobileSessionRow session={{ id: session.id, title, active, pinned, unread: Boolean(unread), archived: Boolean(session.time.archived),

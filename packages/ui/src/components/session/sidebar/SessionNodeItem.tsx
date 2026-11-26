@@ -33,7 +33,7 @@ import { useViewportStore, viewportSessionKey } from '@/sync/viewport-store';
 import { DraggableSessionRow } from './sessionFolderDnd';
 import { SessionRowContextMenuRoot, sessionRowContextMenuTriggerProps, type ContextMenuAnchor } from './sessionRowContextMenu';
 import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
-import { TaskProjectBadge, TaskRunElapsed, TaskUnreadDot, type TaskProjectMark } from './TaskCardParts';
+import { TaskProjectBadge, TaskRunningStatus, TaskUnreadDot, type TaskProjectMark } from './TaskCardParts';
 import { SessionHoverDetails } from './SessionHoverDetails';
 import { nodeContainsSessionId, resolvedSessionRenderKey } from './sessionNodeItemUtils';
 import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './sessionNodeItemUtils';
@@ -1039,12 +1039,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
         </span>
       )
     : cardWorking
-      ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium leading-none tabular-nums text-status-info" title={t('sessions.sidebar.session.status.active')}>
-            <SessionBusyIndicator size={10} arcColor="var(--status-info)" />
-            {runStartedAt !== null ? <TaskRunElapsed startedAt={runStartedAt} /> : null}
-          </span>
-        )
+      ? <TaskRunningStatus startedAt={runStartedAt} />
       : <span className={cn('text-[10px] leading-none tabular-nums', rowIsEmphasized ? 'text-foreground/70' : 'text-muted-foreground/70')}>{sessionCompactUpdatedLabel}</span>;
   // Trailing status owns a shrink-0 gutter on the right (same idea as hover
   // action padding): question tip while awaiting input, context-style ring

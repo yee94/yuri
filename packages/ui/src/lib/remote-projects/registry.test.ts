@@ -378,4 +378,13 @@ describe('Host Runtime Registry production boundary', () => {
     expect(value.projects).toHaveLength(2);
     expect(value.projects[0]).not.toHaveProperty('clientToken');
   });
+
+  it('retains ordered same-Host workspace member paths and rejects malformed ones', () => {
+    const workspace = { id: 'ws-ref', path: '/repo', paths: ['/repo', '/lib'], hostId: 'host-a', remoteProjectId: 'ws_1', remoteState: 'ok' };
+    const catalog = (project: Record<string, unknown>) => parseHostCatalog({ hubId: 'hub-a', supported: true, hosts: [], projects: [project] });
+    expect(catalog(workspace).projects[0].paths).toEqual(['/repo', '/lib']);
+    expect(catalog({ ...workspace, paths: undefined }).projects[0]).not.toHaveProperty('paths');
+    expect(() => catalog({ ...workspace, paths: ['/repo', 42] })).toThrow();
+    expect(() => catalog({ ...workspace, paths: Array.from({ length: 25 }, (_, index) => `/p${index}`) })).toThrow();
+  });
 });

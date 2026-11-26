@@ -53,6 +53,21 @@ test('proxies channel manifests upstream with short edge cache', async () => {
   assert.equal(response.headers.get('x-ota-proxy'), 'edgeone');
 });
 
+test('fetches bundles from the release store and forwards Range when configured', async () => {
+  const fetched = stubUpstream(() => new Response('zip', {
+    status: 206,
+    headers: { 'content-type': 'application/zip', 'content-range': 'bytes 0-2/9' },
+  }));
+  const request = new Request('https://proxy.example.com/ota/bundles/34ab092a8e7f6d21.zip', { headers: { Range: 'bytes=0-2' } });
+  const response = await handleOtaProxyRequest(request, {
+    bundleBaseUrl: 'https://github.com/example/repo/releases/download/ota-bundles/',
+  });
+  assert.equal(response.status, 206);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(fetched[0].url, 'https://github.com/example/repo/releases/download/ota-bundles/34ab092a8e7f6d21.zip');
+  assert.equal(fetched[0].init.headers.Range, 'bytes=0-2');
+});
+
 test('proxies content-addressed bundles with immutable cache', async () => {
   const fetched = stubUpstream(() => new Response('zip-bytes', {
     status: 200,

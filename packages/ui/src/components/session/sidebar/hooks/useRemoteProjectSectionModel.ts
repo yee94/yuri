@@ -160,7 +160,7 @@ export function useRemoteProjectSectionModel({ project, registry, search = '', m
   });
   const syncProject = useEvent(() => {
     void mutate(async () => {
-      if (project.remoteState === 'remote-removed') {
+      if (project.remoteState === 'remote-removed' && !project.paths) {
         const restored = await createRemoteProject(registry, project.hostId, project.path, project.label);
         useProjectsStore.getState().upsertRemoteProject(restored, registry.hubId);
       } else {

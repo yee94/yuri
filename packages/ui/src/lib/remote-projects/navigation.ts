@@ -3,6 +3,7 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore';
 import { ensureRemoteHostCatalog, ensureRemoteHostSummaries, getHostRuntimeRegistry } from '@/queries/remoteProjectQueries';
 import { getRuntimeGeneration, getRuntimeKey, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
+import { readSessionWorkspaceId } from '@/lib/workspacePaths';
 import { resolveRemoteProjectOwner } from './summaries';
 import type { HostLocation } from './location';
 
@@ -18,14 +19,16 @@ export async function applyRemoteProjectRoute(route: Pick<RouteState, 'sessionId
     || generation !== getRuntimeGeneration() || runtime !== getRuntimeKey()) {
     throw new Error('Remote route belongs to a different or unsupported Hub');
   }
-  const project = route.projectId
-    ? catalog.projects.find((project) => project.hostId === route.hostId && project.id === route.projectId)
-    : resolveRemoteProjectOwner(catalog.projects, catalog.hubId, route.hostId, route.directory,
-      (await ensureRemoteHostSummaries(getHostRuntimeRegistry(catalog), route.hostId)).worktrees);
+  const snapshot = route.projectId ? undefined : await ensureRemoteHostSummaries(getHostRuntimeRegistry(catalog), route.hostId);
   if (!isCurrent()) return false;
   if (transport !== getRuntimeTransportIdentity() || generation !== getRuntimeGeneration() || runtime !== getRuntimeKey()) {
     throw new Error('Remote route belongs to an inactive Hub');
   }
+  const session = snapshot?.directories.find((item) => item.directory === route.directory)?.sessions.find((item) => item.id === route.sessionId);
+  const project = route.projectId
+    ? catalog.projects.find((project) => project.hostId === route.hostId && project.id === route.projectId)
+    : resolveRemoteProjectOwner(catalog.projects, catalog.hubId, route.hostId, route.directory,
+      snapshot?.worktrees, readSessionWorkspaceId(session));
   if (!project) throw new Error('Remote Project is not referenced by this Hub');
   const location = { hubId: catalog.hubId, hostId: project.hostId, directory: route.directory,
     ...(route.instanceId || project.instanceId ? { instanceId: route.instanceId || project.instanceId } : {}) };

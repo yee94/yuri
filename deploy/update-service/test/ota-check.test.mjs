@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'vitest';
 
+import { OTA_BUNDLE_RELEASE_BASE_URL } from '../lib/ota-bundle-release.js';
 import { handleCapgoOtaCheck, handleMobileUpdateCheck } from '../lib/ota-check.js';
 import { mergeOtaMajor, parseOtaManifest, selectOtaMajor } from '../lib/ota-manifest.js';
 
@@ -379,6 +380,26 @@ test('mobile update check returns 503 when channel manifest fetch fails', async 
   const response = await handleMobileUpdateCheck(mobileRequest(validBody));
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: 'ota_manifest_unavailable' });
+});
+
+test('bundleBaseUrl hands clients the release asset instead of an origin-hosted ZIP', async () => {
+  const bundleBaseUrl = 'https://github.com/example/repo/releases/download/ota-bundles/';
+  stubChannel({ manifest: channelManifest() });
+  const mobile = await (await handleMobileUpdateCheck(mobileRequest(validBody), { bundleBaseUrl })).json();
+  assert.equal(mobile.ota.bundle.url, `${bundleBaseUrl}34ab092a8e7f6d21.zip`);
+
+  const capgo = await (await handleCapgoOtaCheck(mobileRequest({
+    platform: 'ios', app_id: 'com.yee94.yuri', device_id: 'device-1', version_build: '1.18.2-beta.22',
+    version_code: 350, version_name: 'builtin', defaultChannel: 'beta', shellApiVersion: 2,
+  }, '/v1/ota/check'), { bundleBaseUrl })).json();
+  assert.equal(capgo.url, `${bundleBaseUrl}34ab092a8e7f6d21.zip`);
+});
+
+test('Vercel check entrypoints point bundles at the GitHub release store', async () => {
+  const { default: mobileCheck } = await import('../api/v1/mobile/update/check.js');
+  stubChannel({ manifest: channelManifest() });
+  const body = await (await mobileCheck(mobileRequest(validBody))).json();
+  assert.equal(body.ota.bundle.url, `${OTA_BUNDLE_RELEASE_BASE_URL}34ab092a8e7f6d21.zip`);
 });
 
 test('capgo endpoint returns apply_ota shape', async () => {

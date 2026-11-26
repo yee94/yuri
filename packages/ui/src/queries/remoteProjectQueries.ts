@@ -139,12 +139,22 @@ const projectFromResponse = async (response: Response, hostId: string): Promise<
   return project;
 };
 
-export const createRemoteProject = async (registry: HostRuntimeRegistry, hostId: string, path: string, label?: string): Promise<RemoteProject> => {
+export const createRemoteProject = (registry: HostRuntimeRegistry, hostId: string, path: string, label?: string): Promise<RemoteProject> => (
+  registerRemoteProject(registry, hostId, { path, ...(label ? { label } : {}) })
+);
+
+/** A multi-path workspace created on that Host, so every member directory belongs to the same machine. */
+export const createRemoteWorkspace = (registry: HostRuntimeRegistry, hostId: string, paths: string[], label: string, workspaceRequestId: string): Promise<RemoteProject> => (
+  registerRemoteProject(registry, hostId, { paths, label, workspaceRequestId })
+);
+
+const registerRemoteProject = async (registry: HostRuntimeRegistry, hostId: string, body: { path: string; label?: string } | { paths: string[]; label: string; workspaceRequestId: string }): Promise<RemoteProject> => {
   const project = await projectFromResponse(await registry.requestHost(hostId, 'projects', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, ...(label ? { label } : {}) }),
+    body: JSON.stringify(body),
   }), hostId);
   registry.assertCurrent();
+  if ('paths' in body && !Array.isArray(project.paths)) throw new Error('Remote Host does not support multi-project workspaces');
   const scopedProject = { ...project, hubId: registry.hubId };
   updateCachedProject(registry, scopedProject);
   return scopedProject;
@@ -170,7 +180,8 @@ const metadataWrites = new WeakMap<HostRuntimeRegistry, Map<string, Promise<Remo
 export const remoteProjectMetadata = async (
   registry: HostRuntimeRegistry,
   project: RemoteProject,
-  metadata: Pick<Partial<RemoteProject>, 'label' | 'icon' | 'iconImage' | 'iconBackground' | 'color'>,
+  /** `paths` replaces a workspace's member directories on its own Host. */
+  metadata: Pick<Partial<RemoteProject>, 'label' | 'icon' | 'iconImage' | 'iconBackground' | 'color' | 'paths'>,
 ): Promise<RemoteProject> => {
   registry.assertCurrent();
   let writes = metadataWrites.get(registry);

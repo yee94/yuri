@@ -72,8 +72,7 @@ async function resolveChangelogSource() {
 
 rmSync(outputDirectory, { recursive: true, force: true });
 mkdirSync(outputDirectory, { recursive: true });
-// Legacy proxy-only builds omit CHANGELOG; full EdgeOne builds replace it with
-// the current origin copy together with all referenced OTA resources below.
+// Full EdgeOne builds include the checkout's CHANGELOG in the readiness marker.
 const skipChangelogCopy = process.env.YURI_UPDATE_SKIP_CHANGELOG_COPY === '1';
 if (!skipChangelogCopy) {
   const changelogSource = await resolveChangelogSource();
@@ -95,8 +94,11 @@ writeFileSync(path.join(outputDirectory, 'health.json'), `${JSON.stringify({
 const skipOtaCopy = process.env.YURI_UPDATE_SKIP_OTA_COPY === '1';
 const otaChannelsOnly = process.env.YURI_UPDATE_OTA_CHANNELS_ONLY === '1';
 if (process.env.YURI_UPDATE_OTA_FULL_SNAPSHOT === '1') {
-  if (!process.env.YURI_OTA_UPSTREAM_ORIGIN) throw new Error('YURI_OTA_UPSTREAM_ORIGIN is required for a complete EdgeOne OTA build');
-  const snapshot = await mirrorOtaDistribution({ outputDirectory, upstreamOrigin: process.env.YURI_OTA_UPSTREAM_ORIGIN });
+  const snapshot = await mirrorOtaDistribution({
+    outputDirectory,
+    channelsDirectory: path.join(projectRoot, 'ota/channels'),
+    bundleBaseUrl: process.env.YURI_OTA_BUNDLE_BASE_URL || undefined,
+  });
   console.log(`Verified complete EdgeOne OTA distribution: ${snapshot.files.length} static files`);
 } else if (!skipOtaCopy) {
   const otaSource = path.join(projectRoot, 'ota');

@@ -15,6 +15,7 @@ import { useSessionGrouping } from './useSessionGrouping';
 import type { WorktreeMetadata } from '@/types/worktree';
 import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 import { formatDirectoryName } from '@/lib/utils';
+import { readSessionWorkspaceId } from '@/lib/workspacePaths';
 
 /** Host-scoped reads and one projection for rendering, keyboard navigation and drag order. */
 export function useRemoteProjectSectionData(project: RemoteProject, registry: HostRuntimeRegistry, search: string) {
@@ -24,9 +25,25 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
   const query = search.trim().toLocaleLowerCase();
   const snapshot = summaries.data;
   const registeredProjects = useProjectsStore((state) => state.projects);
-  const ownsDirectory = React.useMemo(() => (directory: string) => {
-    return resolveRemoteProjectOwner(registeredProjects, registry.hubId, project.hostId, directory, snapshot?.worktrees)?.id === project.id;
-  }, [registeredProjects, registry.hubId, project.id, project.hostId, snapshot?.worktrees]);
+  const { ownsDirectory, ownsSession } = React.useMemo(() => {
+    const owners = new Map<string, boolean>();
+    const ownerIs = (directory: string, workspaceId: string | null) => {
+      const key = JSON.stringify([directory, workspaceId]);
+      const cached = owners.get(key);
+      if (cached !== undefined) return cached;
+      const owns = resolveRemoteProjectOwner(registeredProjects, registry.hubId, project.hostId, directory, snapshot?.worktrees, workspaceId)?.id === project.id;
+      if (owners.size >= 1024) owners.clear();
+      owners.set(key, owns);
+      return owns;
+    };
+    // A workspace may share a directory with a single project; it then owns only its tagged sessions there.
+    return {
+      ownsDirectory: (directory: string) => ownerIs(directory, null)
+        || Boolean(project.paths && ownerIs(directory, project.remoteProjectId)),
+      ownsSession: (session: Session, directory: string) => ownerIs(directory, readSessionWorkspaceId(session)),
+    };
+  }, [registeredProjects, registry.hubId, project.id, project.hostId, project.paths, project.remoteProjectId, snapshot?.worktrees]);
+  const roots = React.useMemo(() => project.paths?.length ? project.paths : [project.path], [project.paths, project.path]);
   const [pageLimit, setPageLimit] = React.useState(0);
   const directoryPaths = (snapshot?.directories ?? []).map((directory) => directory.directory).filter(ownsDirectory);
   const pagesKey = [...registry.resolve({ hubId: registry.hubId, hostId: project.hostId, directory: project.path }).queryScope, 'navigation-pages'] as const;
@@ -76,7 +93,10 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
     staleTime: 30_000,
   });
   const directories = React.useMemo(() => {
-    const entries = (snapshot?.directories ?? []).filter((entry) => ownsDirectory(entry.directory));
+    const entries = (snapshot?.directories ?? []).filter((entry) => ownsDirectory(entry.directory)).map((entry) => {
+      const sessions = entry.sessions.filter((session) => ownsSession(session, entry.directory));
+      return sessions.length === entry.sessions.length ? entry : { ...entry, sessions };
+    });
     if ((!query || !titleSearch.data) && !moreSessions.data) return entries;
     const merged = new Map(entries.map((entry) => [entry.directory, { ...entry, sessions: [...entry.sessions] }]));
     for (const page of moreSessions.data ?? []) {
@@ -85,7 +105,7 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
     }
     for (const session of [...(query ? titleSearch.data ?? [] : []), ...(moreSessions.data?.flatMap((page) => page.sessions) ?? [])]) {
       if (!isVisibleGlobalSession(session)) continue;
-      if (!session.directory || !ownsDirectory(session.directory)) continue;
+      if (!session.directory || !ownsSession(session, session.directory)) continue;
       let directory = merged.get(session.directory);
       if (!directory) { directory = { directory: session.directory, sessions: [], hasMore: false, cursor: null, lastSyncedAt: 0 }; merged.set(session.directory, directory); }
       const index = directory.sessions.findIndex((candidate) => candidate.id === session.id);
@@ -93,12 +113,12 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
       else if ((session.time?.updated ?? 0) > (directory.sessions[index].time.updated ?? 0)) directory.sessions[index] = { ...directory.sessions[index], ...session, time: session.time ?? directory.sessions[index].time };
     }
     return [...merged.values()];
-  }, [snapshot, titleSearch.data, moreSessions.data, query, ownsDirectory]);
+  }, [snapshot, titleSearch.data, moreSessions.data, query, ownsDirectory, ownsSession]);
   const rows = React.useMemo(() => directories.flatMap((directory) => directory.sessions.filter((session) => !session.time?.archived).map((session) => ({ session, directory: directory.directory }))), [directories]);
   const pinnedIds = React.useMemo(() => new Set(snapshot?.pinnedSessionIds ?? []), [snapshot?.pinnedSessionIds]);
-  const worktrees = React.useMemo<WorktreeMetadata[]>(() => (snapshot?.worktrees?.projectDirectories[project.path] ?? [])
-    .filter((path) => path !== project.path && ownsDirectory(path))
-    .map((path) => ({ path, projectDirectory: project.path, branch: '', label: formatDirectoryName(path, null) || path })), [snapshot?.worktrees, project.path, ownsDirectory]);
+  const worktrees = React.useMemo<WorktreeMetadata[]>(() => roots.flatMap((root) => (snapshot?.worktrees?.projectDirectories[root] ?? [])
+    .filter((path) => !roots.includes(path) && ownsDirectory(path))
+    .map((path) => ({ path, projectDirectory: root, branch: '', label: formatDirectoryName(path, null) || path }))), [snapshot?.worktrees, roots, ownsDirectory]);
   const emptyMetadata = React.useMemo(() => new Map<string, WorktreeMetadata>(), []);
   const emptyBranches = React.useMemo(() => new Map<string, string | null>(), []);
   const grouping = useSessionGrouping({ homeDirectory: null, worktreeMetadata: emptyMetadata, pinnedSessionIds: pinnedIds, gitBranches: emptyBranches, isVSCode: false });
@@ -135,7 +155,7 @@ export function useRemoteProjectSectionData(project: RemoteProject, registry: Ho
   });
   // A root directory the Hub has never read is unknown, not empty: show loading instead of "no sessions".
   const unsynced = online && Boolean(snapshot) && rows.length === 0 && !query
-    && !(snapshot?.directories ?? []).some((entry) => normalizeDirectoryKey(entry.directory) === normalizeDirectoryKey(project.path) && entry.lastSyncedAt > 0);
+    && !(snapshot?.directories ?? []).some((entry) => roots.some((root) => normalizeDirectoryKey(entry.directory) === normalizeDirectoryKey(root)) && entry.lastSyncedAt > 0);
   return { host, online, query, snapshot, directories, rows, views, groups, grouping, pinnedIds, busy, refresh, setPageLimit, unsynced,
     hidden: Boolean(query && matching.length === 0 && snapshot),
     loading: summaries.isPending, loadingMore: moreSessions.isFetching,

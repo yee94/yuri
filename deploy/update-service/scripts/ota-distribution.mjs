@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { OTA_BUNDLE_RELEASE_BASE_URL, otaBundleReleaseUrl } from '../lib/ota-bundle-release.js';
 import { parseOtaManifest } from '../lib/ota-manifest.js';
 
 const CHANNELS = ['beta', 'stable'];
@@ -42,10 +43,11 @@ function originUrl(value) {
   return url.origin;
 }
 
-async function download(base, filePath, { fetchImpl = fetch, onChunk, maxBytes, requireLocal = false }) {
+// Release assets redirect to their storage host; origins must answer directly.
+async function download(base, filePath, { fetchImpl = fetch, onChunk, maxBytes, requireLocal = false, source }) {
   const started = Date.now();
-  const response = await fetchImpl(new URL(filePath, base), {
-    cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(120_000),
+  const response = await fetchImpl(source ?? new URL(filePath, base), {
+    cache: 'no-store', redirect: source ? 'follow' : 'error', signal: AbortSignal.timeout(120_000),
   });
   if (response.status !== 200 || !response.body) {
     await response.body?.cancel();
@@ -144,37 +146,31 @@ function record(digest) {
 }
 
 /** Materialize a complete, verified snapshot BEFORE EdgeOne activates this deployment. */
-export async function mirrorOtaDistribution({ outputDirectory, upstreamOrigin, fetchImpl = fetch }) {
-  const base = originUrl(upstreamOrigin);
+export async function mirrorOtaDistribution({ outputDirectory, channelsDirectory, bundleBaseUrl = OTA_BUNDLE_RELEASE_BASE_URL, fetchImpl = fetch }) {
+  const changelog = await readFile(path.join(outputDirectory, 'CHANGELOG.md'));
+  if (!changelog.toString('utf8').trim()) throw new Error('OTA distribution CHANGELOG.md is empty');
   const channels = await Promise.all(CHANNELS.map(async (channel) => {
     const filePath = `/ota/channels/${channel}.json`;
-    const asset = await metadata(base, filePath, { fetchImpl });
-    return { ...asset, manifest: channelManifest(asset.text, channel) };
+    const bytes = await readFile(path.join(channelsDirectory, `${channel}.json`));
+    const digest = { path: filePath, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+    return { bytes, digest, manifest: channelManifest(bytes.toString('utf8'), channel) };
   }));
-  const files = [];
+  const files = [{ path: '/CHANGELOG.md', size: changelog.length, sha256: createHash('sha256').update(changelog).digest('hex') }];
   for (const channel of channels) {
     const dest = path.join(outputDirectory, channel.digest.path);
     await mkdir(path.dirname(dest), { recursive: true });
-    await writeFile(dest, channel.text);
+    await writeFile(dest, channel.bytes);
     files.push(record(channel.digest));
   }
   await mkdir(path.join(outputDirectory, 'ota/bundles'), { recursive: true });
   await bounded([...artifacts(channels.map((item) => item.manifest))], async ([filePath, expected]) => {
-    const transfer = await download(base, filePath, { fetchImpl, maxBytes: MAX_BUNDLE_BYTES });
+    const transfer = await download(null, filePath, {
+      fetchImpl, maxBytes: MAX_BUNDLE_BYTES, source: otaBundleReleaseUrl(expected.bundleId, bundleBaseUrl),
+    });
     const digest = await transfer.consume(createWriteStream(path.join(outputDirectory, filePath)));
     assertArtifact(digest, expected);
     files.push(record(digest));
   });
-  const changelog = await metadata(base, '/CHANGELOG.md', { fetchImpl });
-  if (!changelog.text.trim()) throw new Error('OTA distribution CHANGELOG.md is empty');
-  await writeFile(path.join(outputDirectory, 'CHANGELOG.md'), changelog.text);
-  files.push(record(changelog.digest));
-
-  // A concurrent origin publication must not produce a torn two-channel snapshot.
-  for (const channel of channels) {
-    const current = await metadata(base, channel.digest.path, { fetchImpl });
-    if (current.digest.sha256 !== channel.digest.sha256) throw new Error('OTA manifests changed during EdgeOne build; retry the deployment');
-  }
   const marker = { schemaVersion: 1, sourceSha256: await serviceSourceHash(),
     files: files.sort((a, b) => a.path.localeCompare(b.path)) };
   await writeFile(path.join(outputDirectory, MARKER_PATH), `${JSON.stringify(marker, null, 2)}\n`);
@@ -182,7 +178,7 @@ export async function mirrorOtaDistribution({ outputDirectory, upstreamOrigin, f
 }
 
 /** Verify actual full bodies and byte ranges, not merely a successful update check. */
-export async function verifyOtaDistribution({ baseUrl, snapshotDirectory, requireLocal = false, requireCurrentCode = false, fetchImpl = fetch }) {
+export async function verifyOtaDistribution({ baseUrl, snapshotDirectory, requireLocal = false, requireCurrentCode = false, bundleBaseUrl = OTA_BUNDLE_RELEASE_BASE_URL, fetchImpl = fetch }) {
   if (requireCurrentCode && !requireLocal) throw new Error('Current-code verification requires a local EdgeOne distribution');
   const base = originUrl(baseUrl);
   const options = { fetchImpl, requireLocal };
@@ -215,7 +211,9 @@ export async function verifyOtaDistribution({ baseUrl, snapshotDirectory, requir
   await bounded([...artifacts(manifests)], async ([filePath, expected]) => {
     const localHash = createHash('sha256');
     for await (const chunk of createReadStream(path.join(snapshotDirectory, filePath))) localHash.update(chunk);
-    const transfer = await download(base, filePath, { ...options, maxBytes: MAX_BUNDLE_BYTES });
+    // EdgeOne serves its own copies; the origin hands clients the release asset instead.
+    const source = requireLocal ? undefined : otaBundleReleaseUrl(expected.bundleId, bundleBaseUrl);
+    const transfer = await download(base, filePath, { ...options, maxBytes: MAX_BUNDLE_BYTES, source });
     const digest = await transfer.consume();
     assertArtifact(digest, expected);
     if (digest.sha256 !== localHash.digest('hex')) throw new Error(`OTA distribution differs from snapshot: ${filePath}`);
@@ -223,8 +221,8 @@ export async function verifyOtaDistribution({ baseUrl, snapshotDirectory, requir
     timings.push({ path: filePath, size: digest.size, elapsedMs: digest.elapsedMs });
     // A Range request must return exactly the requested prefix, not a full 200.
     const end = Math.min(digest.size - 1, 1023);
-    const range = await fetchImpl(new URL(filePath, base), {
-      headers: { Range: `bytes=0-${end}` }, redirect: 'error', signal: AbortSignal.timeout(30_000),
+    const range = await fetchImpl(source ?? new URL(filePath, base), {
+      headers: { Range: `bytes=0-${end}` }, redirect: source ? 'follow' : 'error', signal: AbortSignal.timeout(30_000),
     });
     if (range.status !== 206 || range.headers.get('content-range') !== `bytes 0-${end}/${digest.size}`
       || (requireLocal && range.headers.has('x-ota-proxy'))) {

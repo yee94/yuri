@@ -57,7 +57,8 @@ export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
       </div>
 
       <ProjectIdentityFields form={form} onSelectIcon={selectIcon} showDefaultModel={!project.hostId} storedIconPreview={storedIconPreview} readOnly={readOnly} />
-      {!project.hostId && !isVSCodeRuntime() ? <WorkspacePathsSection key={project.id} project={project} readOnly={readOnly} /> : null}
+      {/* A remote workspace edits its directories on its own Host; remote single-path projects have none to edit. */}
+      {(!project.hostId || Array.isArray(project.paths)) && !isVSCodeRuntime() ? <WorkspacePathsSection key={project.id} project={project} readOnly={readOnly} /> : null}
     </div>
   );
 };

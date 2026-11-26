@@ -5,8 +5,9 @@
  * manifests + content-addressed bundles) and the authoritative CHANGELOG are
  * published by CI to the Vercel origin only. To keep the EdgeOne host
  * (preferred by mainland-China clients) from serving stale seeds,
- * `/ota/channels/*.json`, `/ota/bundles/*.zip`, and `/CHANGELOG.md` are
- * reverse-proxied to the Vercel origin with edge-friendly cache headers.
+ * `/ota/channels/*.json` and `/CHANGELOG.md` are reverse-proxied to the
+ * Vercel origin, and `/ota/bundles/*.zip` to the GitHub release bundle store,
+ * with edge-friendly cache headers.
  *
  * The proxy is strictly allowlisted — it never becomes an open proxy — and it
  * never fabricates success: upstream failures surface as 502, misses as 404.
@@ -16,6 +17,8 @@
  * so edge caches never store a byte-range body that would poison later GETs.
  * Channel manifests and CHANGELOG never forward Range.
  */
+
+import { otaBundleReleaseUrlForPath } from './ota-bundle-release.js';
 
 const UPSTREAM_TIMEOUT_MS = 20_000;
 
@@ -50,8 +53,6 @@ function upstreamUnavailable() {
  * forwarding to the Vercel origin. Returns a `Response`; never throws.
  */
 export async function handleOtaProxyRequest(request, options = {}) {
-  const origin = options.upstreamOrigin;
-  if (!origin) return upstreamUnavailable();
   const fetchImpl = options.fetchImpl ?? fetch;
 
   const method = request.method.toUpperCase();
@@ -62,6 +63,13 @@ export async function handleOtaProxyRequest(request, options = {}) {
   const isChannelOrChangelog = CHANNEL_PATH_PATTERN.test(path) || CHANGELOG_PATH_PATTERN.test(path);
   if (!isBundle && !isChannelOrChangelog) return notFound();
 
+  // Bundles are no longer hosted on the Vercel origin; fetch them from their
+  // release source (following its redirect) when one is configured.
+  const target = isBundle && options.bundleBaseUrl
+    ? otaBundleReleaseUrlForPath(path, options.bundleBaseUrl)
+    : (options.upstreamOrigin ? options.upstreamOrigin + path : null);
+  if (!target) return upstreamUnavailable();
+
   const clientRange = isBundle ? request.headers.get('range') : null;
   const upstreamHeaders = { Accept: '*/*' };
   if (clientRange) upstreamHeaders.Range = clientRange;
@@ -71,7 +79,7 @@ export async function handleOtaProxyRequest(request, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   try {
-    upstream = await fetchImpl(origin + path, {
+    upstream = await fetchImpl(target, {
       method,
       headers: upstreamHeaders,
       signal: controller.signal,

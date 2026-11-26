@@ -47,6 +47,31 @@ const status = { type: 'yuri:host-status', properties: { hubId, hostId, host } }
 const tip = { type: 'yuri:host-event', properties: { hubId, hostId, generation,
   payload: { type: 'yuri:session-index-changed', properties: { cause: 'change' } } } };
 
+it('publishes a running task from a secondary workspace directory with the local elapsed status', async () => {
+  queryClient.clear();
+  const secondary = '/fixtures/secondary';
+  const workspace = { ...project, paths: [project.path, secondary], remoteProjectId: 'ws_upstream' };
+  const standalone = { ...project, id: 'secondary-project', path: secondary };
+  useProjectsStore.setState({ projects: [standalone, workspace], activeProjectId: null, hubProjectLayout: null });
+  const fetch = vi.fn(async () => Response.json({ hubId, hostId, stale: false, directories: [{ directory: secondary,
+    sessions: [{ id: 'running-task', title: 'Running task', time: { created: 1, updated: 2 },
+      metadata: { yuri: { workspaceId: workspace.remoteProjectId, sessionStatus: { type: 'busy', changedAt: Date.now() - 60_000 } } } }] }] }));
+  const registry = new HostRuntimeRegistry(hubId, { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
+    sdk: () => { throw new Error('No transcript read'); }, service: getLocationOpencodeClient });
+  registry.applyCatalog({ supported: true, hubId, hosts: [host], projects: [standalone, workspace] });
+  const onTaskItems = vi.fn<NonNullable<React.ComponentProps<typeof RemoteProjectSection>['onTaskItems']>>();
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={queryClient}><RemoteProjectSection project={workspace} registry={registry} onTaskItems={onTaskItems} /></QueryClientProvider>));
+    await vi.waitFor(() => expect(onTaskItems).toHaveBeenLastCalledWith(workspace.id, [expect.objectContaining({ groupDirectory: secondary, remoteStatus: { running: true, unread: 0 } })]));
+    const task = onTaskItems.mock.lastCall?.[1][0];
+    await act(async () => root.render(<>{task?.content}</>));
+    expect(container.querySelector('[title="sessions.sidebar.session.status.active"]')?.textContent).toBe('sessions.sidebar.task.runningFor');
+  } finally { await act(async () => root.unmount()); container.remove(); registry.dispose(); queryClient.clear(); }
+});
+
 it('mobile Delete opens a destructive confirmation and cancelling sends no mutation', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   queryClient.clear(); queryClient.setDefaultOptions({ queries: { retry: false } });

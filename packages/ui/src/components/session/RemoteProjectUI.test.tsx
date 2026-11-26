@@ -60,6 +60,35 @@ test.each(['a', 'b'])('remote picker preserves same-path identity for host %s an
   expect(registered).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalledWith(false);
 });
 
+test('remote multi-project picker saves both selected directories through the selected Host', async () => {
+  const paths = ['/workspace/Code', '/workspace/Tools'];
+  const fetch = vi.fn(async (path: string, init?: { body?: BodyInit | null }) => {
+    if (path === '/api/hosts/b/api/fs/home') return json({ home: '/workspace' });
+    if (path === '/api/hosts/b/api/fs/list') return json({ entries: paths.map((path) => ({ name: path.split('/').at(-1), path, isDirectory: true })) });
+    if (path === '/api/hosts/b/projects') {
+      expect(JSON.parse(String(init?.body))).toEqual({ paths, label: 'Workspace B', workspaceRequestId: expect.stringMatching(/^[0-9a-f]{32}$/) });
+      return json({ project: { id: 'hub-workspace-b', hostId: 'b', path: paths[0], paths, remoteProjectId: 'ws_remote', remoteState: 'ok' } });
+    }
+    throw new Error(`Unexpected directory request: ${path}`);
+  });
+  const registry = new HostRuntimeRegistry('hub', { transportIdentity: 'transport', isCurrent: () => true, fetch, sdk: () => { throw new Error('Unused'); }, service: () => { throw new Error('Unused'); } });
+  registry.applyCatalog(catalog);
+  const registered = vi.fn(async () => {});
+  await act(async () => root.render(<QueryClientProvider client={client}><RemoteDirectoryExplorerDialog open onOpenChange={vi.fn()} registry={registry} hostId="b" machinePicker={null} onRegistered={registered} /></QueryClientProvider>));
+  await flush();
+  const button = (label: string) => [...container.querySelectorAll('button')].find((item) => item.textContent === label)!;
+  await act(async () => button('directoryExplorerDialog.toggle.multipleProjects').click());
+  await act(async () => {
+    const name = container.querySelector<HTMLInputElement>('.yuri-directory-workspace-name input')!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'Workspace B');
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    for (const checkbox of container.querySelectorAll<HTMLButtonElement>('[aria-label="workspace.create.stageDirAria"]')) checkbox.click();
+  });
+  await act(async () => button('workspace.create.submit').click());
+  await flush();
+  expect(registered).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ hostId: 'b', paths }));
+});
+
 test('typing a partial name filters the parent listing by substring instead of listing a missing directory', async () => {
   const names = ['mmbiz', 'svrkit.js', 'wxaaiagentnodelogicsvr', 'wxmesh'];
   const fetch = vi.fn(async (path: string, init?: { query?: { path: string } }) => {

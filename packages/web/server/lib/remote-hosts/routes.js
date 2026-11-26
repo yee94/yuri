@@ -149,12 +149,26 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
   app.patch('/api/projects/:id', async (req, res) => {
     try {
       await authorize(req, res, { aggregate: false });
-      let project;
+      // Workspace member paths are validated against this Host's own filesystem by the shared registry.
+      if (req.body?.paths !== undefined) {
+        if (!Array.isArray(req.body.paths) || !req.body.paths.length || Object.keys(projectMetadata(req.body)).length) {
+          throw remoteFailure('validation_error', 400);
+        }
+        const local = (await readSettings()).projects?.find((entry) => entry.id === req.params.id && !entry.hostId);
+        if (!local) throw remoteFailure('project_not_found', 404);
+        if (!Array.isArray(local.paths)) throw remoteFailure('validation_error', 400);
+        const { project } = await registry.update({ projectId: req.params.id, paths: req.body.paths }).catch((error) => {
+          throw error?.code === 'not_found' ? remoteFailure('project_not_found', 404)
+            : error?.code === 'validation_error' ? remoteFailure('validation_error', 400) : error;
+        });
+        app.emit('yuri:projects-changed');
+        return res.json({ project, pathsUpdated: true });
+      }
       const settings = await persistSettings((current) => ({ projects: (current.projects || []).map((entry) => {
         if (entry.id !== req.params.id || entry.hostId) return entry;
-        project = { ...entry, ...projectMetadata(req.body) }; return project;
+        return { ...entry, ...projectMetadata(req.body) };
       }) }));
-      project = settings.projects?.find((p) => p.id === req.params.id);
+      const project = settings.projects?.find((p) => p.id === req.params.id && !p.hostId);
       if (!project) throw remoteFailure('project_not_found', 404);
       app.emit('yuri:projects-changed');
       res.json({ project });
@@ -290,11 +304,22 @@ export function registerRemoteHostRoutes(app, { gateway, getAuth, server, isRequ
     try {
       const project = store.projects(req.params.hostId).find((p) => p.id === req.params.projectId);
       if (!project) throw remoteFailure('project_not_found', 404);
+      const paths = req.body?.paths;
+      if (paths !== undefined && (!project.paths || !Array.isArray(paths) || !paths.length
+        || paths.some((entry) => typeof entry !== 'string' || !entry))) throw remoteFailure('validation_error', 400);
       const remote = await gateway.json(req.params.hostId, `/api/projects/${encodeURIComponent(project.remoteProjectId)}`,
-        { method: 'PATCH', signal: req.remoteHostSignal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(projectMetadata(req.body)) });
+        { method: 'PATCH', signal: req.remoteHostSignal, headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ...projectMetadata(req.body), ...(paths ? { paths } : {}) }) },
+        { instanceId: req.get('x-yuri-target-instance') || undefined });
       if (req.remoteHostSignal.aborted) throw remoteFailure('remote_authorization_required', 401);
+      // An older Host ignores `paths`; never report its unchanged workspace as a successful edit.
+      if (paths && (remote?.pathsUpdated !== true || !Array.isArray(remote?.project?.paths))) throw remoteFailure('remote_incompatible', 409);
       const refreshed = store.refreshProject(project, remote.project);
       if (!refreshed) throw remoteFailure('project_not_found', 404);
+      if (paths) {
+        gateway.projectReferencesChanged(req.params.hostId);
+        broadcaster({ type: 'yuri:project-order-changed', properties: { occurredAt: Date.now() } });
+      }
       res.json({ project: refreshed });
     } catch (error) { report(res, error); }
   });

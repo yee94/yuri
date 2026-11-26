@@ -2,8 +2,7 @@
 /**
  * Mutate a production OTA channel manifest and write a deployable snapshot.
  * Bundle zip files are content-addressed; this script re-fetches active +
- * rollback zips into <out>/ota/bundles/ so a full Vercel static replace still
- * serves them.
+ * rollback zips into <out>/ota/bundles/ for upload and distribution verification.
  *
  * FULL-SNAPSHOT: every deploy replaces static output, so the snapshot always
  * includes BOTH channel manifests and all referenced bundles.
@@ -37,8 +36,7 @@ import { Readable } from 'node:stream'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '../..')
 
-// CI deploys snapshots to Vercel; it is the authoritative OTA origin. The
-// EdgeOne host stays client-readable as a legacy mirror but never as write source.
+// CI reads the live EdgeOne deployment before preparing the next snapshot.
 const DEFAULT_OTA_BASE = ''
 const BUNDLE_ID_PATTERN = /^[0-9a-f]{16}$/
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
@@ -46,6 +44,9 @@ const ALLOWED_CHANNELS = new Set(['beta', 'stable'])
 
 const { parseOtaManifest, selectOtaMajor, mergeOtaMajor, otaManifestMajor } = await import(
   pathToFileURL(path.join(ROOT, 'deploy/update-service/lib/ota-manifest.js')).href
+)
+const { otaBundleReleaseUrl } = await import(
+  pathToFileURL(path.join(ROOT, 'deploy/update-service/lib/ota-bundle-release.js')).href
 )
 
 function parseArgs(argv) {
@@ -183,8 +184,13 @@ async function fetchProductionManifest(baseUrl, channel) {
 }
 
 async function downloadBundle(baseUrl, bundleId, destPath) {
-  const url = `${baseUrl.replace(/\/$/, '')}/ota/bundles/${bundleId}.zip`
-  const response = await fetch(url)
+  let response = await fetch(otaBundleReleaseUrl(bundleId, process.env.OTA_BUNDLE_BASE_URL || undefined))
+  // Bundles published before the release store existed are still on the origin
+  // until the first release-backed snapshot uploads them.
+  if (response.status === 404) {
+    await response.body?.cancel()
+    response = await fetch(`${baseUrl.replace(/\/$/, '')}/ota/bundles/${bundleId}.zip`)
+  }
   if (!response.ok) {
     throw new Error(`Failed to download bundle ${bundleId}: HTTP ${response.status}`)
   }

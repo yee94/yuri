@@ -23,6 +23,49 @@ it('pins authenticated instance identity across reopen and preserves legacy proj
   } finally { store.close(); await fs.rm(root, { recursive: true, force: true }); }
 });
 
+it('migrates legacy references in place and keeps single-path uniqueness', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-store-migrate-'));
+  const dbPath = path.join(root, 'remote.sqlite');
+  const { createRequire } = await import('node:module');
+  const Database = createRequire(import.meta.url)('better-sqlite3');
+  const legacy = new Database(dbPath);
+  legacy.exec(`CREATE TABLE remote_project (id TEXT PRIMARY KEY, host_id TEXT NOT NULL, path TEXT NOT NULL,
+    remote_project_id TEXT NOT NULL, metadata TEXT NOT NULL, state TEXT NOT NULL, added_at INTEGER NOT NULL, UNIQUE(host_id, path))`);
+  legacy.prepare("INSERT INTO remote_project VALUES ('remote-old', 'host', '/repo', 'p1', '{\"label\":\"Repo\"}', 'ok', 5)").run();
+  legacy.close();
+  let store = createRemoteHostStore(dbPath);
+  try {
+    expect(store.projects('host')).toEqual([expect.objectContaining({ id: 'remote-old', path: '/repo', label: 'Repo', addedAt: 5 })]);
+    expect(store.projects('host')[0].paths).toBeUndefined();
+    expect(store.saveProject('host', { id: 'p1', path: '/repo', label: 'Again' }).id).toBe('remote-old');
+    expect(store.projects('host')).toHaveLength(1);
+    store.close(); store = createRemoteHostStore(dbPath);
+    expect(store.projects('host')).toEqual([expect.objectContaining({ id: 'remote-old', label: 'Again' })]);
+  } finally { store.close(); await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it('keeps a same-Host workspace beside a single project at its primary path and follows primary moves by remote ID', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-store-workspace-'));
+  const dbPath = path.join(root, 'remote.sqlite');
+  let store = createRemoteHostStore(dbPath);
+  try {
+    const single = store.saveProject('host', { id: 'p-repo', path: '/repo' });
+    const workspace = store.saveProject('host', { id: 'ws_1', path: '/repo', paths: ['/repo', '/lib'], label: 'Both' });
+    expect(workspace.id).not.toBe(single.id);
+    expect(workspace).toMatchObject({ path: '/repo', paths: ['/repo', '/lib'], remoteProjectId: 'ws_1', label: 'Both' });
+    expect(store.findProject('host', { id: 'ws_1', path: '/elsewhere', paths: ['/elsewhere'] })?.id).toBe(workspace.id);
+    expect(store.findProject('host', { id: 'p-repo', path: '/repo' })?.id).toBe(single.id);
+    const moved = store.refreshProject(workspace, { id: 'ws_1', path: '/lib', paths: ['/lib', '/repo'], label: 'Both' });
+    expect(moved).toMatchObject({ id: workspace.id, path: '/lib', paths: ['/lib', '/repo'] });
+    expect(store.refreshProject(moved, { id: 'ws_other', path: '/lib', paths: ['/lib'] })).toBeNull();
+    expect(store.refreshProject(moved, { id: 'ws_1', path: '/lib', paths: ['/lib', '/lib'] })).toBeNull();
+    expect(store.saveProject('host', { id: 'ws_1', path: '/lib', paths: ['/lib', '/repo'] }).id).toBe(workspace.id);
+    expect(store.projects('host')).toHaveLength(2);
+    store.close(); store = createRemoteHostStore(dbPath);
+    expect(store.projects('host').find((p) => p.id === workspace.id)?.paths).toEqual(['/lib', '/repo']);
+  } finally { store.close(); await fs.rm(root, { recursive: true, force: true }); }
+});
+
 it('projects the SQLite hint and never revives a removed or replaced reference during metadata refresh', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-store-refresh-'));
   const dbPath = path.join(root, 'remote.sqlite');

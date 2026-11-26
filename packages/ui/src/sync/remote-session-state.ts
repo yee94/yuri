@@ -8,6 +8,7 @@ import { useProjectsStore } from '@/stores/useProjectsStore'
 import { isVisibleGlobalSession } from '@/stores/globalSessions'
 import { resolveRemoteProjectOwner, remoteHostSummariesKey, type RemoteHostSummaries } from '@/lib/remote-projects/summaries'
 import { normalizeDirectoryKey } from '@/lib/pathNormalization'
+import { readSessionWorkspaceId } from '@/lib/workspacePaths'
 import { createQueryTranscriptRepository } from './transcript-repository-query-adapter'
 import { fetchProductionTranscriptTransportPage } from './transcript-repository-production'
 import { normalizeSessionProjectionMessage } from './session-projection-api'
@@ -104,18 +105,20 @@ export function createRemoteSessionState(
   const snapshotListeners = new Set<() => void>()
   const emptySnapshot: RemoteChatSnapshot = { permissions: [], questions: [], forms: [] }
   let metadataRevision = 0
-  const promoteProject = () => {
+  const promoteProject = (sessionID: string) => {
     const store = useProjectsStore.getState()
     const summaries = (options.client ?? queryClient).getQueryData<RemoteHostSummaries>(remoteHostSummariesKey(
       getRuntimeTransportIdentity(), entry.location.hubId, entry.location.hostId!,
     ))
-    const project = resolveRemoteProjectOwner(store.projects, entry.location.hubId, entry.location.hostId!, entry.location.directory, summaries?.worktrees)
+    const session = snapshots.get(sessionID)?.session ?? summaries?.directories
+      .find((bucket) => bucket.directory === entry.location.directory)?.sessions.find((item) => item.id === sessionID)
+    const project = resolveRemoteProjectOwner(store.projects, entry.location.hubId, entry.location.hostId!, entry.location.directory, summaries?.worktrees, readSessionWorkspaceId(session))
     if (project) store.moveProjectToTop(project.id)
   }
   const publishLiveStatus = (sessionID: string, status: SessionStatus) => {
     const previous = snapshots.get(sessionID)
     if (previous?.status?.type !== status.type && previous?.session
-      && isVisibleGlobalSession(previous.session) && !previous.session.time?.archived) promoteProject()
+      && isVisibleGlobalSession(previous.session) && !previous.session.time?.archived) promoteProject(sessionID)
     publish(sessionID, { status })
   }
   const publish = (sessionID: string, patch: Partial<RemoteChatSnapshot>) => {
@@ -393,7 +396,7 @@ export function createRemoteSessionState(
           }
           const result = await postSessionPrompt({ ...captured, scope: entry, directory: entry.location.directory })
           assertCurrent()
-          promoteProject()
+          promoteProject(captured.sessionID)
           return result
         } catch (error) {
           if (optimistic) repository.apply(scope(captured.sessionID), { type: 'optimistic-remove', messageID: optimistic.info.id })

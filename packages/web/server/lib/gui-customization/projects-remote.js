@@ -1,4 +1,5 @@
 import { makeRemoteTaskOpenCodeClient } from '../remote-hosts/task-client.js';
+import { projectRoots } from '../remote-hosts/store.js';
 import path from 'node:path';
 
 const text = (value, limit = 4096) => typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= limit && !/[\x00-\x1f]/.test(value);
@@ -89,7 +90,9 @@ export async function runRemoteProjectOperation(gateway, operation, input, signa
       try {
         lease = await gateway.acquireTask(hostId, { signal });
         for (const project of catalog.projects.filter((project) => project.hostId === hostId)) {
-          projects.push({ id: project.id, path: project.path, directories: gateway.projectDirectories?.(hostId, project.path) ?? [project.path],
+          const roots = projectRoots(project);
+          projects.push({ id: project.id, path: project.path, ...(project.paths ? { paths: project.paths } : {}),
+            directories: [...new Set(roots.flatMap((root) => gateway.projectDirectories?.(hostId, root) ?? [root]))],
             ...(project.label ? { label: project.label } : {}), target: lease.target });
         }
       } catch { signal?.throwIfAborted(); failed.push({ hostId, code: 'remote_unavailable' }); }

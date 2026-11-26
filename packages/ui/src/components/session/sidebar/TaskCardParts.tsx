@@ -4,6 +4,7 @@ import { Icon } from '@/components/icon/Icon';
 import { useI18n } from '@/lib/i18n';
 import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP, ProjectIconImage } from '@/lib/projectMeta';
 import { formatRunElapsed, runElapsedRefreshMs } from './taskRunElapsed';
+import { SessionBusyIndicator } from '../SessionBusyIndicator';
 
 /** Project identity shown on a task card; the same icon the project row uses. */
 export type TaskProjectMark = {
@@ -46,4 +47,14 @@ export function TaskRunElapsed({ startedAt }: { startedAt: number }): React.Reac
   const [now, setNow] = React.useState(() => Date.now());
   useInterval(() => setNow(Date.now()), runElapsedRefreshMs(now - startedAt));
   return <>{t('sessions.sidebar.task.runningFor', { duration: formatRunElapsed(now - startedAt) })}</>;
+}
+
+export function TaskRunningStatus({ startedAt }: { startedAt: number | null }): React.ReactNode {
+  const { t } = useI18n();
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium leading-none tabular-nums text-status-info" title={t('sessions.sidebar.session.status.active')}>
+      <SessionBusyIndicator size={10} arcColor="var(--status-info)" />
+      {startedAt !== null ? <TaskRunElapsed startedAt={startedAt} /> : null}
+    </span>
+  );
 }

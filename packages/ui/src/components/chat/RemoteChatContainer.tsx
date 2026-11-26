@@ -57,6 +57,17 @@ import type { ToolPopupContent } from './message/types';
 import { parseSlashCommandInvocation } from '@/composer/inline-visual';
 import { skillAttachmentsFromText } from '@/composer/skill-attachments';
 import { useRemoteOperationError } from '@/lib/remote-projects/operation-errors';
+import { buildSessionWorkspaceMetadataPatch, buildWorkspacePromptContext, isMultiPathWorkspace, isWorkspaceId } from '@/lib/workspacePaths';
+
+/** The selected remote workspace on this Host, identified by its own (Host-side) project ID. */
+const remoteWorkspaceForLocation = (location: HostLocation) => {
+  const store = useProjectsStore.getState();
+  const project = store.projects.find((entry) => entry.id === store.activeProjectId && entry.hostId === location.hostId);
+  const remoteProjectId = project && 'remoteProjectId' in project && typeof project.remoteProjectId === 'string' ? project.remoteProjectId : null;
+  if (!project || !remoteProjectId || !Array.isArray(project.paths)) return null;
+  if (!isWorkspaceId(remoteProjectId) && !isMultiPathWorkspace(project)) return null;
+  return { ...project, id: remoteProjectId };
+};
 
 type Props = { location: HostLocation; sessionId: string | null; active?: boolean; readOnly?: boolean; composerPresentation?: 'primary' | 'panel'; contextPanel?: { allowPromptingSubagentSessions: boolean }; onNavigateSession?: (sessionId: string, directory: string) => void; viewport?: typeof import('./ChatContainer').ChatViewport };
 const EMPTY_INBOX: never[] = [];
@@ -277,10 +288,15 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
     const draftTextAtStart = useInputStore.getState().getDraft(draftKey)?.text;
     const submittedSynthetic = new Set(useInputStore.getState().getDraft(draftKey)?.syntheticParts.map((part) => part.partID) ?? []);
     let id = request.sessionID;
+    let workspaceContext: string | null = null;
     if (!id) {
       if (draftOptions?.pendingWorktreeRequestId || draftOptions?.bootstrapStatus?.status === 'pending' && draftOptions.bootstrapWaitEnabled !== false) throw new Error('Remote worktree is still preparing');
       if (draftOptions?.bootstrapStatus?.status === 'failed') throw new Error(draftOptions.bootstrapStatus.error || 'Remote worktree setup failed');
-      const created = await entry.service().createSession({ ...(draftOptions?.title ? { title: draftOptions.title } : {}), ...(draftOptions?.parentID ? { parentID: draftOptions.parentID } : {}) }, location.directory);
+      // Same contract as a local workspace session, keyed by the Host's own workspace ID.
+      const workspace = remoteWorkspaceForLocation(location);
+      workspaceContext = workspace ? buildWorkspacePromptContext(workspace, location.directory) : null;
+      const created = await entry.service().createSession({ ...(draftOptions?.title ? { title: draftOptions.title } : {}), ...(draftOptions?.parentID ? { parentID: draftOptions.parentID } : {}),
+        ...(workspace && !draftOptions?.parentID ? { metadata: buildSessionWorkspaceMetadataPatch(workspace.id) } : {}) }, location.directory);
       id = created.id;
       initialSelections.current.add(id);
       // Keep a failed first prompt on its created session rather than creating duplicates.
@@ -340,11 +356,13 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
       assertWritable();
       return { id: sessionID, title: referenced.title || sessionID, directory: referenced.directory, messages: [] };
     })));
-    const text = [request.text ?? '', ...[...(request.parts ?? []), ...creationParts].map((part) => part.text), ...(request.systemContext ?? []).map((part) => part.text), sessionContext].filter(Boolean).join('\n\n');
+    const baseText = [request.text ?? '', ...[...(request.parts ?? []), ...creationParts].map((part) => part.text), ...(request.systemContext ?? []).map((part) => part.text), sessionContext].filter(Boolean).join('\n\n');
     const skills = [...new Set([...skillAttachmentsFromText(request.text ?? '').map((skill) => skill.id),
       ...references.flatMap((reference) => reference.type === 'skill' ? [reference.skillName] : [])])].map((id) => ({ id }));
     const agents = request.agentMention ? [{ name: request.agentMention }] : undefined;
-    const invocation = parseSlashCommandInvocation(text);
+    const invocation = parseSlashCommandInvocation(baseText);
+    // Commands and shell input keep their exact text; only a prompt carries the hidden workspace context.
+    const text = workspaceContext && !invocation && request.inputMode !== 'shell' ? `${baseText}\n\n${workspaceContext}` : baseText;
     const command = invocation ? [text, invocation.commandName, invocation.argumentsText] : null;
     // A new session must establish its initial user choice even if its first
     // input is queued. Existing-session enqueue never changes runner selection.

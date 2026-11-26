@@ -88,7 +88,11 @@ export const createProjectRegistry = ({
         return register({ ...input, paths: undefined, path: validatedPaths[0] });
       }
 
-      const id = createWorkspaceId();
+      const requestId = input.workspaceRequestId;
+      if (requestId !== undefined && (typeof requestId !== 'string' || !/^[0-9a-f]{32}$/.test(requestId) || !validatedPaths.length)) {
+        fail('validation_error', 'Invalid workspace request ID.');
+      }
+      const id = requestId === undefined ? createWorkspaceId() : `ws_${requestId}`;
       const primaryDirectory = validatedPaths.length > 0
         ? validatedPaths[0]
         : await provisionBlankDir(id);
@@ -102,8 +106,13 @@ export const createProjectRegistry = ({
         ...(label ? { label } : {}),
       };
 
+      let created = true;
       const settings = await persistSettings((current) => {
         const projects = Array.isArray(current.projects) ? current.projects : [];
+        if (requestId !== undefined && projects.some((entry) => entry.id === id)) {
+          created = false;
+          return {};
+        }
         const hubLayout = current.hubProjectLayout;
         const prependedHubLayout = input.prepend === true && hubLayout && typeof hubLayout.hubId === 'string' && Array.isArray(hubLayout.order)
           ? {
@@ -119,7 +128,7 @@ export const createProjectRegistry = ({
       });
       const saved = settings.projects?.find((entry) => entry.id === project.id);
       if (!saved) fail('project_unavailable', 'Workspace could not be persisted.');
-      return { project: saved, created: true, settings };
+      return { project: saved, created, settings };
     }
 
     // Legacy single-path idempotent registration

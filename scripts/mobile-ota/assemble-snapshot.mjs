@@ -8,8 +8,7 @@
  *   <out>/ota/channels/<other>.json   (full-snapshot mirror)
  *   <out>/ota-meta.json
  *
- * Fetches the live channel manifest from OTA_BASE_URL (default: the Vercel
- * origin that CI auto-deploys — the authoritative OTA source of truth).
+ * Fetches live channel manifests from OTA_BASE_URL (EdgeOne in CI).
  * 404 → start generation 1 with empty rollbacks.
  * Other HTTP errors → abort (never silently reset a live channel).
  *
@@ -35,8 +34,7 @@ import { promoteStableToBeta } from './channel-promotion.mjs'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '../..')
 
-// CI deploys snapshots to Vercel; it is the authoritative OTA origin. The
-// EdgeOne host stays client-readable as a legacy mirror but never as write source.
+// CI reads the live EdgeOne deployment before preparing the next snapshot.
 const DEFAULT_OTA_BASE = ''
 const BUNDLE_ID_PATTERN = /^[0-9a-f]{16}$/
 const ALLOWED_CHANNELS = new Set(['beta', 'stable'])
@@ -46,6 +44,9 @@ const { parseOtaManifest, selectOtaMajor, mergeOtaMajor } = await import(
 )
 const { compareReleaseVersions, parseReleaseVersion } = await import(
   pathToFileURL(path.join(ROOT, 'deploy/update-service/lib/semver.js')).href
+)
+const { otaBundleReleaseUrl } = await import(
+  pathToFileURL(path.join(ROOT, 'deploy/update-service/lib/ota-bundle-release.js')).href
 )
 
 function parseArgs(argv) {
@@ -199,8 +200,13 @@ async function fetchProductionManifest(baseUrl, channel) {
 }
 
 async function downloadBundle(baseUrl, bundleId, destPath) {
-  const url = `${baseUrl.replace(/\/$/, '')}/ota/bundles/${bundleId}.zip`
-  const response = await fetch(url)
+  let response = await fetch(otaBundleReleaseUrl(bundleId, process.env.OTA_BUNDLE_BASE_URL || undefined))
+  // Bundles published before the release store existed are still on the origin
+  // until the first release-backed snapshot uploads them.
+  if (response.status === 404) {
+    await response.body?.cancel()
+    response = await fetch(`${baseUrl.replace(/\/$/, '')}/ota/bundles/${bundleId}.zip`)
+  }
   if (!response.ok) {
     throw new Error(`Failed to download rollback bundle ${bundleId}: HTTP ${response.status}`)
   }

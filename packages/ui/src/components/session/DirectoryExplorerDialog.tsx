@@ -39,7 +39,7 @@ interface DirectoryExplorerDialogProps {
   /** Force mobile layout regardless of device detection */
   forceMobile?: boolean;
   onRemoteProjectAdded?: (project: RemoteProject, location: HostLocation) => void | Promise<void>;
-  editProject?: Pick<ProjectEntry, 'id' | 'path' | 'paths'>;
+  editProject?: Pick<ProjectEntry, 'id' | 'path' | 'paths' | 'hostId'>;
 }
 
 type BrowseEntry = {
@@ -149,8 +149,34 @@ const resolveFreshFilesystemHome = async (): Promise<string | null> => {
 };
 
 export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (props) => props.editProject
-  ? <LocalDirectoryExplorerDialog key={props.editProject.id} {...props} machinePicker={null} />
+  ? props.editProject.hostId
+    ? <RemoteWorkspaceEditDialog key={props.editProject.id} {...props} />
+    : <LocalDirectoryExplorerDialog key={props.editProject.id} {...props} machinePicker={null} />
   : <AddDirectoryExplorerDialog {...props} />;
+
+/** A remote workspace's directories are edited on its own Host, never mixed with this machine. */
+const RemoteWorkspaceEditDialog: React.FC<DirectoryExplorerDialogProps> = (props) => {
+  const { t } = useI18n();
+  const device = useDeviceInfo();
+  const isMobile = resolveDirectoryExplorerMobileLayout(props.forceMobile, device.isMobile);
+  const catalog = useRemoteHostCatalog(props.open, true);
+  const registry = React.useMemo(() => catalog.data?.supported ? getHostRuntimeRegistry(catalog.data) : null, [catalog.data]);
+  const project = catalog.data?.projects.find((entry) => entry.id === props.editProject?.id && entry.hostId === props.editProject?.hostId);
+  if (!registry || !project) {
+    return <DirectoryExplorerSurface open={props.open} onOpenChange={props.onOpenChange} origin={props.origin} mobile={isMobile} footer={null}
+      stacked title={t('workspace.paths.sectionTitle')} error={catalog.error?.message}>
+      {catalog.isPending ? <p role="status" className="yuri-directory-empty text-muted-foreground">{t('common.loading')}</p> : null}
+    </DirectoryExplorerSurface>;
+  }
+  const hostName = catalog.data?.hosts.find((host) => host.id === project.hostId)?.name ?? project.hostId;
+  const machinePicker = <div data-workspace-machine className="flex min-w-0 items-center gap-2 py-1 text-muted-foreground">
+    <span className="yuri-directory-name shrink-0">{t('remoteProjects.machine')}</span>
+    <Icon name="arrow-right-s" className="size-3 shrink-0" />
+    <span className="yuri-directory-name min-w-0 truncate">{hostName}</span>
+  </div>;
+  return <RemoteDirectoryExplorerDialog key={`${registry.hubId}:${project.hostId}`} open={props.open} onOpenChange={props.onOpenChange}
+    forceMobile={props.forceMobile} origin={props.origin} registry={registry} hostId={project.hostId} machinePicker={machinePicker} editProject={project} />;
+};
 
 const AddDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (props) => {
   const { t } = useI18n();
@@ -199,7 +225,7 @@ const AddDirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (prop
     <Icon name="arrow-right-s" className="size-3 shrink-0 text-muted-foreground" />
     <span className="yuri-directory-name min-w-0 truncate text-muted-foreground">{hostId ? selectedHost?.name ?? hostId : t('remoteProjects.local')}</span>
   </div> : null;
-  if (hostId && registry) return <RemoteDirectoryExplorerDialog key={`${registry.hubId}:${hostId}`} {...props} registry={registry} hostId={hostId} machinePicker={machinePicker} onRegistered={async (project) => {
+  if (hostId && registry) return <RemoteDirectoryExplorerDialog key={`${registry.hubId}:${hostId}`} {...props} editProject={undefined} registry={registry} hostId={hostId} machinePicker={machinePicker} onRegistered={async (project) => {
     registry.assertCurrent();
     await props.onRemoteProjectAdded?.(project, { hubId: registry.hubId, hostId, directory: project.path });
     registry.assertCurrent();

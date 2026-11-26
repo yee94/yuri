@@ -4,6 +4,7 @@ import { applySessionIndexEvent } from '../session-index/event-ingest.js';
 import { createUpstreamSseReader } from '../event-stream/upstream-reader.js';
 import { createRemoteTransport } from './transport.js';
 import { remoteDeadlineSignal } from './deadline.js';
+import { projectPaths, projectRoots } from './store.js';
 
 export const remoteFailure = (code, status = 503) => Object.assign(new Error(code), { code, status });
 const publicError = (error) => {
@@ -34,7 +35,8 @@ export const projectRemoteStatusEvent = (payload) => {
       result.metadata = { yuri: Object.fromEntries(['assistant', 'assigned', 'scheduledTask', 'smallModel', 'llm', 'archive', 'titleRefresh', 'sessionStatus']
         .filter((key) => yuri[key] && typeof yuri[key] === 'object').map((key) => [key,
           Object.fromEntries(['assistantID', 'name', 'from', 'taskID', 'purpose', 'archivedAt', 'activityUpdatedAt', 'type', 'changedAt']
-            .filter((field) => ['string', 'number'].includes(typeof yuri[key][field])).map((field) => [field, yuri[key][field]]))])) };
+             .filter((field) => ['string', 'number'].includes(typeof yuri[key][field])).map((field) => [field, yuri[key][field]]))])) };
+      if (typeof yuri.workspaceId === 'string' && yuri.workspaceId.length <= 512) result.metadata.yuri.workspaceId = yuri.workspaceId;
     }
     if (['user', 'shutdown', 'superseded', 'inactivity'].includes(value.reason)) result.reason = value.reason;
     if (value.error?.name === 'MessageAbortedError') result.error = { name: 'MessageAbortedError' };
@@ -102,9 +104,10 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
   const directoryResolver = (id) => {
     const projects = store.projects(id);
     const worktrees = store.organization(id).worktrees?.projectDirectories || {};
-    const roots = projects.map((project) => ({ project, directory: project.path, root: directoryKey(project.path) }));
-    const linked = projects.flatMap((project) => (worktrees[project.path] || [])
-      .map((root) => ({ project, directory: root, root: directoryKey(root) })));
+    const roots = projects.flatMap((project) => projectRoots(project)
+      .map((directory) => ({ project, directory, root: directoryKey(directory) })));
+    const linked = projects.flatMap((project) => projectRoots(project).flatMap((directory) => (worktrees[directory] || [])
+      .map((root) => ({ project, directory: root, root: directoryKey(root) }))));
     return (directory) => {
       const key = directoryKey(directory);
       const match = (candidates) => {
@@ -312,29 +315,29 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     const refreshAll = connection.topologyDirty;
     let changed = refreshAll;
     connection.topologyDirty = false;
-    for (const project of references) {
-      if (!refreshAll && Object.hasOwn(projectDirectories, project.path) && !stale.has(project.path)) continue;
+    const roots = new Set(references.flatMap(projectRoots));
+    for (const projectPath of roots) {
+      if (!refreshAll && Object.hasOwn(projectDirectories, projectPath) && !stale.has(projectPath)) continue;
       changed = true;
       try {
-        const rows = await json(connection.host.id, `/api/git/worktrees?directory=${encodeURIComponent(project.path)}`, { signal }, { refresh: true });
+        const rows = await json(connection.host.id, `/api/git/worktrees?directory=${encodeURIComponent(projectPath)}`, { signal }, { refresh: true });
         if (!Array.isArray(rows) || rows.some((row) => typeof row?.path !== 'string')) throw remoteFailure('remote_invalid_snapshot');
-        const projectKey = directoryKey(project.path);
+        const projectKey = directoryKey(projectPath);
         const checkout = rows.map((row) => directoryKey(row.path))
           .filter((root) => projectKey === root || projectKey.startsWith(root === '/' ? '/' : `${root}/`))
           .sort((a, b) => b.length - a.length)[0];
         const suffix = checkout && projectKey !== checkout
           ? projectKey.slice(checkout === '/' ? 1 : checkout.length + 1) : '';
-        projectDirectories[project.path] = checkout ? rows.map((row) => suffix
+        projectDirectories[projectPath] = checkout ? rows.map((row) => suffix
           ? `${row.path.replace(/[\\/]+$/, '')}${row.path.includes('\\') ? '\\' : '/'}${suffix.replace(/\//g, row.path.includes('\\') ? '\\' : '/')}`
           : row.path) : [];
-        stale.delete(project.path);
+        stale.delete(projectPath);
       } catch {
         if (signal.aborted || !current(connection)) { connection.topologyDirty = true; return; }
-        stale.add(project.path);
+        stale.add(projectPath);
       }
     }
     if (signal.aborted || !current(connection)) return;
-    const roots = new Set(references.map((project) => project.path));
     store.saveOrganization(connection.host.id, 'worktrees', {
       projectDirectories: Object.fromEntries(Object.entries(projectDirectories).filter(([root]) => roots.has(root))),
       staleProjectDirectories: [...stale].filter((root) => roots.has(root)),
@@ -354,7 +357,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       if (!current(connection) || controller.signal.aborted) return;
       if (topologyChanged) {
         const worktrees = store.organization(connection.host.id).worktrees?.projectDirectories || {};
-        const directories = [...new Set(references.flatMap((project) => [project.path, ...(worktrees[project.path] || [])]))];
+        const directories = [...new Set(references.flatMap(projectRoots).flatMap((root) => [root, ...(worktrees[root] || [])]))];
         let queued;
         try {
           queued = await json(connection.host.id, '/api/yuri/session-index/sync', {
@@ -378,10 +381,22 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       // snapshots must not overwrite a user's pin or resurrect a cleared pin.
       const remote = await json(connection.host.id, '/api/projects', { signal: controller.signal }, { refresh: true });
       if (!Array.isArray(remote.projects) || !current(connection) || controller.signal.aborted) return;
+      let membershipChanged = false;
       for (const reference of references) {
-        const project = remote.projects.find((p) => p.path === reference.path && !p.hostId);
-        if (project) store.refreshProject(reference, project);
+        // Workspaces are identified by remote ID; a single-path reference may also follow its path.
+        const project = remote.projects.find((p) => !p.hostId && p.id === reference.remoteProjectId)
+          ?? (reference.paths ? undefined : remote.projects.find((p) => !p.hostId && !projectPaths(p) && p.path === reference.path));
+        if (project) {
+          const updated = store.refreshProject(reference, project);
+          membershipChanged ||= Boolean(updated && (updated.path !== reference.path
+            || JSON.stringify(updated.paths) !== JSON.stringify(reference.paths)));
+        }
         else store.markProject(reference.id, 'remote-removed');
+      }
+      if (membershipChanged) {
+        connection.topologyDirty = true;
+        enqueueRefresh(connection);
+        broadcast({ type: 'yuri:project-order-changed', properties: { occurredAt: Date.now() } });
       }
       for (const [kind, route] of [['unread', '/api/yuri/session-unread'], ['folders', '/api/session-folders'], ['order', '/api/session-folders/order']]) {
         const organization = await json(connection.host.id, route, { signal: controller.signal }, { refresh: true });
@@ -394,8 +409,8 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
       // The remote scan is asynchronous and its completion event can be missed: a project directory that is still
       // syncing or was never synced must be re-read, otherwise its sessions stay hidden behind an empty summary.
       const syncing = snapshot.sync?.active === true;
-      const unsynced = references.some((project) => {
-        const entry = snapshot.directories.find((row) => directoryKey(row.directory) === directoryKey(project.path));
+      const unsynced = references.flatMap(projectRoots).some((root) => {
+        const entry = snapshot.directories.find((row) => directoryKey(row.directory) === directoryKey(root));
         return !entry || entry.lastSyncedAt === 0;
       });
       if (!syncing && !unsynced) connection.resyncAttempts = 0;
@@ -681,15 +696,25 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     if (connection && hasStatusDemand(id)) { connection.topologyDirty = true; enqueueRefresh(connection); }
     void reconcile();
   };
+  const validRemoteProject = (project, workspace) => typeof project?.id === 'string' && project.id
+    && typeof project.path === 'string' && project.path && !project.hostId
+    && (Array.isArray(project.paths) ? Boolean(projectPaths(project)) : !workspace);
+  // A multi-path workspace is created on the target Host, so all members live on that one machine.
   const registerProject = async (id, input, { instanceId, signal } = {}) => {
+    const workspace = Array.isArray(input?.paths);
+    if (workspace && (input.paths.length < 1 || input.paths.some((entry) => typeof entry !== 'string' || !entry))) {
+      throw remoteFailure('validation_error', 400);
+    }
     const lease = await acquireTask(id, { instanceId, signal });
     try {
+      const body = workspace
+        ? { paths: input.paths, createWorkspace: true, label: input.label, workspaceRequestId: input.workspaceRequestId }
+        : { path: input?.path, label: input?.label };
       const remote = await lease.json('/api/projects', { method: 'POST', signal,
-        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: input?.path, label: input?.label }) });
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       signal?.throwIfAborted();
-      if (typeof remote?.project?.id !== 'string' || !remote.project.id
-        || typeof remote.project.path !== 'string' || !remote.project.path || remote.project.hostId) throw remoteFailure('remote_invalid_project');
-      const existed = store.projects(id).some((project) => project.path === remote.project.path);
+      if (!validRemoteProject(remote?.project, workspace)) throw remoteFailure('remote_invalid_project');
+      const existed = Boolean(store.findProject(id, remote.project));
       const project = store.saveProject(id, remote.project);
       projectReferencesChanged(id);
       if (!existed) broadcast({ type: 'yuri:project-order-changed', properties: { occurredAt: Date.now() } });
@@ -745,8 +770,7 @@ export function createRemoteHostGateway({ store, indexDbPath, adapter, broadcast
     },
     summaries(id) {
       if (stopped) throw remoteFailure('host_unavailable', 404);
-      const references = new Set(store.projects(id).map((p) => directoryKey(p.path)));
-      if (!references.size) throw remoteFailure('project_not_found', 404);
+      if (!store.projects(id).length) throw remoteFailure('project_not_found', 404);
       const stale = stateFor(id) !== 'connected' || !connections.get(id)?.snapshotReady;
       const snapshot = indexFor(id).snapshot();
       const ownerFor = directoryResolver(id);

@@ -61,8 +61,8 @@ repository `contents: write` permission for this manifest commit.
 | Output directory | `public` |
 | Framework preset | Other |
 
-Connect the repository so pushes to `main` create production deployments, or
-deploy with the Vercel CLI from `deploy/update-service`.
+Use the release workflows to publish the optional Vercel mirror with
+`YURI_OTA_WRITE_VERCEL=true`. Leave Vercel Git auto-deployment disabled.
 
 Yuri Web, CLI, and VS Code use
 the explicitly configured update API through the connected
@@ -92,8 +92,9 @@ Or `bun run test` from this directory.
 and keep the legacy desktop feed available for installed clients. Its build
 command writes a complete static distribution to `dist/`, while Vercel builds
 `public/`. Both project domains must permit public requests. Legacy installer
-feeds continue to reference GitHub release assets; OTA ZIPs are local on both
-providers (see below).
+feeds continue to reference GitHub release assets. OTA ZIPs live in the GitHub
+prerelease `ota-bundles`; EdgeOne keeps local copies, Vercel hosts none (see
+below).
 
 ## Mobile OTA endpoints
 
@@ -150,7 +151,11 @@ Clients must follow `primaryAction`: `apply_ota` applies the bundle in-app;
 `install_native_required` opens `native.installUrl` when present; `none` hides
 the update. Do not invent a GitHub URL on the client.
 
-Relative `bundle.url` values are resolved to absolute URLs against the request origin.
+Relative `bundle.url` values are resolved to absolute URLs against the request origin
+on EdgeOne. The Vercel entrypoints pass `bundleBaseUrl`, so they return the
+`ota-bundles` release asset (`lib/ota-bundle-release.js`) instead; GitHub answers
+with a redirect to its storage host. Desktop clients only
+check EdgeOne, whose same-origin, no-redirect download contract is unchanged.
 When `primaryAction` is `apply_ota` or `install_native_required`, the handler loads
 `/CHANGELOG.md` from the same origin as the channel manifest and attaches filtered
 `releaseNotes` (same extraction as `/v1/update/check`). The upper bound is the OTA
@@ -203,15 +208,20 @@ Schema summary (`schemaVersion: 1`):
 
 Stable publishing also advances the same-major beta lane to the stable bundle unless beta already has a higher release version. Beta keeps its channel identity, independent generation, two most recent rollback records (including their ZIPs), and other major lanes. The promoted bundle shares stable's mobile/desktop artifacts, rollout and shell gates. Full releases synchronize finalized native targets before deployment. Beta publishing never advances stable.
 
-Vercel builds copy the source `ota/` tree into `public/`; CI overlays the full live snapshot before deployment. EdgeOne builds fetch a complete live snapshot into `dist/` as described below. Missing or invalid channel manifests fail either build.
+CI uploads ZIPs to the GitHub `ota-bundles` prerelease before publishing the
+channel manifests. EdgeOne builds `dist/` from the checked-out manifests and
+CHANGELOG, and downloads the ZIPs from GitHub. Vercel, if enabled, receives the
+same channel manifests and serves no ZIPs.
 
-Stable release service refreshes use `rollout.mjs --action snapshot` to retain the live manifests and every active/rollback mobile and desktop ZIP without changing generations, rollout state or native targets. Finalization shares the `mobile-ota-production` lock with OTA publishing, overlays this snapshot onto the prebuilt Vercel output, and aborts before deployment if any referenced file is unavailable. A source-only Vercel deploy is not safe: ZIPs are not committed to git. The following same-version OTA deployment reads the finalized stable release feed from `main`, rather than replacing it with the older feed in the release tag.
+Stable finalization and OTA publishing share the `mobile-ota-production` lock.
+When a stable release explicitly skips OTA, finalization refreshes EdgeOne with
+the new stable version manifest and the existing OTA snapshot.
 
 ### Cache rules
 
 | Path | Cache-Control |
 | --- | --- |
-| `/ota/bundles/(.*)` (full GET) | `public, max-age=31536000, immutable` |
+| `/ota/bundles/(.*)` (EdgeOne full GET; Vercel serves none) | `public, max-age=31536000, immutable` |
 | `/ota/bundles/(.*)` (static `Range`) | Provider-native byte-range serving; verified as `206` with exact bytes |
 | Legacy proxy partial responses | `no-store` (never edge-cache partial bodies) |
 | `/ota/channels/(.*)` | `no-cache, max-age=0` |
@@ -220,68 +230,37 @@ Stable release service refreshes use `rollout.mjs --action snapshot` to retain t
 
 ### Deploying bundles and channels
 
-CI publishes a static snapshot: place zip artifacts under `ota/bundles/<bundleId>.zip` and update the matching `ota/channels/<channel>.json`. The Vercel origin (`updates.example.com`) is authoritative — CI deploys snapshots there via `vercel deploy --prebuilt`.
+CI reads the current channel state from EdgeOne and uploads all retained ZIPs
+as `<bundleId>.zip` assets of the GitHub prerelease `ota-bundles`. During migration,
+if a ZIP is not yet on GitHub, CI copies the existing static ZIP from EdgeOne.
+CI commits both channel manifests to `main` via
+`scripts/mobile-ota/commit-edgeone-manifests.sh`, then calls the production hook
+stored in `YURI_EDGEONE_DEPLOY_HOOK` even if neither manifest changed. A hook
+acknowledgment does not establish that deployment succeeded.
 
-The EdgeOne host (`updates-mirror.example.com`) keeps the existing Git project
-and public domain. CI deploys Vercel first, then synchronizes both manifests to
-`main` via `scripts/mobile-ota/commit-edgeone-manifests.sh` and explicitly POSTs
-the main-branch deployment hook stored in `YURI_EDGEONE_DEPLOY_HOOK`. A successful
-Git push alone is not a deployment receipt. Unchanged manifests still invoke the
-hook, so a retry cannot silently skip a missing deployment. All three publishing
-jobs validate hook configuration before changing the Vercel distribution; a
-missing hook, rejected request or transport failure fails publication. Hook URLs
-are credentials: never print them or commit them to the repository. Requests do
-not follow redirects or automatically replay ambiguous POST failures. The
-EdgeOne build must expose `YURI_OTA_UPSTREAM_ORIGIN` (the verified Vercel HTTPS
-origin) to the build process, not only to runtime functions.
+EdgeOne builds from the checked-out manifests and CHANGELOG. It fetches only
+ZIPs from GitHub Releases, with at most three concurrent downloads; duplicate
+references download once and bytes must match the ID, size and available hash.
+Missing or corrupt content fails the build before activation. The checked-out
+snapshot keeps metadata consistent without a Vercel build-time dependency.
+CHANGELOG remains static-only; the dynamic `/ota/*` fallback serves historical
+ZIPs from GitHub and is not accepted by the readiness gate.
 
-`edgeone.json` enables `YURI_UPDATE_OTA_FULL_SNAPSHOT=1`. Before activation,
-`scripts/ota-distribution.mjs` fetches both live manifests, every referenced
-mobile/desktop active and rollback ZIP across all majors, and current CHANGELOG.
-Transfers are streamed with at most three concurrent ZIP downloads. Every ZIP
-must match its content-addressed ID and available size/checksum; encrypted ZIPs
-are verified by the ciphertext SHA-256 ID without changing Capgo metadata.
-Duplicate references download once. A second manifest read rejects a concurrently
-changed source. Missing/corrupt resources, origin failure or a torn snapshot fail
-the build, leaving the previous EdgeOne deployment serving its complete snapshot.
+CI verifies the `/ota-distribution.json` marker, both manifests, all retained
+mobile and desktop ZIPs and exact `206` range bytes on EdgeOne. OTA releases also
+verify client detectability. If `YURI_OTA_WRITE_VERCEL=true`, CI independently
+deploys and verifies the Vercel mirror using the same snapshot. Mirror failures
+are reported by their GitHub Actions step and do not fail EdgeOne publication.
 
-**CHANGELOG is static-only; no same-path Edge Function is deployed.** A production
-deployment containing both `CHANGELOG.md` and its former exact proxy function
-still served the proxy, despite the asset being present. Do not rely on static
-precedence for exact function routes. The real-build test rejects collisions
-between static files and exact Edge Function routes before service publication.
-The dynamic `/ota/*` proxy remains only for historical paths absent from the
-retained snapshot; such a proxy response does not pass the publication gate.
-Normal update checks, release notes, complete downloads and byte-range resume
-use EdgeOne local resources without runtime Vercel access. Existing URLs and
-installed clients need no migration.
-
-A successful build writes `/ota-distribution.json`, listing sizes and SHA-256s
-of all materialized OTA files (no keys or encryption payloads). Release, OTA and
-rollout workflows run `scripts/mobile-ota/verify-distribution.mjs` against both
-origins with the expected snapshot. EdgeOne verification requires this marker,
-downloads every retained ZIP, compares bytes with the snapshot (including
-encrypted artifacts), verifies exact `206` range bodies, and rejects
-`x-ota-proxy` responses. Metadata readiness, including CHANGELOG, is checked
-before ZIP transfers so deployment retries do not repeatedly download every
-retained bundle while an old metadata route is still active. A matching check
-response alone is not publication success. The existing detectability gate
-still validates client decisions.
-
-If Vercel deploys but EdgeOne build/verification fails, publication fails rather
-than claiming both are complete. Vercel retains the new authoritative snapshot;
-EdgeOne retains its previous working one. Retry the rollout workflow with
-`action: refresh-distribution`: it preserves version, generation, rollout and
-native targets, republishes the full Vercel snapshot and explicitly requests an
-EdgeOne build even when manifests are unchanged. No App rebuild, installer, TestFlight
-upload or new release version is needed. Do not deploy a git source-only Vercel
-build during recovery.
+`refresh-distribution` preserves the live EdgeOne version, generation, rollout
+and native targets and explicitly requests an EdgeOne build. No App rebuild or
+new release version is needed. It also republishes Vercel when enabled.
 
 ### Automatic service-code deployment
 
 `.github/workflows/update-service.yml` tests update-service code changes pushed
 to `main`, then calls the same rollout workflow with `refresh-distribution`.
-This reuses the production lock, complete-snapshot deployment and both-origin
+This reuses the production lock, complete-snapshot deployment and EdgeOne
 download/Range gate. It additionally compares the marker's `sourceSha256`
 against this checkout's service code/configuration, so an older deployment with
 identical OTA assets cannot prematurely pass a service-code rollout. It does
@@ -291,8 +270,7 @@ avoid recursive deployment. Normal release and rollout workflows already run
 the same distribution gate, so routine publishing needs no console login.
 
 One-time EdgeOne setup must point the Git project at `yee94/yuri`, branch
-`main`, root `deploy/update-service`, with the build environment origin configured
-above. Create a deployment hook for `main` in project settings and save its URL
+`main`, root `deploy/update-service`. Create a deployment hook for `main` in project settings and save its URL
 as the repository Actions secret `YURI_EDGEONE_DEPLOY_HOOK` (inherited by the
 reusable rollout workflow). CI uses this hook rather than depending on Git push
 callbacks or commit skip directives. Keep Git automatic deployment disabled once

@@ -1,3 +1,4 @@
+import { otaBundleReleaseUrlForPath } from './ota-bundle-release.js';
 import { loadOtaChannelManifest } from './ota-manifest.js';
 import { resolveMobileUpdate } from './ota-resolver.js';
 import { loadReleaseNotes, resolveChangelogCurrentVersion } from './release-notes.js';
@@ -178,11 +179,12 @@ function parseCapgoRequest(payload) {
   });
 }
 
-function absoluteBundleUrl(requestUrl, relativeUrl) {
-  return new URL(relativeUrl, new URL(requestUrl).origin).toString();
+function absoluteBundleUrl(requestUrl, relativeUrl, bundleBaseUrl) {
+  const released = bundleBaseUrl ? otaBundleReleaseUrlForPath(relativeUrl, bundleBaseUrl) : null;
+  return released ?? new URL(relativeUrl, new URL(requestUrl).origin).toString();
 }
 
-function withAbsoluteBundleUrl(decision, requestUrl) {
+function withAbsoluteBundleUrl(decision, requestUrl, bundleBaseUrl) {
   if (!decision.ota?.bundle?.url) return decision;
   return {
     ...decision,
@@ -190,7 +192,7 @@ function withAbsoluteBundleUrl(decision, requestUrl) {
       ...decision.ota,
       bundle: {
         ...decision.ota.bundle,
-        url: absoluteBundleUrl(requestUrl, decision.ota.bundle.url),
+        url: absoluteBundleUrl(requestUrl, decision.ota.bundle.url, bundleBaseUrl),
       },
     },
   };
@@ -287,6 +289,7 @@ async function runUpdateCheck(request, parsedRequest, options) {
     withAbsoluteBundleUrl(
       resolveMobileUpdate(manifest, parsedRequest),
       request.url,
+      options.bundleBaseUrl,
     ),
     parsedRequest,
     assetBaseUrl,
@@ -325,6 +328,7 @@ export async function handleCapgoOtaCheck(request, options = {}) {
   const decision = withAbsoluteBundleUrl(
     resolveMobileUpdate(manifest, parsed.request),
     request.url,
+    options.bundleBaseUrl,
   );
   return jsonResponse(toCapgoResponse(decision));
 }

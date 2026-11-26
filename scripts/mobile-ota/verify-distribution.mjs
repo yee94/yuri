@@ -20,7 +20,10 @@ if (!snapshotDirectory || !baseUrl) throw new Error('--snapshot and --base are r
 const attempts = requireLocal ? 30 : 1;
 for (let attempt = 1; attempt <= attempts; attempt += 1) {
   try {
-    const timings = await verifyOtaDistribution({ baseUrl, snapshotDirectory, requireLocal, requireCurrentCode });
+    const timings = await verifyOtaDistribution({
+      baseUrl, snapshotDirectory, requireLocal, requireCurrentCode,
+      bundleBaseUrl: process.env.OTA_BUNDLE_BASE_URL || undefined,
+    });
     console.log(JSON.stringify({ origin: new URL(baseUrl).origin, local: requireLocal, bundles: timings }, null, 2));
     break;
   } catch (error) {

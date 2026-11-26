@@ -8,6 +8,7 @@ import { getHostRuntimeServices } from '@/lib/remote-projects/runtime';
 import type { HostRuntimeEntry, HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import { locationSessionKey } from '@/lib/remote-projects/location';
 import { resolveRemoteProjectOwner, type RemoteHostSummaries } from '@/lib/remote-projects/summaries';
+import { readSessionWorkspaceId } from '@/lib/workspacePaths';
 import { queryClient } from '@/lib/queryRuntime';
 import type { GitWorktreeInfo } from '@/lib/api/types';
 import { captureProjectScope } from '@/lib/api/project-scope';
@@ -94,7 +95,7 @@ export function useRemoteMobileStatusCatalog(projects: ProjectEntry[], visible: 
       }
       const identities = new Map([...rawRows.values()].map(({ session, directory }) => [session.id, locationSessionKey({ hubId: registry.hubId, hostId: snapshot.hostId, directory }, session.id)]));
       for (const { session, directory } of rawRows.values()) {
-        const project = resolveRemoteProjectOwner(projects, registry.hubId, snapshot.hostId, directory, snapshot.worktrees);
+        const project = resolveRemoteProjectOwner(projects, registry.hubId, snapshot.hostId, directory, snapshot.worktrees, readSessionWorkspaceId(session));
         if (!project || session.time?.archived) continue;
         const entry = registry.resolve({ hubId: registry.hubId, hostId: snapshot.hostId, directory });
         result.push({ ...session, id: locationSessionKey(entry.location, session.id), parentID: session.parentID ? identities.get(session.parentID) ?? session.parentID : undefined,

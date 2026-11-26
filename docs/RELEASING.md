@@ -459,9 +459,9 @@ OTA tag 会创建 **GitHub prerelease**（`mobile-beta/v…` 或 `mobile-stable/
 
 ### 客户端可检测性验证（detectability probe）
 
-每次 OTA 发布部署后，CI 会用 `scripts/mobile-ota/verify-detectability.mjs` 对 **Vercel 与 EdgeOne 两个客户端入口** 探活 `POST /v1/mobile/update/check`，任一失败即让发布 fail（带 ~3 分钟边缘缓存重试）。脚本先断言**双 fixture**（新式版本门 / 存量无门），再打线上。设备优先打 EdgeOne，只探 Vercel 会漏掉国内入口的 resolver 回归。
+每次 OTA 发布部署后，CI 会用 `scripts/mobile-ota/verify-detectability.mjs` 对 **EdgeOne** 探活 `POST /v1/mobile/update/check`，失败即让发布 fail（带 ~3 分钟边缘缓存重试）。脚本先断言**双 fixture**（新式版本门 / 存量无门），再打线上。设备优先打 EdgeOne，只探 Vercel 会漏掉国内入口的 resolver 回归。
 
-此前还必须通过 `verify-distribution.mjs --snapshot <本次快照> --base <origin>`：两入口都下载并逐字节校验所有保留的移动端/桌面 ZIP（含回滚、其他主版本和加密包），并验证 Range 续传。EdgeOne 加 `--require-local`，要求新的 `/ota-distribution.json` 与实际文件一致且无 `x-ota-proxy`。旧代理即使能检查更新、下载成功也不能冒充本地完整分发。EdgeOne 构建等待最多约 7.5 分钟重试（不含传输耗时），未完成让发布失败。
+此前还必须通过 `verify-distribution.mjs --snapshot <本次快照> --base <origin>`：EdgeOne 下载并逐字节校验所有保留的移动端/桌面 ZIP（含回滚、其他主版本和加密包），并验证 Range 续传。EdgeOne 加 `--require-local`，要求新的 `/ota-distribution.json` 与实际文件一致且无 `x-ota-proxy`。旧代理即使能检查更新、下载成功也不能冒充本地完整分发。EdgeOne 构建等待最多约 7.5 分钟重试（不含传输耗时），未完成让发布失败。
 
 **Fixture A**（manifest 带 `minShellReleaseVersion: "1.18.3"`，active `1.18.3-beta.2`）：
 
@@ -521,7 +521,7 @@ node scripts/mobile-release-plan.mjs --json
 3. `mobile-beta-ota.yml`（Shared Desktop and Mobile OTA Release）：
    - `release-plan`：从 tag 推导 `CHANNEL`（`mobile-beta/` → beta，`mobile-stable/` → stable）与 `VERSION`；再次校验资格；非 ota 则失败并提示改用 `v*`。
    - `build-ota`：`bun run --cwd packages/mobile build`（web 构建 + prepare，**不含** `cap sync`）→ `@capgo/cli bundle zip` → 可选 `CAPGO_PRIVATE_KEY_V2` 加密 → 24 MiB 上限 → `scripts/mobile-ota/assemble-snapshot.mjs --channel $CHANNEL`。默认灰度：双通道均 `100`（可 `workflow_dispatch` 覆盖 `rollout_percent`）。
-   - `deploy`：对 `deploy/update-service` 做 Vercel pull / `vercel build --prod` / 将 **完整** snapshot 的 `ota/` 覆盖进 `.vercel/output/static/ota/` / `vercel deploy --prebuilt --prod`；再提交清单触发 EdgeOne 构建完整静态快照，通过两入口完整下载、Range 和客户端可检测性门禁。
+   - `deploy`：先把 ZIP 上传到 GitHub `ota-bundles`，再提交同一快照的清单触发 EdgeOne 构建。EdgeOne 验证通过后，若 `YURI_OTA_WRITE_VERCEL=true`，CI 另行写入并验证 Vercel；镜像失败不阻塞发布。
    - `archive`：GitHub **prerelease** 挂 zip 与对应 channel json。
 
 端点契约见 `deploy/update-service/README.md`（`/ota/channels/{beta,stable}.json`、`/ota/bundles/<id>.zip`、`POST /v1/mobile/update/check`）。仓库内种子：`deploy/update-service/ota/channels/beta.json` 与 `stable.json`。
@@ -535,7 +535,9 @@ Vercel/EdgeOne 部署会 **整包替换** 静态输出。因此每次 assemble /
 
 OTA release 与 rollout 共用 concurrency group `mobile-ota-production`（`cancel-in-progress: false`），串行化所有生产 OTA 部署，避免 beta/stable 交错部署时用过期镜像覆盖新近写入的另一通道。
 
-稳定版 `finalize-release` 更新服务部署也共用该锁：先用 `rollout.mjs --action snapshot --out <dir>` 原样保留线上两通道、所有主版本和引用的移动端/桌面 ZIP，再覆盖进 Vercel prebuilt 输出。该动作不改变 generation、灰度或原生目标；任一引用包缺失都必须中止。禁止仅从 git 源码直接部署更新服务，仓库不保存 ZIP，整包替换会删掉仍被线上清单引用的包。后续同版本 OTA 部署从 `main` 读取已发布的稳定 feed，避免 release tag 内的旧 feed 覆盖新版本。
+稳定版 `finalize-release` 共用该锁。显式跳过 OTA 时，EdgeOne 仍刷新稳定版检查清单，保留当前 OTA 状态。配置 `YURI_OTA_WRITE_VERCEL=true` 可同时维护 Vercel；未配置时不需要 Vercel 凭据。
+
+**OTA ZIP 不再放在 Vercel**：GitHub prerelease `ota-bundles` 存放内容寻址 ZIP。CI 从 EdgeOne 读当前发布状态；迁移前的 ZIP 在 GitHub 返回 404 时从 EdgeOne 现有静态文件补齐。
 
 ### 灰度 / 暂停 / 回滚 / 跨通道 promote
 
@@ -550,7 +552,7 @@ GitHub Actions → **Shared Desktop and Mobile OTA Rollout**（`mobile-beta-roll
 | `set-min-shell-release-version` | 设置或清除 `activeBundle.minShellReleaseVersion`（传空字符串清除）。端内「一键 OTA」vs「跳转重装」的版本门 |
 | `set-min-native-build` | **DEPRECATED**。设置 `activeBundle.platforms.<platform>.minNativeBuild`（可升可降）。服务端判定已不再读取该字段；仅保留用于修复线上存量 manifest |
 | `promote-channel` | 将 `--from`（通常 beta）已验证的 activeBundle **原样**拷到 `--to`（通常 stable），仅换 `rolloutSalt` / `rolloutPercent`（默认 100）；内容寻址 zip 可复用 |
-| `refresh-distribution` | 原样保留线上版本、generation、灰度、原生目标和全部引用包，重部署 Vercel 并强制触发 EdgeOne 完整构建；用于补齐已发布版本、重试失败镜像，不重发 App |
+| `refresh-distribution` | 保留线上版本、generation、灰度、原生目标及引用包，重新构建 EdgeOne；按配置选写 Vercel，无须重发 App |
 
 本地等价（写出 snapshot，再由 CI/人工部署）：
 
@@ -571,23 +573,23 @@ node scripts/mobile-ota/rollout.mjs --action promote-channel --from beta --to st
 - 无密钥时走明文 zip，`checksum` 为 **纯 64 位 hex（无 `sha256:` 前缀）**——原生插件按字面值比较自身摘要，带前缀会导致下载校验失败。脚本会自动剥掉输入的前缀。
 - 检查端点对加密 bundle 同时返回 `session_key` 与 `sessionKey` 两个键：Android 解析 `sessionKey`，iOS 解析 `session_key`。
 - 回滚加密 bundle 属于已知限制：回滚 zip 只能携带明文摘要，配置了公钥的壳无法校验，会自动回退到上一个成功 bundle。
-- zip **必须 < 24 MiB**；超限失败并提示迁移 COS。CI 部署 Vercel（权威源）后，`scripts/mobile-ota/commit-edgeone-manifests.sh` 把两个 channel manifest 提交到 `main` 触发 EdgeOne Git 构建；ZIP 不进 git。提交失败让 job fail，要求 `main` 允许 `github-actions[bot]` 直推。
-- EdgeOne 使用 `YURI_UPDATE_OTA_FULL_SNAPSHOT=1`，构建阶段从 Vercel 取两通道、所有主版本 active/rollback 的移动端/桌面 ZIP 及最新 CHANGELOG，流式校验 ID/大小/摘要后输出完整 `dist/`。最多三个并行 ZIP 传输，同一包只取一次。源不可达、缺包、损坏或构建中清单变化必须失败，保留旧完整部署，不上线半份资源。
+- zip **必须 < 24 MiB**。CI 上传 ZIP 后，`scripts/mobile-ota/commit-edgeone-manifests.sh` 把两个 channel manifest 提交到 `main` 并触发 EdgeOne 构建。ZIP 不进 git。
+- EdgeOne 用 Git checkout 的两通道清单和 CHANGELOG，从 GitHub 获取所有主版本的 active/rollback ZIP，验证后输出完整 `dist/`。构建失败时保留旧部署。
 - EdgeOne **刻意输出** `ota/bundles/` 和 `CHANGELOG.md` 覆盖旧代理；check 和 Capgo 接口只读本地，完整下载和 Range 续传均由静态服务处理，不再运行时回源 Vercel。旧白名单代理仅兼容不在当前保留快照内的历史路径，不能通过新发布门禁。用户原来的 EdgeOne 下载域名和路径不变，不需重装 App。
-- 仅改清单/下载分发可用 `refresh-distribution` 为已经发布的版本补齐资源。EdgeOne 失败时 Vercel 保留新权威快照、EdgeOne 继续提供旧完整快照；修复构建环境或源站后重试该动作，不改变版本与 generation。暂停/回滚仍要等 EdgeOne Git 部署成功，分发验证通过后才能声明两入口生效。
+- 仅改清单/下载分发可用 `refresh-distribution`，重试 EdgeOne 或补写可选的 Vercel 镜像，无须改变版本或 generation。
 
 ### 通道隔离保证
 
-- OTA 只写 `/ota/channels/{beta,stable}.json` 与 `/ota/bundles/*`，不修改 `release-manifest.json` 或 `/desktop/latest*.yml`。
+- OTA 只写 `/ota/channels/{beta,stable}.json`、EdgeOne `/ota/bundles/*` 与 `ota-bundles` Release 资产，不修改 `release-manifest.json` 或 `/desktop/latest*.yml`。
 - `mobile-beta/*` / `mobile-stable/*` GitHub Release 始终 `prerelease: true`，不会成为 Latest。
 - 拉取线上 manifest 时：HTTP **404** 可从 generation 0 起步（并仍镜像另一通道）；**5xx / 其它错误必须中止**，禁止静默清空线上通道。
 
 ### 灾难恢复
 
-若 `finalize-release` 已发布 Release、但后续 OTA 因旧包 `404` 失败，先检查上一次完整 Vercel 部署的相同内容寻址 URL。确认全部引用包完整后恢复该部署，再只重跑原 Release 的失败 job；不要重复 npm / IPA 上传、移动 tag 或清空回滚记录。最后重新核验两个入口的稳定 feed、beta/stable OTA 与可检测性。
+若 Release 已发布、但 OTA 因旧包 `404` 失败，检查该内容寻址 ZIP 是否存在于 GitHub 或当前 EdgeOne 静态部署。补齐 ZIP 后重试 OTA，不要移动 tag 或清空回滚记录。
 
 使用 `vercel rollback` 后，Vercel 会暂停生产域名的自动分配。新快照构建成功并不代表自定义域名已经切换；先检查新部署的独立 URL，再用 `vercel promote <新部署 URL> --yes` 恢复域名与后续自动发布。若旧 tag 的 OTA job 把稳定 feed 覆盖为旧版，用当前 `main` 的 feed 构建更新服务，并原样覆盖最新完整 OTA 快照后再部署；不要重发安装包或改变已发布 tag。
 
 1. GitHub prerelease `mobile-beta/v…` / `mobile-stable/v…` 上的 zip + channel json 可重新 assemble / 手动 overlay。
 2. `mobile-beta-rollout.yml` → `rollback` 将上一 generation 的 bundle 重新激活（内容寻址 zip 会从生产拉回 snapshot）。
-3. 若 Vercel 部署把旧 bundle 冲掉，assemble/rollout 脚本都会把 **双通道** active + rollback zip 重新拉进 snapshot 再 deploy。
+3. 若 GitHub 缺少旧 bundle，检查当前 EdgeOne 静态副本是否仍完整。

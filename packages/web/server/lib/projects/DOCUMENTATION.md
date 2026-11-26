@@ -33,11 +33,9 @@ reads and failed-write preservation. Assistant HTTP integration is covered in
 `../assistants/yuri-project.http.test.js`.
 
 A multi-path workspace belongs to exactly one machine: the Host that owns these
-settings. Member paths are validated against that Host's filesystem, the remote
-directory picker offers no multiple-projects mode, and remote projects do not
-open the workspace-directory editor, so a workspace cannot span machines. The picker shows the
-owning machine and this limit whenever multiple-projects mode is active,
-including while editing.
+settings. Both directory pickers show the owning machine and validate member
+paths against its filesystem. The remote editor stays on the workspace's
+original Host and requires at least one attached directory.
 
 New sessions created from a workspace send `metadata.yuri.workspaceId` in the
 OpenCode create request. For multi-path and 0-path workspaces the shared UI

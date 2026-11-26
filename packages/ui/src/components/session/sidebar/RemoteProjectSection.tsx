@@ -90,7 +90,7 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
     // The remote project's own icon, drawn at the task card's mark size.
     const badge = project.iconImage
       ? <span className="inline-flex size-3.5 shrink-0 items-center justify-center"><RemoteProjectIcon project={project} registry={registry} className="size-3.5" /></span>
-      : <TaskProjectBadge project={{ id: project.id, icon: project.icon ?? undefined, color: project.color ?? undefined }} />;
+      : <TaskProjectBadge project={{ id: project.id, icon: project.icon ?? undefined, color: project.color ?? undefined, isMultiPath: (project.paths?.length ?? 0) > 1 }} />;
     props.onTaskItems(project.id, data.rows.map(({ session }) => session)
       .filter((session) => !(session as { parentID?: string | null }).parentID)
       .map((session) => {

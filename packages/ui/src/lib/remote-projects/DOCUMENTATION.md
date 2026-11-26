@@ -123,7 +123,11 @@ successful catalog Query reads apply snapshots outside render.
 
 Host summaries include optional `worktrees.projectDirectories` (project root to
 authoritative Git checkout paths) and `staleProjectDirectories`. Root membership
-is implicit. `resolveRemoteProjectOwner` is the shared sidebar, Header and route
+is implicit. Remote workspaces carry ordered `paths` from one Host. Ownership
+checks all member roots and their verified worktrees. Session summaries preserve
+the Host's `metadata.yuri.workspaceId` to disambiguate shared roots, and the
+current status timestamp powers the same elapsed indicator used for local tasks.
+`resolveRemoteProjectOwner` is the shared sidebar, Header and route
 ownership rule: explicit project roots take precedence, followed by the most
 specific verified checkout. Never infer aliases for a nested project from its
 parent repository catalog; the server's filtered directory map is authoritative.

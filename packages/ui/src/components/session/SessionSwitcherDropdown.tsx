@@ -29,6 +29,7 @@ import { openRemoteProjectSession } from '@/router/openRemoteProjectSession';
 import type { RemoteProject } from '@/lib/remote-projects/types';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
 import { resolveRemoteProjectOwner, type RemoteHostSummaries } from '@/lib/remote-projects/summaries';
+import { readSessionWorkspaceId } from '@/lib/workspacePaths';
 import type { SessionIndexSession } from '@/lib/session-index-api';
 import { queryClient } from '@/lib/queryRuntime';
 import { projectSession } from '@/lib/opencode/v2-types';
@@ -193,13 +194,15 @@ function RemoteSwitcherList({ registry, project, onSelect, variant }: { registry
   const rows = React.useMemo(() => {
     const pinned = new Set(snapshot?.pinnedSessionIds ?? []);
     const owners = new Map<string, boolean>();
-    const ownsDirectory = (directory: string) => {
-      if (!owners.has(directory)) owners.set(directory, resolveRemoteProjectOwner(projects, registry.hubId, project.hostId, directory, snapshot?.worktrees)?.id === project.id);
-      return owners.get(directory);
+    const ownsSession = (session: Session, directory: string) => {
+      const workspaceId = readSessionWorkspaceId(session);
+      const key = JSON.stringify([directory, workspaceId]);
+      if (!owners.has(key)) owners.set(key, resolveRemoteProjectOwner(projects, registry.hubId, project.hostId, directory, snapshot?.worktrees, workspaceId)?.id === project.id);
+      return owners.get(key);
     };
     return (snapshot?.directories ?? []).flatMap(({ directory, sessions }) => sessions.filter((session) => !session.parentID && !session.time.archived)
       .map((session) => ({ session, directory: session.directory || directory })))
-      .filter(({ directory }) => ownsDirectory(directory))
+      .filter(({ session, directory }) => ownsSession(session, directory))
       .sort((a, b) => compareSessionsByPinnedAndTime(a.session, b.session, pinned)).slice(0, 7);
   }, [snapshot, projects, project.hostId, project.id, registry.hubId]);
   const error = summaries.error?.message;
@@ -209,7 +212,7 @@ function RemoteSwitcherList({ registry, project, onSelect, variant }: { registry
   }, [error, project.id, refreshSummaries, t]);
   const navigate = useEvent((sessionId: string | null, directory: string) => {
     try {
-      if (resolveRemoteProjectOwner(projects, registry.hubId, project.hostId, directory, snapshot?.worktrees)?.id !== project.id) throw new Error(t('remoteProjects.host-unavailable'));
+      if (resolveRemoteProjectOwner(projects, registry.hubId, project.hostId, directory, snapshot?.worktrees, project.paths ? project.remoteProjectId : null)?.id !== project.id) throw new Error(t('remoteProjects.host-unavailable'));
       openRemoteProjectSession(project, registry, sessionId, directory, mobile);
       onSelect();
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : String(cause)); }
@@ -280,7 +283,7 @@ function RemoteSwitcherNode({ registry, project, projects, session, directory, v
   }, [registry, project.hostId, directory, expanded, online, invalidate]);
   const cached = snapshot?.directories.flatMap((item) => item.sessions.filter((child) => child.parentID === session.id).map((child) => ({ ...child, directory: child.directory || item.directory }))) ?? [];
   const childRows = (children.data?.sessions ?? cached).filter((child) => child.id !== session.id && !ancestors.includes(child.id)
-    && resolveRemoteProjectOwner(projects, registry.hubId, project.hostId, child.directory || directory, snapshot?.worktrees)?.id === project.id);
+    && resolveRemoteProjectOwner(projects, registry.hubId, project.hostId, child.directory || directory, snapshot?.worktrees, readSessionWorkspaceId(child) ?? readSessionWorkspaceId(session))?.id === project.id);
   const status = (session.metadata as { yuri?: { sessionStatus?: { type?: string } } } | undefined)?.yuri?.sessionStatus?.type;
   const isActive = selected?.projectId === project.id && selected.location.hubId === registry.hubId && selected.location.hostId === project.hostId && selected.location.directory === directory && selected.sessionId === session.id;
   return <>

@@ -24,8 +24,18 @@ test('every OTA publication requires complete local EdgeOne downloads, including
     const triggerIndex = steps.findIndex((step) => step.run?.includes('commit-edgeone-manifests.sh'));
     const verifyIndex = steps.findIndex((step) => step.run?.includes('verify-distribution.mjs'));
     assert.ok(triggerIndex >= 0 && verifyIndex > triggerIndex, `${name} must wait for complete EdgeOne distribution`);
+    const uploadIndex = steps.findIndex((step) => step.run?.includes('publish-bundle-release.sh'));
+    assert.ok(uploadIndex >= 0 && uploadIndex < triggerIndex, `${name} must publish ZIPs before deploying EdgeOne`);
+    const deployIndex = steps.findIndex((step) => step.run?.includes('deploy --prebuilt --prod'));
+    const deployStep = steps[deployIndex];
+    assert.ok(deployIndex > verifyIndex, `${name} must verify EdgeOne before attempting Vercel`);
+    assert.match(deployStep.if, /vars\.YURI_OTA_WRITE_VERCEL == 'true'/);
+    assert.equal(deployStep['continue-on-error'], true);
+    assert.doesNotMatch(deployStep.run, /ota\/\.\s/, `${name} must not deploy bundles to Vercel`);
+    assert.match(steps[uploadIndex].env.GH_TOKEN, /GITHUB_TOKEN/);
+    assert.match(workflow.jobs[job].env?.OTA_BASE_URL ?? workflow.env?.OTA_BASE_URL, /vars\.YURI_OTA_MIRROR_URL/);
     const verify = steps[verifyIndex].run;
-    assert.match(verify, /--base "\$OTA_BASE_URL"/);
+    assert.doesNotMatch(verify, /VERCEL/);
     assert.match(verify, /--base "\$OTA_MIRROR_URL" --require-local/);
     if (name === 'mobile-beta-rollout.yml') {
       assert.ok(workflow.on.workflow_dispatch.inputs.action.options.includes('refresh-distribution'));
@@ -57,8 +67,9 @@ test('stable release service deployment preserves live OTA before replacing stat
   assert.match(finalize, /concurrency:\s+group: mobile-ota-production\s+cancel-in-progress: false/);
   const deploy = finalize.slice(finalize.indexOf('      - name: Deploy update service to Vercel'));
   assert.match(deploy, /node scripts\/mobile-ota\/rollout\.mjs --action snapshot --out/);
-  assert.match(deploy, /cp -R "\$SNAPSHOT_DIR\/ota\/\." "\$STATIC_DIR\/ota\/"/);
-  assert.ok(deploy.indexOf('--action snapshot') < deploy.indexOf('deploy --prebuilt --prod'));
+  assert.match(deploy, /cp -R "\$SNAPSHOT_DIR\/ota\/channels\/\." "\$STATIC_DIR\/ota\/channels\/"/);
+  assert.ok(deploy.indexOf('--action snapshot') < deploy.indexOf('publish-bundle-release.sh'));
+  assert.ok(deploy.indexOf('publish-bundle-release.sh') < deploy.indexOf('deploy --prebuilt --prod'));
   const ota = workflow.slice(workflow.indexOf('  mobile-native-targets:'), workflow.indexOf('  publish-relay-docker-manual:'));
   assert.match(ota, /git show FETCH_HEAD:deploy\/update-service\/release-manifest\.json > deploy\/update-service\/release-manifest\.json/);
 });
@@ -92,13 +103,14 @@ test('publishing and rollout retain both majors, channels and referenced bundles
       return;
     }
     const channel = req.url.match(/^\/ota\/channels\/(beta|stable)\.json$/)?.[1];
-    const bundle = req.url.match(/^\/ota\/bundles\/([a-f0-9]+)\.zip$/)?.[1];
+    const bundle = req.url.match(/^\/release\/([a-f0-9]+)\.zip$/)?.[1];
     const data = channel ? channels.get(channel) : bundles.get(bundle);
     res.statusCode = data ? 200 : 404;
     res.end(data ?? 'missing');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const env = { ...process.env, OTA_BASE_URL: `http://127.0.0.1:${server.address().port}`, MIN_SHELL_RELEASE_VERSION: '' };
+  const env = { ...process.env, OTA_BASE_URL: `http://127.0.0.1:${server.address().port}`, MIN_SHELL_RELEASE_VERSION: '',
+    OTA_BUNDLE_BASE_URL: `http://127.0.0.1:${server.address().port}/release/` };
   let sequence = 0;
   const publish = async (version, channel = 'beta', { metadata = {}, otaOnly = false } = {}) => {
     const zip = path.join(dir, `input-${++sequence}.zip`);
@@ -152,7 +164,8 @@ test('publishing and rollout retain both majors, channels and referenced bundles
     }), /shell\/backend changed/);
     const one = await publish('1.20.0-beta.1');
     assert.equal(one.activeBundle.applicationId, 'com.yee94.yuri');
-    assert.equal(one.activeBundle.minShellApiVersion, 3);
+    const capacitorConfig = await readFile(path.join(root, 'packages/mobile/capacitor.config.ts'), 'utf8');
+    assert.equal(one.activeBundle.minShellApiVersion, Number(capacitorConfig.match(/shellApiVersion\s*:\s*(\d+)/)[1]));
     assert.equal(one.activeBundle.desktop.applicationId, 'dev.yuri.desktop');
     assert.equal(one.activeBundle.desktop.minShellApiVersion, 2);
     const two = await publish('2.0.0-beta.24');

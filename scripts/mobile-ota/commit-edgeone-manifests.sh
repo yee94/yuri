@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Commit the assembled OTA channel manifests to main so the git-deployed EdgeOne
 # project builds a complete static distribution. Only channels/*.json enter git;
-# the EdgeOne build downloads and verifies all retained ZIPs and CHANGELOG from
-# Vercel before activation. Runs from a detached worktree; checkout is untouched.
+# the EdgeOne build uses that commit's metadata and downloads verified ZIPs
+# from GitHub Releases. Runs from a detached worktree; checkout is untouched.
 # After synchronization, explicitly invoke the production deployment hook; a
 # successful push alone does not establish that EdgeOne received a Git callback.
 #

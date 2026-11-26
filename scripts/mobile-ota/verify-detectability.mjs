@@ -55,6 +55,7 @@
  * Pass `--fixtures-only` to assert the dual-fixture profile table without
  * contacting production endpoints.
  */
+import { otaBundleReleaseUrl } from '../../deploy/update-service/lib/ota-bundle-release.js'
 import { parseOtaManifest, selectOtaMajor } from '../../deploy/update-service/lib/ota-manifest.js'
 import { parseReleaseVersion } from '../../deploy/update-service/lib/semver.js'
 import { createHash } from 'node:crypto'
@@ -591,7 +592,8 @@ for (const delay of RETRY_DELAYS_MS) {
       if (desktop.applicationId !== 'dev.yuri.desktop' || desktop.minShellApiVersion !== 2) {
         throw new Error('Desktop manifest must identify dev.yuri.desktop with bridge epoch 2')
       }
-      const desktopResponse = await fetch(new URL(desktop.url, base))
+      // Origins no longer host ZIPs; EdgeOne copies are byte-verified by verify-distribution.
+      const desktopResponse = await fetch(otaBundleReleaseUrl(desktop.bundleId, process.env.OTA_BUNDLE_BASE_URL || undefined))
       if (!desktopResponse.ok) throw new Error(`Desktop bundle unavailable: ${desktopResponse.status}`)
       const desktopBytes = Buffer.from(await desktopResponse.arrayBuffer())
       if (desktopBytes.length !== desktop.size || createHash('sha256').update(desktopBytes).digest('hex') !== desktop.checksum) {

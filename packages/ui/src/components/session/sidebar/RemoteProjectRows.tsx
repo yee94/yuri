@@ -9,18 +9,26 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useI18n } from '@/lib/i18n';
 import { cn, formatDirectoryName } from '@/lib/utils';
 import type { RemoteProject } from '@/lib/remote-projects/types';
+import { getWorkspacePaths } from '@/lib/workspacePaths';
 import { supportsRemoteProjects } from '@/queries/remoteProjectQueries';
 import { PendingRemoteHostIndicator } from '../RemoteHostIndicator';
 import { useRemoteHostDisplayName } from '@/lib/remote-projects/host-names';
 import { SessionBusyIndicator } from '../SessionBusyIndicator';
 import { SortableProjectItem } from './sortableItems';
 import { formatSessionCompactDateLabel, renderHighlightedText } from './utils';
-import { TaskUnreadDot } from './TaskCardParts';
+import { TaskRunningStatus, TaskUnreadDot } from './TaskCardParts';
+import { readRemoteTaskRunStartedAt } from '@/lib/remote-projects/summaries';
 import { SessionHoverDetails } from './SessionHoverDetails';
 import { DraggableSessionRow } from './sessionFolderDnd';
 import { SessionRowLayout, SessionRowContent, SessionRowTitle, SessionRowActions } from './SessionRowLayout';
 import type { RemoteProjectShellProps, RemoteSummaryRowProps } from './remoteProjectPresentation';
 import { MobileRemoteProjectShell } from './RemoteProjectMobileViews';
+
+/** Multi-path workspace members on the project's own Host, matching local workspace rows. */
+const remoteWorkspacePaths = (project: RemoteProject): string[] | undefined => {
+  const paths = getWorkspacePaths(project);
+  return paths.length > 1 ? paths : undefined;
+};
 
 export function RemoteProjectShell({ mobile, ...props }: RemoteProjectShellProps & { mobile: boolean }) {
   return mobile ? <MobileRemoteProjectShell {...props} /> : <DesktopRemoteProjectShell {...props} />;
@@ -30,7 +38,7 @@ function DesktopRemoteProjectShell({ project, registry, label, collapsed, active
   const [menu, setMenu] = React.useState<string | null>(null);
   return <SortableProjectItem id={project.id} hostId={project.hostId} remoteState={project.remoteState} hostRegistry={registry}
     projectLabel={label} projectDescription={project.path} projectIcon={project.icon ?? undefined} projectColor={project.color ?? undefined}
-    projectIconSlot={iconSlot} isCollapsed={collapsed} isActiveProject={active} isSessionsLoading={loading} isRepo={isRepo} worktreeActionAvailable
+    workspacePaths={remoteWorkspacePaths(project)} projectIconSlot={iconSlot} isCollapsed={collapsed} isActiveProject={active} isSessionsLoading={loading} isRepo={isRepo} worktreeActionAvailable
     hideDirectoryControls={false} mobileVariant={false} alwaysShowActions={false} reorderEnabled={reorderEnabled} onToggle={actions.toggle} onNewSession={actions.newSession}
     onNewWorktreeSession={actions.newWorktree} onSyncSessions={actions.sync} onRenameStart={actions.edit} onClose={actions.close}
     openSidebarMenuKey={menu} setOpenSidebarMenuKey={setMenu}>{children}</SortableProjectItem>;
@@ -46,7 +54,7 @@ export function PendingRemoteProjectRow({ project, loading, error, mobile, reord
   return <SortableProjectItem id={project.id} hostId={project.hostId} remoteState={project.remoteState}
     hostTag={<PendingRemoteHostIndicator hostId={project.hostId} name={hostName} loading={loading} status={status} error={loading ? undefined : error} />}
     projectLabel={project.label || formatDirectoryName(project.path) || project.path} projectDescription={project.path}
-    projectIcon={project.icon ?? undefined} projectColor={project.color ?? undefined}
+    projectIcon={project.icon ?? undefined} projectColor={project.color ?? undefined} workspacePaths={remoteWorkspacePaths(project)}
     isCollapsed isActiveProject={false} isRepo={false}
     hideDirectoryControls mobileVariant={mobile} alwaysShowActions={false} reorderEnabled={reorderEnabled}
     showCreateButtons={false} onToggle={noop} onNewSession={noop} onSyncSessions={noop} onRenameStart={noop} onClose={noop}
@@ -82,7 +90,7 @@ export function RemoteSummaryRow({ session, active, search, selected, pending, p
             <span className={cn('min-w-0 flex-1 truncate text-xs leading-4', active || selected ? 'text-foreground/80' : 'text-muted-foreground')}>{secondaryMeta?.projectLabel}</span>
             <span className={cn('shrink-0 group-hover:invisible group-focus-within:invisible', menuOpen && 'invisible')}>
               {busy
-                ? <span className="inline-flex items-center gap-1 text-[10px] font-medium leading-none tabular-nums text-status-info" title={t('sessions.sidebar.session.status.active')}><SessionBusyIndicator size={10} arcColor="var(--status-info)" /></span>
+                ? <TaskRunningStatus startedAt={readRemoteTaskRunStartedAt(session)} />
                 : <span className={cn('text-[10px] leading-none tabular-nums', active || selected ? 'text-foreground/70' : 'text-muted-foreground/70')}>{time}</span>}
             </span>
           </div>

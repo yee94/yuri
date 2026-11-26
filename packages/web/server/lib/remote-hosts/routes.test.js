@@ -803,6 +803,53 @@ describe('Remote Host production HTTP contract', () => {
     expect(remote.projects.find((entry) => entry.id === project.remoteProjectId)).toMatchObject({ ...appearance, ...cleared });
   });
 
+  it('creates and edits a same-Host multi-path workspace beside a single project and owns every member directory', async () => {
+    const { hub, remote } = await aggregate();
+    const single = (await (await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/repo' })).json()).project;
+    const created = await (await hub.call('/api/hosts/remote-1/projects', 'POST', { paths: ['/repo', '/lib'], label: 'Both' })).json();
+    expect(created.created).toBe(true);
+    expect(created.project).toMatchObject({ hostId: 'remote-1', path: '/repo', paths: ['/repo', '/lib'], label: 'Both' });
+    expect(created.project.id).not.toBe(single.id);
+    expect(remote.projects.find((entry) => entry.id === created.project.remoteProjectId)).toMatchObject({ paths: ['/repo', '/lib'] });
+    expect(hub.store.projects('remote-1')).toHaveLength(2);
+    expect(hub.gateway.assertProjectDirectory('remote-1', '/lib/src')).toBe('/lib');
+    expect(() => hub.gateway.assertProjectDirectory('remote-1', '/docs')).toThrow('project_not_found');
+
+    const route = `/api/hosts/remote-1/projects/${created.project.id}`;
+    const edited = await hub.call(route, 'PATCH', { paths: ['/lib', '/docs'] });
+    expect(edited.status).toBe(200);
+    expect((await edited.json()).project).toMatchObject({ id: created.project.id, path: '/lib', paths: ['/lib', '/docs'], label: 'Both' });
+    expect(remote.projects.find((entry) => entry.id === created.project.remoteProjectId)).toMatchObject({ path: '/lib', paths: ['/lib', '/docs'] });
+    expect(hub.gateway.assertProjectDirectory('remote-1', '/docs')).toBe('/docs');
+    expect(hub.store.projects('remote-1').find((entry) => entry.id === single.id)).toMatchObject({ path: '/repo' });
+
+    expect((await hub.call(`/api/hosts/remote-1/projects/${single.id}`, 'PATCH', { paths: ['/repo', '/other'] })).status).toBe(400);
+    expect((await hub.call(route, 'PATCH', { paths: [] })).status).toBe(400);
+    const send = hub.gateway.json;
+    hub.gateway.json = async (...args) => {
+      const result = await send(...args);
+      return args[2]?.method === 'PATCH' ? { project: result.project } : result;
+    };
+    try {
+      const legacy = await hub.call(route, 'PATCH', { paths: ['/docs'] });
+      expect(legacy.status).toBe(409);
+      expect((await legacy.json()).code).toBe('remote_incompatible');
+    } finally { hub.gateway.json = send; }
+  });
+
+  it('retries workspace association without creating another workspace after a Hub write failure', async () => {
+    const { hub, remote } = await aggregate({ failHubWrite: true });
+    const input = { paths: ['/repo', '/lib'], label: 'Both', workspaceRequestId: '1234567890abcdef1234567890abcdef' };
+    const route = '/api/hosts/remote-1/projects';
+    expect((await hub.call(route, 'POST', input)).ok).toBe(false);
+    expect(remote.projects).toHaveLength(1);
+    const retry = await hub.call(route, 'POST', input);
+    expect(retry.ok).toBe(true);
+    expect((await retry.json()).project.remoteProjectId).toBe(remote.projects[0].id);
+    expect(remote.projects).toHaveLength(1);
+    expect(hub.store.projects('remote-1')).toHaveLength(1);
+  });
+
   it('does not restore a Hub reference deleted while a metadata PATCH is completing remotely', async () => {
     const { hub, remote } = await aggregate();
     const { project } = await (await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/same/path' })).json();
@@ -908,6 +955,20 @@ describe('Remote Host production HTTP contract', () => {
       remote.emit({ type: 'yuri:session-index-changed', properties: { cause: 'change' } });
       await wait(() => expect(remote.indexRequests).toBeGreaterThan(before));
       expect(remote.indexSyncRequests).toHaveLength(1);
+    } finally { abort.abort(); await stream.body.cancel().catch(() => {}); }
+  });
+  it('indexes every workspace member directory and keeps the workspace by remote ID through refresh', async () => {
+    const { hub, remote } = await aggregate();
+    await hub.call('/api/hosts/remote-1/projects', 'POST', { path: '/repo' });
+    const { project } = await (await hub.call('/api/hosts/remote-1/projects', 'POST', { paths: ['/repo', '/lib'], label: 'Both' })).json();
+    const abort = new AbortController();
+    const stream = await fetch(`${hub.url}/api/global/event`, { headers: hub.headers, signal: abort.signal });
+    try {
+      await wait(() => expect(remote.indexSyncRequests.at(-1)).toEqual(['/repo', '/lib']));
+      await wait(async () => expect((await (await hub.call('/api/hosts/remote-1/summaries')).json()).directories
+        .map((entry) => entry.directory).sort()).toEqual(['/lib', '/repo']));
+      expect(hub.store.projects('remote-1').map((entry) => entry.remoteState)).toEqual(['ok', 'ok']);
+      expect(hub.store.projects('remote-1').find((entry) => entry.id === project.id)).toMatchObject({ paths: ['/repo', '/lib'] });
     } finally { abort.abort(); await stream.body.cancel().catch(() => {}); }
   });
   it('forwards scoped form reads and replies to the remote authority', async () => {

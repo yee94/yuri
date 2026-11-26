@@ -87,6 +87,10 @@ export const parseRemoteProject = (input: unknown): RemoteProject => {
     remoteProjectId: text(value.remoteProjectId), remoteState: value.remoteState as RemoteProject['remoteState'],
   };
   if (value.instanceId !== undefined) project.instanceId = text(value.instanceId);
+  if (Array.isArray(value.paths)) {
+    if (value.paths.length > 24) throw new Error('Invalid Remote Project paths');
+    project.paths = value.paths.map(text);
+  }
   for (const key of ['label', 'icon', 'iconBackground', 'color'] as const) {
     if (typeof value[key] === 'string') project[key] = value[key] as string;
     else if (key !== 'label' && value[key] === null) project[key] = null;

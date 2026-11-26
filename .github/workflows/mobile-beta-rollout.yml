@@ -96,9 +96,8 @@ permissions:
   contents: write
 
 env:
-  OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
+  OTA_BASE_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
   OTA_MIRROR_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
-  OTA_DETECTABILITY_BASES: ${{ vars.YURI_OTA_DETECTABILITY_BASES }}
 
 jobs:
   rollout:
@@ -208,46 +207,11 @@ jobs:
             echo "write_channel=$WRITE_CHANNEL"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Vercel pull + prebuilt build + overlay OTA
-        shell: bash
+      - name: Publish OTA ZIPs to GitHub
         env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
-        run: |
-          set -euo pipefail
-          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
-            if [[ -z "${!name}" ]]; then
-              echo "$name secret is required for OTA deploy."
-              exit 1
-            fi
-          done
-
-          mkdir -p deploy/update-service/.vercel
-          printf '%s\n' "{\"orgId\":\"${VERCEL_ORG_ID}\",\"projectId\":\"${VERCEL_PROJECT_ID}\"}" \
-            > deploy/update-service/.vercel/project.json
-
-          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" \
-            --cwd deploy/update-service
-
-          # Assumption: prebuilt static output lives at .vercel/output/static
-          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN" \
-            --cwd deploy/update-service
-
-          STATIC_DIR="deploy/update-service/.vercel/output/static"
-          if [[ ! -d "$STATIC_DIR" ]]; then
-            echo "Expected prebuilt static dir missing: $STATIC_DIR"
-            exit 1
-          fi
-
-          mkdir -p "$STATIC_DIR/ota"
-          cp -R "$SNAPSHOT_DIR/ota/." "$STATIC_DIR/ota/"
-
-          npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" \
-            --cwd deploy/update-service
-
-          rm -rf deploy/update-service/.vercel
+        run: scripts/mobile-ota/publish-bundle-release.sh "$SNAPSHOT_DIR"
 
       - name: Sync manifests and explicitly trigger EdgeOne OTA deployment
         shell: bash
@@ -260,16 +224,14 @@ jobs:
           scripts/mobile-ota/commit-edgeone-manifests.sh "$SNAPSHOT_DIR" \
             "chore(ota): ${ACTION} ${CHANNEL} manifest for EdgeOne"
 
-      - name: Verify full downloads and resume on both origins
+      - name: Verify full downloads and resume
         shell: bash
         env:
           SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
           VERIFY_CURRENT_CODE: ${{ inputs.verify_current_code }}
         run: |
           set -euo pipefail
-          test -n "$OTA_BASE_URL"
           test -n "$OTA_MIRROR_URL"
-          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_BASE_URL"
           ARGS=()
           if [[ "$VERIFY_CURRENT_CODE" == "true" ]]; then ARGS+=(--require-current-code); fi
           node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_MIRROR_URL" --require-local "${ARGS[@]}"
@@ -333,3 +295,48 @@ jobs:
             echo "::error::Rollout verification never observed generation=$EXPECTED_GENERATION after retries."
             exit 1
           fi
+
+      - name: Publish optional Vercel mirror
+        if: ${{ vars.YURI_OTA_WRITE_VERCEL == 'true' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          VERCEL_MIRROR_URL: ${{ vars.YURI_OTA_BASE_URL }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
+        run: |
+          set -euo pipefail
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "$name secret is required for OTA deploy."
+              exit 1
+            fi
+          done
+
+          mkdir -p deploy/update-service/.vercel
+          printf '%s\n' "{\"orgId\":\"${VERCEL_ORG_ID}\",\"projectId\":\"${VERCEL_PROJECT_ID}\"}" \
+            > deploy/update-service/.vercel/project.json
+
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" \
+            --cwd deploy/update-service
+
+          # Assumption: prebuilt static output lives at .vercel/output/static
+          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN" \
+            --cwd deploy/update-service
+
+          STATIC_DIR="deploy/update-service/.vercel/output/static"
+          if [[ ! -d "$STATIC_DIR" ]]; then
+            echo "Expected prebuilt static dir missing: $STATIC_DIR"
+            exit 1
+          fi
+
+          mkdir -p "$STATIC_DIR/ota/channels"
+          cp -R "$SNAPSHOT_DIR/ota/channels/." "$STATIC_DIR/ota/channels/"
+
+          npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" \
+            --cwd deploy/update-service
+
+          rm -rf deploy/update-service/.vercel
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$VERCEL_MIRROR_URL"

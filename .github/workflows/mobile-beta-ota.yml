@@ -39,9 +39,8 @@ permissions:
   contents: write
 
 env:
-  OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
+  OTA_BASE_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
   OTA_MIRROR_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
-  OTA_DETECTABILITY_BASES: ${{ vars.YURI_OTA_DETECTABILITY_BASES }}
   MOBILE_APP_ID: com.yee94.yuri
   MAX_BUNDLE_BYTES: 25165824 # 24 MiB
   YURI_UPDATE_ORIGIN: ${{ vars.YURI_OTA_MIRROR_URL }}
@@ -395,9 +394,118 @@ jobs:
           name: mobile-ota-snapshot-${{ needs.release-plan.outputs.version }}
           path: /tmp/ota-snapshot
 
-      - name: Vercel pull + prebuilt build + overlay OTA
+      - name: Publish OTA ZIPs to GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/mobile-ota/publish-bundle-release.sh /tmp/ota-snapshot
+
+      - name: Sync manifests and explicitly trigger EdgeOne OTA deployment
         shell: bash
         env:
+          CHANNEL: ${{ needs.release-plan.outputs.channel }}
+          VERSION: ${{ needs.release-plan.outputs.version }}
+        run: |
+          scripts/mobile-ota/commit-edgeone-manifests.sh /tmp/ota-snapshot \
+            "chore(ota): publish ${CHANNEL} manifest ${VERSION} for EdgeOne"
+
+      - name: Verify full downloads and resume
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$OTA_MIRROR_URL"
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot /tmp/ota-snapshot --base "$OTA_MIRROR_URL" --require-local
+
+      - name: Verify production OTA manifest + bundle
+        shell: bash
+        env:
+          OTA_BASE_URL: ${{ env.OTA_BASE_URL }}
+          CHANNEL: ${{ needs.release-plan.outputs.channel }}
+          BUNDLE_ID: ${{ needs.build-ota.outputs.bundle_id }}
+          EXPECTED_CHECKSUM: ${{ needs.build-ota.outputs.checksum }}
+          EXPECTED_GENERATION: ${{ needs.build-ota.outputs.generation }}
+          ENCRYPTED: ${{ needs.build-ota.outputs.encrypted }}
+        run: |
+          set -euo pipefail
+          # Full-snapshot invariant: BOTH channel manifests must remain reachable.
+          for ch in beta stable; do
+            curl -fsS "${OTA_BASE_URL}/ota/channels/${ch}.json" -o "/tmp/${ch}.json"
+            node -e "
+              const fs = require('fs');
+              const m = JSON.parse(fs.readFileSync('/tmp/' + process.argv[1] + '.json','utf8'));
+              if (m.channel !== process.argv[1]) throw new Error('channel field mismatch for ' + process.argv[1]);
+              console.log(process.argv[1] + '.json ok generation=' + m.generation);
+            " "$ch"
+          done
+
+          MANIFEST_URL="${OTA_BASE_URL}/ota/channels/${CHANNEL}.json"
+          BUNDLE_URL="$(node --input-type=module -e '
+            import { otaBundleReleaseUrl } from "./deploy/update-service/lib/ota-bundle-release.js";
+            process.stdout.write(otaBundleReleaseUrl(process.env.BUNDLE_ID));
+          ')"
+          curl -fsS "$MANIFEST_URL" -o /tmp/active-channel.json
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('/tmp/active-channel.json','utf8'));
+            if (m.generation !== Number(process.env.EXPECTED_GENERATION)) {
+              throw new Error('generation mismatch: ' + m.generation + ' !== ' + process.env.EXPECTED_GENERATION);
+            }
+            if (!m.activeBundle || m.activeBundle.bundleId !== process.env.BUNDLE_ID) {
+              throw new Error('activeBundle.bundleId mismatch');
+            }
+            console.log('manifest ok generation=' + m.generation + ' bundleId=' + m.activeBundle.bundleId);
+          "
+
+          curl -fsSL "$BUNDLE_URL" -o /tmp/bundle.zip
+          ACTUAL_SIZE="$(node -e "process.stdout.write(String(require('fs').statSync('/tmp/bundle.zip').size))")"
+          META_SIZE="$(node -p "JSON.parse(require('fs').readFileSync('/tmp/active-channel.json','utf8')).activeBundle.size")"
+          if [[ "$ACTUAL_SIZE" != "$META_SIZE" ]]; then
+            echo "content-length/size mismatch: actual=$ACTUAL_SIZE meta=$META_SIZE"
+            exit 1
+          fi
+
+          # Plain path: checksum is the sha256 of the served zip. Encrypted
+          # bundles carry an opaque CLI-encrypted checksum that cannot be
+          # recomputed here — only size is verified for those.
+          if [[ "${ENCRYPTED}" != "true" ]]; then
+            ACTUAL="$(node -e "const fs=require('fs');const c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync('/tmp/bundle.zip')).digest('hex'))")"
+            EXPECTED_HEX="${EXPECTED_CHECKSUM#sha256:}"
+            if [[ "$ACTUAL" != "$EXPECTED_HEX" ]]; then
+              echo "checksum mismatch: actual=$ACTUAL expected=$EXPECTED_HEX"
+              exit 1
+            fi
+            echo "bundle verified size=$ACTUAL_SIZE checksum=$ACTUAL"
+          else
+            echo "encrypted bundle verified by size only ($ACTUAL_SIZE bytes); checksum is CLI-encrypted"
+          fi
+
+      - name: Verify client update detectability
+        env:
+          OTA_BASE_URL: ${{ env.OTA_BASE_URL }}
+          CHANNEL: ${{ needs.release-plan.outputs.channel }}
+          VERSION: ${{ needs.release-plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/mobile-ota/verify-detectability.mjs --base "$OTA_BASE_URL" \
+            --channel "$CHANNEL" --version "$VERSION" --mode ota
+          if [[ "$CHANNEL" == "stable" ]]; then
+            BETA_VERSION="$(node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              import { selectOtaMajor } from "./deploy/update-service/lib/ota-manifest.js";
+              const catalog = JSON.parse(readFileSync(process.argv[1], "utf8"));
+              process.stdout.write(selectOtaMajor(catalog, Number(process.env.VERSION.split(".")[0])).activeBundle.releaseVersion);
+            ' /tmp/ota-snapshot/ota/channels/beta.json)"
+            node scripts/mobile-ota/verify-detectability.mjs --base "$OTA_BASE_URL" --channel beta --version "$BETA_VERSION" --mode ota
+          fi
+
+      - name: Publish optional Vercel mirror
+        if: ${{ vars.YURI_OTA_WRITE_VERCEL == 'true' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-plan.outputs.version }}
+          CHANNEL: ${{ needs.release-plan.outputs.channel }}
+          PLAN_MODE: ota
+          VERCEL_MIRROR_URL: ${{ vars.YURI_OTA_BASE_URL }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -429,111 +537,17 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$STATIC_DIR/ota"
-          # Overlay channel + bundles from the assembled snapshot (content-addressed).
-          cp -R /tmp/ota-snapshot/ota/. "$STATIC_DIR/ota/"
+          mkdir -p "$STATIC_DIR/ota/channels"
+          # Overlay channel manifests only; bundles live in the GitHub release store.
+          cp -R /tmp/ota-snapshot/ota/channels/. "$STATIC_DIR/ota/channels/"
 
           npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" \
             --cwd deploy/update-service
 
           rm -rf deploy/update-service/.vercel
-
-      - name: Sync manifests and explicitly trigger EdgeOne OTA deployment
-        shell: bash
-        env:
-          CHANNEL: ${{ needs.release-plan.outputs.channel }}
-          VERSION: ${{ needs.release-plan.outputs.version }}
-        run: |
-          scripts/mobile-ota/commit-edgeone-manifests.sh /tmp/ota-snapshot \
-            "chore(ota): publish ${CHANNEL} manifest ${VERSION} for EdgeOne"
-
-      - name: Verify full downloads and resume on both origins
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$OTA_BASE_URL"
-          test -n "$OTA_MIRROR_URL"
-          node scripts/mobile-ota/verify-distribution.mjs --snapshot /tmp/ota-snapshot --base "$OTA_BASE_URL"
-          node scripts/mobile-ota/verify-distribution.mjs --snapshot /tmp/ota-snapshot --base "$OTA_MIRROR_URL" --require-local
-
-      - name: Verify production OTA manifest + bundle
-        shell: bash
-        env:
-          OTA_BASE_URL: ${{ env.OTA_BASE_URL }}
-          CHANNEL: ${{ needs.release-plan.outputs.channel }}
-          BUNDLE_ID: ${{ needs.build-ota.outputs.bundle_id }}
-          EXPECTED_CHECKSUM: ${{ needs.build-ota.outputs.checksum }}
-          EXPECTED_GENERATION: ${{ needs.build-ota.outputs.generation }}
-          ENCRYPTED: ${{ needs.build-ota.outputs.encrypted }}
-        run: |
-          set -euo pipefail
-          # Full-snapshot invariant: BOTH channel manifests must remain reachable.
-          for ch in beta stable; do
-            curl -fsS "${OTA_BASE_URL}/ota/channels/${ch}.json" -o "/tmp/${ch}.json"
-            node -e "
-              const fs = require('fs');
-              const m = JSON.parse(fs.readFileSync('/tmp/' + process.argv[1] + '.json','utf8'));
-              if (m.channel !== process.argv[1]) throw new Error('channel field mismatch for ' + process.argv[1]);
-              console.log(process.argv[1] + '.json ok generation=' + m.generation);
-            " "$ch"
-          done
-
-          MANIFEST_URL="${OTA_BASE_URL}/ota/channels/${CHANNEL}.json"
-          BUNDLE_URL="${OTA_BASE_URL}/ota/bundles/${BUNDLE_ID}.zip"
-          curl -fsS "$MANIFEST_URL" -o /tmp/active-channel.json
-          node -e "
-            const fs = require('fs');
-            const m = JSON.parse(fs.readFileSync('/tmp/active-channel.json','utf8'));
-            if (m.generation !== Number(process.env.EXPECTED_GENERATION)) {
-              throw new Error('generation mismatch: ' + m.generation + ' !== ' + process.env.EXPECTED_GENERATION);
-            }
-            if (!m.activeBundle || m.activeBundle.bundleId !== process.env.BUNDLE_ID) {
-              throw new Error('activeBundle.bundleId mismatch');
-            }
-            console.log('manifest ok generation=' + m.generation + ' bundleId=' + m.activeBundle.bundleId);
-          "
-
-          curl -fsS "$BUNDLE_URL" -o /tmp/bundle.zip
-          ACTUAL_SIZE="$(node -e "process.stdout.write(String(require('fs').statSync('/tmp/bundle.zip').size))")"
-          META_SIZE="$(node -p "JSON.parse(require('fs').readFileSync('/tmp/active-channel.json','utf8')).activeBundle.size")"
-          if [[ "$ACTUAL_SIZE" != "$META_SIZE" ]]; then
-            echo "content-length/size mismatch: actual=$ACTUAL_SIZE meta=$META_SIZE"
-            exit 1
-          fi
-
-          # Plain path: checksum is the sha256 of the served zip. Encrypted
-          # bundles carry an opaque CLI-encrypted checksum that cannot be
-          # recomputed here — only size is verified for those.
-          if [[ "${ENCRYPTED}" != "true" ]]; then
-            ACTUAL="$(node -e "const fs=require('fs');const c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync('/tmp/bundle.zip')).digest('hex'))")"
-            EXPECTED_HEX="${EXPECTED_CHECKSUM#sha256:}"
-            if [[ "$ACTUAL" != "$EXPECTED_HEX" ]]; then
-              echo "checksum mismatch: actual=$ACTUAL expected=$EXPECTED_HEX"
-              exit 1
-            fi
-            echo "bundle verified size=$ACTUAL_SIZE checksum=$ACTUAL"
-          else
-            echo "encrypted bundle verified by size only ($ACTUAL_SIZE bytes); checksum is CLI-encrypted"
-          fi
-
-      - name: Verify client update detectability
-        env:
-          OTA_BASE_URL: ${{ env.OTA_BASE_URL }}
-          CHANNEL: ${{ needs.release-plan.outputs.channel }}
-          VERSION: ${{ needs.release-plan.outputs.version }}
-        run: |
-          set -euo pipefail
-          node scripts/mobile-ota/verify-detectability.mjs \
-            --channel "$CHANNEL" --version "$VERSION" --mode ota
-          if [[ "$CHANNEL" == "stable" ]]; then
-            BETA_VERSION="$(node --input-type=module -e '
-              import { readFileSync } from "node:fs";
-              import { selectOtaMajor } from "./deploy/update-service/lib/ota-manifest.js";
-              const catalog = JSON.parse(readFileSync(process.argv[1], "utf8"));
-              process.stdout.write(selectOtaMajor(catalog, Number(process.env.VERSION.split(".")[0])).activeBundle.releaseVersion);
-            ' /tmp/ota-snapshot/ota/channels/beta.json)"
-            node scripts/mobile-ota/verify-detectability.mjs --channel beta --version "$BETA_VERSION" --mode ota
-          fi
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot /tmp/ota-snapshot --base "$VERCEL_MIRROR_URL"
+          node scripts/mobile-ota/verify-detectability.mjs --base "$VERCEL_MIRROR_URL" \
+            --channel "$CHANNEL" --version "$VERSION" --mode "$PLAN_MODE"
 
   archive:
     name: Archive OTA prerelease

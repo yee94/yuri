@@ -29,6 +29,12 @@ const text = (value: unknown): string => {
   return value;
 };
 const number = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
+export const readRemoteTaskRunStartedAt = (session: { metadata?: unknown }): number | null => {
+  const status = (session.metadata as { yuri?: { sessionStatus?: { type?: unknown; changedAt?: unknown } } } | undefined)?.yuri?.sessionStatus;
+  if (status?.type !== 'busy' && status?.type !== 'retry') return null;
+  const changedAt = number(status.changedAt);
+  return changedAt > 0 ? changedAt : null;
+};
 const ids = (value: unknown): string[] => Array.isArray(value) ? value.map(text) : [];
 const entries = <T>(value: unknown, parse: (value: unknown) => T): Record<string, T> => Object.fromEntries(
   Object.entries(object(value)).map(([key, row]) => [key, parse(row)]),
@@ -56,7 +62,13 @@ export const parseRemoteHostSummaries = (input: unknown, hubId: string, hostId: 
           const time = object(session.time);
           const metadata = session.metadata ? object(session.metadata) : undefined;
           const yuri = metadata?.yuri ? object(metadata.yuri) : undefined;
-          const status = yuri?.sessionStatus ? object(yuri.sessionStatus) : undefined;
+           const status = yuri?.sessionStatus ? object(yuri.sessionStatus) : undefined;
+           const workspaceId = typeof yuri?.workspaceId === 'string' && yuri.workspaceId.length <= 512 ? yuri.workspaceId : undefined;
+           const sessionStatus = status && typeof status.type === 'string' ? {
+             type: value.stale ? 'unknown' : status.type,
+             ...(number(status.changedAt) > 0 && !value.stale ? { changedAt: number(status.changedAt) } : {}),
+             ...(typeof status.lastKnown === 'string' ? { lastKnown: status.lastKnown } : value.stale ? { lastKnown: status.type } : {}),
+           } : undefined;
           return {
             id: text(session.id), directory, title: typeof session.title === 'string' ? session.title : '',
             ...(typeof session.parentID === 'string' ? { parentID: session.parentID } : {}),
@@ -68,10 +80,10 @@ export const parseRemoteHostSummaries = (input: unknown, hubId: string, hostId: 
               ...(typeof time.archived === 'number' ? { archived: time.archived } : {}),
               ...(typeof time.pinned === 'string' || typeof time.pinned === 'number' ? { pinned: time.pinned } : {}),
             },
-            ...(status && typeof status.type === 'string' ? { metadata: { yuri: { sessionStatus: {
-              type: value.stale ? 'unknown' : status.type,
-              ...(typeof status.lastKnown === 'string' ? { lastKnown: status.lastKnown } : value.stale ? { lastKnown: status.type } : {}),
-            } } } } : {}),
+             ...(sessionStatus || workspaceId ? { metadata: { yuri: {
+               ...(sessionStatus ? { sessionStatus } : {}),
+               ...(workspaceId ? { workspaceId } : {}),
+             } } } : {}),
           } as SessionIndexSession;
         }),
       };
@@ -114,28 +126,46 @@ export const parseRemoteHostSummaries = (input: unknown, hubId: string, hostId: 
 
 const within = (directory: string, root: string): boolean => directory === root || directory.startsWith(root.endsWith('/') ? root : `${root}/`);
 
-/** Topology is Host authority, not a common-parent heuristic or filesystem cwd rewrite. */
-export function resolveRemoteProjectOwner<T extends { path: string; hubId?: string; hostId?: string }>(
+type RemoteOwnerCandidate = { path: string; paths?: string[]; hubId?: string; hostId?: string; remoteProjectId?: string };
+
+/** Every remote directory a project owns: multi-path workspace members, else its single path. */
+const ownedRoots = (project: RemoteOwnerCandidate): string[] => (project.paths?.length ? project.paths : [project.path])
+  .map(normalizeDirectoryKey).filter(Boolean);
+const longestRoot = (roots: readonly string[], target: string): number => roots
+  .reduce((best, root) => (within(target, root) && root.length > best ? root.length : best), -1);
+
+/**
+ * Topology is Host authority, not a common-parent heuristic or filesystem cwd rewrite.
+ * `workspaceId` (the session's `metadata.yuri.workspaceId`, a remote project ID) wins over a
+ * same-path single project, matching the local workspace ownership rule.
+ */
+export function resolveRemoteProjectOwner<T extends RemoteOwnerCandidate>(
   projects: readonly T[], hubId: string, hostId: string, directory: string, topology?: RemoteWorktreeTopology,
+  workspaceId?: string | null,
 ): T | undefined {
   const target = normalizeDirectoryKey(directory);
   if (!target) return undefined;
   const scoped = projects.filter((project) => project.hostId === hostId && (!project.hubId || project.hubId === hubId));
-  const explicit = scoped.filter((project) => { const root = normalizeDirectoryKey(project.path); return root && within(target, root); })
-    .sort((a, b) => normalizeDirectoryKey(b.path).length - normalizeDirectoryKey(a.path).length)[0];
+  const catalogs = new Map(Object.entries(topology?.projectDirectories ?? {}).map(([path, paths]) => [normalizeDirectoryKey(path), paths]));
+  const aliases = (roots: string[]) => roots.flatMap((root) => catalogs.get(root)?.map(normalizeDirectoryKey).filter(Boolean) ?? []);
+  if (workspaceId) {
+    const tagged = scoped.find((project) => project.paths && project.remoteProjectId === workspaceId);
+    if (tagged) {
+      const roots = ownedRoots(tagged);
+      if (longestRoot(roots, target) >= 0 || longestRoot(aliases(roots), target) >= 0) return tagged;
+    }
+  }
+  // On equal roots a single-path project keeps its sessions; a workspace claims them via workspaceId.
+  const explicit = scoped.map((project) => ({ project, score: longestRoot(ownedRoots(project), target) }))
+    .filter((entry) => entry.score >= 0)
+    .sort((a, b) => b.score - a.score || Number(Boolean(a.project.paths)) - Number(Boolean(b.project.paths)))[0]?.project;
   if (explicit) return explicit;
   let owner: T | undefined;
   let best = -1;
   let ambiguous = false;
-  const catalogs = new Map(Object.entries(topology?.projectDirectories ?? {}).map(([path, paths]) => [normalizeDirectoryKey(path), paths]));
   for (const project of scoped) {
-    const root = normalizeDirectoryKey(project.path);
-    if (!root) continue;
-    const catalog = catalogs.get(root);
-    const roots = [root, ...(catalog?.map(normalizeDirectoryKey).filter(Boolean) ?? [])];
-    const match = roots.filter((path) => within(target, path)).sort((a, b) => b.length - a.length)[0];
-    if (!match) continue;
-    const score = match.length;
+    const score = longestRoot(aliases(ownedRoots(project)), target);
+    if (score < 0) continue;
     if (score > best) { owner = project; best = score; ambiguous = false; }
     else if (score === best && owner !== project) ambiguous = true;
   }

@@ -5,6 +5,16 @@ const require = createRequire(import.meta.url);
 const metadataKeys = ['label', 'icon', 'iconImage', 'iconBackground', 'color'];
 export const projectMetadata = (value) => Object.fromEntries(metadataKeys
   .filter((key) => Object.hasOwn(value || {}, key)).map((key) => [key, value[key]]));
+const MAX_WORKSPACE_PATHS = 24;
+/** Ordered member directories of a remote multi-path workspace; null for a single-path project. */
+export const projectPaths = (value) => {
+  if (!Array.isArray(value?.paths)) return null;
+  const paths = [...new Set(value.paths.filter((entry) => typeof entry === 'string' && entry && entry.length <= 4096
+    && !/[\x00-\x1f]/.test(entry)))];
+  return paths.length === value.paths.length && paths.length <= MAX_WORKSPACE_PATHS ? paths : null;
+};
+/** Every remote directory a reference owns: workspace members, else its single path. */
+export const projectRoots = (project) => (project.paths?.length ? project.paths : [project.path]);
 
 // This database has deliberately no message/part/body columns. Only the remote
 // authority's presentation metadata and connection receipts can cross this seam.
@@ -12,10 +22,20 @@ export function createRemoteHostStore(dbPath) {
   const Database = require('better-sqlite3');
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
-  db.exec(`CREATE TABLE IF NOT EXISTS remote_project (
-    id TEXT PRIMARY KEY, host_id TEXT NOT NULL, path TEXT NOT NULL,
+  // A workspace reference may share its primary path with a single-path project, so
+  // `(host_id, path)` is unique only among single-path rows. Older databases are rebuilt once.
+  const projectTable = `(id TEXT PRIMARY KEY, host_id TEXT NOT NULL, path TEXT NOT NULL,
     remote_project_id TEXT NOT NULL, metadata TEXT NOT NULL, state TEXT NOT NULL,
-    added_at INTEGER NOT NULL, UNIQUE(host_id, path));
+    added_at INTEGER NOT NULL, paths TEXT)`;
+  const legacyProjectTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'remote_project'").get()
+    && !db.prepare('PRAGMA table_info(remote_project)').all().some((column) => column.name === 'paths');
+  if (legacyProjectTable) db.transaction(() => db.exec(`CREATE TABLE remote_project_next ${projectTable};
+    INSERT INTO remote_project_next (id, host_id, path, remote_project_id, metadata, state, added_at)
+      SELECT id, host_id, path, remote_project_id, metadata, state, added_at FROM remote_project;
+    DROP TABLE remote_project;
+    ALTER TABLE remote_project_next RENAME TO remote_project;`))();
+  db.exec(`CREATE TABLE IF NOT EXISTS remote_project ${projectTable};
+    CREATE UNIQUE INDEX IF NOT EXISTS remote_project_single_path ON remote_project(host_id, path) WHERE paths IS NULL;
     CREATE TABLE IF NOT EXISTS remote_host_receipt (
       host_id TEXT PRIMARY KEY, connected_at INTEGER, synced_at INTEGER,
       error_code TEXT, error_message TEXT);
@@ -29,12 +49,20 @@ export function createRemoteHostStore(dbPath) {
   const hubId = db.prepare('SELECT id FROM remote_hub_identity').get().id;
   const instanceFor = (hostId) => db.prepare('SELECT instance_id FROM remote_host_authority WHERE host_id = ?').get(hostId)?.instance_id;
   const decode = (row) => row && ({ id: row.id, hostId: row.host_id, path: row.path,
+    ...(row.paths ? { paths: JSON.parse(row.paths) } : {}),
     ...(row.instance_id ? { instanceId: row.instance_id } : {}),
     remoteProjectId: row.remote_project_id, remoteState: row.state,
     ...JSON.parse(row.metadata), addedAt: row.added_at, lastOpenedAt: row.added_at });
   const projects = (hostId) => (hostId
     ? db.prepare('SELECT p.*, a.instance_id FROM remote_project p LEFT JOIN remote_host_authority a ON a.host_id = p.host_id WHERE p.host_id = ? ORDER BY p.added_at, p.id').all(hostId)
     : db.prepare('SELECT p.*, a.instance_id FROM remote_project p LEFT JOIN remote_host_authority a ON a.host_id = p.host_id ORDER BY p.added_at, p.id').all()).map(decode);
+  /** Prior reference for a remote project: workspaces by remote ID, single-path projects by path. */
+  const findProject = (hostId, remote) => {
+    const rows = projects(hostId);
+    return projectPaths(remote)
+      ? rows.find((p) => p.remoteProjectId === remote.id)
+      : rows.find((p) => !p.paths && p.path === remote.path);
+  };
   return {
     hubId, projects, instanceFor,
     bindInstance(hostId, instanceId) {
@@ -87,20 +115,29 @@ export function createRemoteHostStore(dbPath) {
       if (!snapshot) throw new Error('Invalid organization kind');
       db.prepare('INSERT OR REPLACE INTO remote_organization VALUES (?, ?, ?)').run(hostId, kind, JSON.stringify(snapshot));
     },
+    findProject,
     saveProject(hostId, remote) {
-      const prior = projects(hostId).find((p) => p.path === remote.path);
-      const id = prior?.id || `remote-${crypto.createHash('sha256').update(JSON.stringify([hubId, hostId, remote.path])).digest('hex').slice(0, 24)}`;
-      db.prepare(`INSERT INTO remote_project VALUES (?, ?, ?, ?, ?, 'ok', ?)
-        ON CONFLICT(host_id, path) DO UPDATE SET remote_project_id=excluded.remote_project_id,
-        metadata=excluded.metadata, state='ok'`).run(id, hostId, remote.path, remote.id,
-        JSON.stringify(projectMetadata(remote)), prior?.addedAt || Date.now());
+      const paths = projectPaths(remote);
+      const prior = findProject(hostId, remote);
+      const identity = paths ? [hubId, hostId, 'workspace', remote.id] : [hubId, hostId, remote.path];
+      const id = prior?.id || `remote-${crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 24)}`;
+      db.prepare(`INSERT INTO remote_project (id, host_id, path, remote_project_id, metadata, state, added_at, paths)
+        VALUES (?, ?, ?, ?, ?, 'ok', ?, ?)
+        ON CONFLICT(id) DO UPDATE SET path=excluded.path, remote_project_id=excluded.remote_project_id,
+        metadata=excluded.metadata, state='ok', paths=excluded.paths`).run(id, hostId, remote.path, remote.id,
+        JSON.stringify(projectMetadata(remote)), prior?.addedAt || Date.now(), paths ? JSON.stringify(paths) : null);
       return projects(hostId).find((p) => p.id === id);
     },
     refreshProject(reference, remote) {
-      if (remote?.path !== reference.path || !remote?.id || remote.hostId) return null;
-      const updated = db.prepare(`UPDATE remote_project SET remote_project_id = ?, metadata = ?, state = 'ok'
+      if (!remote?.id || remote.hostId || typeof remote.path !== 'string') return null;
+      const paths = projectPaths(remote);
+      if (Array.isArray(remote.paths) && !paths) return null;
+      // A workspace keeps its remote ID while its primary path may move; a single-path project is its path.
+      if (paths ? remote.id !== reference.remoteProjectId : remote.path !== reference.path) return null;
+      const updated = db.prepare(`UPDATE remote_project SET remote_project_id = ?, metadata = ?, state = 'ok', path = ?, paths = ?
         WHERE id = ? AND host_id = ? AND path = ? AND added_at = ? AND remote_project_id = ?`).run(remote.id,
-        JSON.stringify(projectMetadata(remote)), reference.id, reference.hostId, reference.path, reference.addedAt, reference.remoteProjectId);
+        JSON.stringify(projectMetadata(remote)), remote.path, paths ? JSON.stringify(paths) : null,
+        reference.id, reference.hostId, reference.path, reference.addedAt, reference.remoteProjectId);
       return updated.changes ? projects(reference.hostId).find((p) => p.id === reference.id) : null;
     },
     markProject(id, state) { db.prepare('UPDATE remote_project SET state = ? WHERE id = ?').run(state, id); },

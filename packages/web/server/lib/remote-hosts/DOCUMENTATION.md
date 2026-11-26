@@ -39,7 +39,9 @@ task status callbacks.
 
 - `store.js` owns `remote-hosts.sqlite`: stable Hub identity, remote-project
   references, safe presentation fields, connection receipts and bounded-shape
-  unread/folder/order snapshots. `(hostId, path)` is unique. Missing hosts retain
+  unread/folder/order snapshots. Ordinary project references are keyed by
+  `(hostId, path)`; workspace references are keyed by `(hostId, remoteProjectId)`
+  so they can share a primary path and change it without losing their Hub ID. Missing hosts retain
   their reference and display record; removing a reference never deletes remote
   sessions, files or projects.
   `saveProject` is explicit association/upsert; asynchronous metadata completions
@@ -123,16 +125,19 @@ short reads in `finally` and retain background watch demand until settlement.
   captured HTTP/query scopes by this epoch and continue fencing events by wire
   generation. Current-connection checks still reject late physical responses.
 - `GET /api/hosts/projects`: persisted Hub references.
-- `POST /api/hosts/:hostId/projects {path,label?}`: remote register first, then
+- `POST /api/hosts/:hostId/projects {path,label?}` or `{paths,label,workspaceRequestId?}`: remote register first, then
   upsert the Hub reference. A Hub disk failure leaves the remote project intact;
-  retry associates the same canonical remote path and deterministic Hub ID.
+   retry associates the same canonical remote path or workspace request ID and
+   deterministic Hub ID.
   The UI route and bound session `add-remote` share `gateway.registerProject`.
   It captures an authenticated task lease (and checks an explicit instance ID),
   validates the remote response, persists the reference and emits the same
   project-order tip. Every outcome releases the lease. Route resource-expiry
   tracking listens to this tip, including when an Agent creates the first reference.
-- `PATCH /api/hosts/:hostId/projects/:projectId`: remote metadata write-through;
-  cache updates only on successful authority response.
+- `PATCH /api/hosts/:hostId/projects/:projectId`: remote metadata or workspace
+   directory write-through. Directory edits require an explicit target receipt;
+   the Hub cache updates only on successful authority response. Every member
+   participates in directory admission, worktree discovery and summary indexing.
 - `DELETE` on that path removes only the reference.
 - `GET`/`PUT /api/hosts/:hostId/model-favorites`: the target machine's own
   `favoriteModels`, read and written through `/api/config/settings` with only that

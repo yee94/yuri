@@ -70,7 +70,7 @@ test.each([
   const job = workflow.jobs[jobName];
   assert.equal(job.env.EDGEONE_DEPLOY_HOOK, '${{ secrets.YURI_EDGEONE_DEPLOY_HOOK }}');
   const preflight = job.steps.findIndex(step => step.run?.includes('trigger-edgeone-deploy.mjs --check'));
-  const publish = job.steps.findIndex(step => step.run?.includes('vercel@latest deploy'));
+  const publish = job.steps.findIndex(step => step.run?.includes('publish-bundle-release.sh'));
   const trigger = job.steps.findIndex(step => step.run?.includes('commit-edgeone-manifests.sh'));
   const verify = job.steps.findIndex(step => step.run?.includes('verify-distribution.mjs'));
   assert.ok(preflight >= 0 && preflight < publish);

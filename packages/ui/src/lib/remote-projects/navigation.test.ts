@@ -11,7 +11,7 @@ vi.mock('@/stores/useSessionNavigationStore', () => ({ useSessionNavigationStore
 const project = { id: 'reference', hostId: 'host', hubId: 'hub', path: '/root', remoteProjectId: 'remote-project', remoteState: 'ok' };
 beforeEach(() => {
   vi.clearAllMocks(); fixture.catalog.mockResolvedValue({ supported: true, hubId: 'hub', projects: [project], hosts: [] });
-  fixture.summaries.mockResolvedValue({ worktrees: { projectDirectories: { '/root': ['/root', '/sibling worktree'] }, staleProjectDirectories: [] } });
+  fixture.summaries.mockResolvedValue({ directories: [], worktrees: { projectDirectories: { '/root': ['/root', '/sibling worktree'] }, staleProjectDirectories: [] } });
 });
 
 it('restores a worktree URL through its current-Hub project reference without replacing raw cwd with project root', async () => {
@@ -36,7 +36,7 @@ it('does not mutate selection after topology failure or navigation supersedes a 
   await expect(applyRemoteProjectRoute(route)).rejects.toThrow('topology unavailable');
   expect(fixture.open).not.toHaveBeenCalled();
   let current = true;
-  fixture.summaries.mockImplementationOnce(async () => { current = false; return { worktrees: { projectDirectories: { '/root': ['/sibling worktree'] }, staleProjectDirectories: [] } }; });
+  fixture.summaries.mockImplementationOnce(async () => { current = false; return { directories: [], worktrees: { projectDirectories: { '/root': ['/sibling worktree'] }, staleProjectDirectories: [] } }; });
   expect(await applyRemoteProjectRoute(route, () => current)).toBe(false);
   expect(fixture.open).not.toHaveBeenCalled(); expect(fixture.select).not.toHaveBeenCalled();
 });

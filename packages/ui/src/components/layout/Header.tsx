@@ -735,7 +735,9 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
     const directory = remoteSession?.location.directory ?? activeProject?.path;
     const hubId = activeProject?.hubId ?? remoteRegistry?.hubId;
     const hostId = activeProject?.hostId;
-    if (!directory || !hubId || !hostId || resolveRemoteProjectOwner(projects, hubId, hostId, directory, remoteSummaries?.worktrees)?.id !== activeProject?.id) return undefined;
+    // The selection already names this project; a workspace's ID claims directories it shares with a single project.
+    const workspaceId = activeProject && 'remoteProjectId' in activeProject && activeProject.paths ? String(activeProject.remoteProjectId) : null;
+    if (!directory || !hubId || !hostId || resolveRemoteProjectOwner(projects, hubId, hostId, directory, remoteSummaries?.worktrees, workspaceId)?.id !== activeProject?.id) return undefined;
     return remoteSummaries?.directories.find((item) => item.directory === directory)?.sessions.find((session) => session.id === currentSessionId && session.directory === directory);
   }, [isRemoteProject, localSession, remoteSession?.location.directory, activeProject, remoteRegistry?.hubId, projects, remoteSummaries, currentSessionId]);
   const activeProjectLabel = React.useMemo(() => {

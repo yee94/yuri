@@ -612,48 +612,19 @@ jobs:
       ota_channel: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
     secrets: inherit
 
-  # EdgeOne mirrors every OTA artifact from the Vercel origin, so OTA cannot be
-  # published while that origin is unavailable. Skip OTA with a warning instead
-  # of failing a release whose installers are already public; re-run later.
-  ota-origin-check:
-    name: Check OTA origin availability
-    needs: [create-release, finalize-release]
-    if: ${{ !cancelled() && needs.finalize-release.result == 'success' && (github.event_name != 'workflow_dispatch' || (!inputs.dry_run && !inputs.skip_ota)) }}
-    runs-on: ubuntu-latest
-    outputs:
-      available: ${{ steps.probe.outputs.available }}
-    steps:
-      - name: Probe OTA channel manifest on the origin
-        id: probe
-        shell: bash
-        env:
-          OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
-          OTA_CHANNEL: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
-        run: |
-          set -uo pipefail
-          URL="${OTA_BASE_URL}/ota/channels/${OTA_CHANNEL}.json"
-          STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --retry 2 --retry-delay 5 "$URL" || echo 000)"
-          if [[ "$STATUS" =~ ^2 ]]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning title=OTA skipped::OTA origin returned HTTP ${STATUS} for ${URL}. Installers are published; after the origin recovers, re-run the 'Check OTA origin availability' job (its dependent OTA job re-runs with it)."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
   # After a native mobile release, publish the matching web bundle as active OTA
   # and move nativeTargets. Fresh installs must never be rolled back to an older
   # activeBundle. Does not touch desktop latest feeds or /releases/latest.
   mobile-native-targets:
     name: Publish shared desktop and mobile OTA
-    needs: [create-release, finalize-release, ota-origin-check]
-    if: ${{ !cancelled() && needs.finalize-release.result == 'success' && needs.ota-origin-check.outputs.available == 'true' && (github.event_name != 'workflow_dispatch' || (!inputs.dry_run && !inputs.skip_ota)) }}
+    needs: [create-release, finalize-release]
+    if: ${{ !cancelled() && needs.finalize-release.result == 'success' && (github.event_name != 'workflow_dispatch' || (!inputs.dry_run && !inputs.skip_ota)) }}
     runs-on: ubuntu-latest
     concurrency:
       group: mobile-ota-production
       cancel-in-progress: false
     env:
-      OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
-      OTA_DETECTABILITY_BASES: ${{ vars.YURI_OTA_DETECTABILITY_BASES }}
+      OTA_BASE_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
       EDGEONE_DEPLOY_HOOK: ${{ secrets.YURI_EDGEONE_DEPLOY_HOOK }}
       MOBILE_APP_ID: com.yee94.yuri
       MAX_BUNDLE_BYTES: 25165824
@@ -894,9 +865,61 @@ jobs:
 
           echo "snapshot_dir=$OUT" >> "$GITHUB_OUTPUT"
 
-      - name: Vercel pull + prebuilt build + overlay OTA
+      - name: Publish OTA ZIPs to GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
+        run: scripts/mobile-ota/publish-bundle-release.sh "$SNAPSHOT_DIR"
+
+      - name: Sync manifests and explicitly trigger EdgeOne OTA deployment
         shell: bash
         env:
+          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          OTA_CHANNEL: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
+        run: |
+          scripts/mobile-ota/commit-edgeone-manifests.sh "$SNAPSHOT_DIR" \
+            "chore(ota): publish ${OTA_CHANNEL} manifest ${VERSION} for EdgeOne"
+
+      - name: Verify full downloads and resume
+        shell: bash
+        env:
+          OTA_MIRROR_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
+          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
+        run: |
+          set -euo pipefail
+          test -n "$OTA_MIRROR_URL"
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_MIRROR_URL" --require-local
+
+      - name: Verify client update detectability
+        env:
+          OTA_BASE_URL: ${{ env.OTA_BASE_URL }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          PLAN_MODE: ${{ needs.create-release.outputs.plan_mode }}
+          OTA_CHANNEL: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
+        run: |
+          set -euo pipefail
+          node scripts/mobile-ota/verify-detectability.mjs --base "$OTA_BASE_URL" \
+            --channel "$OTA_CHANNEL" --version "$VERSION" --mode "$PLAN_MODE"
+          if [[ "$OTA_CHANNEL" == "stable" ]]; then
+            BETA_VERSION="$(node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              import { selectOtaMajor } from "./deploy/update-service/lib/ota-manifest.js";
+              const catalog = JSON.parse(readFileSync(process.argv[1], "utf8"));
+              process.stdout.write(selectOtaMajor(catalog, Number(process.env.VERSION.split(".")[0])).activeBundle.releaseVersion);
+            ' "${{ steps.prepare.outputs.snapshot_dir }}/ota/channels/beta.json")"
+            node scripts/mobile-ota/verify-detectability.mjs --base "$OTA_BASE_URL" --channel beta --version "$BETA_VERSION" --mode ota
+          fi
+
+      - name: Publish optional Vercel mirror
+        if: ${{ vars.YURI_OTA_WRITE_VERCEL == 'true' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+          CHANNEL: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
+          PLAN_MODE: ${{ needs.create-release.outputs.plan_mode }}
+          VERCEL_MIRROR_URL: ${{ vars.YURI_OTA_BASE_URL }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -904,8 +927,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${VERCEL_TOKEN}" || -z "${VERCEL_ORG_ID}" || -z "${VERCEL_PROJECT_ID}" ]]; then
-            echo "Skipping OTA nativeTargets deploy; Vercel secrets are not configured."
-            exit 0
+            echo "Vercel secrets are not configured." >&2
+            exit 1
           fi
 
           git fetch origin main
@@ -925,61 +948,15 @@ jobs:
             echo "Expected prebuilt static dir missing: $STATIC_DIR"
             exit 1
           fi
-          mkdir -p "$STATIC_DIR/ota"
-          cp -R "$SNAPSHOT_DIR/ota/." "$STATIC_DIR/ota/"
+          mkdir -p "$STATIC_DIR/ota/channels"
+          cp -R "$SNAPSHOT_DIR/ota/channels/." "$STATIC_DIR/ota/channels/"
 
           npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" \
             --cwd deploy/update-service
           rm -rf deploy/update-service/.vercel
-
-      - name: Sync manifests and explicitly trigger EdgeOne OTA deployment
-        shell: bash
-        env:
-          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
-          VERSION: ${{ needs.create-release.outputs.version }}
-          OTA_CHANNEL: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
-        run: |
-          scripts/mobile-ota/commit-edgeone-manifests.sh "$SNAPSHOT_DIR" \
-            "chore(ota): publish ${OTA_CHANNEL} manifest ${VERSION} for EdgeOne"
-
-      - name: Verify full downloads and resume on both origins
-        shell: bash
-        env:
-          OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
-          OTA_MIRROR_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
-          SNAPSHOT_DIR: ${{ steps.prepare.outputs.snapshot_dir }}
-        run: |
-          set -euo pipefail
-          test -n "$OTA_BASE_URL"
-          test -n "$OTA_MIRROR_URL"
-          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_BASE_URL"
-          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$OTA_MIRROR_URL" --require-local
-
-      - name: Verify client update detectability
-        env:
-          OTA_BASE_URL: ${{ env.OTA_BASE_URL }}
-          VERSION: ${{ needs.create-release.outputs.version }}
-          PLAN_MODE: ${{ needs.create-release.outputs.plan_mode }}
-          OTA_CHANNEL: ${{ contains(needs.create-release.outputs.version, '-') && 'beta' || 'stable' }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          set -euo pipefail
-          # Deploy is skipped when Vercel secrets are absent; nothing to verify then.
-          if [[ -z "${VERCEL_TOKEN}" ]]; then
-            echo "Skipping detectability verify; Vercel secrets are not configured."
-            exit 0
-          fi
-          node scripts/mobile-ota/verify-detectability.mjs \
-            --channel "$OTA_CHANNEL" --version "$VERSION" --mode "$PLAN_MODE"
-          if [[ "$OTA_CHANNEL" == "stable" ]]; then
-            BETA_VERSION="$(node --input-type=module -e '
-              import { readFileSync } from "node:fs";
-              import { selectOtaMajor } from "./deploy/update-service/lib/ota-manifest.js";
-              const catalog = JSON.parse(readFileSync(process.argv[1], "utf8"));
-              process.stdout.write(selectOtaMajor(catalog, Number(process.env.VERSION.split(".")[0])).activeBundle.releaseVersion);
-            ' "${{ steps.prepare.outputs.snapshot_dir }}/ota/channels/beta.json")"
-            node scripts/mobile-ota/verify-detectability.mjs --channel beta --version "$BETA_VERSION" --mode ota
-          fi
+          node scripts/mobile-ota/verify-distribution.mjs --snapshot "$SNAPSHOT_DIR" --base "$VERCEL_MIRROR_URL"
+          node scripts/mobile-ota/verify-detectability.mjs --base "$VERCEL_MIRROR_URL" \
+            --channel "$CHANNEL" --version "$VERSION" --mode "$PLAN_MODE"
 
   publish-relay-docker-manual:
     name: Publish only the Relay Docker image
@@ -1226,7 +1203,7 @@ jobs:
             -F prerelease="$([[ "${IS_PRERELEASE}" == "true" ]] && echo true || echo false)" \
             --jq '{id, tag_name, draft, prerelease, asset_count: (.assets|length)}'
 
-      - name: Publish Vercel update manifest
+      - name: Publish stable update manifest
         if: ${{ needs.create-release.outputs.is_prerelease != 'true' }}
         env:
           VERSION: ${{ needs.create-release.outputs.version }}
@@ -1243,19 +1220,46 @@ jobs:
           git commit -m "chore: publish update manifest v${VERSION}"
           git push origin HEAD:main
 
+      - name: Publish stable version check to EdgeOne when OTA is skipped
+        if: ${{ needs.create-release.outputs.is_prerelease != 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_ota }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EDGEONE_DEPLOY_HOOK: ${{ secrets.YURI_EDGEONE_DEPLOY_HOOK }}
+          OTA_BASE_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          SNAPSHOT_DIR="$RUNNER_TEMP/update-service-edgeone"
+          node scripts/mobile-ota/trigger-edgeone-deploy.mjs --check
+          node scripts/mobile-ota/rollout.mjs --action snapshot --out "$SNAPSHOT_DIR"
+          scripts/mobile-ota/publish-bundle-release.sh "$SNAPSHOT_DIR"
+          scripts/mobile-ota/commit-edgeone-manifests.sh "$SNAPSHOT_DIR" "chore(ota): refresh EdgeOne for v${VERSION}"
+          for attempt in {1..30}; do
+            if curl -fsS --max-time 10 "${OTA_BASE_URL%/}/update-manifest.json" |
+              node -e 'const manifest = JSON.parse(require("fs").readFileSync(0, "utf8")); process.exit(manifest.latestVersion === process.env.VERSION ? 0 : 1)'; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::EdgeOne did not publish the stable update manifest."
+          exit 1
+
       - name: Install Bun for Vercel function bundling
-        if: ${{ needs.create-release.outputs.is_prerelease != 'true' }}
+        if: ${{ needs.create-release.outputs.is_prerelease != 'true' && vars.YURI_OTA_WRITE_VERCEL == 'true' }}
+        continue-on-error: true
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
 
       - name: Deploy update service to Vercel
-        if: ${{ needs.create-release.outputs.is_prerelease != 'true' }}
+        if: ${{ needs.create-release.outputs.is_prerelease != 'true' && vars.YURI_OTA_WRITE_VERCEL == 'true' }}
+        continue-on-error: true
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          OTA_BASE_URL: ${{ vars.YURI_OTA_BASE_URL }}
+          OTA_BASE_URL: ${{ vars.YURI_OTA_MIRROR_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [[ -z "${VERCEL_TOKEN}" || -z "${VERCEL_ORG_ID}" || -z "${VERCEL_PROJECT_ID}" ]]; then
@@ -1265,6 +1269,8 @@ jobs:
           # Project has no rootDirectory; deploy the update-service package directory.
           SNAPSHOT_DIR="$RUNNER_TEMP/update-service-ota"
           node scripts/mobile-ota/rollout.mjs --action snapshot --out "$SNAPSHOT_DIR"
+          # Bundles are served from the GitHub release store, never from Vercel.
+          scripts/mobile-ota/publish-bundle-release.sh "$SNAPSHOT_DIR"
 
           mkdir -p deploy/update-service/.vercel
           printf '%s\n' "{\"orgId\":\"${VERCEL_ORG_ID}\",\"projectId\":\"${VERCEL_PROJECT_ID}\"}" > deploy/update-service/.vercel/project.json
@@ -1277,8 +1283,8 @@ jobs:
             echo "Expected prebuilt static dir missing: $STATIC_DIR"
             exit 1
           fi
-          mkdir -p "$STATIC_DIR/ota"
-          cp -R "$SNAPSHOT_DIR/ota/." "$STATIC_DIR/ota/"
+          mkdir -p "$STATIC_DIR/ota/channels"
+          cp -R "$SNAPSHOT_DIR/ota/channels/." "$STATIC_DIR/ota/channels/"
           npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN" \
             --cwd deploy/update-service
           rm -rf deploy/update-service/.vercel
