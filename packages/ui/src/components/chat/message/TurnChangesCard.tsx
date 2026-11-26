@@ -67,15 +67,15 @@ const TurnChangesCardFileButton = React.memo(({
                 'flex w-full min-w-0 items-center justify-between gap-3 rounded-[var(--radius-md)] text-left transition-colors',
                 'hover:bg-interactive-hover focus-visible:bg-interactive-hover active:bg-interactive-active',
                 'focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
-                isMobile ? 'typography-meta px-2 py-1' : 'px-2.5 py-1.5 text-[13px]',
+                isMobile ? 'px-2 py-1 text-xs' : 'px-2.5 py-1.5 text-[13px]',
             )}
         >
             <span className="flex min-w-0 flex-1 items-baseline leading-snug">
                 {dirPrefix ? <span className="min-w-0 truncate text-[var(--surface-muted-foreground)]">{dirPrefix}</span> : null}
-                <span className="min-w-0 shrink-[0.001] truncate text-foreground">{fileName}</span>
+                <span className="min-w-0 max-w-full shrink-0 truncate text-foreground">{fileName}</span>
             </span>
             {hasCounts ? (
-                <span className={cn('inline-flex shrink-0 items-center gap-1.5 font-medium leading-none tabular-nums', isMobile ? 'typography-meta' : 'text-xs')}>
+                <span className={cn('inline-flex shrink-0 items-center gap-1.5 font-medium leading-none tabular-nums', isMobile ? 'text-[11px]' : 'text-xs')}>
                     <span style={{ color: 'var(--status-success)' }}>+{file.additions}</span>
                     <span style={{ color: 'var(--status-error)' }}>-{file.deletions}</span>
                 </span>
@@ -348,12 +348,12 @@ export const TurnChangesCard = React.memo(({
                             id={`turn-changes-${turnId}`}
                             className={cn(
                                 'truncate font-medium leading-snug text-foreground',
-                                isMobile ? 'typography-meta' : 'text-[13px]',
+                                isMobile ? 'text-xs' : 'text-[13px]',
                             )}
                         >
                             {editedTitle}
                         </span>
-                        <div className={cn('flex items-center gap-1.5 font-medium leading-none tabular-nums', isMobile ? 'typography-meta min-h-4' : 'min-h-[14px] text-xs')}>
+                        <div className={cn('flex items-center gap-1.5 font-medium leading-none tabular-nums', isMobile ? 'min-h-3 text-[11px]' : 'min-h-[14px] text-xs')}>
                             {totals ? (
                                 <>
                                     <span style={{ color: 'var(--status-success)' }}>+{totals.additions}</span>
@@ -389,7 +389,7 @@ export const TurnChangesCard = React.memo(({
                             }}
                             className={cn(
                                 'gap-1 text-[var(--surface-muted-foreground)] hover:text-foreground',
-                                isMobile ? 'typography-meta h-6 px-2' : 'h-7 px-2.5 text-xs',
+                                isMobile ? 'h-6 px-2 text-[11px]' : 'h-7 px-2.5 text-xs',
                             )}
                         >
                             <span>{t('chat.changedFiles.actions.revert')}</span>
@@ -406,7 +406,7 @@ export const TurnChangesCard = React.memo(({
                         disabled={!canOpen}
                         data-turn-changes-view="true"
                         onClick={openCompleteTurnDiff}
-                        className={isMobile ? 'typography-meta h-6 px-2.5' : 'h-7 px-3 text-xs'}
+                        className={isMobile ? 'h-6 px-2.5 text-[11px]' : 'h-7 px-3 text-xs'}
                     >
                         {t('chat.changedFiles.actions.viewChanges')}
                     </Button>
@@ -442,7 +442,7 @@ export const TurnChangesCard = React.memo(({
                         onClick={handleToggleExpanded}
                         className={cn(
                             'flex w-full items-center gap-1.5 rounded-[var(--radius-md)] text-left font-medium text-[var(--surface-muted-foreground)] transition-colors hover:bg-interactive-hover hover:text-foreground active:bg-interactive-active focus-visible:bg-interactive-hover focus-visible:outline-none',
-                            isMobile ? 'typography-meta px-2 py-1' : 'px-2.5 py-1.5 text-xs',
+                            isMobile ? 'px-2 py-1 text-[11px]' : 'px-2.5 py-1.5 text-xs',
                         )}
                     >
                         <span>{isExpanded ? t('chat.changedFiles.actions.showLess') : showMoreLabel}</span>
