@@ -184,13 +184,17 @@ const projectSlimFileEntry = (file) => {
   const relativePath = typeof file.relativePath === 'string' ? file.relativePath.trim() : '';
   const filePath = typeof file.filePath === 'string' ? file.filePath.trim() : '';
   const path = typeof file.path === 'string' ? file.path.trim() : '';
-  if (!relativePath && !filePath && !path && additions === undefined && deletions === undefined) {
+  const fileKey = typeof file.file === 'string' ? file.file.trim() : '';
+  const movePath = typeof file.movePath === 'string' ? file.movePath.trim() : '';
+  if (!relativePath && !filePath && !path && !fileKey && !movePath && additions === undefined && deletions === undefined) {
     return undefined;
   }
   return {
     ...(relativePath ? { relativePath } : {}),
     ...(filePath ? { filePath } : {}),
     ...(!relativePath && !filePath && path ? { path } : {}),
+    ...(!relativePath && !filePath && !path && fileKey ? { file: fileKey } : {}),
+    ...(movePath ? { movePath } : {}),
     ...(additions !== undefined ? { additions } : {}),
     ...(deletions !== undefined ? { deletions } : {}),
   };

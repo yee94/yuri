@@ -30,4 +30,36 @@ describe('resolveTurnChangedFileOpenTarget', () => {
       notice: 'turn-diff-outside-workspace',
     });
   });
+
+  test('keeps secondary attached repository files on the turn-diff path in multi-path workspaces', () => {
+    const workspaceDirs = ['/workspace/app-node', '/workspace/mmbizwxaaiagent'];
+
+    expect(resolveTurnChangedFileOpenTarget(
+      '/workspace/app-node',
+      '/workspace/mmbizwxaaiagent/src/tablekv.cc',
+      workspaceDirs,
+    )).toEqual({
+      kind: 'diff',
+      path: 'mmbizwxaaiagent/src/tablekv.cc',
+    });
+
+    expect(resolveTurnChangedFileOpenTarget(
+      '/workspace/app-node',
+      'mmbizwxaaiagent/src/tablekv.cc',
+      workspaceDirs,
+    )).toEqual({
+      kind: 'diff',
+      path: 'mmbizwxaaiagent/src/tablekv.cc',
+    });
+
+    expect(resolveTurnChangedFileOpenTarget(
+      '/workspace/app-node',
+      '/outside/other/file.ts',
+      workspaceDirs,
+    )).toEqual({
+      kind: 'file',
+      path: '/outside/other/file.ts',
+      notice: 'turn-diff-outside-workspace',
+    });
+  });
 });

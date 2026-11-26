@@ -1,7 +1,6 @@
 import React from 'react';
 import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
-import { useGitStore } from '@/lib/api/useProjectGitStore';
-import { useWorkspaceGitSummary } from '@/stores/useGitStore';
+import { useGitStore, useWorkspaceGitSummary } from '@/lib/api/useProjectGitStore';
 import { createProjectGitAPI } from '@/lib/gitApiProject';
 import { useUIStore } from '@/stores/useUIStore';
 import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
@@ -9,6 +8,7 @@ import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useEffectiveDirectory, useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
 import { Icon } from "@/components/icon/Icon";
 import { cn } from '@/lib/utils';
+import { buildWorkspaceRepoLabels, prefixWorkspaceFilePath } from './lib/turns/workspaceTurnChanges';
 import {
     type ChangedFileEntry,
     type GitChangedFile,
@@ -41,7 +41,7 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
     const hostRuntime = useHostRuntime();
     const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const projectGit = React.useMemo(() => hostScope ? createProjectGitAPI(hostScope) : runtime?.git, [hostScope, runtime?.git]);
-    const isMultiPath = !hostScope && workspaceDirectories.length > 1;
+    const isMultiPath = workspaceDirectories.length > 1;
     const singleDirStatus = useGitStore((s) =>
         !isMultiPath && currentDirectory ? s.directories.get(currentDirectory)?.status ?? null : null,
     );
@@ -84,32 +84,37 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
         return summarizeGitChangedFiles(singleDirStatus.files, singleDirStatus.diffStats);
     }, [hasChanges, isMultiPath, singleDirStatus, workspaceSummary.gitEntries]);
 
-    const { gitChangedFiles, fileRootDirectoryMap } = React.useMemo(() => {
-        const rootMap = new Map<string, string>();
-        if (!isExpanded || !hasChanges) return { gitChangedFiles: [] as GitChangedFile[], fileRootDirectoryMap: rootMap };
+    const { gitChangedFiles, fileTargetMap } = React.useMemo(() => {
+        const targetMap = new Map<string, { directory: string; relativePath: string; prefixedPath: string }>();
+        if (!isExpanded || !hasChanges) return { gitChangedFiles: [] as GitChangedFile[], fileTargetMap: targetMap };
         if (isMultiPath) {
+            const repoLabels = buildWorkspaceRepoLabels(workspaceDirectories);
             const merged: GitChangedFile[] = [];
             for (const entry of workspaceSummary.gitEntries) {
                 if (!entry.status || entry.status.isClean) continue;
-                const baseName = entry.directory.split('/').filter(Boolean).at(-1) || entry.directory;
                 const files = extractGitChangedFiles(entry.status.files, entry.status.diffStats, entry.directory);
                 for (const file of files) {
+                    const prefixedPath = prefixWorkspaceFilePath(file.relativePath, entry.directory, repoLabels);
                     const prefixed = {
                         ...file,
-                        relativePath: `${baseName}/${file.relativePath}`,
+                        relativePath: prefixedPath,
                     };
-                    rootMap.set(prefixed.path, entry.directory);
+                    targetMap.set(prefixed.path, {
+                        directory: entry.directory,
+                        relativePath: file.relativePath,
+                        prefixedPath,
+                    });
                     merged.push(prefixed);
                 }
             }
-            return { gitChangedFiles: merged, fileRootDirectoryMap: rootMap };
+            return { gitChangedFiles: merged, fileTargetMap: targetMap };
         }
-        if (!singleDirStatus || !currentDirectory) return { gitChangedFiles: [] as GitChangedFile[], fileRootDirectoryMap: rootMap };
+        if (!singleDirStatus || !currentDirectory) return { gitChangedFiles: [] as GitChangedFile[], fileTargetMap: targetMap };
         return {
             gitChangedFiles: extractGitChangedFiles(singleDirStatus.files, singleDirStatus.diffStats, currentDirectory),
-            fileRootDirectoryMap: rootMap,
+            fileTargetMap: targetMap,
         };
-    }, [isExpanded, hasChanges, isMultiPath, singleDirStatus, currentDirectory, workspaceSummary.gitEntries]);
+    }, [isExpanded, hasChanges, isMultiPath, singleDirStatus, currentDirectory, workspaceDirectories, workspaceSummary.gitEntries]);
 
     const totalAdded = summary.insertions;
     const totalRemoved = summary.deletions;
@@ -125,16 +130,17 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
         onExpandedChange(false);
 
         const absolutePath = file.path;
-        const targetDirectory = fileRootDirectoryMap.get(absolutePath) ?? currentDirectory;
-        const targetRelativePath = targetDirectory !== currentDirectory && file.relativePath.includes('/')
-            ? file.relativePath.slice(file.relativePath.indexOf('/') + 1)
-            : file.relativePath;
+        const target = fileTargetMap.get(absolutePath);
+        const targetDirectory = target?.directory ?? currentDirectory;
+        const targetRelativePath = target?.relativePath ?? file.relativePath;
+        const targetDiffPath = isMultiPath ? (target?.prefixedPath ?? file.relativePath) : targetRelativePath;
 
         // Dedicated mobile root: open the per-file diff inside the mobile Changes surface.
         if (mobileActions) {
             mobileActions.openChanges({
                 diffPath: targetRelativePath,
                 staged: file.hasStagedChanges && !file.hasWorkingChanges,
+                ...(isMultiPath ? { directory: targetDirectory } : {}),
             });
             return;
         }
@@ -148,10 +154,10 @@ export const PendingChangesBar: React.FC<PendingChangesBarProps> = React.memo(({
         const store = useUIStore.getState();
         const openStagedDiff = file.hasStagedChanges && !file.hasWorkingChanges;
         if (!store.isMobile) {
-            store.openContextDiff(hostScope?.key ?? targetDirectory, targetRelativePath, openStagedDiff);
+            store.openContextDiff(hostScope?.key ?? currentDirectory, targetDiffPath, openStagedDiff);
             return;
         }
-        store.navigateToDiff(targetRelativePath, openStagedDiff);
+        store.navigateToDiff(targetDiffPath, openStagedDiff);
         store.setRightSidebarOpen(false);
     };
 

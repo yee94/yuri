@@ -60,6 +60,8 @@ type ContextPanelTab = {
   diffTurnMessageId: string | null;
   /** Session that owns turn-scoped diffs (nested/subagent panels; not global currentSessionId). */
   diffSessionId: string | null;
+  /** Optional explicit repository directory for single-repo diffs inside a multi-path workspace. */
+  diffDirectory?: string | null;
   /** Transient notice for a file tab opened via a degraded Changes click path. */
   fileNotice: ContextPanelFileNotice | null;
   touchedAt: number;
@@ -78,6 +80,7 @@ type ContextPanelTabDescriptor = {
   diffTurnMessageId?: string | null;
   /** Session that owns turn-scoped diffs (nested/subagent panels). */
   diffSessionId?: string | null;
+  diffDirectory?: string | null;
   fileNotice?: ContextPanelFileNotice | null;
 };
 
@@ -349,6 +352,9 @@ const createContextPanelTab = (descriptor: ContextPanelTabDescriptor): ContextPa
       : null,
     diffTurnMessageId: normalizeContextDiffTurnMessageId(descriptor.diffTurnMessageId),
     diffSessionId: normalizeContextDiffSessionId(descriptor.diffSessionId),
+    diffDirectory: typeof descriptor.diffDirectory === 'string' && descriptor.diffDirectory.trim()
+      ? descriptor.diffDirectory.trim()
+      : null,
     fileNotice: descriptor.mode === 'file' ? normalizeContextPanelFileNotice(descriptor.fileNotice) : null,
     touchedAt: Date.now(),
   };
@@ -395,6 +401,7 @@ const sanitizeContextPanelTabs = (tabs: unknown): ContextPanelTab[] => {
       diffTargetLine?: unknown;
       diffTurnMessageId?: unknown;
       diffSessionId?: unknown;
+      diffDirectory?: unknown;
       fileNotice?: unknown;
       touchedAt?: unknown;
     };
@@ -430,6 +437,9 @@ const sanitizeContextPanelTabs = (tabs: unknown): ContextPanelTab[] => {
         : null,
       diffTurnMessageId: normalizeContextDiffTurnMessageId(candidate.diffTurnMessageId),
       diffSessionId: normalizeContextDiffSessionId(candidate.diffSessionId),
+      diffDirectory: typeof candidate.diffDirectory === 'string' && candidate.diffDirectory.trim()
+        ? candidate.diffDirectory.trim()
+        : null,
       fileNotice: candidate.mode === 'file' ? normalizeContextPanelFileNotice(candidate.fileNotice) : null,
       touchedAt: typeof candidate.touchedAt === 'number' && Number.isFinite(candidate.touchedAt)
         ? candidate.touchedAt
@@ -513,6 +523,7 @@ const upsertContextPanelTab = (
           diffTargetLine: nextTab.diffTargetLine,
           diffTurnMessageId: nextTab.diffTurnMessageId,
           diffSessionId: nextTab.diffSessionId,
+          diffDirectory: nextTab.diffDirectory ?? null,
           mode: nextTab.mode,
           targetPath: nextTab.targetPath || tab.targetPath,
           dedupeKey: nextTab.dedupeKey,
@@ -926,7 +937,7 @@ interface UIStore {
   openContextPanelTab: (directory: string, tab: ContextPanelTabDescriptor) => void;
   openContextDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null, targetLine?: number, turnMessageId?: string | null, sessionId?: string | null) => void;
   openContextToolDiff: (directory: string, filePath: string, patches: ReadonlyArray<{ path: string; patch: string }>, targetLine?: number, turnMessageId?: string | null, sessionId?: string | null) => void;
-  openContextFileDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null) => void;
+  openContextFileDiff: (directory: string, filePath: string, staged?: boolean, scope?: PendingDiffScope | null, diffDirectory?: string | null) => void;
   openContextFile: (directory: string, filePath: string, options?: { fileNotice?: ContextPanelFileNotice | null; viewerMode?: 'preview' | 'edit'; closeFileTree?: boolean }) => void;
   openContextFileAtLine: (directory: string, filePath: string, line: number, column?: number, options?: { closeFileTree?: boolean }) => void;
   openContextOverview: (directory: string) => void;
@@ -1550,19 +1561,27 @@ export const useUIStore = create<UIStore>()(
           });
         },
 
-        openContextFileDiff: (directory, filePath, staged = false, scope = null) => {
+        openContextFileDiff: (directory, filePath, staged = false, scope = null, diffDirectory = null) => {
           const normalizedDirectory = normalizeContextPanelDirectoryKey((directory || '').trim());
           const normalizedFilePath = (filePath || '').trim();
           if (!normalizedDirectory || !normalizedFilePath) {
             return;
           }
 
+          const normalizedDiffDirectory = typeof diffDirectory === 'string' && diffDirectory.trim()
+            ? diffDirectory.trim()
+            : null;
           const diffScope = normalizePendingDiffScope(scope) ?? (staged ? 'staged' : 'working');
+          const dedupeKey = normalizedDiffDirectory && normalizeContextPanelDirectoryKey(normalizedDiffDirectory) !== normalizedDirectory
+            ? `${normalizeContextPanelDirectoryKey(normalizedDiffDirectory)}::${normalizedFilePath}`
+            : undefined;
           get().openContextPanelTab(normalizedDirectory, {
             mode: 'file-diff',
             targetPath: normalizedFilePath,
+            dedupeKey,
             stagedDiff: diffScope === 'staged',
             diffScope,
+            diffDirectory: normalizedDiffDirectory,
           });
         },
 

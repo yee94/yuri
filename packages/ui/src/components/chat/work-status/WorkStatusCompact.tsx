@@ -7,8 +7,7 @@ import { AgentAvatar } from '@/components/chat/AgentAvatar';
 import { useProjectRuntimeAPIs } from '@/lib/api/useProjectRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
-import { useGitStore, useGitStatus, useGitLoadingStatus, useIsGitRepo } from '@/lib/api/useProjectGitStore';
-import { useWorkspaceGitSummary } from '@/stores/useGitStore';
+import { useGitStore, useGitStatus, useGitLoadingStatus, useIsGitRepo, useWorkspaceGitSummary } from '@/lib/api/useProjectGitStore';
 import { getWorkspacePaths, isBlankWorkspace } from '@/lib/workspacePaths';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -111,10 +110,10 @@ const WorkStatusCompactContent: React.FC<Props & {
   const gitLoading = useGitLoadingStatus(directory);
   const isGitRepo = useIsGitRepo(directory);
   const attachedWorkspacePaths = React.useMemo(
-    () => (scope ? [] : getWorkspacePaths(project)),
-    [project, scope],
+    () => getWorkspacePaths(project),
+    [project],
   );
-  const isMultiPathWorkspace = !scope && attachedWorkspacePaths.length > 1;
+  const isMultiPathWorkspace = attachedWorkspacePaths.length > 1;
   const isBlankProjectWorkspace = !scope && isBlankWorkspace(project);
   const workspaceGitSummary = useWorkspaceGitSummary(isMultiPathWorkspace ? attachedWorkspacePaths : []);
   const projectPath = project?.path || worktree?.projectDirectory || directory;

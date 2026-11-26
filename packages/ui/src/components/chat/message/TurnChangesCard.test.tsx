@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     revertToMessage: vi.fn(),
     openTurnChangedFilePreview: vi.fn(),
     getSessionDiff: vi.fn(),
+    workspaceDirectories: ['/repo'] as string[],
 }));
 
 vi.mock('@/contexts/HostRuntimeProvider', () => ({
@@ -18,6 +19,7 @@ vi.mock('@/contexts/HostRuntimeProvider', () => ({
 
 vi.mock('@/hooks/useEffectiveDirectory', () => ({
     useEffectiveDirectory: () => '/repo',
+    useEffectiveWorkspaceDirectories: () => mocks.workspaceDirectories,
 }));
 
 vi.mock('@/apps/mobileAppContext', () => ({
@@ -230,5 +232,74 @@ describe('TurnChangesCard', () => {
         await flushAsync();
         expect(container.textContent).toContain('+28');
         expect(container.textContent).toContain('-9');
+    });
+
+    test('merges primary snapshot diff and secondary attached-repo changes in multi-path workspaces', async () => {
+        mocks.workspaceDirectories = ['/repo', '/workspace/mmbizwxaaiagent'];
+        mocks.getSessionDiff.mockResolvedValueOnce([
+            { file: 'src/index.ts', status: 'modified', additions: 4, deletions: 1, patch: '@@' },
+        ]);
+
+        try {
+            await mountCard({
+                fileCount: 2,
+                turnDiffFiles: ['repo/src/index.ts', 'mmbizwxaaiagent/src/tablekv.cc'],
+                turnWorkspaceChanges: [
+                    {
+                        file: 'mmbizwxaaiagent/src/tablekv.cc',
+                        repoDirectory: '/workspace/mmbizwxaaiagent',
+                        repoRelativePath: 'src/tablekv.cc',
+                        absolutePath: '/workspace/mmbizwxaaiagent/src/tablekv.cc',
+                        additions: 10,
+                        deletions: 2,
+                        status: 'modified',
+                        sourceMessageIds: ['msg_a_1'],
+                        hasSlimParts: false,
+                    },
+                ],
+            });
+
+            expect(container.textContent).toContain('Edited 2 files');
+            expect(container.textContent).toContain('+14');
+            expect(container.textContent).toContain('-3');
+            const buttons = Array.from(container.querySelectorAll('[data-turn-change-file="true"]'));
+            expect(buttons.map((b) => b.getAttribute('title'))).toEqual([
+                'mmbizwxaaiagent/src/tablekv.cc',
+                'repo/src/index.ts',
+            ]);
+        } finally {
+            mocks.workspaceDirectories = ['/repo'];
+        }
+    });
+
+    test('renders secondary-only multi-path turn changes without querying primary session diff', async () => {
+        mocks.workspaceDirectories = ['/repo', '/workspace/mmbizwxaaiagent'];
+
+        try {
+            await mountCard({
+                fileCount: 1,
+                turnDiffFiles: ['mmbizwxaaiagent/src/tablekv.cc'],
+                turnWorkspaceChanges: [
+                    {
+                        file: 'mmbizwxaaiagent/src/tablekv.cc',
+                        repoDirectory: '/workspace/mmbizwxaaiagent',
+                        repoRelativePath: 'src/tablekv.cc',
+                        absolutePath: '/workspace/mmbizwxaaiagent/src/tablekv.cc',
+                        additions: 9,
+                        deletions: 4,
+                        status: 'modified',
+                        sourceMessageIds: ['msg_a_1'],
+                        hasSlimParts: false,
+                    },
+                ],
+            });
+
+            expect(mocks.getSessionDiff).not.toHaveBeenCalled();
+            expect(container.textContent).toContain('Edited 1 file');
+            expect(container.textContent).toContain('+9');
+            expect(container.textContent).toContain('-4');
+        } finally {
+            mocks.workspaceDirectories = ['/repo'];
+        }
     });
 });

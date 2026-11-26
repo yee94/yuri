@@ -1,7 +1,7 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
-import { useEffectiveDirectory, useEffectiveLocationKey, resolveEffectiveDirectory } from './useEffectiveDirectory';
+import { useEffectiveDirectory, useEffectiveLocationKey, useEffectiveWorkspaceDirectories, resolveEffectiveDirectory } from './useEffectiveDirectory';
 import { HostRuntimeContext, type HostRuntimeContextValue } from '@/contexts/hostRuntimeContext';
 import { locationKey } from '@/lib/remote-projects/location';
 
@@ -17,7 +17,15 @@ vi.mock('@/sync/session-worktree-store', () => ({ useSessionWorktreeStore: Objec
 vi.mock('@/sync/sync-context', () => ({ useSessionDirectory: () => '/local-session' }));
 vi.mock('@/stores/useDirectoryStore', () => ({ useDirectoryStore: Object.assign((select: (state: unknown) => unknown) => select({ currentDirectory: '/local' }), { getState: () => ({ currentDirectory: '/local' }) }) }));
 
-function Consumer() { return <output data-directory={useEffectiveDirectory()} data-identity={useEffectiveLocationKey()} />; }
+function Consumer() {
+  return (
+    <output
+      data-directory={useEffectiveDirectory()}
+      data-identity={useEffectiveLocationKey()}
+      data-workspaces={JSON.stringify(useEffectiveWorkspaceDirectories())}
+    />
+  );
+}
 let root: Root, node: HTMLDivElement;
 beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); node = document.createElement('div'); document.body.append(node); root = createRoot(node); });
 afterEach(async () => { await act(async () => root.unmount()); node.remove(); });
@@ -28,4 +36,19 @@ it('real consumers resolve selected remote worktree raw bytes independently from
   expect(node.querySelector('output')?.dataset.identity).toBe(locationKey(fixture.remote.location));
   expect(resolveEffectiveDirectory()).toBe('C:\\worktrees\\feature');
   expect(fixture.local.worktreeMetadata.get('same-id')?.path).toBe('/local-worktree');
+});
+
+it('resolves all attached directories for a remote multi-path workspace', async () => {
+  const previousPaths = (fixture.project as { paths?: string[] }).paths;
+  (fixture.project as { paths?: string[] }).paths = ['C:\\project', 'C:\\secondary-repo'];
+  try {
+    const scope = { entry: { location: { ...fixture.remote.location, directory: fixture.project.path }, key: locationKey({ ...fixture.remote.location, directory: fixture.project.path }) } } as unknown as HostRuntimeContextValue;
+    await act(async () => root.render(<HostRuntimeContext.Provider value={scope}><Consumer /></HostRuntimeContext.Provider>));
+    expect(JSON.parse(node.querySelector('output')?.dataset.workspaces ?? '[]')).toEqual([
+      'C:/worktrees/feature',
+      'C:/secondary-repo',
+    ]);
+  } finally {
+    (fixture.project as { paths?: string[] }).paths = previousPaths;
+  }
 });

@@ -65,16 +65,18 @@ type MobileChangesSurfaceProps = {
   initialDiffPath?: string | null;
   initialDiffStaged?: boolean;
   initialDiffTargetLine?: number | null;
+  initialDiffDirectory?: string | null;
   /** Let an owning modal render the title and close control for a directly opened diff. */
   hideDiffHeader?: boolean;
 };
 
-export const MobileChangesSurface: React.FC<MobileChangesSurfaceProps> = ({ onClose, initialDiffPath, initialDiffStaged = false, initialDiffTargetLine = null, hideDiffHeader = false }) => {
+export const MobileChangesSurface: React.FC<MobileChangesSurfaceProps> = ({ onClose, initialDiffPath, initialDiffStaged = false, initialDiffTargetLine = null, initialDiffDirectory = null, hideDiffHeader = false }) => {
   const { t } = useI18n();
   const { git, projectScope } = useRuntimeAPIs();
   const { generateCommitMessage, stageGitFile, stageGitFiles, unstageGitFile, unstageGitFiles } = useProjectGitActions();
   const effectiveDirectory = useEffectiveDirectory();
-  const currentDirectory = projectScope ? effectiveDirectory ?? null : normalizePath(effectiveDirectory ?? null);
+  const targetDirectory = initialDiffDirectory?.trim() || effectiveDirectory || null;
+  const currentDirectory = projectScope ? targetDirectory : normalizePath(targetDirectory);
   const status = useGitStatus(currentDirectory || null);
   const isGitRepo = useIsGitRepo(currentDirectory || null);
   const isLoadingStatus = useGitLoadingStatus(currentDirectory || null);

@@ -1,5 +1,10 @@
-import { useMemo } from 'react';
-import { useGitStore as useLocalGitStore } from '@/stores/useGitStore';
+import { useMemo, useRef } from 'react';
+import {
+  useGitStore as useLocalGitStore,
+  selectWorkspaceGitSummary,
+  type WorkspaceGitSummary,
+  type WorkspaceGitSummaryCache,
+} from '@/stores/useGitStore';
 import { useHostRuntime } from '@/contexts/HostRuntimeProvider';
 import type { HostRuntimeEntry } from '@/lib/remote-projects/registry';
 import type { GitAPI } from './types';
@@ -88,3 +93,9 @@ export const useGitLog = (d: string | null) => useGitStore((s) => d ? s.director
 export const useIsGitRepo = (d: string | null) => useGitStore((s) => d ? s.directories.get(d)?.isGitRepo ?? null : null);
 export const useGitLoadingStatus = (d: string | null) => useGitStore((s) => d ? s.directories.get(d)?.isLoadingStatus ?? false : false);
 export const useGitLoadingLog = (d: string | null) => useGitStore((s) => d ? s.directories.get(d)?.isLoadingLog ?? false : false);
+
+export const useWorkspaceGitSummary = (directories: string[]): WorkspaceGitSummary => {
+  const uniqueDirectories = useMemo(() => Array.from(new Set(directories)), [directories]);
+  const cacheRef = useRef<WorkspaceGitSummaryCache | null>(null);
+  return useGitStore((state) => selectWorkspaceGitSummary(state.directories, uniqueDirectories, cacheRef));
+};

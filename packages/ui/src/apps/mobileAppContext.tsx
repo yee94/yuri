@@ -3,7 +3,7 @@ import React from 'react';
 
 export type MobileAppActions = {
   /** Open the Changes surface as a modal and (optionally) navigate it to a specific diff. */
-  openChanges: (options?: { diffPath?: string | null; staged?: boolean; targetLine?: number }) => void;
+  openChanges: (options?: { diffPath?: string | null; staged?: boolean; targetLine?: number; directory?: string | null }) => void;
   /** Open every exact file patch selected from one edit/apply_patch tool row. */
   openToolDiff: (options: {
     diffPath: string;

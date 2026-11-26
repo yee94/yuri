@@ -113,6 +113,12 @@ import { opencodeClient } from '@/lib/opencode/client';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP, ProjectIconImage } from '@/lib/projectMeta';
 import { useGitBranchLabel, useGitBranches, useGitStore, useIsGitRepo } from '@/stores/useGitStore';
+import {
+    useGitStore as useProjectGitStore,
+    useIsGitRepo as useProjectIsGitRepo,
+    useWorkspaceGitSummary as useProjectWorkspaceGitSummary,
+} from '@/lib/api/useProjectGitStore';
+import { createProjectGitAPI } from '@/lib/gitApiProject';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { queryClient } from '@/lib/queryRuntime';
 import { installedSkillsQueryOptions, readInstalledSkillsSnapshot, useInstalledSkillsQuery } from '@/queries/installedSkillsQueries';
@@ -123,7 +129,6 @@ import { useCommandsQuery } from '@/queries/commandQueries';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useEffectiveDirectory, useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
 import { isBlankWorkspace, isMultiPathWorkspace, getWorkspacePaths } from '@/lib/workspacePaths';
-import { useWorkspaceGitSummary } from '@/stores/useGitStore';
 import { normalizeDirectoryKey } from '@/lib/pathNormalization';
 import { buildSessionTargetOptions } from '@/sync/session-worktree-contract';
 import { DraftSessionBranchSelector } from './DraftSessionBranchSelector';
@@ -259,6 +264,7 @@ import { queueModeAllowsMutations, shouldRemoveQueueItemAfterEditCommit } from '
 const COMPOSER_TEXT_LAYOUT_CLASS = 'box-border w-full whitespace-pre-wrap break-words px-3 typography-markdown [font-family:inherit] [font-style:inherit] [font-weight:inherit] leading-[inherit] tracking-[inherit] md:typography-ui-label';
 const ToolOutputDialog = lazyWithChunkRecovery(() => import('./message/ToolOutputDialog'));
 const EMPTY_QUEUE: QueueItem[] = [];
+const EMPTY_WORKSPACE_DIRECTORIES: string[] = [];
 const EMPTY_INLINE_DRAFTS: InlineCommentDraft[] = [];
 const ignoreExpandedInput = () => {};
 const EMPTY_PROVIDERS: Array<{ id: string; name?: string; models: Array<Record<string, unknown> & { id: string; name?: string }> }> = [];
@@ -2077,26 +2083,67 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     );
     const { currentTheme } = useThemeSystem();
     const chatSearchDirectory = useChatSearchDirectory();
-    const isGitRepo = useIsGitRepo(currentDirectory);
-    const currentGitStatus = useGitStore((state) =>
+    const hostScopeForGit = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
+    const projectGit = React.useMemo(
+        () => (hostScopeForGit ? createProjectGitAPI(hostScopeForGit) : runtimeGit),
+        [hostScopeForGit, runtimeGit],
+    );
+    const workspaceDirectories = useEffectiveWorkspaceDirectories();
+    const workspaceDirectoriesForChanges = workspaceDirectories.length > 1 ? workspaceDirectories : null;
+    const isGitRepo = useProjectIsGitRepo(currentDirectory);
+    const currentGitStatus = useProjectGitStore((state) =>
         currentDirectory ? state.directories.get(currentDirectory)?.status ?? null : null,
     );
-    const ensureGitStatus = useGitStore((state) => state.ensureStatus);
+    const ensureProjectGitStatus = useProjectGitStore((state) => state.ensureStatus);
+    const fetchProjectGitStatus = useProjectGitStore((state) => state.fetchStatus);
     const fetchGitStatus = useGitStore((state) => state.fetchStatus);
     const [showAbortStatus, setShowAbortStatus] = React.useState(false);
     const composerHighlightRef = React.useRef<HTMLDivElement | null>(null);
     React.useEffect(() => {
-        if (!currentDirectory || !runtimeGit) return;
-        void ensureGitStatus(currentDirectory, runtimeGit);
-    }, [currentDirectory, runtimeGit, ensureGitStatus]);
+        if (!projectGit) return;
+        if (workspaceDirectoriesForChanges) {
+            for (const dir of workspaceDirectoriesForChanges) {
+                void ensureProjectGitStatus(dir, projectGit);
+            }
+            return;
+        }
+        if (!currentDirectory) return;
+        void ensureProjectGitStatus(currentDirectory, projectGit);
+    }, [currentDirectory, ensureProjectGitStatus, projectGit, workspaceDirectoriesForChanges]);
 
     React.useEffect(() => {
-        if (!currentDirectory || !runtimeGit) return;
+        if (!projectGit) return;
+        const trackedDirs = workspaceDirectoriesForChanges ?? (currentDirectory ? [currentDirectory] : []);
+        if (trackedDirs.length === 0) return;
+        const normalizedTracked = new Set(trackedDirs.map((dir) => normalizePath(dir)));
         return sessionEvents.onGitRefreshHint((hint) => {
-            if (normalizePath(hint.directory) !== normalizePath(currentDirectory)) return;
-            void fetchGitStatus(currentDirectory, runtimeGit);
+            const normalizedHint = normalizePath(hint.directory);
+            if (!normalizedHint || !normalizedTracked.has(normalizedHint)) return;
+            for (const dir of trackedDirs) {
+                void fetchProjectGitStatus(dir, projectGit, normalizePath(dir) === normalizedHint ? undefined : { silent: true });
+            }
         });
-    }, [currentDirectory, runtimeGit, fetchGitStatus]);
+    }, [currentDirectory, fetchProjectGitStatus, projectGit, workspaceDirectoriesForChanges]);
+
+    React.useEffect(() => {
+        const hostId = hostRuntime?.entry.location.hostId;
+        if (!hostId || !projectGit || !workspaceDirectoriesForChanges) return;
+        const trackedDirs = workspaceDirectoriesForChanges;
+        const normalizedTracked = new Set(trackedDirs.map((dir) => normalizePath(dir)));
+        return hostRuntime.registry.subscribeEvents(hostId, (event) => {
+            const type = (event.payload as { type?: string } | undefined)?.type ?? '';
+            if (
+                type === 'vcs.branch.updated'
+                || type.startsWith('worktree.')
+                || /^session\.(execution\.(succeeded|failed|interrupted)|idle)$/.test(type)
+            ) {
+                if (event.directory && !normalizedTracked.has(normalizePath(event.directory))) return;
+                for (const dir of trackedDirs) {
+                    void fetchProjectGitStatus(dir, projectGit, { silent: true });
+                }
+            }
+        });
+    }, [fetchProjectGitStatus, hostRuntime, projectGit, workspaceDirectoriesForChanges]);
 
     const isDesktopExpanded = isExpandedInput && !isMobile;
     // Mobile fullscreen composer (entered via the drag handle's swipe-up).
@@ -6427,25 +6474,28 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
     const chatSurfaceMode = useChatSurfaceMode();
     const isMiniChatSurface = chatSurfaceMode === 'mini-chat';
-    const workspaceDirectoriesForChanges = useEffectiveWorkspaceDirectories();
-    const isMultiPathForChanges = workspaceDirectoriesForChanges.length > 1;
-    const workspaceGitSummaryForChanges = useWorkspaceGitSummary(
-        !isMiniChatSurface && isMultiPathForChanges ? workspaceDirectoriesForChanges : [],
+    const workspaceGitSummaryForChanges = useProjectWorkspaceGitSummary(
+        (!isMiniChatSurface && workspaceDirectoriesForChanges) || EMPTY_WORKSPACE_DIRECTORIES,
     );
 
     const hasPendingChanges = React.useMemo(() => {
         if (isMiniChatSurface) {
             return false;
         }
-        if (isMultiPathForChanges) {
-            return workspaceGitSummaryForChanges.isAnyGitRepo && workspaceGitSummaryForChanges.hasChanges;
+        if (workspaceDirectoriesForChanges) {
+            if (!workspaceGitSummaryForChanges.isAnyGitRepo || !workspaceGitSummaryForChanges.hasChanges) {
+                return false;
+            }
+            return workspaceGitSummaryForChanges.gitEntries.some(
+                (entry) => Boolean(entry.status && !entry.status.isClean && hasExtractableGitChangedFiles(entry.status.files)),
+            );
         }
         if (isGitRepo !== true || !currentGitStatus || currentGitStatus.isClean) {
             return false;
         }
         // 短路谓词：超大变更集下避免为布尔值构造全量 GitChangedFile 数组。
         return hasExtractableGitChangedFiles(currentGitStatus.files);
-    }, [currentGitStatus, isGitRepo, isMiniChatSurface, isMultiPathForChanges, workspaceGitSummaryForChanges.hasChanges, workspaceGitSummaryForChanges.isAnyGitRepo]);
+    }, [currentGitStatus, isGitRepo, isMiniChatSurface, workspaceDirectoriesForChanges, workspaceGitSummaryForChanges.gitEntries, workspaceGitSummaryForChanges.hasChanges, workspaceGitSummaryForChanges.isAnyGitRepo]);
 
     const selectedDraftBranchIsKnown = React.useMemo(() => {
         if (!selectedDraftDirectory) {

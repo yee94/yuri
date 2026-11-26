@@ -2061,6 +2061,7 @@ type PendingMobileChangesDiff = {
   path: string;
   staged: boolean;
   targetLine?: number;
+  directory?: string | null;
   toolPatches?: ReadonlyArray<{ path: string; patch: string }>;
 };
 
@@ -2413,8 +2414,8 @@ const MobileShell: React.FC<{
 
   const mobileActions = React.useMemo<MobileAppActions>(
     () => ({
-      openChanges: ({ diffPath, staged, targetLine } = {}) => {
-        openChangesSurface(diffPath ? { path: diffPath, staged: staged === true, targetLine } : null);
+      openChanges: ({ diffPath, staged, targetLine, directory } = {}) => {
+        openChangesSurface(diffPath ? { path: diffPath, staged: staged === true, targetLine, directory: directory ?? null } : null);
       },
       openToolDiff: ({ diffPath, patches, targetLine }) => {
         openChangesSurface({ path: diffPath, staged: false, targetLine, toolPatches: patches });
@@ -3080,6 +3081,7 @@ const MobileShell: React.FC<{
                       initialDiffPath={pendingChangesDiff?.path ?? null}
                       initialDiffStaged={pendingChangesDiff?.staged === true}
                       initialDiffTargetLine={pendingChangesDiff?.targetLine ?? null}
+                      initialDiffDirectory={pendingChangesDiff?.directory ?? null}
                     />
                   )}
                 </ErrorBoundary>
@@ -3228,6 +3230,7 @@ const MobileShell: React.FC<{
                   initialDiffPath={pendingChangesDiff.path}
                   initialDiffStaged={pendingChangesDiff.staged}
                   initialDiffTargetLine={pendingChangesDiff.targetLine ?? null}
+                  initialDiffDirectory={pendingChangesDiff.directory ?? null}
                   hideDiffHeader
                 />
               )}
@@ -3251,6 +3254,7 @@ const MobileShell: React.FC<{
                 initialDiffPath={pendingChangesDiff?.path ?? null}
                 initialDiffStaged={pendingChangesDiff?.staged === true}
                 initialDiffTargetLine={pendingChangesDiff?.targetLine ?? null}
+                initialDiffDirectory={pendingChangesDiff?.directory ?? null}
               />
             </ErrorBoundary>
           </MobileResizableSheet>

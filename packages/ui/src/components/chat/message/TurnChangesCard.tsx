@@ -6,13 +6,19 @@ import { toast } from '@/components/ui/toast';
 import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
-import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useEffectiveDirectory, useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
+import { toAbsoluteFilePath } from '@/lib/path-utils';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useSessionTurnDiffQuery } from '@/queries/sessionTurnChangesQueries';
 import type { ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import type { TurnChangedFile } from '../lib/turns/types';
+import {
+    buildWorkspaceRepoLabels,
+    prefixWorkspaceFilePath,
+    type TurnWorkspaceFileChange,
+} from '../lib/turns/workspaceTurnChanges';
 import { openTurnChangedFilePreview } from '../openTurnChangedFile';
 import { getSessionSurfaceActionAvailability, useSessionSurface } from '../SessionSurfaceContext';
 
@@ -95,6 +101,7 @@ interface TurnChangesCardProps {
     turnId: string;
     turnDiffFromMessageId?: string;
     turnDiffFiles?: string[];
+    turnWorkspaceChanges?: TurnWorkspaceFileChange[];
     turnDiffSignature?: string;
     isLatestTurn: boolean;
     isMobile: boolean;
@@ -110,6 +117,7 @@ export const TurnChangesCard = React.memo(({
     turnId,
     turnDiffFromMessageId,
     turnDiffFiles,
+    turnWorkspaceChanges,
     turnDiffSignature,
     isLatestTurn,
     isMobile,
@@ -117,6 +125,8 @@ export const TurnChangesCard = React.memo(({
 }: TurnChangesCardProps) => {
     const { t } = useI18n();
     const effectiveDirectory = useEffectiveDirectory();
+    const workspaceDirectories = useEffectiveWorkspaceDirectories();
+    const isMultiPathWorkspace = workspaceDirectories.length > 1;
     const hostRuntime = useHostRuntime();
     const hostScope = hostRuntime?.entry.location.hostId ? hostRuntime.entry : undefined;
     const sessionSurface = useSessionSurface();
@@ -135,8 +145,21 @@ export const TurnChangesCard = React.memo(({
     const isV2TurnDiff = Boolean(turnDiffFromMessageId && turnDiffFiles && turnDiffFiles.length > 0);
     const targetTurnMessageId = turnDiffFromMessageId || turnId;
 
+    const secondaryChangesByFile = React.useMemo(() => {
+        const map = new Map<string, TurnWorkspaceFileChange>();
+        for (const entry of turnWorkspaceChanges ?? []) {
+            map.set(entry.file, entry);
+        }
+        return map;
+    }, [turnWorkspaceChanges]);
+
+    const hasPrimaryV2Files = React.useMemo(
+        () => Boolean(turnDiffFiles && turnDiffFiles.some((file) => !secondaryChangesByFile.has(file))),
+        [secondaryChangesByFile, turnDiffFiles],
+    );
+
     const turnDiffQuery = useSessionTurnDiffQuery(
-        isV2TurnDiff && diffSessionId && diffDirectory && turnDiffFromMessageId
+        isV2TurnDiff && hasPrimaryV2Files && diffSessionId && diffDirectory && turnDiffFromMessageId
             ? {
                 sessionID: diffSessionId,
                 directory: diffDirectory,
@@ -145,21 +168,52 @@ export const TurnChangesCard = React.memo(({
                 scope: hostScope,
             }
             : null,
-        { enabled: isV2TurnDiff && Boolean(diffSessionId && diffDirectory && turnDiffFromMessageId) },
+        { enabled: isV2TurnDiff && hasPrimaryV2Files && Boolean(diffSessionId && diffDirectory && turnDiffFromMessageId) },
     );
 
     const resolvedFiles = React.useMemo<TurnChangesCardFileRow[]>(() => {
         if (isV2TurnDiff) {
+            const repoLabels = isMultiPathWorkspace && diffDirectory
+                ? buildWorkspaceRepoLabels([diffDirectory, ...workspaceDirectories])
+                : null;
+            if (!hasPrimaryV2Files) {
+                return (turnWorkspaceChanges ?? []).map((entry) => ({
+                    file: entry.file,
+                    additions: entry.additions,
+                    deletions: entry.deletions,
+                }));
+            }
             if (turnDiffQuery.isSuccess) {
-                return turnDiffQuery.data
-                    .filter((entry) => typeof entry?.file === 'string' && entry.file.length > 0)
-                    .map((entry) => ({
-                        file: entry.file,
+                const seenAbsPaths = new Set<string>();
+                const merged: TurnChangesCardFileRow[] = [];
+                for (const entry of turnDiffQuery.data) {
+                    if (typeof entry?.file !== 'string' || entry.file.length === 0) continue;
+                    const absPath = diffDirectory ? toAbsoluteFilePath(diffDirectory, entry.file) : '';
+                    if (absPath) seenAbsPaths.add(absPath);
+                    merged.push({
+                        file: isMultiPathWorkspace && repoLabels && diffDirectory
+                            ? prefixWorkspaceFilePath(entry.file, diffDirectory, repoLabels)
+                            : entry.file,
                         additions: typeof entry.additions === 'number' && Number.isFinite(entry.additions) ? entry.additions : 0,
                         deletions: typeof entry.deletions === 'number' && Number.isFinite(entry.deletions) ? entry.deletions : 0,
-                    }));
+                    });
+                }
+                for (const secondary of turnWorkspaceChanges ?? []) {
+                    if (seenAbsPaths.has(secondary.absolutePath)) continue;
+                    merged.push({
+                        file: secondary.file,
+                        additions: secondary.additions,
+                        deletions: secondary.deletions,
+                    });
+                }
+                return merged.sort((a, b) => a.file.localeCompare(b.file));
             }
-            return (turnDiffFiles ?? []).map((file) => ({ file }));
+            return (turnDiffFiles ?? []).map((file) => {
+                const secondary = secondaryChangesByFile.get(file);
+                return secondary
+                    ? { file: secondary.file, additions: secondary.additions, deletions: secondary.deletions }
+                    : { file };
+            });
         }
         if (hasLegacyFiles && changedFiles) {
             return changedFiles.map((file) => ({
@@ -169,11 +223,24 @@ export const TurnChangesCard = React.memo(({
             }));
         }
         return [];
-    }, [changedFiles, hasLegacyFiles, isV2TurnDiff, turnDiffFiles, turnDiffQuery.data, turnDiffQuery.isSuccess]);
+    }, [
+        changedFiles,
+        diffDirectory,
+        hasLegacyFiles,
+        hasPrimaryV2Files,
+        isMultiPathWorkspace,
+        isV2TurnDiff,
+        secondaryChangesByFile,
+        turnDiffFiles,
+        turnDiffQuery.data,
+        turnDiffQuery.isSuccess,
+        turnWorkspaceChanges,
+        workspaceDirectories,
+    ]);
 
     const totals = React.useMemo<{ additions: number; deletions: number } | null>(() => {
         if (isV2TurnDiff) {
-            if (!turnDiffQuery.isSuccess) return null;
+            if (hasPrimaryV2Files && !turnDiffQuery.isSuccess) return null;
             let additions = 0;
             let deletions = 0;
             for (const file of resolvedFiles) {
@@ -195,7 +262,7 @@ export const TurnChangesCard = React.memo(({
             return { additions, deletions };
         }
         return null;
-    }, [isV2TurnDiff, resolvedFiles, totalAdditions, totalDeletions, turnDiffQuery.isSuccess]);
+    }, [hasPrimaryV2Files, isV2TurnDiff, resolvedFiles, totalAdditions, totalDeletions, turnDiffQuery.isSuccess]);
 
     const openTurnFile = useEvent((file: string) => {
         if (mobileActions) {
@@ -207,6 +274,7 @@ export const TurnChangesCard = React.memo(({
             openTurnChangedFilePreview({
                 scope: hostScope,
                 directory: diffDirectory,
+                workspaceDirectories,
                 filePath: file,
                 turnMessageId: targetTurnMessageId,
                 sessionId: diffSessionId,
@@ -218,6 +286,7 @@ export const TurnChangesCard = React.memo(({
             openTurnChangedFilePreview({
                 scope: hostScope,
                 directory: diffDirectory,
+                workspaceDirectories,
                 filePath: file,
                 turnMessageId: targetTurnMessageId,
                 sessionId: diffSessionId,
@@ -249,6 +318,7 @@ export const TurnChangesCard = React.memo(({
             openTurnChangedFilePreview({
                 scope: hostScope,
                 directory: diffDirectory,
+                workspaceDirectories,
                 filePath: firstFile,
                 turnMessageId: targetTurnMessageId,
                 sessionId: diffSessionId,
@@ -293,7 +363,7 @@ export const TurnChangesCard = React.memo(({
 
     // When a steered/multi-step v2 turn resolves to zero net diff (e.g. changes were reverted),
     // hide the card instead of rendering an empty box.
-    if (isV2TurnDiff && turnDiffQuery.isSuccess && resolvedFiles.length === 0) {
+    if (isV2TurnDiff && (!hasPrimaryV2Files || turnDiffQuery.isSuccess) && resolvedFiles.length === 0) {
         return null;
     }
 

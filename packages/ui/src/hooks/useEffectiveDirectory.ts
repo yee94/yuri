@@ -144,13 +144,32 @@ export const useActiveWorkspace = (): ProjectEntry | null => {
  */
 export const useEffectiveWorkspaceDirectories = (): string[] => {
     const effectiveDirectory = useEffectiveDirectory();
-    const activeWorkspace = useActiveWorkspace();
     const host = useHostRuntime();
-    return React.useMemo(() => {
-        if (host?.entry.location.hostId || activeWorkspace?.hostId) {
-            return effectiveDirectory ? [effectiveDirectory] : [];
+    const remote = useSessionNavigationStore((state) => state.remoteSession);
+    const activeWorkspace = useProjectsStore((state) => {
+        const hostId = host?.entry.location.hostId;
+        const hubId = host?.entry.location.hubId;
+        if (hostId) {
+            if (remote && remote.location.hostId === hostId && (!hubId || remote.location.hubId === hubId)) {
+                const remoteMatch = state.projects.find((item) => (
+                    item.id === remote.projectId
+                    && item.hostId === hostId
+                    && (!item.hubId || !hubId || item.hubId === hubId)
+                ));
+                if (remoteMatch) return remoteMatch;
+            }
+            const activeMatch = state.projects.find((item) => (
+                item.id === state.activeProjectId
+                && item.hostId === hostId
+                && (!item.hubId || !hubId || item.hubId === hubId)
+            ));
+            if (activeMatch) return activeMatch;
+            return null;
         }
-        if (activeWorkspace && isBlankWorkspace(activeWorkspace)) {
+        return state.projects.find((item) => item.id === state.activeProjectId) ?? null;
+    });
+    return React.useMemo(() => {
+        if (activeWorkspace && !activeWorkspace.hostId && isBlankWorkspace(activeWorkspace)) {
             return [];
         }
         const attached = getWorkspacePaths(activeWorkspace);
@@ -162,5 +181,5 @@ export const useEffectiveWorkspaceDirectories = (): string[] => {
             return attached;
         }
         return effectiveDirectory ? [effectiveDirectory] : [];
-    }, [activeWorkspace, effectiveDirectory, host?.entry.location.hostId]);
+    }, [activeWorkspace, effectiveDirectory]);
 };

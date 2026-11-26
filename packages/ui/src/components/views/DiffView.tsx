@@ -5,7 +5,8 @@ import { useEvent } from '@reactuses/core';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useUIStore } from '@/stores/useUIStore';
 import { useProjectDirectory as useEffectiveDirectory } from '@/lib/api/useProjectRuntimeAPIs';
-import { useGitStore, useGitStatus, useIsGitRepo, useGitLoadingStatus } from '@/lib/api/useProjectGitStore';
+import { useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
+import { useGitStore, useGitStatus, useIsGitRepo, useGitLoadingStatus, useWorkspaceGitSummary } from '@/lib/api/useProjectGitStore';
 import { cn } from '@/lib/utils';
 import type { GitStatus } from '@/lib/api/types';
 import {
@@ -40,7 +41,15 @@ import { useI18n } from '@/lib/i18n';
 import type { I18nKey } from '@/lib/i18n/store';
 import { fileDiffFromPatch } from '@/lib/diff/patchFileDiff';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useSessionMessages } from '@/sync/sync-context';
+import { useSessionMessages, useSessionMessageRecords } from '@/sync/sync-context';
+import { materializeTranscriptMessage } from '@/sync/transcript-repository-runtime';
+import {
+    buildWorkspaceRepoLabels,
+    collectTurnWorkspaceToolChanges,
+    prefixWorkspaceFilePath,
+    resolveWorkspaceFileTarget,
+    type TurnWorkspaceFileChange,
+} from '@/components/chat/lib/turns/workspaceTurnChanges';
 import {
     createToolPatchTurnDiffs,
     getFirstChangedModifiedLineFromPatch,
@@ -78,6 +87,10 @@ type FileEntry = GitStatus['files'][number] & {
     insertions: number;
     deletions: number;
     isNew: boolean;
+    /** Owning repository directory when aggregating a multi-path workspace. */
+    repoDirectory?: string;
+    /** Path relative to `repoDirectory` (distinct from prefixed `path`). */
+    repoRelativePath?: string;
 };
 
 type DiffContextMode = 'patch' | 'full';
@@ -99,6 +112,8 @@ type TurnSnapshotDiff = {
     patch?: string;
     additions?: number;
     deletions?: number;
+    repoDirectory?: string;
+    repoRelativePath?: string;
 };
 
 type TurnChangesRequest = {
@@ -614,6 +629,8 @@ interface MultiFileDiffEntryProps {
     disableGitFetch?: boolean;
     turnChangesRequest?: TurnChangesRequest | null;
     loadTurnChangeFile?: boolean;
+    isHydratingTurnSource?: boolean;
+    onRequestTurnSourceHydration?: (filePath: string) => void;
 }
 
 const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
@@ -640,9 +657,12 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
     disableGitFetch = false,
     turnChangesRequest = null,
     loadTurnChangeFile = false,
+    isHydratingTurnSource = false,
+    onRequestTurnSourceHydration,
 }) => {
     const { t } = useI18n();
     const { git } = useRuntimeAPIs();
+    const gitFilePath = file.repoRelativePath ?? file.path;
     const cachedDiff = useGitStore(
         React.useCallback((state) => {
             return state.directories.get(directory)?.diffCache.get(file.path) ?? null;
@@ -670,7 +690,7 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
         directory: turnChangesRequest?.directory ?? '',
         messageID: turnChangesRequest?.messageID ?? '',
         diffCount: turnChangesRequest?.diffCount,
-        file: file.path,
+        file: gitFilePath,
     }, {
         enabled: loadTurnChangeFile && Boolean(turnChangesRequest) && isExpanded && isMounted,
     });
@@ -722,7 +742,14 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
     const visibleDiffLoadError = diffData
         ? null
         : (turnChangeError ?? diffLoadError);
-    const visibleIsLoading = (loadTurnChangeFile && turnChangeFileQuery.isPending) || isLoading;
+    const visibleIsLoading = (loadTurnChangeFile && turnChangeFileQuery.isPending) || isHydratingTurnSource || isLoading;
+
+    React.useEffect(() => {
+        if (!isExpanded || !isMounted || diffData || !onRequestTurnSourceHydration) {
+            return;
+        }
+        onRequestTurnSourceHydration(file.path);
+    }, [diffData, file.path, isExpanded, isMounted, onRequestTurnSourceHydration]);
 
     const setSectionRef = React.useCallback((node: HTMLDivElement | null) => {
         sectionRef.current = node;
@@ -750,9 +777,9 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
 
         let cancelled = false;
         const contextLines = needsFullFiles ? FULL_CONTEXT_DIFF_LINES : DEFAULT_CONTEXT_DIFF_LINES;
-        const fetchPromise = isImageFile(file.path) || needsFullFiles
-            ? git.getGitFileDiff(directory, { path: file.path, staged })
-            : git.getGitDiff(directory, { path: file.path, staged, contextLines });
+        const fetchPromise = isImageFile(gitFilePath) || needsFullFiles
+            ? git.getGitFileDiff(directory, { path: gitFilePath, staged })
+            : git.getGitDiff(directory, { path: gitFilePath, staged, contextLines });
         const timeoutMs = DIFF_REQUEST_TIMEOUT_MS;
         let timeoutId: ReturnType<typeof setTimeout>;
         const timeoutPromise = new Promise<never>((_, reject) => {
@@ -800,7 +827,7 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
             cancelled = true;
             clearTimeout(timeoutId);
         };
-    }, [desiredContextMode, diffRetryNonce, directory, disableGitFetch, file.path, fileStatusKey, git, initialDiffData, isExpanded, isMounted, needsFullFiles, setDiff, staged]);
+    }, [desiredContextMode, diffRetryNonce, directory, disableGitFetch, file.path, fileStatusKey, git, gitFilePath, initialDiffData, isExpanded, isMounted, needsFullFiles, setDiff, staged]);
 
     const handleToggle = React.useCallback(() => {
         handleOpenChange(!isExpanded);
@@ -815,11 +842,11 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
         setFileAction(action);
         try {
             if (action === 'stage') {
-                await git.stageGitFile(directory, file.path);
+                await git.stageGitFile(directory, gitFilePath);
             } else if (action === 'unstage') {
-                await git.unstageGitFile(directory, file.path);
+                await git.unstageGitFile(directory, gitFilePath);
             } else {
-                await git.revertGitFile(directory, file.path, { scope: 'working' });
+                await git.revertGitFile(directory, gitFilePath, { scope: 'working' });
             }
             setDiffRetryNonce((nonce) => nonce + 1);
             await fetchStatus(directory, git);
@@ -833,7 +860,7 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
         } finally {
             setFileAction((current) => (current === action ? null : current));
         }
-    }, [directory, fetchStatus, file.path, fileAction, git, t]);
+    }, [directory, fetchStatus, fileAction, git, gitFilePath, t]);
 
     return (
         <div ref={setSectionRef} aria-busy={visibleIsLoading} className="scroll-mt-9 border-b border-[var(--interactive-border)]/40 last:border-b-0">
@@ -1080,6 +1107,27 @@ export const DiffView: React.FC<DiffViewProps> = ({
     const effectiveDirectory = (typeof directory === 'string' && directory.trim())
         ? directory.trim()
         : fallbackDirectory;
+    const effectiveWorkspaceDirectories = useEffectiveWorkspaceDirectories();
+    const hasExplicitDifferentDirectory = Boolean(
+        typeof directory === 'string'
+        && directory.trim()
+        && fallbackDirectory
+        && normalizePath(directory) !== normalizePath(fallbackDirectory),
+    );
+    const workspaceDirectories = React.useMemo(() => {
+        if (hasExplicitDifferentDirectory || effectiveWorkspaceDirectories.length <= 1) {
+            return [] as string[];
+        }
+        return effectiveWorkspaceDirectories;
+    }, [effectiveWorkspaceDirectories, hasExplicitDifferentDirectory]);
+    const isMultiPathWorkspace = workspaceDirectories.length > 1;
+    const workspaceGitSummary = useWorkspaceGitSummary(isMultiPathWorkspace ? workspaceDirectories : []);
+    const workspaceRepoLabels = React.useMemo(
+        () => (isMultiPathWorkspace && effectiveDirectory
+            ? buildWorkspaceRepoLabels([effectiveDirectory, ...workspaceDirectories])
+            : null),
+        [effectiveDirectory, isMultiPathWorkspace, workspaceDirectories],
+    );
     const { screenWidth, isMobile } = useDeviceInfo({ includeScreenWidth: true });
 
     const isGitRepo = useIsGitRepo(effectiveDirectory ?? null);
@@ -1122,6 +1170,12 @@ export const DiffView: React.FC<DiffViewProps> = ({
         ? sessionId.trim()
         : globalSessionId;
     const sessionMessages = useSessionMessages(resolvedSessionId ?? '', effectiveDirectory ?? undefined);
+    const readsWorkspaceTurnParts = activeDiffScope === 'turn' && isMultiPathWorkspace && !toolPatches?.length;
+    const sessionMessageRecords = useSessionMessageRecords(
+        readsWorkspaceTurnParts ? resolvedSessionId ?? '' : '',
+        effectiveDirectory ?? undefined,
+        { enabled: readsWorkspaceTurnParts },
+    );
     const diffWrapLines = diffWrapLinesStore;
     const forcedStaged = activeDiffScope === 'staged' ? true : activeDiffScope === 'working' ? false : null;
     const activeDiffStaged = forcedStaged ?? displayFileStaged;
@@ -1171,6 +1225,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
                     thinDiffs: [] as TurnSnapshotDiff[],
                     v2SnapshotFiles: [] as string[],
                     v2SnapshotSignature: undefined as string | undefined,
+                    cycleAssistantMessageIds: [] as string[],
                 };
             }
         }
@@ -1193,6 +1248,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
                 thinDiffs: [] as TurnSnapshotDiff[],
                 v2SnapshotFiles: [] as string[],
                 v2SnapshotSignature: undefined as string | undefined,
+                cycleAssistantMessageIds: [] as string[],
             };
         }
         const userMessage = sessionMessages[userIndex] as {
@@ -1212,9 +1268,11 @@ export const DiffView: React.FC<DiffViewProps> = ({
         });
         const snapshotFilesSet = new Set<string>();
         const snapshotTokens: string[] = [];
+        const cycleAssistantMessageIds: string[] = [];
         let idleTag: string | undefined;
         for (let index = userIndex + 1; index < sessionMessages.length; index += 1) {
             const msg = sessionMessages[index] as {
+                id?: string;
                 role?: string;
                 snapshot?: { start?: string; end?: string; files?: string[] };
                 turnIdle?: { id?: string; outcome?: string };
@@ -1225,12 +1283,17 @@ export const DiffView: React.FC<DiffViewProps> = ({
                 break;
             }
             if (msg.role === 'user' && !hasIdleMarkers) break;
-            if (msg.role === 'assistant' && msg.snapshot) {
-                if (msg.snapshot.start) snapshotTokens.push(`s:${msg.snapshot.start}`);
-                if (msg.snapshot.end) snapshotTokens.push(`e:${msg.snapshot.end}`);
-                if (Array.isArray(msg.snapshot.files)) {
-                    for (const file of msg.snapshot.files) {
-                        if (typeof file === 'string' && file.length > 0) snapshotFilesSet.add(file);
+            if (msg.role === 'assistant') {
+                if (typeof msg.id === 'string' && msg.id.length > 0) {
+                    cycleAssistantMessageIds.push(msg.id);
+                }
+                if (msg.snapshot) {
+                    if (msg.snapshot.start) snapshotTokens.push(`s:${msg.snapshot.start}`);
+                    if (msg.snapshot.end) snapshotTokens.push(`e:${msg.snapshot.end}`);
+                    if (Array.isArray(msg.snapshot.files)) {
+                        for (const file of msg.snapshot.files) {
+                            if (typeof file === 'string' && file.length > 0) snapshotFilesSet.add(file);
+                        }
                     }
                 }
             }
@@ -1252,8 +1315,71 @@ export const DiffView: React.FC<DiffViewProps> = ({
             thinDiffs,
             v2SnapshotFiles,
             v2SnapshotSignature,
+            cycleAssistantMessageIds,
         };
     }, [sessionMessages, turnMessageId]);
+
+    const workspaceTurnChanges = React.useMemo<TurnWorkspaceFileChange[]>(() => {
+        if (
+            activeDiffScope !== 'turn'
+            || !isMultiPathWorkspace
+            || !effectiveDirectory
+            || turnChangesMarker.cycleAssistantMessageIds.length === 0
+        ) {
+            return [];
+        }
+        const assistantIdSet = new Set(turnChangesMarker.cycleAssistantMessageIds);
+        const assistantEntries = sessionMessageRecords
+            .filter((record) => assistantIdSet.has(record.info.id))
+            .map((record) => ({ info: record.info, parts: record.parts }));
+        return collectTurnWorkspaceToolChanges(assistantEntries, effectiveDirectory, workspaceDirectories);
+    }, [
+        activeDiffScope,
+        effectiveDirectory,
+        isMultiPathWorkspace,
+        sessionMessageRecords,
+        turnChangesMarker.cycleAssistantMessageIds,
+        workspaceDirectories,
+    ]);
+
+    const secondaryWorkspaceTurnChangeByFile = React.useMemo(() => {
+        const map = new Map<string, TurnWorkspaceFileChange>();
+        for (const item of workspaceTurnChanges) {
+            map.set(item.file, item);
+        }
+        return map;
+    }, [workspaceTurnChanges]);
+
+    const [hydratingTurnMessageIds, setHydratingTurnMessageIds] = React.useState<Set<string>>(() => new Set());
+    const attemptedTurnHydrationRef = React.useRef<Set<string>>(new Set());
+    const handleRequestTurnSourceHydration = useEvent((filePath: string) => {
+        const secondary = secondaryWorkspaceTurnChangeByFile.get(filePath);
+        if (!secondary || !secondary.hasSlimParts || !resolvedSessionId || !effectiveDirectory) {
+            return;
+        }
+        const location = hostRuntime?.entry.location ?? effectiveDirectory;
+        for (const msgId of secondary.sourceMessageIds) {
+            const key = `${resolvedSessionId}:${msgId}`;
+            if (attemptedTurnHydrationRef.current.has(key)) continue;
+            attemptedTurnHydrationRef.current.add(key);
+            setHydratingTurnMessageIds((previous) => {
+                if (previous.has(msgId)) return previous;
+                const next = new Set(previous);
+                next.add(msgId);
+                return next;
+            });
+            void materializeTranscriptMessage(location, resolvedSessionId, msgId, { priority: 'user' })
+                .catch(() => undefined)
+                .finally(() => {
+                    setHydratingTurnMessageIds((previous) => {
+                        if (!previous.has(msgId)) return previous;
+                        const next = new Set(previous);
+                        next.delete(msgId);
+                        return next;
+                    });
+                });
+        }
+    });
 
     const selectedToolTurnDiffs = React.useMemo(
         () => createToolPatchTurnDiffs(toolPatches ?? []),
@@ -1261,9 +1387,11 @@ export const DiffView: React.FC<DiffViewProps> = ({
     );
 
     const usesToolPatches = selectedToolTurnDiffs.length > 0;
+    const hasPrimarySnapshotOrUnknown = turnChangesMarker.v2SnapshotFiles.length > 0 || workspaceTurnChanges.length === 0;
     const usesV2TurnDiff = activeDiffScope === 'turn'
         && !usesToolPatches
         && turnChangesMarker.thinDiffs.length === 0
+        && hasPrimarySnapshotOrUnknown
         && Boolean(resolvedSessionId && effectiveDirectory && turnChangesMarker.messageID);
 
     const v2TurnDiffQuery = useSessionTurnDiffQuery(
@@ -1292,7 +1420,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
     // L1 carries the thin file list on legacy V1 user messages; OpenCode V2
     // resolves full per-file patches via GET /api/session/:id/diff?from= (sharing
     // the TanStack Query cache already warmed by TurnChangesCard).
-    const activeTurnDiffs = React.useMemo<TurnSnapshotDiff[]>(() => {
+    const primaryTurnDiffs = React.useMemo<TurnSnapshotDiff[]>(() => {
         if (usesToolPatches) return selectedToolTurnDiffs;
         if (turnChangesMarker.thinDiffs.length > 0) return turnChangesMarker.thinDiffs;
         if (v2TurnDiffQuery.data && v2TurnDiffQuery.data.length > 0) {
@@ -1314,6 +1442,47 @@ export const DiffView: React.FC<DiffViewProps> = ({
         turnChangesMarker.v2SnapshotFiles,
         usesToolPatches,
         v2TurnDiffQuery.data,
+    ]);
+
+    const activeTurnDiffs = React.useMemo<TurnSnapshotDiff[]>(() => {
+        if (usesToolPatches || !isMultiPathWorkspace || !effectiveDirectory || !workspaceRepoLabels) {
+            return primaryTurnDiffs;
+        }
+        const seenAbsPaths = new Set<string>();
+        const merged: TurnSnapshotDiff[] = [];
+        for (const diff of primaryTurnDiffs) {
+            if (!diff.file) continue;
+            const absPath = toAbsolutePath(effectiveDirectory, diff.file);
+            if (absPath) seenAbsPaths.add(absPath);
+            merged.push({
+                ...diff,
+                file: prefixWorkspaceFilePath(diff.file, effectiveDirectory, workspaceRepoLabels),
+                repoDirectory: effectiveDirectory,
+                repoRelativePath: diff.file,
+            });
+        }
+        for (const secondary of workspaceTurnChanges) {
+            if (seenAbsPaths.has(secondary.absolutePath)) continue;
+            merged.push({
+                file: secondary.file,
+                status: secondary.status,
+                additions: secondary.additions,
+                deletions: secondary.deletions,
+                patch: secondary.patch,
+                before: secondary.before,
+                after: secondary.after,
+                repoDirectory: secondary.repoDirectory,
+                repoRelativePath: secondary.repoRelativePath,
+            });
+        }
+        return merged.sort((a, b) => (a.file ?? '').localeCompare(b.file ?? ''));
+    }, [
+        effectiveDirectory,
+        isMultiPathWorkspace,
+        primaryTurnDiffs,
+        usesToolPatches,
+        workspaceRepoLabels,
+        workspaceTurnChanges,
     ]);
 
     const lastTurnDiffData = React.useMemo(() => {
@@ -1350,18 +1519,43 @@ export const DiffView: React.FC<DiffViewProps> = ({
                     insertions: diff.additions ?? 0,
                     deletions: diff.deletions ?? 0,
                     isNew: diff.status === 'added',
+                    repoDirectory: diff.repoDirectory,
+                    repoRelativePath: diff.repoRelativePath,
                 }))
                 .filter((file) => file.path)
                 .sort((a, b) => a.path.localeCompare(b.path));
         }
 
-        if (!status?.files) return [];
-        const diffStats = status.diffStats ?? {};
         const includeFile = activeDiffScope === 'staged'
             ? isStagedStatusFile
             : activeDiffScope === 'working'
                 ? isWorkingStatusFile
                 : () => true;
+
+        if (isMultiPathWorkspace && workspaceRepoLabels) {
+            const merged: FileEntry[] = [];
+            for (const entry of workspaceGitSummary.gitEntries) {
+                const entryFiles = entry.status?.files;
+                if (!entryFiles || entryFiles.length === 0) continue;
+                const diffStats = entry.status?.diffStats ?? {};
+                for (const file of entryFiles) {
+                    if (!includeFile(file)) continue;
+                    merged.push({
+                        ...file,
+                        path: prefixWorkspaceFilePath(file.path, entry.directory, workspaceRepoLabels),
+                        insertions: diffStats[file.path]?.insertions ?? 0,
+                        deletions: diffStats[file.path]?.deletions ?? 0,
+                        isNew: isNewStatusFile(file),
+                        repoDirectory: entry.directory,
+                        repoRelativePath: file.path,
+                    });
+                }
+            }
+            return merged.sort((a, b) => a.path.localeCompare(b.path));
+        }
+
+        if (!status?.files) return [];
+        const diffStats = status.diffStats ?? {};
 
         return status.files
             .filter(includeFile)
@@ -1372,21 +1566,39 @@ export const DiffView: React.FC<DiffViewProps> = ({
                 isNew: isNewStatusFile(file),
             }))
             .sort((a, b) => a.path.localeCompare(b.path));
-    }, [activeDiffScope, activeTurnDiffs, status]);
+    }, [activeDiffScope, activeTurnDiffs, isMultiPathWorkspace, status, workspaceGitSummary.gitEntries, workspaceRepoLabels]);
 
     const workingFileCount = React.useMemo(() => {
+        if (isMultiPathWorkspace) {
+            let total = 0;
+            for (const entry of workspaceGitSummary.gitEntries) {
+                if (entry.status?.files) {
+                    total += entry.status.files.filter(isWorkingStatusFile).length;
+                }
+            }
+            return total;
+        }
         if (!status?.files) return 0;
         return status.files.filter(isWorkingStatusFile).length;
-    }, [status]);
+    }, [isMultiPathWorkspace, status, workspaceGitSummary.gitEntries]);
 
     const stagedFileCount = React.useMemo(() => {
+        if (isMultiPathWorkspace) {
+            let total = 0;
+            for (const entry of workspaceGitSummary.gitEntries) {
+                if (entry.status?.files) {
+                    total += entry.status.files.filter(isStagedStatusFile).length;
+                }
+            }
+            return total;
+        }
         if (!status?.files) return 0;
         return status.files.filter(isStagedStatusFile).length;
-    }, [status]);
+    }, [isMultiPathWorkspace, status, workspaceGitSummary.gitEntries]);
 
     const turnFileCount = usesToolPatches
         ? activeTurnDiffs.length
-        : (activeTurnDiffs.length > 0 ? activeTurnDiffs.length : turnChangesMarker.count);
+        : (activeTurnDiffs.length > 0 ? activeTurnDiffs.length : turnChangesMarker.count + workspaceTurnChanges.length);
 
     const changedFilePathsKey = React.useMemo(
         () => changedFiles.map((file) => file.path).join('\0'),
@@ -1535,24 +1747,39 @@ export const DiffView: React.FC<DiffViewProps> = ({
 
     // Ensure git status on mount
     React.useEffect(() => {
+        if (isMultiPathWorkspace) {
+            if (effectiveDirectory) {
+                setActiveDirectory(effectiveDirectory);
+            }
+            for (const dir of workspaceDirectories) {
+                void ensureStatus(dir, git);
+            }
+            return;
+        }
         if (effectiveDirectory) {
             setActiveDirectory(effectiveDirectory);
             void ensureStatus(effectiveDirectory, git);
         }
-    }, [effectiveDirectory, setActiveDirectory, ensureStatus, git]);
+    }, [effectiveDirectory, ensureStatus, git, isMultiPathWorkspace, setActiveDirectory, workspaceDirectories]);
 
     React.useEffect(() => {
-        if (!effectiveDirectory) {
+        const trackedDirs = isMultiPathWorkspace
+            ? workspaceDirectories
+            : (effectiveDirectory ? [effectiveDirectory] : []);
+        if (trackedDirs.length === 0) {
             return;
         }
-
+        const normalizedTracked = new Set(trackedDirs.map((dir) => normalizePath(dir)));
         return sessionEvents.onGitRefreshHint((hint) => {
-            if (normalizePath(hint.directory) !== normalizePath(effectiveDirectory)) {
+            const normalizedHint = normalizePath(hint.directory);
+            if (!normalizedHint || !normalizedTracked.has(normalizedHint)) {
                 return;
             }
-            void fetchStatus(effectiveDirectory, git);
+            for (const dir of trackedDirs) {
+                void fetchStatus(dir, git, normalizePath(dir) === normalizedHint ? undefined : { silent: true });
+            }
         });
-    }, [effectiveDirectory, fetchStatus, git]);
+    }, [effectiveDirectory, fetchStatus, git, isMultiPathWorkspace, workspaceDirectories]);
 
     // Handle pending diff file from external navigation
     React.useEffect(() => {
@@ -1776,25 +2003,60 @@ export const DiffView: React.FC<DiffViewProps> = ({
 
     const [openingEditorFilePath, setOpeningEditorFilePath] = React.useState<string | null>(null);
 
+    const resolveDiffFileTarget = React.useCallback((filePath: string): {
+        directory: string;
+        relativePath: string;
+        absolutePath: string;
+    } | null => {
+        if (!effectiveDirectory || !filePath) return null;
+        const matched = changedFiles.find((entry) => entry.path === filePath);
+        if (matched?.repoDirectory && matched.repoRelativePath) {
+            return {
+                directory: matched.repoDirectory,
+                relativePath: matched.repoRelativePath,
+                absolutePath: toAbsolutePath(matched.repoDirectory, matched.repoRelativePath),
+            };
+        }
+        if (isMultiPathWorkspace) {
+            const resolved = resolveWorkspaceFileTarget(filePath, effectiveDirectory, workspaceDirectories);
+            if (resolved) {
+                return {
+                    directory: resolved.directory,
+                    relativePath: resolved.relativePath,
+                    absolutePath: resolved.absolutePath,
+                };
+            }
+        }
+        return {
+            directory: effectiveDirectory,
+            relativePath: filePath,
+            absolutePath: toAbsolutePath(effectiveDirectory, filePath),
+        };
+    }, [changedFiles, effectiveDirectory, isMultiPathWorkspace, workspaceDirectories]);
+
     const openFileInEditorAtChange = React.useCallback(async (filePath: string, cachedDiffData: DiffData | null) => {
         if (!effectiveDirectory || !filePath) {
             return;
         }
 
+        const resolvedTarget = resolveDiffFileTarget(filePath);
+        const targetDir = resolvedTarget?.directory ?? effectiveDirectory;
+        const targetRelPath = resolvedTarget?.relativePath ?? filePath;
+
         setOpeningEditorFilePath(filePath);
         try {
             let targetLine: number | null = null;
 
-            if (cachedDiffData?.patch && !cachedDiffData.isBinary && !isImageFile(filePath)) {
+            if (cachedDiffData?.patch && !cachedDiffData.isBinary && !isImageFile(targetRelPath)) {
                 targetLine = getFirstChangedModifiedLineFromPatch(cachedDiffData.patch);
-            } else if (cachedDiffData && cachedDiffData.contextMode === 'full' && !cachedDiffData.isBinary && !isImageFile(filePath)) {
+            } else if (cachedDiffData && cachedDiffData.contextMode === 'full' && !cachedDiffData.isBinary && !isImageFile(targetRelPath)) {
                 targetLine = getFirstChangedModifiedLine(cachedDiffData.original, cachedDiffData.modified);
             }
 
             if (targetLine === null) {
                 try {
-                    const patchResponse = await git.getGitDiff(effectiveDirectory, {
-                        path: filePath,
+                    const patchResponse = await git.getGitDiff(targetDir, {
+                        path: targetRelPath,
                         staged: activeDiffStaged,
                         contextLines: 3,
                     });
@@ -1806,22 +2068,22 @@ export const DiffView: React.FC<DiffViewProps> = ({
 
             let diffForNavigation = cachedDiffData;
             if (targetLine === null || !diffForNavigation) {
-                const response = await git.getGitFileDiff(effectiveDirectory, { path: filePath, staged: activeDiffStaged });
+                const response = await git.getGitFileDiff(targetDir, { path: targetRelPath, staged: activeDiffStaged });
                 diffForNavigation = {
                     original: response.original ?? '',
                     modified: response.modified ?? '',
                     isBinary: response.isBinary,
                 };
                 if (!activeDiffStaged) {
-                    setDiff(effectiveDirectory, filePath, diffForNavigation);
+                    setDiff(targetDir, filePath, diffForNavigation);
                 }
             }
 
-            const resolvedTargetLine = targetLine ?? ((diffForNavigation.isBinary || isImageFile(filePath))
+            const resolvedTargetLine = targetLine ?? ((diffForNavigation.isBinary || isImageFile(targetRelPath))
                 ? 1
                 : getFirstChangedModifiedLine(diffForNavigation.original, diffForNavigation.modified));
 
-            const absolutePath = toAbsolutePath(effectiveDirectory, filePath);
+            const absolutePath = resolvedTarget?.absolutePath ?? toAbsolutePath(effectiveDirectory, filePath);
             openContextFileAtLine(
                 effectiveDirectory,
                 absolutePath,
@@ -1831,7 +2093,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
         } finally {
             setOpeningEditorFilePath((current) => (current === filePath ? null : current));
         }
-    }, [activeDiffStaged, effectiveDirectory, git, openContextFileAtLine, setDiff]);
+    }, [activeDiffStaged, effectiveDirectory, git, openContextFileAtLine, resolveDiffFileTarget, setDiff]);
 
     /**
      * Jump from a diff file row to the file viewer. Any file type is allowed;
@@ -1843,7 +2105,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
             return;
         }
 
-        const absolutePath = toAbsolutePath(effectiveDirectory, filePath);
+        const absolutePath = resolveDiffFileTarget(filePath)?.absolutePath ?? toAbsolutePath(effectiveDirectory, filePath);
 
         if (mobileActions) {
             mobileActions.openFile({ path: absolutePath });
@@ -1889,10 +2151,17 @@ export const DiffView: React.FC<DiffViewProps> = ({
                         data-diff-virtual-root
                     >
                         <div className="flex flex-col [overflow-anchor:none]" data-diff-virtual-content>
-                            {visibleDiffFiles.map((file) => (
+                            {visibleDiffFiles.map((file) => {
+                                const secondaryTurnChange = activeDiffScope === 'turn'
+                                    ? secondaryWorkspaceTurnChangeByFile.get(file.path)
+                                    : undefined;
+                                const isHydratingSecondary = Boolean(
+                                    secondaryTurnChange?.sourceMessageIds.some((id) => hydratingTurnMessageIds.has(id)),
+                                );
+                                return (
                                 <MultiFileDiffEntry
                                     key={file.path}
-                                    directory={effectiveDirectory}
+                                    directory={file.repoDirectory ?? effectiveDirectory}
                                     file={file}
                                     layout={getLayoutForFile(file)}
                                     wrapLines={diffWrapLines}
@@ -1915,10 +2184,13 @@ export const DiffView: React.FC<DiffViewProps> = ({
                                     focusLine={file.path === (targetFilePath?.trim() || displayFile) ? (targetLine ?? displayFocusLine) : null}
                                     showFileActions={activeDiffScope !== 'turn'}
                                     disableGitFetch={activeDiffScope === 'turn'}
-                                    turnChangesRequest={turnChangesRequest}
+                                    turnChangesRequest={secondaryTurnChange ? null : turnChangesRequest}
                                     loadTurnChangeFile={activeDiffScope === 'turn' && !usesToolPatches}
+                                    isHydratingTurnSource={isHydratingSecondary}
+                                    onRequestTurnSourceHydration={secondaryTurnChange?.hasSlimParts ? handleRequestTurnSourceHydration : undefined}
                                 />
-                            ))}
+                                );
+                            })}
                         </div>
                     </ScrollableOverlay>
                 </div>
@@ -1936,7 +2208,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
             );
         }
 
-        if (activeDiffScope !== 'turn' && isLoadingStatus && !status) {
+        if (activeDiffScope !== 'turn' && !isMultiPathWorkspace && isLoadingStatus && !status) {
             return (
                 <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
                     <Icon name="loader-4" className="size-4 animate-spin" />
@@ -1945,7 +2217,16 @@ export const DiffView: React.FC<DiffViewProps> = ({
             );
         }
 
-        if (activeDiffScope !== 'turn' && isGitRepo === false) {
+        if (activeDiffScope !== 'turn' && isMultiPathWorkspace && !workspaceGitSummary.isAnyGitRepo && !workspaceGitSummary.allKnownNonRepo) {
+            return (
+                <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <Icon name="loader-4" className="size-4 animate-spin" />
+                    {t('diffView.state.loadingRepositoryStatus')}
+                </div>
+            );
+        }
+
+        if (activeDiffScope !== 'turn' && (isMultiPathWorkspace ? workspaceGitSummary.allKnownNonRepo : isGitRepo === false)) {
             return (
                 <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
                     {t('diffView.state.notGitRepository')}

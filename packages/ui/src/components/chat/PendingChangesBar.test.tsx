@@ -32,19 +32,23 @@ vi.mock('@/apps/mobileAppContext', () => ({
   useMobileAppActions: () => null,
 }));
 
-vi.mock('@/stores/useGitStore', () => ({
-  useIsGitRepo: () => true,
-  useWorkspaceGitSummary: () => ({ gitEntries: [], isAnyGitRepo: false, hasChanges: false, insertions: 0, deletions: 0 }),
-  useGitStore: (selector: (state: {
-    directories: Map<string, { status: unknown; isGitRepo: boolean }>;
-    fetchStatus: typeof fetchStatus;
-    ensureStatus: () => Promise<void>;
-  }) => unknown) => selector({
-    directories: new Map([['/repo', { status: gitState.status, isGitRepo: true }]]),
-    fetchStatus,
-    ensureStatus: async () => undefined,
-  }),
-}));
+vi.mock('@/stores/useGitStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/stores/useGitStore')>();
+  return {
+    ...actual,
+    useIsGitRepo: () => true,
+    useWorkspaceGitSummary: () => ({ entries: [], gitEntries: [], gitRepoCount: 0, isAnyGitRepo: false, allKnownNonRepo: false, hasChanges: false, totalFiles: 0, insertions: 0, deletions: 0, hasOversized: false, hasDiffStats: false }),
+    useGitStore: (selector: (state: {
+      directories: Map<string, { status: unknown; isGitRepo: boolean }>;
+      fetchStatus: typeof fetchStatus;
+      ensureStatus: () => Promise<void>;
+    }) => unknown) => selector({
+      directories: new Map([['/repo', { status: gitState.status, isGitRepo: true }]]),
+      fetchStatus,
+      ensureStatus: async () => undefined,
+    }),
+  };
+});
 
 vi.mock('@/sync/session-ui-store', () => ({
   useSessionUIStore: (selector: (state: unknown) => unknown) => selector({ currentSessionId: 'session' }),

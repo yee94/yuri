@@ -3030,7 +3030,7 @@ const ContextPanelContentView: React.FC<ContextPanelProps & { remoteSessions?: A
                 diffScope={tab.diffScope ?? (tab.stagedDiff ? 'staged' : 'working')}
                 turnMessageId={tab.diffTurnMessageId}
                 sessionId={tab.diffSessionId}
-                directory={effectiveDirectory}
+                directory={tab.diffDirectory ?? effectiveDirectory}
                 onDiffScopeChange={handleDiffScopeChange}
                 targetFilePath={tab.targetPath}
                 targetLine={tab.diffTargetLine ?? null}

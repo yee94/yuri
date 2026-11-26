@@ -1158,4 +1158,126 @@ describe('projectTurnRecords', () => {
         expect(next.turns[0]?.completionDisposition).toBe('normal');
         expect(next.turns[0]?.durationMs).toBe(10);
     });
+
+    test('merges primary snapshot files and secondary attached-repo edits in multi-path workspaces', () => {
+        const user = createMessageEntry({ id: 'u_mp_1', role: 'user', createdAt: 10 });
+        const assistant = createMessageEntry({
+            id: 'a_mp_1',
+            role: 'assistant',
+            parentID: 'u_mp_1',
+            createdAt: 11,
+            completedAt: 20,
+            finish: 'stop',
+            parts: [
+                {
+                    id: 'p_sec',
+                    type: 'tool',
+                    tool: 'apply_patch',
+                    state: {
+                        status: 'completed',
+                        metadata: {
+                            files: [
+                                {
+                                    file: '/workspace/mmbizwxaaiagent/src/tablekv.cc',
+                                    type: 'update',
+                                    additions: 12,
+                                    deletions: 3,
+                                    diff: '--- a/src/tablekv.cc\n+++ b/src/tablekv.cc\n@@ -1 +1 @@\n-a\n+b',
+                                },
+                            ],
+                        },
+                    },
+                } as unknown as Part,
+                { id: 't_mp_1', type: 'text', text: 'updated both repos' } as Part,
+            ],
+        });
+        (assistant.info as { snapshot?: { start?: string; end?: string; files?: string[] }; turnIdle?: { id: string; outcome: 'succeeded' } }).snapshot = {
+            start: 's1',
+            end: 'e1',
+            files: ['src/index.ts'],
+        };
+        (assistant.info as { turnIdle?: { id: string; outcome: 'succeeded' } }).turnIdle = {
+            id: 'idle_1',
+            outcome: 'succeeded',
+        };
+
+        const projection = projectTurnRecords([user, assistant], {
+            showTurnChangedFiles: true,
+            sessionDirectory: '/workspace/app-node',
+            workspaceDirectories: ['/workspace/app-node', '/workspace/mmbizwxaaiagent'],
+        });
+
+        const turn = projection.turns[0];
+        expect(turn?.turnDiffFromMessageId).toBe('u_mp_1');
+        expect(turn?.turnDiffFiles).toEqual([
+            'app-node/src/index.ts',
+            'mmbizwxaaiagent/src/tablekv.cc',
+        ]);
+        expect(turn?.diffStats).toEqual({
+            additions: 0,
+            deletions: 0,
+            files: 2,
+            hasDiffs: true,
+        });
+        expect(turn?.turnWorkspaceChanges).toHaveLength(1);
+        expect(turn?.turnWorkspaceChanges?.[0]).toMatchObject({
+            file: 'mmbizwxaaiagent/src/tablekv.cc',
+            repoDirectory: '/workspace/mmbizwxaaiagent',
+            repoRelativePath: 'src/tablekv.cc',
+            additions: 12,
+            deletions: 3,
+        });
+    });
+
+    test('emits turn changes when a multi-path turn edits only a secondary attached repository', () => {
+        const user = createMessageEntry({ id: 'u_mp_2', role: 'user', createdAt: 10 });
+        const assistant = createMessageEntry({
+            id: 'a_mp_2',
+            role: 'assistant',
+            parentID: 'u_mp_2',
+            createdAt: 11,
+            completedAt: 20,
+            finish: 'stop',
+            parts: [
+                {
+                    id: 'p_sec_only',
+                    type: 'tool',
+                    tool: 'edit',
+                    state: {
+                        status: 'completed',
+                        metadata: {
+                            filediff: {
+                                file: '/workspace/mmbizwxaaiagent/src/tablekv.cc',
+                                additions: 7,
+                                deletions: 2,
+                                diff: '--- a/src/tablekv.cc\n+++ b/src/tablekv.cc\n@@ -1 +1 @@\n-old\n+new',
+                            },
+                        },
+                    },
+                } as unknown as Part,
+                { id: 't_mp_2', type: 'text', text: 'updated secondary repo only' } as Part,
+            ],
+        });
+        (assistant.info as { turnIdle?: { id: string; outcome: 'succeeded' } }).turnIdle = {
+            id: 'idle_2',
+            outcome: 'succeeded',
+        };
+
+        const projection = projectTurnRecords([user, assistant], {
+            showTurnChangedFiles: true,
+            sessionDirectory: '/workspace/app-node',
+            workspaceDirectories: ['/workspace/app-node', '/workspace/mmbizwxaaiagent'],
+        });
+
+        const turn = projection.turns[0];
+        expect(turn?.turnDiffFromMessageId).toBe('u_mp_2');
+        expect(turn?.turnDiffFiles).toEqual(['mmbizwxaaiagent/src/tablekv.cc']);
+        expect(turn?.diffStats).toEqual({
+            additions: 7,
+            deletions: 2,
+            files: 1,
+            hasDiffs: true,
+        });
+        expect(turn?.turnWorkspaceChanges).toHaveLength(1);
+    });
 });

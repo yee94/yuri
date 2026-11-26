@@ -7,6 +7,7 @@ import {
   toAbsoluteFilePath,
 } from '@/lib/path-utils';
 import { useUIStore, type ContextPanelFileNotice } from '@/stores/useUIStore';
+import { resolveWorkspaceFileTarget } from './lib/turns/workspaceTurnChanges';
 
 export type TurnChangedFileOpenTarget =
   | { kind: 'diff'; path: string }
@@ -15,7 +16,18 @@ export type TurnChangedFileOpenTarget =
 export const resolveTurnChangedFileOpenTarget = (
   directory: string,
   filePath: string,
+  workspaceDirectories?: readonly string[],
 ): TurnChangedFileOpenTarget => {
+  if (workspaceDirectories && workspaceDirectories.length > 1) {
+    const resolved = resolveWorkspaceFileTarget(filePath, directory, workspaceDirectories);
+    if (resolved) {
+      return {
+        kind: 'diff',
+        path: resolved.displayPath,
+      };
+    }
+  }
+
   const absolutePath = toAbsoluteFilePath(directory, filePath) || normalizeFilePath(filePath);
   if (!absolutePath) {
     return { kind: 'diff', path: filePath };
@@ -39,6 +51,7 @@ export const resolveTurnChangedFileOpenTarget = (
 export const openTurnChangedFilePreview = (args: {
   scope?: HostRuntimeEntry;
   directory: string;
+  workspaceDirectories?: readonly string[];
   filePath: string;
   turnMessageId?: string | null;
   sessionId?: string | null;
@@ -47,7 +60,7 @@ export const openTurnChangedFilePreview = (args: {
   const store = useUIStore.getState();
   args.scope?.sdk();
   const stateKey = args.scope?.key ?? args.directory;
-  const target = resolveTurnChangedFileOpenTarget(args.directory, args.filePath);
+  const target = resolveTurnChangedFileOpenTarget(args.directory, args.filePath, args.workspaceDirectories);
 
   if (target.kind === 'file') {
     const open = () => {

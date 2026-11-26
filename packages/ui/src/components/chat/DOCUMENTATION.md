@@ -410,6 +410,12 @@ dismissal. `PendingChangesBar` receives its expansion state from that owner;
 opening still refreshes Git silently, and closed change lists do not construct
 per-file rows. Turn-level file popovers keep their bounded size.
 
+Multi-path turn projection reuses extracted tool edits for unchanged assistant
+message arrays in the same workspace scope. Streaming updates to another turn
+do not read historical tool metadata again. OpenCode snapshot query keys still
+use the primary snapshot's raw paths; formatting paths for display or recovering
+secondary-repository edits does not invalidate that query.
+
 ## Workspace review boundary
 
 `/workspace-review` remains an in-session prompt. There is no separate Review

@@ -1,6 +1,7 @@
 import type { Message, Part } from '@/lib/opencode/v2-types';
 import type { SessionCompactionPart } from '@/sync/session-projection-api';
 import type { TurnActivityGroup, TurnActivityRecord, TurnChangedFile, TurnDiffStats, TurnGroupingContext } from '../lib/turns/types';
+import { areTurnWorkspaceChangesEqual } from '../lib/turns/workspaceTurnChanges';
 import { collectBackgroundWorkScope } from './parts/sessionBackgroundModel';
 
 type MessageRecord = {
@@ -396,6 +397,7 @@ export const areRelevantTurnGroupingContextsEqual = (
       || left.turnDiffSignature !== right.turnDiffSignature
       || left.turnIdleOutcome !== right.turnIdleOutcome
       || !areStringListsEqual(left.turnDiffFiles, right.turnDiffFiles)
+      || !areTurnWorkspaceChangesEqual(left.turnWorkspaceChanges, right.turnWorkspaceChanges)
     )
   ) {
     return false;

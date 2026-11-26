@@ -7,10 +7,6 @@ import type { CommitFileEntry, GitStatus } from '@/lib/api/types';
 import { useShallow } from 'zustand/react/shallow';
 import { useProjectDirectory as useEffectiveDirectory } from '@/lib/api/useProjectRuntimeAPIs';
 import { useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
-import { useWorkspaceGitSummary } from '@/stores/useGitStore';
-import { Button } from '@/components/ui/button';
-import { useGitmojiList } from '@/hooks/useGitmojiList';
-import { copyTextToClipboard } from '@/lib/clipboard';
 import {
   useGitStore,
   useGitStatus,
@@ -19,7 +15,11 @@ import {
   useIsGitRepo,
   useGitLoadingStatus,
   useGitLoadingLog,
+  useWorkspaceGitSummary,
 } from '@/lib/api/useProjectGitStore';
+import { Button } from '@/components/ui/button';
+import { useGitmojiList } from '@/hooks/useGitmojiList';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { toast } from '@/components/ui';
@@ -215,7 +215,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
   const { generateCommitMessage: generateSessionCommitMessage, getGitWorktreeBootstrapStatus } = useProjectGitActions();
   const effectiveDirectory = useEffectiveDirectory();
   const workspaceDirectories = useEffectiveWorkspaceDirectories();
-  const isMultiPathWorkspace = !projectScope && workspaceDirectories.length > 1;
+  const isMultiPathWorkspace = workspaceDirectories.length > 1;
   const workspaceGitSummary = useWorkspaceGitSummary(isMultiPathWorkspace ? workspaceDirectories : []);
   const multiRepoGitDirectories = React.useMemo(
     () => (isMultiPathWorkspace ? workspaceGitSummary.gitEntries.map((entry) => entry.directory) : []),
@@ -823,12 +823,21 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     }
 
     return sessionEvents.onGitRefreshHint((hint) => {
-      if (normalizePath(hint.directory) !== normalizePath(currentDirectory)) {
+      const normalizedHint = normalizePath(hint.directory);
+      if (isMultiPathWorkspace) {
+        const matchesWorkspace = workspaceDirectories.some((dir) => normalizePath(dir) === normalizedHint);
+        if (!matchesWorkspace) return;
+        for (const dir of workspaceDirectories) {
+          void fetchStatus(dir, git, normalizePath(dir) === normalizePath(currentDirectory) ? undefined : { silent: true });
+        }
+        return;
+      }
+      if (normalizedHint !== normalizePath(currentDirectory)) {
         return;
       }
       void fetchStatus(currentDirectory, git);
     });
-  }, [isActive, currentDirectory, fetchStatus, git]);
+  }, [isActive, currentDirectory, fetchStatus, git, isMultiPathWorkspace, workspaceDirectories]);
 
   const refreshStatusAndBranches = React.useCallback(
     async (showErrors = true) => {
@@ -1600,14 +1609,16 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
 
   const handleViewChangeDiff = React.useCallback((path: string, staged: boolean) => {
     if (currentDirectory && !isMobile) {
-      openContextFileDiff(projectScope?.key ?? currentDirectory, path, staged);
+      const panelKey = projectScope?.key ?? effectiveDirectory ?? currentDirectory;
+      const diffDirectory = currentDirectory !== effectiveDirectory ? currentDirectory : null;
+      openContextFileDiff(panelKey, path, staged, null, diffDirectory);
       return;
     }
     navigateToDiff(path, staged);
     if (isMobile) {
       setRightSidebarOpen(false);
     }
-  }, [currentDirectory, isMobile, navigateToDiff, openContextFileDiff, setRightSidebarOpen, projectScope?.key]);
+  }, [currentDirectory, effectiveDirectory, isMobile, navigateToDiff, openContextFileDiff, setRightSidebarOpen, projectScope?.key]);
 
   const openStashes = React.useCallback(() => setIsStashesDialogOpen(true), []);
 

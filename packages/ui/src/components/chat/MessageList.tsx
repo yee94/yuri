@@ -16,6 +16,8 @@ import { areOptionalRenderRelevantMessagesEqual, areRelevantTurnGroupingContexts
 import TurnItem from './components/TurnItem';
 import type { AnimationHandlers, ContentChangeReason, ContentChangeDetail, ContentChangeHandler } from '@/hooks/useChatAutoFollow';
 import type { ChatMessageEntry, TurnRecord, TurnGroupingContext } from './lib/turns/types';
+import { useEffectiveWorkspaceDirectories } from '@/hooks/useEffectiveDirectory';
+import { normalizeFilePath } from '@/lib/path-utils';
 import { useTurnRecords } from './hooks/useTurnRecords';
 import { applyRetryOverlay } from './lib/turns/applyRetryOverlay';
 import { buildLiveStreamingEntry } from './lib/turns/streamingTailEntry';
@@ -1073,12 +1075,13 @@ const TurnBlock = React.memo(({
             changedFiles: turn.changedFiles,
             turnDiffFromMessageId: turn.turnDiffFromMessageId,
             turnDiffFiles: turn.turnDiffFiles,
+            turnWorkspaceChanges: turn.turnWorkspaceChanges,
             turnDiffSignature: turn.turnDiffSignature,
             turnIdleOutcome: turn.turnIdleOutcome,
             userMessageCreatedAt: typeof userCreatedAt === 'number' ? userCreatedAt : undefined,
             userMessageVariant,
         };
-    }, [turn.activityPresentationKind, turn.assistantMessages, turn.changedFiles, turn.diffStats, turn.hasReasoning, turn.hasTools, turn.headerMessageId, turn.summaryText, turn.turnDiffFiles, turn.turnDiffFromMessageId, turn.turnDiffSignature, turn.turnId, turn.turnIdleOutcome, turn.userMessage?.info, visibleActivityParts, visibleActivitySegments]);
+    }, [turn.activityPresentationKind, turn.assistantMessages, turn.changedFiles, turn.diffStats, turn.hasReasoning, turn.hasTools, turn.headerMessageId, turn.summaryText, turn.turnDiffFiles, turn.turnDiffFromMessageId, turn.turnDiffSignature, turn.turnId, turn.turnIdleOutcome, turn.turnWorkspaceChanges, turn.userMessage?.info, visibleActivityParts, visibleActivitySegments]);
 
     // Called by `TurnAssistantBlock` during its render, so it must see this
     // render's values. Through `useEvent` it saw the previous render's, and a
@@ -1154,6 +1157,7 @@ const TurnBlock = React.memo(({
                     changedFiles: turnGroupingContextBase.changedFiles,
                     turnDiffFromMessageId: turnGroupingContextBase.turnDiffFromMessageId,
                     turnDiffFiles: turnGroupingContextBase.turnDiffFiles,
+                    turnWorkspaceChanges: turnGroupingContextBase.turnWorkspaceChanges,
                     turnDiffSignature: turnGroupingContextBase.turnDiffSignature,
                     turnIdleOutcome: turnGroupingContextBase.turnIdleOutcome,
                     userMessageCreatedAt: turnGroupingContextBase.userMessageCreatedAt,
@@ -2110,6 +2114,7 @@ TailEntry.displayName = 'TailEntry';
 const StreamingTailContent: React.FC<{
     entries: RenderEntry[];
     directory?: string;
+    workspaceDirectories?: readonly string[];
     /** Session scope for repository-narrowed parts subscription (Ticket 02). */
     sessionId?: string | null;
     onMessageContentChange: ContentChangeHandler;
@@ -2129,6 +2134,7 @@ const StreamingTailContent: React.FC<{
 }> = ({
     entries,
     directory,
+    workspaceDirectories,
     sessionId,
     onMessageContentChange,
     getAnimationHandlers,
@@ -2163,8 +2169,10 @@ const StreamingTailContent: React.FC<{
             liveParts,
             showTextJustificationActivity: chatRenderMode === 'sorted',
             showTurnChangedFiles,
+            sessionDirectory: directory,
+            workspaceDirectories,
         });
-    }, [activeStreamingMessageId, chatRenderMode, entries, newestIndex, liveParts, showTurnChangedFiles]);
+    }, [activeStreamingMessageId, chatRenderMode, directory, entries, newestIndex, liveParts, showTurnChangedFiles, workspaceDirectories]);
 
     return (
         <>
@@ -2368,8 +2376,20 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     // React parents, rebuilding Markdown and losing row-local UI state.
     const liveTailActive = sessionIsWorking || Boolean(activeStreamingMessageId);
 
+    const effectiveWorkspaceDirectories = useEffectiveWorkspaceDirectories();
+    const workspaceDirectories = React.useMemo(() => {
+        if (effectiveWorkspaceDirectories.length <= 1) return effectiveWorkspaceDirectories;
+        if (!directory) return effectiveWorkspaceDirectories;
+        const normalizedDir = normalizeFilePath(directory);
+        return effectiveWorkspaceDirectories.some((candidate) => normalizeFilePath(candidate) === normalizedDir)
+            ? effectiveWorkspaceDirectories
+            : [];
+    }, [directory, effectiveWorkspaceDirectories]);
+
     const { projection, streamingTurns } = useTurnRecords(displayMessages, {
         sessionKey: domainSessionKey,
+        sessionDirectory: directory,
+        workspaceDirectories,
         // Activity is the original ordered prefix, never a regrouping by type.
         showTextJustificationActivity: chatRenderMode === 'sorted',
         showTurnChangedFiles,
@@ -2949,6 +2969,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
                         <StreamingTailContent
                             entries={trailingStreamingEntries}
                             directory={directory}
+                            workspaceDirectories={workspaceDirectories}
                             sessionId={domainSessionKey}
                             onMessageContentChange={stableTailContentChange}
                             getAnimationHandlers={stableGetAnimationHandlers}

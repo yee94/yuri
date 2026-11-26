@@ -21,6 +21,8 @@ type BuildLiveStreamingEntryOptions = {
     liveParts: Part[];
     showTextJustificationActivity: boolean;
     showTurnChangedFiles: boolean;
+    sessionDirectory?: string | null;
+    workspaceDirectories?: readonly string[];
 };
 
 /**
@@ -93,6 +95,8 @@ export const buildLiveStreamingEntry = <TEntry extends StreamingTailEntry>(
     const projection = projectTurnRecords(messages, {
         showTextJustificationActivity: options.showTextJustificationActivity,
         showTurnChangedFiles: options.showTurnChangedFiles,
+        sessionDirectory: options.sessionDirectory,
+        workspaceDirectories: options.workspaceDirectories,
     });
     const turn = projection.turns[0] ?? {
         ...entry.turn,

@@ -1105,118 +1105,126 @@ const EMPTY_WORKSPACE_GIT_SUMMARY: WorkspaceGitSummary = {
   hasDiffStats: false,
 };
 
+export type WorkspaceGitSummaryCache = {
+  dirs: string[];
+  statuses: Array<GitStatus | null>;
+  repoFlags: Array<boolean | null>;
+  result: WorkspaceGitSummary;
+};
+
+export const selectWorkspaceGitSummary = (
+  directoriesMap: Map<string, DirectoryGitState>,
+  uniqueDirectories: string[],
+  cacheRef: React.MutableRefObject<WorkspaceGitSummaryCache | null>,
+): WorkspaceGitSummary => {
+  if (uniqueDirectories.length === 0) {
+    return EMPTY_WORKSPACE_GIT_SUMMARY;
+  }
+
+  const prev = cacheRef.current;
+  let same = Boolean(prev && prev.dirs.length === uniqueDirectories.length);
+  if (same && prev) {
+    for (let i = 0; i < uniqueDirectories.length; i += 1) {
+      const dir = uniqueDirectories[i];
+      const entry = directoriesMap.get(dir);
+      if (
+        prev.dirs[i] !== dir
+        || prev.statuses[i] !== (entry?.status ?? null)
+        || prev.repoFlags[i] !== (entry?.isGitRepo ?? null)
+      ) {
+        same = false;
+        break;
+      }
+    }
+  }
+  if (same && prev) {
+    return prev.result;
+  }
+
+  const statuses: Array<GitStatus | null> = [];
+  const repoFlags: Array<boolean | null> = [];
+  const entries: WorkspaceGitSummaryEntry[] = [];
+  const gitEntries: WorkspaceGitSummaryEntry[] = [];
+
+  let totalFiles = 0;
+  let insertions = 0;
+  let deletions = 0;
+  let hasOversized = false;
+  let hasDiffStats = false;
+  let allKnownNonRepo = true;
+
+  for (const dir of uniqueDirectories) {
+    const dirState = directoriesMap.get(dir);
+    const isGitRepo = dirState?.isGitRepo ?? null;
+    const status = dirState?.status ?? null;
+    statuses.push(status);
+    repoFlags.push(isGitRepo);
+
+    if (isGitRepo !== false) {
+      allKnownNonRepo = false;
+    }
+
+    let dirInsertions = 0;
+    let dirDeletions = 0;
+    if (isGitRepo === true && status?.diffStats) {
+      hasDiffStats = true;
+      for (const stat of Object.values(status.diffStats)) {
+        dirInsertions += stat?.insertions ?? 0;
+        dirDeletions += stat?.deletions ?? 0;
+      }
+    }
+    const dirFiles = isGitRepo === true ? (status?.files?.length ?? 0) : 0;
+    if (isGitRepo === true && status?.oversized) {
+      hasOversized = true;
+    }
+
+    const item: WorkspaceGitSummaryEntry = {
+      directory: dir,
+      isGitRepo,
+      status,
+      branch: isGitRepo === true ? (status?.current?.trim() || null) : null,
+      fileCount: dirFiles,
+      insertions: dirInsertions,
+      deletions: dirDeletions,
+    };
+    entries.push(item);
+
+    if (isGitRepo === true) {
+      gitEntries.push(item);
+      totalFiles += dirFiles;
+      insertions += dirInsertions;
+      deletions += dirDeletions;
+    }
+  }
+
+  const result: WorkspaceGitSummary = {
+    entries,
+    gitEntries,
+    gitRepoCount: gitEntries.length,
+    isAnyGitRepo: gitEntries.length > 0,
+    allKnownNonRepo,
+    hasChanges: totalFiles > 0,
+    totalFiles,
+    insertions,
+    deletions,
+    hasOversized,
+    hasDiffStats,
+  };
+
+  cacheRef.current = {
+    dirs: [...uniqueDirectories],
+    statuses,
+    repoFlags,
+    result,
+  };
+  return result;
+};
+
 export const useWorkspaceGitSummary = (directories: string[]): WorkspaceGitSummary => {
   const uniqueDirectories = React.useMemo(() => Array.from(new Set(directories)), [directories]);
-  const cacheRef = React.useRef<{
-    dirs: string[];
-    statuses: Array<GitStatus | null>;
-    repoFlags: Array<boolean | null>;
-    result: WorkspaceGitSummary;
-  } | null>(null);
+  const cacheRef = React.useRef<WorkspaceGitSummaryCache | null>(null);
 
-  return useGitStore((state) => {
-    if (uniqueDirectories.length === 0) {
-      return EMPTY_WORKSPACE_GIT_SUMMARY;
-    }
-
-    const prev = cacheRef.current;
-    let same = Boolean(prev && prev.dirs.length === uniqueDirectories.length);
-    if (same && prev) {
-      for (let i = 0; i < uniqueDirectories.length; i += 1) {
-        const dir = uniqueDirectories[i];
-        const entry = state.directories.get(dir);
-        if (
-          prev.dirs[i] !== dir
-          || prev.statuses[i] !== (entry?.status ?? null)
-          || prev.repoFlags[i] !== (entry?.isGitRepo ?? null)
-        ) {
-          same = false;
-          break;
-        }
-      }
-    }
-    if (same && prev) {
-      return prev.result;
-    }
-
-    const statuses: Array<GitStatus | null> = [];
-    const repoFlags: Array<boolean | null> = [];
-    const entries: WorkspaceGitSummaryEntry[] = [];
-    const gitEntries: WorkspaceGitSummaryEntry[] = [];
-
-    let totalFiles = 0;
-    let insertions = 0;
-    let deletions = 0;
-    let hasOversized = false;
-    let hasDiffStats = false;
-    let allKnownNonRepo = true;
-
-    for (const dir of uniqueDirectories) {
-      const dirState = state.directories.get(dir);
-      const isGitRepo = dirState?.isGitRepo ?? null;
-      const status = dirState?.status ?? null;
-      statuses.push(status);
-      repoFlags.push(isGitRepo);
-
-      if (isGitRepo !== false) {
-        allKnownNonRepo = false;
-      }
-
-      let dirInsertions = 0;
-      let dirDeletions = 0;
-      if (isGitRepo === true && status?.diffStats) {
-        hasDiffStats = true;
-        for (const stat of Object.values(status.diffStats)) {
-          dirInsertions += stat?.insertions ?? 0;
-          dirDeletions += stat?.deletions ?? 0;
-        }
-      }
-      const dirFiles = isGitRepo === true ? (status?.files?.length ?? 0) : 0;
-      if (isGitRepo === true && status?.oversized) {
-        hasOversized = true;
-      }
-
-      const item: WorkspaceGitSummaryEntry = {
-        directory: dir,
-        isGitRepo,
-        status,
-        branch: isGitRepo === true ? (status?.current?.trim() || null) : null,
-        fileCount: dirFiles,
-        insertions: dirInsertions,
-        deletions: dirDeletions,
-      };
-      entries.push(item);
-
-      if (isGitRepo === true) {
-        gitEntries.push(item);
-        totalFiles += dirFiles;
-        insertions += dirInsertions;
-        deletions += dirDeletions;
-      }
-    }
-
-    const result: WorkspaceGitSummary = {
-      entries,
-      gitEntries,
-      gitRepoCount: gitEntries.length,
-      isAnyGitRepo: gitEntries.length > 0,
-      allKnownNonRepo,
-      hasChanges: totalFiles > 0,
-      totalFiles,
-      insertions,
-      deletions,
-      hasOversized,
-      hasDiffStats,
-    };
-
-    cacheRef.current = {
-      dirs: [...uniqueDirectories],
-      statuses,
-      repoFlags,
-      result,
-    };
-    return result;
-  });
+  return useGitStore((state) => selectWorkspaceGitSummary(state.directories, uniqueDirectories, cacheRef));
 };
 
 export const useGitLoadingStatus = (directory: string | null) => {

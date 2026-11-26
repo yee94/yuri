@@ -1,4 +1,5 @@
 import type { Message, Part } from '@/lib/opencode/v2-types';
+import type { TurnWorkspaceFileChange } from './workspaceTurnChanges';
 
 export interface ChatMessageEntry {
     info: Message;
@@ -112,6 +113,8 @@ export interface TurnRecord {
     turnDiffFromMessageId?: string;
     /** OpenCode v2: sorted unique relative paths from assistant snapshot.files across the execution cycle. */
     turnDiffFiles?: string[];
+    /** Secondary-repo file edits in a multi-path workspace extracted from completed assistant tool parts. */
+    turnWorkspaceChanges?: TurnWorkspaceFileChange[];
     /** Deterministic revision signature for v2 turn diff query invalidation. */
     turnDiffSignature?: string;
     /** Authoritative OpenCode v2 idle marker outcome when the execution cycle ended. */
@@ -177,6 +180,7 @@ export interface TurnGroupingContext {
     changedFiles?: TurnChangedFile[];
     turnDiffFromMessageId?: string;
     turnDiffFiles?: string[];
+    turnWorkspaceChanges?: TurnWorkspaceFileChange[];
     turnDiffSignature?: string;
     turnIdleOutcome?: 'succeeded' | 'failed' | 'interrupted';
     userMessageCreatedAt?: number;

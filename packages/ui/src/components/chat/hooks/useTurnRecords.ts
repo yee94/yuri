@@ -6,6 +6,8 @@ import { streamPerfMeasure } from '@/stores/utils/streamDebug';
 
 interface UseTurnRecordsOptions {
     sessionKey?: string;
+    sessionDirectory?: string | null;
+    workspaceDirectories?: readonly string[];
     showTextJustificationActivity: boolean;
     showTurnChangedFiles: boolean;
     hasLiveTail: boolean;
@@ -105,15 +107,23 @@ export const useTurnRecords = (
     const previousSessionKeyRef = React.useRef<string | undefined>(options.sessionKey);
     const previousShowTextJustificationActivityRef = React.useRef(options.showTextJustificationActivity);
     const previousShowTurnChangedFilesRef = React.useRef(options.showTurnChangedFiles);
+    const workspaceDirectoriesKey = React.useMemo(() => {
+        const dirs = options.workspaceDirectories ?? [];
+        if (dirs.length <= 1) return '';
+        return `${options.sessionDirectory ?? ''}::${dirs.join('\0')}`;
+    }, [options.sessionDirectory, options.workspaceDirectories]);
+    const previousWorkspaceDirectoriesKeyRef = React.useRef(workspaceDirectoriesKey);
 
     if (
         previousSessionKeyRef.current !== options.sessionKey
         || previousShowTextJustificationActivityRef.current !== options.showTextJustificationActivity
         || previousShowTurnChangedFilesRef.current !== options.showTurnChangedFiles
+        || previousWorkspaceDirectoriesKeyRef.current !== workspaceDirectoriesKey
     ) {
         previousSessionKeyRef.current = options.sessionKey;
         previousShowTextJustificationActivityRef.current = options.showTextJustificationActivity;
         previousShowTurnChangedFilesRef.current = options.showTurnChangedFiles;
+        previousWorkspaceDirectoriesKeyRef.current = workspaceDirectoriesKey;
         previousProjectionRef.current = null;
         staticTurnsRef.current = [];
         streamingTurnsRef.current = EMPTY_TURNS;
@@ -132,6 +142,7 @@ export const useTurnRecords = (
             messages,
             options.showTextJustificationActivity,
             options.showTurnChangedFiles,
+            workspaceDirectoriesKey,
         );
         const cached = getCachedProjectionByKey(cacheKey);
         // A different view may have reached this page with a different leading
@@ -146,6 +157,8 @@ export const useTurnRecords = (
                 previousProjection: previousProjectionRef.current,
                 showTextJustificationActivity: options.showTextJustificationActivity,
                 showTurnChangedFiles: options.showTurnChangedFiles,
+                sessionDirectory: options.sessionDirectory,
+                workspaceDirectories: options.workspaceDirectories,
             });
             previousProjectionRef.current = nextProjection;
 
@@ -153,7 +166,7 @@ export const useTurnRecords = (
 
             return nextProjection;
         });
-    }, [messages, options.showTextJustificationActivity, options.showTurnChangedFiles, options.sessionKey]);
+    }, [messages, options.showTextJustificationActivity, options.showTurnChangedFiles, options.sessionKey, options.sessionDirectory, options.workspaceDirectories, workspaceDirectoriesKey]);
 
     const claimedTurnId = liveTailStartRef.current?.turnId;
     const claimedTurnIndex = React.useMemo(

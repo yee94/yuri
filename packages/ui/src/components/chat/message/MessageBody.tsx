@@ -1829,6 +1829,7 @@ const AssistantMessageBody = React.memo(({
                         turnId={turnGroupingContext.turnId}
                         turnDiffFromMessageId={turnGroupingContext.turnDiffFromMessageId}
                         turnDiffFiles={turnGroupingContext.turnDiffFiles}
+                        turnWorkspaceChanges={turnGroupingContext.turnWorkspaceChanges}
                         turnDiffSignature={turnGroupingContext.turnDiffSignature}
                         isLatestTurn={turnGroupingContext.isLatestTurn}
                         isMobile={isMobile}

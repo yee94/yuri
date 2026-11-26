@@ -341,6 +341,7 @@ describe('projectSlimParts', () => {
               files: [
                 { relativePath: 'a.ts', additions: 3, deletions: 1, patch: 'SECRET PATCH A' },
                 { filePath: 'b.ts', additions: 0, deletions: 2, patch: 'SECRET PATCH B' },
+                { file: '/workspace/secondary/c.cc', movePath: '/workspace/secondary/d.cc', type: 'update', additions: 4, deletions: 1, diff: 'SECRET DIFF C' },
               ],
             },
           },
@@ -352,11 +353,13 @@ describe('projectSlimParts', () => {
       files: [
         { relativePath: 'a.ts', additions: 3, deletions: 1 },
         { filePath: 'b.ts', additions: 0, deletions: 2 },
+        { file: '/workspace/secondary/c.cc', movePath: '/workspace/secondary/d.cc', additions: 4, deletions: 1 },
       ],
-      additions: 3,
-      deletions: 3,
+      additions: 7,
+      deletions: 4,
     });
     expect(JSON.stringify(record.parts[0])).not.toContain('SECRET PATCH');
+    expect(JSON.stringify(record.parts[0])).not.toContain('SECRET DIFF');
   });
 
   it('keeps skill name and id locators and drops skill output', () => {

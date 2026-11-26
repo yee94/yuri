@@ -70,6 +70,19 @@ vi.mock('@/lib/api/useProjectGitStore', () => ({
   } }),
   useGitLoadingStatus: () => false,
   useIsGitRepo: () => true,
+  useWorkspaceGitSummary: () => ({
+    entries: [],
+    gitEntries: [],
+    gitRepoCount: 0,
+    isAnyGitRepo: false,
+    allKnownNonRepo: false,
+    hasChanges: false,
+    totalFiles: 0,
+    insertions: 0,
+    deletions: 0,
+    hasOversized: false,
+    hasDiffStats: false,
+  }),
 }));
 
 let root: Root;

@@ -24,6 +24,60 @@ const makeUser = (id: string, created: number, text = 'prompt'): ChatMessageEntr
     ],
 });
 
+test('unrelated streaming frames do not re-read completed workspace edit metadata', () => {
+    let metadataReads = 0;
+    const history = Array.from({ length: 100 }, (_, index) => {
+        const assistant = makeAssistant(`history-a-${index}`, index, {
+            finish: 'stop',
+            completed: index,
+            turnIdle: { id: `idle-${index}`, outcome: 'succeeded' },
+        });
+        assistant.parts = Array.from({ length: 20 }, (_, file): ChatMessageEntry['parts'][number] => ({
+            id: `edit-${index}-${file}`,
+            sessionID: assistant.info.sessionID,
+            messageID: assistant.info.id,
+            type: 'tool',
+            tool: 'edit',
+            callID: `call-${index}-${file}`,
+            state: {
+                status: 'completed',
+                input: {},
+                get metadata() {
+                    metadataReads += 1;
+                    return { filediff: { file: `/side/file-${file}.ts`, additions: 1, deletions: 1 } };
+                },
+            },
+        }));
+        return [makeUser(`history-u-${index}`, index), assistant];
+    }).flat();
+    const options = {
+        showTurnChangedFiles: true,
+        sessionDirectory: '/main',
+        workspaceDirectories: ['/main', '/side', '/third'],
+    };
+    const liveUser = makeUser('live-u', 100);
+    const liveAssistant = makeAssistant('live-a', 101);
+    let projection = projectTurnRecords(history, options);
+    const firstTurn = projection.turns[0];
+    expect(firstTurn?.turnWorkspaceChanges).toHaveLength(20);
+    expect(metadataReads).toBeGreaterThanOrEqual(2_000);
+
+    metadataReads = 0;
+    for (let frame = 0; frame < 50; frame += 1) {
+        const streaming = { ...liveAssistant, parts: makeUser('live-text', 101, 'a'.repeat(frame)).parts };
+        projection = projectTurnRecords([...history, liveUser, streaming], { ...options, previousProjection: projection });
+    }
+    expect(metadataReads).toBe(0);
+    expect(projection.turns[0]).toBe(firstTurn);
+
+    const changedScope = projectTurnRecords(history, {
+        ...options,
+        workspaceDirectories: ['/main', '/third'],
+        previousProjection: projection,
+    });
+    expect(changedScope.turns[0]?.turnWorkspaceChanges).toBeUndefined();
+});
+
 const makeAssistant = (
     id: string,
     created: number,

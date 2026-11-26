@@ -1,9 +1,18 @@
+import { normalizeFilePath, toAbsoluteFilePath } from '@/lib/path-utils';
 import { isCompactionCommandMessage } from '../messageDisplayNormalization';
 import { isSessionCompactionCard } from '@/sync/session-projection-api';
 import { countContinuationToolParts, hasConfirmedFinalBody } from './assistantMessageLifecycle';
 import { projectTurnActivity } from './projectTurnActivity';
 import { projectTurnIndexes } from './projectTurnIndexes';
 import { projectTurnChangedFiles, projectTurnDiffStats, projectTurnSummary } from './projectTurnSummary';
+import {
+    areTurnWorkspaceChangesEqual,
+    buildWorkspaceRepoLabels,
+    collectTurnWorkspaceToolChanges,
+    mergeTurnWorkspaceFileChanges,
+    prefixWorkspaceFilePath,
+    type TurnWorkspaceFileChange,
+} from './workspaceTurnChanges';
 import type {
     ChatMessageEntry,
     TurnActivityPresentationKind,
@@ -236,6 +245,8 @@ interface ProjectTurnRecordsOptions {
     previousProjection?: TurnProjectionResult | null;
     showTextJustificationActivity: boolean;
     showTurnChangedFiles: boolean;
+    sessionDirectory?: string | null;
+    workspaceDirectories?: readonly string[];
 }
 
 const DEFAULT_OPTIONS: ProjectTurnRecordsOptions = {
@@ -419,6 +430,13 @@ const collectTurnSnapshotFiles = (turn: TurnRecord): { files: string[]; tokens: 
     return { files, tokens };
 };
 
+// The hydrated turn keeps assistantMessages by reference across unchanged transcript
+// frames. Keep one workspace scope per array; discarded history can be collected.
+const workspaceEditsByMessages = new WeakMap<ChatMessageEntry[], {
+    scope: string;
+    edits: TurnWorkspaceFileChange[];
+}>();
+
 /**
  * OpenCode v2 turn-diff attribution across execution cycles.
  *
@@ -439,8 +457,25 @@ const collectTurnSnapshotFiles = (turn: TurnRecord): { files: string[]; tokens: 
 const applyV2TurnDiffProjection = (
     turns: TurnRecord[],
     showTurnChangedFiles: boolean,
+    sessionDirectory?: string | null,
+    workspaceDirectories?: readonly string[],
 ): TurnRecord[] => {
     if (turns.length === 0) return turns;
+
+    const normalizedWorkspaceDirs: string[] = [];
+    const seenWorkspaceDirs = new Set<string>();
+    for (const dir of showTurnChangedFiles && workspaceDirectories && workspaceDirectories.length > 1 ? workspaceDirectories : []) {
+        const normalized = normalizeFilePath(dir);
+        if (!normalized || seenWorkspaceDirs.has(normalized)) continue;
+        seenWorkspaceDirs.add(normalized);
+        normalizedWorkspaceDirs.push(normalized);
+    }
+    const primaryDir = normalizeFilePath(sessionDirectory) || normalizedWorkspaceDirs[0] || '';
+    const isMultiPath = showTurnChangedFiles && normalizedWorkspaceDirs.length > 1 && Boolean(primaryDir);
+    const workspaceScope = isMultiPath ? JSON.stringify([primaryDir, normalizedWorkspaceDirs]) : '';
+    const repoLabels = isMultiPath
+        ? buildWorkspaceRepoLabels([primaryDir, ...normalizedWorkspaceDirs])
+        : null;
 
     const leadingIdleMarkers = turns.map(readTurnLeadingIdleMarker);
     const idleMarkers = turns.map(readTurnIdleMarker);
@@ -450,6 +485,8 @@ const applyV2TurnDiffProjection = (
         turnIdleOutcome?: 'succeeded' | 'failed' | 'interrupted';
         turnDiffFromMessageId?: string;
         turnDiffFiles?: string[];
+        turnWorkspaceChanges?: TurnWorkspaceFileChange[];
+        hasPrimarySnapshotFiles?: boolean;
         turnDiffSignature?: string;
     };
 
@@ -461,6 +498,7 @@ const applyV2TurnDiffProjection = (
         opener: string;
         files: Set<string>;
         tokens: string[];
+        workspaceChanges?: TurnWorkspaceFileChange[];
         lastFileEditTurnIndex: number;
     } | undefined;
 
@@ -468,19 +506,41 @@ const applyV2TurnDiffProjection = (
         idle: { id?: string; outcome: 'succeeded' | 'failed' | 'interrupted' } | undefined,
         fallbackTurnIndex: number,
     ) => {
-        if (showTurnChangedFiles && execution && execution.files.size > 0) {
+        if (showTurnChangedFiles && execution && (execution.files.size > 0 || execution.workspaceChanges?.length)) {
             const targetIndex = execution.lastFileEditTurnIndex >= 0
                 ? execution.lastFileEditTurnIndex
                 : fallbackTurnIndex;
             const target = planned[targetIndex];
             if (target) {
-                const files = [...execution.files].sort();
+                const primaryAbsolutePaths = new Set<string>();
+                const formattedPrimaryFiles: string[] = [];
+                for (const file of execution.files) {
+                    const abs = primaryDir ? toAbsoluteFilePath(primaryDir, file) : '';
+                    if (abs) primaryAbsolutePaths.add(abs);
+                    formattedPrimaryFiles.push(
+                        isMultiPath && repoLabels && primaryDir
+                            ? prefixWorkspaceFilePath(file, primaryDir, repoLabels)
+                            : file,
+                    );
+                }
+
+                const secondaryList = primaryAbsolutePaths.size > 0
+                    ? execution.workspaceChanges?.filter((entry) => !primaryAbsolutePaths.has(entry.absolutePath))
+                    : execution.workspaceChanges;
+
+                const files = [...new Set([
+                    ...formattedPrimaryFiles,
+                    ...(secondaryList?.map((entry) => entry.file) ?? []),
+                ])].sort();
+
                 target.turnDiffFromMessageId = execution.opener;
                 target.turnDiffFiles = files;
+                target.turnWorkspaceChanges = secondaryList?.length ? secondaryList : undefined;
+                target.hasPrimarySnapshotFiles = execution.files.size > 0;
                 target.turnDiffSignature = [
                     idle ? (idle.id ?? idle.outcome) : undefined,
                     ...execution.tokens,
-                    ...files,
+                    ...[...execution.files].sort(),
                 ].filter(Boolean).join('|');
                 if (idle && !target.turnIdleOutcome) {
                     target.turnIdleOutcome = idle.outcome;
@@ -502,7 +562,6 @@ const applyV2TurnDiffProjection = (
         const turn = turns[index]!;
         const idle = idleMarkers[index];
         const snapshot = collectTurnSnapshotFiles(turn);
-
         if (turn.userMessageId) {
             if (!execution || !hasIdleMarkers) {
                 execution = {
@@ -518,6 +577,27 @@ const applyV2TurnDiffProjection = (
             if (snapshot.files.length > 0) {
                 for (const file of snapshot.files) execution.files.add(file);
                 execution.lastFileEditTurnIndex = index;
+            }
+            if (isMultiPath && turn.assistantMessages.length > 0) {
+                let cached = workspaceEditsByMessages.get(turn.assistantMessages);
+                if (cached?.scope !== workspaceScope) {
+                    cached = {
+                        scope: workspaceScope,
+                        edits: collectTurnWorkspaceToolChanges(turn.assistantMessages, primaryDir, normalizedWorkspaceDirs),
+                    };
+                    workspaceEditsByMessages.set(turn.assistantMessages, cached);
+                }
+                if (cached.edits.length > 0) {
+                    if (execution.workspaceChanges) {
+                        const merged = new Map<string, TurnWorkspaceFileChange>();
+                        mergeTurnWorkspaceFileChanges(merged, execution.workspaceChanges);
+                        mergeTurnWorkspaceFileChanges(merged, cached.edits);
+                        execution.workspaceChanges = [...merged.values()].sort((a, b) => a.file.localeCompare(b.file));
+                    } else {
+                        execution.workspaceChanges = cached.edits;
+                    }
+                    execution.lastFileEditTurnIndex = index;
+                }
             }
             for (const token of snapshot.tokens) execution.tokens.push(token);
         }
@@ -536,20 +616,73 @@ const applyV2TurnDiffProjection = (
     let changed = false;
     const nextTurns = turns.map((turn, index) => {
         const plan = planned[index]!;
-        const nextTurnIdleOutcome = plan.turnIdleOutcome;
-        const nextTurnDiffFromMessageId = plan.turnDiffFromMessageId;
-        const nextTurnDiffFiles = plan.turnDiffFiles;
-        const nextTurnDiffSignature = plan.turnDiffSignature;
-
         const legacyDiffStats = turn.userMessage ? projectTurnDiffStats(turn.userMessage) : undefined;
-        const nextDiffStats = legacyDiffStats ?? (nextTurnDiffFiles && nextTurnDiffFiles.length > 0
-            ? {
-                additions: 0,
-                deletions: 0,
+        const legacyChangedFiles = showTurnChangedFiles && turn.userMessage
+            ? projectTurnChangedFiles(turn.userMessage)
+            : undefined;
+        const isLegacyV1Turn = Boolean(legacyDiffStats) && !plan.hasPrimarySnapshotFiles;
+
+        const nextTurnIdleOutcome = plan.turnIdleOutcome;
+        const nextTurnWorkspaceChanges = plan.turnWorkspaceChanges;
+        const nextTurnDiffFromMessageId = isLegacyV1Turn ? undefined : plan.turnDiffFromMessageId;
+        const nextTurnDiffFiles = isLegacyV1Turn ? undefined : plan.turnDiffFiles;
+        const nextTurnDiffSignature = isLegacyV1Turn ? undefined : plan.turnDiffSignature;
+
+        let nextChangedFiles = legacyChangedFiles;
+        let nextDiffStats = legacyDiffStats;
+
+        if (isLegacyV1Turn && nextTurnWorkspaceChanges && nextTurnWorkspaceChanges.length > 0) {
+            const legacyAbs = new Set<string>();
+            for (const item of legacyChangedFiles ?? []) {
+                const abs = primaryDir ? toAbsoluteFilePath(primaryDir, item.file) : '';
+                if (abs) legacyAbs.add(abs);
+            }
+            const extraSecondary = nextTurnWorkspaceChanges.filter((item) => !legacyAbs.has(item.absolutePath));
+            if (extraSecondary.length > 0) {
+                const formattedLegacy = (legacyChangedFiles ?? []).map((item) => ({
+                    ...item,
+                    file: isMultiPath && repoLabels && primaryDir
+                        ? prefixWorkspaceFilePath(item.file, primaryDir, repoLabels)
+                        : item.file,
+                }));
+                nextChangedFiles = [
+                    ...formattedLegacy,
+                    ...extraSecondary.map((item) => ({
+                        file: item.file,
+                        additions: item.additions,
+                        deletions: item.deletions,
+                    })),
+                ].sort((a, b) => a.file.localeCompare(b.file));
+                let extraAdditions = 0;
+                let extraDeletions = 0;
+                for (const item of extraSecondary) {
+                    extraAdditions += item.additions;
+                    extraDeletions += item.deletions;
+                }
+                nextDiffStats = {
+                    additions: (legacyDiffStats?.additions ?? 0) + extraAdditions,
+                    deletions: (legacyDiffStats?.deletions ?? 0) + extraDeletions,
+                    files: (legacyDiffStats?.files ?? 0) + extraSecondary.length,
+                    hasDiffs: true,
+                };
+            }
+        } else if (!legacyDiffStats && nextTurnDiffFiles && nextTurnDiffFiles.length > 0) {
+            const onlySecondary = !plan.hasPrimarySnapshotFiles && Boolean(nextTurnWorkspaceChanges?.length);
+            let secondaryAdditions = 0;
+            let secondaryDeletions = 0;
+            if (onlySecondary && nextTurnWorkspaceChanges) {
+                for (const item of nextTurnWorkspaceChanges) {
+                    secondaryAdditions += item.additions;
+                    secondaryDeletions += item.deletions;
+                }
+            }
+            nextDiffStats = {
+                additions: onlySecondary ? secondaryAdditions : 0,
+                deletions: onlySecondary ? secondaryDeletions : 0,
                 files: nextTurnDiffFiles.length,
                 hasDiffs: true,
-            }
-            : undefined);
+            };
+        }
 
         const diffStatsUnchanged = (turn.diffStats === nextDiffStats)
             || Boolean(
@@ -560,13 +693,27 @@ const applyV2TurnDiffProjection = (
                 && turn.diffStats.files === nextDiffStats.files
                 && turn.diffStats.hasDiffs === nextDiffStats.hasDiffs,
             );
+        const changedFilesUnchanged = (turn.changedFiles === nextChangedFiles)
+            || Boolean(
+                turn.changedFiles
+                && nextChangedFiles
+                && turn.changedFiles.length === nextChangedFiles.length
+                && turn.changedFiles.every((item, idx) => {
+                    const other = nextChangedFiles[idx]!;
+                    return item.file === other.file
+                        && item.additions === other.additions
+                        && item.deletions === other.deletions;
+                }),
+            );
 
         if (
             turn.turnIdleOutcome === nextTurnIdleOutcome
             && turn.turnDiffFromMessageId === nextTurnDiffFromMessageId
             && turn.turnDiffSignature === nextTurnDiffSignature
             && areStringArraysEqual(turn.turnDiffFiles, nextTurnDiffFiles)
+            && areTurnWorkspaceChangesEqual(turn.turnWorkspaceChanges, nextTurnWorkspaceChanges)
             && diffStatsUnchanged
+            && changedFilesUnchanged
         ) {
             return turn;
         }
@@ -577,8 +724,10 @@ const applyV2TurnDiffProjection = (
             turnIdleOutcome: nextTurnIdleOutcome,
             turnDiffFromMessageId: nextTurnDiffFromMessageId,
             turnDiffFiles: nextTurnDiffFiles,
+            turnWorkspaceChanges: nextTurnWorkspaceChanges,
             turnDiffSignature: nextTurnDiffSignature,
             diffStats: diffStatsUnchanged ? turn.diffStats : nextDiffStats,
+            changedFiles: changedFilesUnchanged ? turn.changedFiles : nextChangedFiles,
         };
     });
 
@@ -758,6 +907,8 @@ export const projectTurnRecords = (
             hydrateStableTurnRecords(contentTurns, effectiveOptions),
         ),
         effectiveOptions.showTurnChangedFiles,
+        effectiveOptions.sessionDirectory,
+        effectiveOptions.workspaceDirectories,
     );
     const projection = projectTurnIndexes(stableTurns);
     const ungroupedMessageIds = new Set<string>();
