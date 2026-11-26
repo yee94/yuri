@@ -42,6 +42,10 @@ icon when no custom icon/image is set; blank 0-path workspaces (`paths: []`)
 use a Host-managed backing directory for OpenCode while hiding Git/Worktree UI.
 Linked-worktree rows render a compact footer (`[data-session-worktree-footer]`)
 showing the branch icon, branch name, and distinct worktree name.
+Task cards reuse the project row's resolved worktree when available, falling
+back to the session's indexed worktree metadata when the project row is absent.
+The task footer and both hover cards use the worktree branch and name before
+falling back to the project branch.
 
 ## Task navigation icons and hover details
 
@@ -143,10 +147,11 @@ membership or an externally opened session never automatically expands the shelf
 full title, project badge, cached current-host label, branch and authoritative
 session model (resolved against that directory's existing provider catalog). Missing machine
 or model metadata is omitted; local desktop may use the existing Local label.
-The checkout warning requires both an expected branch and a different known
-current branch for that exact directory. Hover never fetches a transcript,
-probes a Host or requests git status. The shared Tooltip owns anchoring,
-collision handling and material.
+The branch row uses cached Git status for the session's checkout directory,
+preferring its worktree path when present. If Git status is unavailable, the
+row uses the matching worktree or sidebar branch metadata. Hover never
+fetches a transcript, probes a Host or requests git status. The shared Tooltip
+owns anchoring, collision handling and material.
 
 For a multi-path workspace, the project header and session hover card use one
 project icon slot. The default is the double-folder glyph; a customized project

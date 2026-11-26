@@ -31,6 +31,7 @@ import { useGitRepoStatusMap, useGitStore } from '@/stores/useGitStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { formatWorktreeFooterLabel, sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
+import { isMultiPathWorkspace } from '@/lib/workspacePaths';
 import { NewWorktreeDialog } from './NewWorktreeDialog';
 import { ScheduledTasksDialogHost as ScheduledTasksDialog } from './ScheduledTasksDialogHost';
 import { ArchivedSessionsDialog } from '@/components/sections/yuri/ArchivedSessionsDialog';
@@ -1403,7 +1404,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const projectLabelsById = React.useMemo(
     () => new Map(normalizedProjects.map((project) => [
       project.id,
-      formatDirectoryName(project.normalizedPath) || project.normalizedPath,
+      project.label?.trim() || formatDirectoryName(project.normalizedPath) || project.normalizedPath,
     ])),
     [normalizedProjects],
   );
@@ -1920,12 +1921,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const taskItems = React.useMemo(() => {
     if (!taskBuckets) return null;
     const unassignedLabel = t("sessions.sidebar.task.unassigned");
-    const projectLabelById = new Map(
-      sortedProjects.map((project) => [
-        project.id,
-        formatDirectoryName(project.normalizedPath) || project.normalizedPath,
-      ]),
-    );
     // Cards depend only on a project's icon identity, not on the whole entry,
     // so a rename or reorder elsewhere keeps the previous mark (and its rows).
     const projectMarkCache = projectMarkCacheRef.current;
@@ -1933,14 +1928,16 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     const projectMarkById = new Map<string, TaskProjectMark>();
     for (const project of sortedProjects) {
       const known = projectMarkCache.get(project.id);
+      const isMultiPath = isMultiPathWorkspace(project);
       const mark = known
         && known.icon === project.icon
         && known.color === project.color
+        && known.isMultiPath === isMultiPath
         && known.iconImage?.mime === project.iconImage?.mime
         && known.iconImage?.updatedAt === project.iconImage?.updatedAt
         && known.iconImage?.source === project.iconImage?.source
         ? known
-        : { id: project.id, icon: project.icon, color: project.color, iconImage: project.iconImage };
+        : { id: project.id, icon: project.icon, color: project.color, iconImage: project.iconImage, isMultiPath };
       projectMarkCache.set(project.id, mark);
       projectMarkById.set(project.id, mark);
     }
@@ -1956,11 +1953,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
         owner?.scopeDirectory
         ?? existing?.groupDirectory
         ?? normalizePath((session as Session & { directory?: string | null }).directory ?? null);
-      const project = owner ? projectMarkById.get(owner.projectId) ?? null : null;
-      const projectLabel = (owner && projectLabelById.get(owner.projectId)) || unassignedLabel;
+      const project = projectId ? projectMarkById.get(projectId) ?? null : null;
+      const projectLabel = (projectId && projectLabelsById.get(projectId)) || unassignedLabel;
       const projectPath = owner ? projectPathById.get(owner.projectId) ?? null : null;
       const projectGit = projectPath ? gitRepoStatus.get(projectPath) : undefined;
-      const sessionWorktree = worktreeMetadata.get(session.id) ?? null;
+      const sessionWorktree = existing?.node.worktree
+        ?? worktreeMetadata.get(session.id)
+        ?? sessionWorktreeToMetadata(session);
       const rawBranch = formatWorktreeFooterLabel(sessionWorktree)
         ?? existing?.secondaryMeta?.branchLabel
         ?? (owner ? projectRootBranches.get(owner.projectId) : null)
@@ -2020,7 +2019,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     };
     taskItemCacheRef.current = next;
     return result;
-  }, [gitRepoStatus, homeDirectory, pinnedSessions, projectRootBranches, remoteTaskState.itemById, runStartTimes, sessionOwnership, sessionSidebarMetaById, sortedProjects, t, taskBuckets, taskShelves.settledLimit, taskShelves.settledOpen, worktreeMetadata]);
+  }, [gitRepoStatus, homeDirectory, pinnedSessions, projectLabelsById, projectRootBranches, remoteTaskState.itemById, runStartTimes, sessionOwnership, sessionSidebarMetaById, sortedProjects, t, taskBuckets, taskShelves.settledLimit, taskShelves.settledOpen, worktreeMetadata]);
 
   // Task cards span many projects, but useProjectRepoStatus only fetches git
   // for the active one. Request status on demand for rows still showing the

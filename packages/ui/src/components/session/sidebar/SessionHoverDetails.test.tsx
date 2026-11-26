@@ -5,7 +5,8 @@ import type { Session } from '@/lib/opencode/v2-types';
 import type { ProjectEntry } from '@/lib/api/types';
 
 const fixture = vi.hoisted(() => ({
-  current: 'other-branch' as string | undefined,
+  current: 'repository-branch' as string | undefined,
+  worktreeBranch: 'feature/live' as string | undefined,
   projects: [] as ProjectEntry[],
   fetch: vi.fn(async () => Response.json({ home: '/workspace', data: [] })),
 }));
@@ -14,7 +15,10 @@ vi.hoisted(() => {
 });
 vi.mock('@/stores/useGitStore', () => ({
   useGitStore: (select: (state: unknown) => unknown) => select({
-    directories: new Map([['/repo', { status: { current: fixture.current } }]]),
+    directories: new Map([
+      ['/repo', { status: { current: fixture.current } }],
+      ['/repo/.worktrees/wt-slug', { status: { current: fixture.worktreeBranch } }],
+    ]),
   }),
 }));
 vi.mock('@/stores/useProjectsStore', () => ({
@@ -52,7 +56,8 @@ const session = { id: 'session', model: { id: 'model', providerID: 'provider' } 
 afterEach(async () => {
   await act(async () => root.render(null));
   queryClient.clear();
-  fixture.current = 'other-branch';
+  fixture.current = 'repository-branch';
+  fixture.worktreeBranch = 'feature/live';
   fixture.projects = [];
 });
 
@@ -68,49 +73,65 @@ afterAll(async () => {
   vi.unstubAllGlobals();
 });
 
-test('hover card shows known project, machine, branch, absolute path and model without warning color or making a request', async () => {
+test('hover card shows the row project and actual worktree branch with no branch warning or request', async () => {
   vi.stubGlobal('fetch', fixture.fetch);
+  fixture.projects = [
+    { id: 'project', path: '/repo', label: 'File tree project' },
+    { id: 'other', path: '/other', label: 'Other project' },
+  ];
   queryClient.setQueryData(['desktop-host-inventory', 'hover-test'], {
     hosts: [{ id: 'machine', label: 'Build machine' }],
   });
   const before = fixture.fetch.mock.calls.length;
   await act(async () => root.render(
     <SessionHoverDetails
-      session={session}
+      session={{ ...session, metadata: { yuri: { workspaceId: 'other' } } }}
       title="A long full task title"
-      projectLabel="Project"
-      branch="task-branch"
-      worktree={{ branch: 'task-branch', name: 'wt-slug', label: 'wt-slug', path: '/repo/.worktrees/wt-slug' }}
+      projectId="project"
+      branch="repository-branch"
+      worktree={{ branch: 'feature/old', name: 'wt-slug', label: 'wt-slug', path: '/repo/.worktrees/wt-slug' }}
       directory="/repo"
       time="1h"
     />,
   ));
   for (const text of [
     'A long full task title',
-    'Project',
+    'File tree project',
     'Build machine',
-    'task-branch · wt-slug',
+    'feature/live',
     '/repo/.worktrees/wt-slug',
     'Model display name',
-    'other-branch',
   ]) {
     expect(host.textContent).toContain(text);
   }
-  expect(host.textContent).toContain('sessions.sidebar.session.hover.differentBranch');
-  const note = host.querySelector('[data-session-hover-branch-note]');
-  expect(note?.className).toContain('text-muted-foreground');
-  expect(note?.className).not.toContain('text-status-warning');
+  for (const text of ['Other project', 'repository-branch', 'feature/old', 'differentBranch']) {
+    expect(host.textContent).not.toContain(text);
+  }
   expect(fixture.fetch.mock.calls.length).toBe(before);
 });
 
-test.each(['task-branch', undefined])('matching or unknown checkout branch (%s) does not invent a mismatch', async (current) => {
+test.each(['task-branch', undefined])('matching or unknown checkout branch (%s) shows the sidebar branch', async (current) => {
   fixture.current = current;
   await act(async () => root.render(
     <SessionHoverDetails session={{ id: 'empty' } as Session} title="Title" projectLabel="Project" branch="task-branch" directory="/repo" time="1h" />,
   ));
+  expect(host.textContent).toContain('task-branch');
   expect(host.textContent).not.toContain('differentBranch');
   expect(host.textContent).not.toContain('Model display name');
   expect(host.querySelector('use[href="#yuri-computer"]')).toBeNull();
+});
+
+test.each([
+  [undefined, 'feature/saved'],
+  ['HEAD', 'gitView.branch.detachedHead'],
+] as const)('worktree with cached Git branch %s shows %s, never the project checkout', async (current, shown) => {
+  fixture.worktreeBranch = current;
+  await act(async () => root.render(
+    <SessionHoverDetails session={session} title="Session" directory="/repo" time="1h" branch="repository-branch"
+      worktree={{ branch: 'feature/saved', name: 'wt-slug', label: 'wt-slug', path: '/repo/.worktrees/wt-slug' }} />,
+  ));
+  expect(host.textContent).toContain(shown);
+  expect(host.textContent).not.toContain('repository-branch');
 });
 
 test('shows one workspace icon and lists every attached path in the directory row', async () => {

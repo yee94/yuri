@@ -17,6 +17,8 @@ import { getSessionFocusKey, useSessionFocusStore } from '@/stores/useSessionFoc
 import { reconcileSessionFocus } from './sessionFocusReconciliation';
 import { createSidebarShortcutNumberStore, SidebarShortcutNumberContext, useSidebarShortcutNumber } from './sidebarShortcutNumbers';
 import { resolveFocusedProjectTarget } from './resolveFocusedProjectTarget';
+import { formatWorktreeFooterLabel, sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
+import { formatDirectoryName } from '@/lib/utils';
 
 test('task header add opens the add-project dialog rather than a new session', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -157,6 +159,59 @@ test('sidebar does not depend on GitHub auth or PR discovery for its session tre
     expect(imports.some(path => /githubAuthQueries|useGitHubPrStatusStore/i.test(path))).toBe(false);
     expect(source).not.toContain('refreshPrStatusTargets');
     expect(source).not.toContain('prVisualStateByDirectoryBranch');
+});
+
+test('task cards use the owning workspace name and the same worktree as the project row', () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../SessionSidebar.tsx'), 'utf8');
+    const ast = ts.createSourceFile('SessionSidebar.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let initializer = '';
+    let projectLabels = '';
+    const visit = (node: ts.Node) => {
+        if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'toTaskItem') {
+            initializer = node.initializer?.getText(ast) ?? '';
+        }
+        if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'projectLabelsById') {
+            projectLabels = node.getText(ast);
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    expect(initializer).not.toBe('');
+    expect(projectLabels).not.toBe('');
+    const compiled = ts.transpileModule(`
+        const { worktreeMetadata, sessionSidebarMetaById } = input;
+        const React = { useMemo: derive => derive() };
+        const normalizedProjects = [
+            { id: 'standalone', normalizedPath: '/repo' },
+            { id: 'project', label: 'Agent Workspace', normalizedPath: '/repo', paths: ['/repo', '/second'] },
+        ];
+        const ${projectLabels};
+        const remoteTaskState = { itemById: new Map() };
+        const sessionOwnership = { bySessionId: new Map([['task', { projectId: 'project', scopeDirectory: '/worktrees/jobs' }]]) };
+        const projectPathById = new Map([['project', '/repo']]);
+        const projectRootBranches = new Map([['project', 'main']]);
+        const projectMarkById = new Map(), gitRepoStatus = new Map(), runStartTimes = new Map(), previous = new Map(), next = new Map();
+        return (${initializer})(true)(input.session);
+    `, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    const buildTask = new Function('input', 'formatWorktreeFooterLabel', 'sessionWorktreeToMetadata', 'formatDirectoryName', compiled);
+    const worktree = { projectDirectory: '/repo', path: '/worktrees/jobs', branch: 'feat/jobs', name: 'jobs' };
+    const session = { id: 'task', directory: worktree.path, metadata: { yuri: { worktree } } };
+    const projectWorktree = { ...worktree, branch: 'feat/jobs-live' };
+    const fromProject = buildTask({
+        session,
+        worktreeMetadata: new Map([['task', worktree]]),
+        sessionSidebarMetaById: new Map([['task', { node: { worktree: projectWorktree } }]]),
+    }, formatWorktreeFooterLabel, sessionWorktreeToMetadata, formatDirectoryName);
+    expect(fromProject.node.worktree).toBe(projectWorktree);
+    expect(fromProject.secondaryMeta.projectLabel).toBe('Agent Workspace');
+    expect(fromProject.secondaryMeta.branchLabel).toBe('feat/jobs-live · jobs');
+
+    const fromIndex = buildTask({
+        session, worktreeMetadata: new Map(), sessionSidebarMetaById: new Map(),
+    }, formatWorktreeFooterLabel, sessionWorktreeToMetadata, formatDirectoryName);
+    expect(fromIndex.node.worktree).toMatchObject(worktree);
+    expect(fromIndex.secondaryMeta.projectLabel).toBe('Agent Workspace');
+    expect(fromIndex.secondaryMeta.branchLabel).toBe('feat/jobs · jobs');
 });
 
 test('group hover metadata keeps project ownership separate from branch labels and updates on project rename', async () => {

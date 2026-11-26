@@ -8,7 +8,6 @@ import type { Session } from '@/lib/opencode/v2-types';
 import { queryClient } from '@/lib/queryRuntime';
 import { getRuntimeApiBaseUrl, getRuntimeKey, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
 import { getWorkspaceDisplayLabel, getWorkspacePaths, isWorkspaceId, normalizeWorkspacePath, readSessionWorkspaceId } from '@/lib/workspacePaths';
-import { formatWorktreeFooterLabel } from '@/lib/worktrees/sessionWorktreeMetadata';
 import { getConfigDirectoryKey, useConfigStore } from '@/stores/useConfigStore';
 import { useGitStore } from '@/stores/useGitStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
@@ -42,7 +41,13 @@ export function SessionHoverDetails({ session, title, projectLabel, project, pro
     if (rowProject && (isWorkspaceId(rowProject.id) || (rowProject.paths?.length ?? 0) > 1)) {
       return rowProject;
     }
-    return findLocalProject(indexedWorkspaceId) ?? findLocalProject(liveWorkspaceId) ?? rowProject;
+    const indexedWorkspace = findLocalProject(indexedWorkspaceId);
+    if (indexedWorkspace) return indexedWorkspace;
+    const liveWorkspace = findLocalProject(liveWorkspaceId);
+    if (liveWorkspace && (isWorkspaceId(liveWorkspace.id) || (liveWorkspace.paths?.length ?? 0) > 1)) {
+      return liveWorkspace;
+    }
+    return rowProject ?? liveWorkspace;
   });
   const attachedPaths = getWorkspacePaths(workspace);
   const workspacePaths = attachedPaths.length > 1 ? attachedPaths : null;
@@ -54,7 +59,10 @@ export function SessionHoverDetails({ session, title, projectLabel, project, pro
     isMultiPath: true,
   } : project;
   const displayProjectLabel = workspace ? getWorkspaceDisplayLabel(workspace) : projectLabel;
-  const currentBranch = useGitStore((state) => !remote && directory ? state.directories.get(directory)?.status?.current : undefined);
+  const absolutePath = worktree?.path?.trim() || directory?.trim() || null;
+  const checkoutDirectory = absolutePath ? normalizeWorkspacePath(absolutePath) : null;
+  const currentBranch = useGitStore((state) =>
+    !remote && checkoutDirectory ? state.directories.get(checkoutDirectory)?.status?.current?.trim() : undefined);
   const modelLabel = useConfigStore((state) => {
     const model = session.model;
     if (!model) return null;
@@ -71,12 +79,12 @@ export function SessionHoverDetails({ session, title, projectLabel, project, pro
     : Boolean(apiUrl && locationMatchesHost(apiUrl, getDesktopHostApiUrl(candidate))));
   const hostLabel = remote?.hostLabel ?? (host ? redactSensitiveUrl(host.label)
     : isDesktopLocalOriginActive() ? t('desktopHostSwitcher.instance.local') : null);
-  const worktreeLabel = formatWorktreeFooterLabel(worktree);
-  const branchDisplay = worktreeLabel || branch || null;
-  const absolutePath = worktree?.path?.trim() || directory?.trim() || null;
-  const showExecutionPath = Boolean(absolutePath) && !workspacePaths?.includes(normalizeWorkspacePath(absolutePath!));
-  const pathLines = [...(workspacePaths ?? []), ...(showExecutionPath ? [absolutePath!] : [])];
-  const mismatchedBranch = Boolean(branch && currentBranch && currentBranch !== 'HEAD' && currentBranch !== branch);
+  const savedBranch = (worktree ? worktree.branch : branch)?.trim();
+  const branchDisplay = currentBranch === 'HEAD'
+    ? t('gitView.branch.detachedHead')
+    : currentBranch || (savedBranch === 'HEAD' ? null : savedBranch);
+  const pathLines = [...(workspacePaths ?? []),
+    ...(absolutePath && checkoutDirectory && !workspacePaths?.includes(checkoutDirectory) ? [absolutePath] : [])];
 
   return (
     <div className="flex flex-col gap-1.5 text-left text-wrap" data-session-hover-details={session.id}>
@@ -106,15 +114,6 @@ export function SessionHoverDetails({ session, title, projectLabel, project, pro
           <span className="min-w-0 break-all">{line}</span>
         </div>
       ))}
-      {mismatchedBranch ? (
-        <div
-          data-session-hover-branch-note
-          className="flex items-start gap-2 text-xs leading-4 text-muted-foreground"
-        >
-          <Icon name="arrow-left-right" className="mt-0.5 size-3.5 shrink-0 opacity-75" />
-          <span>{t('sessions.sidebar.session.hover.differentBranch', { branch: currentBranch ?? '' })}</span>
-        </div>
-      ) : null}
       {hostLabel ? (
         <div className="flex min-w-0 items-center gap-2 text-xs leading-4 text-muted-foreground">
           <Icon name="computer" className="size-3.5 shrink-0" />
