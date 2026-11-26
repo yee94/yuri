@@ -51,6 +51,7 @@ vi.mock('@/stores/useDirectoryStore', async () => {
   return { useDirectoryStore: create(() => ({ currentDirectory: '' })) };
 });
 vi.mock('@/queries/sessionIndexPinQueries', () => ({ usePinnedSessionIds: () => fixtures.pinned }));
+vi.mock('@/queries/openCodeProjectQueries', () => ({ useOpenCodeProjectRootsQuery: () => new Map() }));
 vi.mock('@/components/session/sidebar/hooks/useAlwaysVisibleSessionIds', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/components/session/sidebar/hooks/useAlwaysVisibleSessionIds')>(),
   useRunningSessionIds: () => fixtures.running,

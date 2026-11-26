@@ -143,6 +143,7 @@ const toSummary = (session, fallbackDirectory, resolveDirectory = normalizeDirec
     modelUpdatedAt: model ? toTimestamp(session.time?.updated) : 0,
     worktreeJson: worktree ? JSON.stringify(worktree) : null,
     workspaceId,
+    projectID: normalizeWorkspaceId(session.projectID),
   };
 };
 
@@ -255,7 +256,7 @@ export const createSessionIndexService = ({
     db.exec('ALTER TABLE session_summary ADD COLUMN pinned_at INTEGER');
   }
   db.transaction(() => {
-    for (const [column, type] of [['model_json', 'TEXT'], ['model_updated_at', 'INTEGER NOT NULL DEFAULT 0'], ['model_sequence', 'INTEGER'], ['worktree_json', 'TEXT'], ['workspace_id', 'TEXT']]) {
+    for (const [column, type] of [['model_json', 'TEXT'], ['model_updated_at', 'INTEGER NOT NULL DEFAULT 0'], ['model_sequence', 'INTEGER'], ['worktree_json', 'TEXT'], ['workspace_id', 'TEXT'], ['project_id', 'TEXT']]) {
       if (!sessionSummaryColumns.has(column)) db.exec(`ALTER TABLE session_summary ADD COLUMN ${column} ${type}`);
     }
   })();
@@ -311,6 +312,7 @@ export const createSessionIndexService = ({
           model_json: model.model_json, model_updated_at: model.model_updated_at, model_sequence: model.model_sequence,
           worktree_json: newest.worktree_json ?? row.worktree_json ?? previous.worktree_json,
           workspace_id: newest.workspace_id ?? row.workspace_id ?? previous.workspace_id,
+          project_id: newest.project_id ?? row.project_id ?? previous.project_id,
         });
       }
       db.prepare('DELETE FROM session_summary WHERE runtime_key = ? AND directory IN (?, ?)').run(key, source.directory, target);
@@ -359,7 +361,7 @@ export const createSessionIndexService = ({
     SELECT session_id, has_children AS hasChildren, activity_updated_at AS activityUpdatedAt,
       status, status_changed_at AS statusChangedAt, pinned_at AS pinnedAt,
       model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence,
-      worktree_json AS worktreeJson, workspace_id AS workspaceId
+      worktree_json AS worktreeJson, workspace_id AS workspaceId, project_id AS projectID
     FROM session_summary WHERE runtime_key = ? AND directory = ?
   `);
   const readSummary = db.prepare(`
@@ -367,7 +369,7 @@ export const createSessionIndexService = ({
       activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
       parent_id AS parentID, has_children AS hasChildren,
       model_json AS modelJson, model_updated_at AS modelUpdatedAt, model_sequence AS modelSequence,
-      worktree_json AS worktreeJson, workspace_id AS workspaceId
+      worktree_json AS worktreeJson, workspace_id AS workspaceId, project_id AS projectID
     FROM session_summary
     WHERE runtime_key = ? AND directory = ? AND session_id = ?
   `);
@@ -379,12 +381,12 @@ export const createSessionIndexService = ({
     LIMIT 1 OFFSET ?
   `);
   const insertSummary = db.prepare(`
-    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, pinned_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json, workspace_id)
-    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, @pinnedAt, @status, @statusChangedAt, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson, @workspaceId)
+    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, pinned_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json, workspace_id, project_id)
+    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, @pinnedAt, @status, @statusChangedAt, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson, @workspaceId, @projectID)
   `);
   const upsertSummary = db.prepare(`
-    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json, workspace_id)
-    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, NULL, 0, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson, @workspaceId)
+    INSERT INTO session_summary(runtime_key, directory, session_id, title, created_at, updated_at, activity_updated_at, archived_at, status, status_changed_at, parent_id, has_children, assistant_id, assistant_name, model_json, model_updated_at, model_sequence, worktree_json, workspace_id, project_id)
+    VALUES (@runtimeKey, @directory, @id, @title, @createdAt, @updatedAt, @activityUpdatedAt, @archivedAt, NULL, 0, @parentID, @hasChildren, @assistantID, @assistantName, @modelJson, @modelUpdatedAt, @modelSequence, @worktreeJson, @workspaceId, @projectID)
     ON CONFLICT(runtime_key, directory, session_id) DO UPDATE SET
       title = excluded.title,
       created_at = excluded.created_at,
@@ -399,7 +401,8 @@ export const createSessionIndexService = ({
       model_updated_at = excluded.model_updated_at,
       model_sequence = excluded.model_sequence,
       worktree_json = COALESCE(excluded.worktree_json, session_summary.worktree_json),
-      workspace_id = COALESCE(excluded.workspace_id, session_summary.workspace_id)
+      workspace_id = COALESCE(excluded.workspace_id, session_summary.workspace_id),
+      project_id = COALESCE(excluded.project_id, session_summary.project_id)
   `);
   const writeModel = db.prepare(`UPDATE session_summary
     SET model_json = @modelJson, model_updated_at = @modelUpdatedAt, model_sequence = @modelSequence
@@ -477,8 +480,9 @@ export const createSessionIndexService = ({
     const moved = movedLocations.get(`${runtimeKey()}:${session?.id}`);
     return moved && moved.directory !== normalizeDirectory(directory) && toTimestamp(session?.time?.updated) <= moved.at;
   };
-  const move = db.transaction((sessionID, directory, at = Date.now(), sequence) => {
+  const move = db.transaction((sessionID, directory, at = Date.now(), sequence, projectID) => {
     directory = normalizeDirectory(directory);
+    projectID = normalizeWorkspaceId(projectID);
     if (!sessionID || !directory) return false;
     const key = runtimeKey();
     const fenceKey = `${key}:${sessionID}`;
@@ -490,6 +494,9 @@ export const createSessionIndexService = ({
     touchExistingDirectory.run({ runtimeKey: key, directory, lastAccessedAt: at });
     const roots = db.prepare('UPDATE OR REPLACE session_summary SET directory = ? WHERE runtime_key = ? AND session_id = ? AND directory != ?').run(directory, key, sessionID, directory);
     const children = db.prepare('UPDATE OR REPLACE session_child SET directory = ? WHERE runtime_key = ? AND session_id = ? AND directory != ?').run(directory, key, sessionID, directory);
+    if (projectID) {
+      db.prepare('UPDATE session_summary SET project_id = ? WHERE runtime_key = ? AND session_id = ?').run(projectID, key, sessionID);
+    }
     db.prepare(`DELETE FROM session_summary WHERE runtime_key = ? AND directory = ? AND session_id IN (
       SELECT session_id FROM session_summary WHERE runtime_key = ? AND directory = ? ORDER BY activity_updated_at DESC, session_id DESC LIMIT -1 OFFSET ?
     )`).run(key, directory, key, directory, MAX_ROOT_SESSIONS);
@@ -531,6 +538,7 @@ export const createSessionIndexService = ({
         ...mergeModel(summary, previous),
         worktreeJson: summary.worktreeJson ?? previous?.worktreeJson ?? null,
         workspaceId: summary.workspaceId ?? previous?.workspaceId ?? null,
+        projectID: summary.projectID ?? previous?.projectID ?? null,
         activityUpdatedAt: Math.max(summary.activityUpdatedAt, toTimestamp(previous?.activityUpdatedAt)),
         pinnedAt: previous?.pinnedAt != null ? toTimestamp(previous.pinnedAt) : null,
         status: typeof previous?.status === 'string' ? previous.status : null,
@@ -592,6 +600,7 @@ export const createSessionIndexService = ({
     const hasChildren = toBooleanInt(summary.hasChildren ?? Boolean(existing?.hasChildren));
     const worktreeJson = summary.worktreeJson ?? existing?.worktreeJson ?? null;
     const workspaceId = summary.workspaceId ?? existing?.workspaceId ?? null;
+    const projectID = summary.projectID ?? existing?.projectID ?? null;
     if (existing) {
       const unchanged = existing.title === summary.title
         && toTimestamp(existing.createdAt) === summary.createdAt
@@ -602,7 +611,8 @@ export const createSessionIndexService = ({
         && toBooleanInt(existing.hasChildren) === hasChildren
         && existing.modelJson === model.modelJson
         && (existing.worktreeJson ?? null) === worktreeJson
-        && (existing.workspaceId ?? null) === workspaceId;
+        && (existing.workspaceId ?? null) === workspaceId
+        && (existing.projectID ?? null) === projectID;
       if (unchanged) {
         if (existing.modelUpdatedAt !== model.modelUpdatedAt || existing.modelSequence !== model.modelSequence) {
           writeModel.run({ ...model, runtimeKey: key, id: summary.id });
@@ -626,6 +636,7 @@ export const createSessionIndexService = ({
       ...model,
       worktreeJson,
       workspaceId,
+      projectID,
       activityUpdatedAt,
       hasChildren,
       runtimeKey: key,
@@ -675,16 +686,19 @@ export const createSessionIndexService = ({
           pinned_at AS pinnedAt,
           status, status_changed_at AS statusChangedAt, parent_id AS parentID,
           has_children AS hasChildren, assistant_id AS assistantID, assistant_name AS assistantName,
-          model_json AS modelJson, worktree_json AS worktreeJson, workspace_id AS workspaceId
+          model_json AS modelJson, worktree_json AS worktreeJson, workspace_id AS workspaceId,
+          project_id AS projectID
         FROM session_summary WHERE runtime_key = ? AND directory = ?
         ORDER BY activity_updated_at DESC, id DESC
       `).all(key, directory.directory)
         .map((session) => {
           const worktree = session.worktreeJson ? worktreeFromJson(session.worktreeJson) : null;
           const workspaceId = normalizeWorkspaceId(session.workspaceId);
+          const projectID = normalizeWorkspaceId(session.projectID);
           return ({
             id: session.id,
             title: session.title,
+            ...(projectID ? { projectID } : {}),
             ...(session.modelJson ? { model: modelFromJson(session.modelJson) } : {}),
             directory: directory.directory,
             time: {
@@ -751,7 +765,7 @@ export const createSessionIndexService = ({
         activity_updated_at AS activityUpdatedAt, archived_at AS archivedAt,
         parent_id AS parentID, has_children AS hasChildren,
         assistant_id AS assistantID, assistant_name AS assistantName, model_json AS modelJson,
-        worktree_json AS worktreeJson, workspace_id AS workspaceId
+        worktree_json AS worktreeJson, workspace_id AS workspaceId, project_id AS projectID
       FROM session_summary
       WHERE runtime_key = ? AND session_id = ?
       ORDER BY activity_updated_at DESC, updated_at DESC
@@ -769,6 +783,7 @@ export const createSessionIndexService = ({
       directory: normalizeDirectory(row.directory),
       title: typeof row.title === 'string' ? row.title : '',
       ...(row.modelJson ? { model: modelFromJson(row.modelJson) } : {}),
+      ...(normalizeWorkspaceId(row.projectID) ? { projectID: normalizeWorkspaceId(row.projectID) } : {}),
       ...(Object.keys(yuriMeta).length > 0 ? { metadata: { yuri: yuriMeta } } : {}),
       createdAt: toTimestamp(row.createdAt),
       updatedAt: toTimestamp(row.updatedAt),
@@ -899,7 +914,8 @@ export const createSessionIndexService = ({
   `).run(runtimeKey(), directory).changes > 0;
 
   try { reconcileDirectoryAliases(runtimeKey()); } catch (error) { db.close(); throw error; }
-  const historyKey = () => `history_backfill:model_ref_v1:${runtimeKey()}`;
+  // v2 reruns the bounded pass once so indexed rows gain the OpenCode project reference.
+  const historyKey = () => `history_backfill:model_project_ref_v2:${runtimeKey()}`;
   const getHistoryBackfill = () => {
     const row = db.prepare('SELECT value FROM session_index_meta WHERE key = ?').get(historyKey());
     return row ? JSON.parse(row.value) : null;
@@ -915,10 +931,15 @@ export const createSessionIndexService = ({
         // The bounded 30-day import is not proof that older history is empty.
         db.prepare('UPDATE runtime_directory SET has_more = 1 WHERE runtime_key = ? AND directory = ? AND last_full_synced_at = 0')
           .run(expectedRuntimeKey, directory);
-      } else if (!existing.model && isVisibleSession(session) && !session.time?.archived) {
-        const model = normalizeModel(session.model);
+      } else if (isVisibleSession(session) && !session.time?.archived) {
+        const model = existing.model ? null : normalizeModel(session.model);
         if (model) writeModel.run({ runtimeKey: expectedRuntimeKey, id: session.id,
           modelJson: JSON.stringify(model), modelUpdatedAt: toTimestamp(session.time?.updated), modelSequence: null });
+        const projectID = existing.projectID ? null : normalizeWorkspaceId(session.projectID);
+        if (projectID) {
+          db.prepare('UPDATE session_summary SET project_id = ? WHERE runtime_key = ? AND session_id = ? AND project_id IS NULL')
+            .run(projectID, expectedRuntimeKey, session.id);
+        }
       }
     }
     db.prepare('INSERT OR REPLACE INTO session_index_meta(key, value) VALUES (?, ?)')

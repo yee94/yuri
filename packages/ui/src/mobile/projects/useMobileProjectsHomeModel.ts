@@ -39,7 +39,8 @@ import {
   PINNED_SESSION_ORDER_SCOPE,
   listInProgressHomeSessions,
 } from '@/components/session/sidebar/pinnedSessions';
-import { createSessionOwnershipIndex } from '@/components/session/sidebar/sessionOwnership';
+import type { createSessionOwnershipIndex } from '@/components/session/sidebar/sessionOwnership';
+import { useSessionOwnershipIndex } from '@/components/session/sidebar/hooks/useSessionOwnershipIndex';
 import { selectVisibleSessions } from '@/components/session/sidebar/sessionNavigationModel';
 import { buildSessionTree } from '@/components/session/sidebar/sessionTree';
 import { formatWorktreeFooterLabel, sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
@@ -280,15 +281,11 @@ export function useMobileProjectsHomeModel(): MobileProjectsHomeModel {
     return merged;
   }, [globalActiveSessions, liveSessions]);
 
-  const ownership = React.useMemo(
-    () => createSessionOwnershipIndex(
-      sessions,
-      projectsMeta.map((project) => ({ id: project.id, normalizedPath: project.path, paths: project.paths })),
-      worktreesByProject,
-      false,
-    ),
-    [projectsMeta, sessions, worktreesByProject],
+  const ownershipProjects = React.useMemo(
+    () => projectsMeta.map((project) => ({ id: project.id, normalizedPath: project.path, paths: project.paths })),
+    [projectsMeta],
   );
+  const ownership = useSessionOwnershipIndex(sessions, ownershipProjects, worktreesByProject, false);
 
   const projectNodes = React.useMemo<ProjectNode[]>(() => {
     const nodes: ProjectNode[] = projectsMeta.map((project) => ({

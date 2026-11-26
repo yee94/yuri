@@ -60,6 +60,9 @@ export const queryKeys = {
     branches: (directory: string | null | undefined, transport = getRuntimeTransportIdentity()): readonly [string, 'git', 'branches', string | null] => [transport, 'git', 'branches', normalizeQueryDirectory(directory)],
     remotes: (directory: string | null | undefined, transport = getRuntimeTransportIdentity()): readonly [string, 'git', 'remotes', string | null] => [transport, 'git', 'remotes', normalizeQueryDirectory(directory)],
   },
+  openCodeProjects: {
+    roots: (projectIds: readonly string[], transport = getRuntimeTransportIdentity()): readonly [string, 'openCodeProjects', 'roots', ...string[]] => [transport, 'openCodeProjects', 'roots', ...projectIds],
+  },
   sessionIndex: {
     snapshot: (transport = getRuntimeTransportIdentity()): readonly [string, 'sessionIndex', 'snapshot'] => [transport, 'sessionIndex', 'snapshot'],
   },

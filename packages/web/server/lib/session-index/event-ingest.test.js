@@ -84,7 +84,7 @@ describe('session index event ingest', () => {
     expect(applySessionIndexEvent(service, { directory: '/old', payload: {
       type: 'session.moved', created: 20, data: { sessionID: 'ses_move', location: { directory: '/new' }, projectID: 'project' },
     } }, 30)).toBe(true);
-    expect(service.move).toHaveBeenCalledWith('ses_move', '/new', 20, undefined);
+    expect(service.move).toHaveBeenCalledWith('ses_move', '/new', 20, undefined, 'project');
   });
   it('writes session summaries, user activity, and status to the service', () => {
     const service = {

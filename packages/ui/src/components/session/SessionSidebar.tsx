@@ -47,7 +47,7 @@ import { useSessionActions } from './sidebar/hooks/useSessionActions';
 import { useSidebarPersistence } from './sidebar/hooks/useSidebarPersistence';
 import { useProjectRepoStatus } from './sidebar/hooks/useProjectRepoStatus';
 import { useProjectSessionLists } from './sidebar/hooks/useProjectSessionLists';
-import { createSessionOwnershipIndex } from './sidebar/sessionOwnership';
+import { useSessionOwnershipIndex } from './sidebar/hooks/useSessionOwnershipIndex';
 import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
 import type { ProjectIdentitySaveData } from '@/components/sections/projects/useProjectIdentityForm';
 import { UpdateDialog } from '@/components/ui/UpdateDialog';
@@ -1504,9 +1504,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     enabled: isVisible,
   });
 
-  const sessionOwnership = React.useMemo(
-    () => createSessionOwnershipIndex(sessions, normalizedProjects, availableWorktreesByProject, isVSCode, archivedSessions),
-    [archivedSessions, availableWorktreesByProject, isVSCode, normalizedProjects, sessions],
+  const sessionOwnership = useSessionOwnershipIndex(
+    sessions, normalizedProjects, availableWorktreesByProject, isVSCode, archivedSessions,
   );
 
   const { getSessionsForProject, getArchivedSessionsForProject } = useProjectSessionLists({

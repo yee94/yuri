@@ -1017,4 +1017,31 @@ describe('Electron session index', () => {
     expect(service.findBySessionId('ses_ws')?.metadata?.yuri?.workspaceId).toBe('ws_combo');
     service.close();
   });
+
+  it('keeps the OpenCode projectID across refreshes and moves, and backfills it for indexed rows', () => {
+    const runtimeRef = { value: 'http://runtime-project.test' };
+    const service = createService(runtimeRef);
+
+    service.upsert({ id: 'ses_p', projectID: 'oc_tap', directory: '/code/tap', title: 'P', time: { created: 100, updated: 200 } });
+    service.replaceDirectory({
+      directory: '/code/tap',
+      sessions: [{ id: 'ses_p', title: 'P2', time: { created: 100, updated: 300 } }],
+      cursor: null, hasMore: false, now: 1000,
+    });
+    expect(service.snapshot().directories[0].sessions[0].projectID).toBe('oc_tap');
+
+    service.move('ses_p', '/wt/feature', 400, undefined, 'oc_tap');
+    const moved = service.snapshot().directories.find((entry) => entry.directory === '/wt/feature');
+    expect(moved?.sessions[0]).toMatchObject({ id: 'ses_p', projectID: 'oc_tap' });
+    expect(service.findBySessionId('ses_p')?.projectID).toBe('oc_tap');
+
+    service.upsert({ id: 'ses_legacy', directory: '/code/tap', title: 'Legacy', time: { created: 100, updated: 200 } });
+    expect(service.commitHistoryPage({
+      sessions: [{ id: 'ses_legacy', projectID: 'oc_tap', directory: '/code/tap', title: 'Legacy', time: { created: 100, updated: 200 } }],
+      progress: { done: true },
+      expectedRuntimeKey: service.getRuntimeKey(),
+    })).toBe(true);
+    expect(service.findBySessionId('ses_legacy')?.projectID).toBe('oc_tap');
+    service.close();
+  });
 });

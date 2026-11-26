@@ -13,7 +13,7 @@ import { useDeviceInfo } from '@/lib/device'
 import { isVSCodeRuntime } from '@/lib/desktop'
 import { useI18n } from '@/lib/i18n'
 import { formatPathForDisplay, cn } from '@/lib/utils'
-import { createSessionOwnershipIndex } from '@/components/session/sidebar/sessionOwnership'
+import { useSessionOwnershipIndex } from '@/components/session/sidebar/hooks/useSessionOwnershipIndex'
 import { formatSessionCompactDateLabel } from '@/components/session/sidebar/utils'
 import {
   ensureFullGlobalSessionsLoaded,
@@ -33,6 +33,8 @@ type ProjectBucket = {
 }
 
 const OTHER_PROJECT_ID = '__other__'
+const NO_ACTIVE_SESSIONS: Session[] = []
+const NO_WORKTREES = new Map<string, Array<{ path: string }>>()
 
 function getSessionActivityMs(session: Session): number {
   return session.time?.updated ?? session.time?.archived ?? session.time?.created ?? 0
@@ -82,19 +84,12 @@ export function ArchivedSessionsManager({
     }
   }, [active, t])
 
-  const projectBuckets = React.useMemo((): ProjectBucket[] => {
-    const ownershipProjects = projects.map((project) => ({
-      id: project.id,
-      normalizedPath: project.path,
-    }))
-    const ownership = createSessionOwnershipIndex(
-      [],
-      ownershipProjects,
-      new Map(),
-      isVSCodeRuntime(),
-      archivedSessions,
-    )
+  const ownershipProjects = React.useMemo(() => projects
+    .filter((project) => !project.hostId)
+    .map((project) => ({ id: project.id, normalizedPath: project.path, paths: project.paths })), [projects])
+  const ownership = useSessionOwnershipIndex(NO_ACTIVE_SESSIONS, ownershipProjects, NO_WORKTREES, isVSCodeRuntime(), archivedSessions)
 
+  const projectBuckets = React.useMemo((): ProjectBucket[] => {
     const byProject = new Map<string, Session[]>()
     for (const [projectId, sessions] of ownership.archivedSessionsByProject) {
       byProject.set(projectId, [...sessions].sort((a, b) => getSessionActivityMs(b) - getSessionActivityMs(a)))
@@ -133,7 +128,7 @@ export function ArchivedSessionsManager({
     }
     buckets.sort((a, b) => b.sessions.length - a.sessions.length || a.label.localeCompare(b.label))
     return buckets
-  }, [archivedSessions, projects, t])
+  }, [archivedSessions, ownership, projects, t])
 
   const totalArchived = archivedSessions.length
   const selectedBucket = selectedProjectId

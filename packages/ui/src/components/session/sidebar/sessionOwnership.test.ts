@@ -186,6 +186,67 @@ describe('createSessionOwnershipIndex', () => {
     expect(ownership.sessionsByProject.get('api-sub')?.map((s) => s.id)).toEqual(['api-wt-session']);
   });
 
+  test('binds a single-path session moved into an OpenCode worktree via its OpenCode project', () => {
+    const sessions = [
+      { id: 'root', projectID: 'oc_tap', directory: '/code/taptable' },
+      { id: 'moved', projectID: 'oc_tap', directory: '/data/opencode/worktree/c70cef/solid2-ui-sdk' },
+      { id: 'unknown-project', projectID: 'oc_other', directory: '/scratch/x' },
+      { id: 'no-project', directory: '/scratch/y' },
+    ] as unknown as Session[];
+    const archived = [
+      { id: 'archived-moved', projectID: 'oc_tap', directory: '/data/opencode/worktree/c70cef/solid2-ui-sdk', time: { archived: 1 } },
+    ] as unknown as Session[];
+    const projects = [{ id: 'taptable', normalizedPath: '/code/taptable' }];
+
+    const unresolved = createSessionOwnershipIndex(sessions, projects, new Map(), false, archived);
+    expect(unresolved.bySessionId.has('moved')).toBe(false);
+    expect(unresolved.unresolvedOpenCodeProjectIds).toEqual(['oc_other', 'oc_tap']);
+
+    const roots = new Map([['oc_tap', '/code/taptable'], ['oc_other', '/code/elsewhere']]);
+    const ownership = createSessionOwnershipIndex(sessions, projects, new Map(), false, archived, roots);
+
+    expect(ownership.bySessionId.get('moved')).toEqual({
+      projectId: 'taptable',
+      projectRoot: '/code/taptable',
+      scopeDirectory: '/data/opencode/worktree/c70cef/solid2-ui-sdk',
+      kind: 'worktree',
+    });
+    expect(ownership.sessionsByProject.get('taptable')?.map((s) => s.id)).toEqual(['root', 'moved']);
+    expect(ownership.archivedSessionsByProject.get('taptable')?.map((s) => s.id)).toEqual(['archived-moved']);
+    expect(ownership.bySessionId.has('unknown-project')).toBe(false);
+    expect(ownership.bySessionId.has('no-project')).toBe(false);
+    expect(ownership.unresolvedOpenCodeProjectIds).toEqual(unresolved.unresolvedOpenCodeProjectIds);
+    expect(createSessionOwnershipIndex(sessions, projects, new Map(), true, archived, roots).bySessionId.has('moved')).toBe(false);
+  });
+
+  test('binds OpenCode-project sessions to multi-path members and monorepo subdirectory projects', () => {
+    const sessions = [
+      { id: 'member', projectID: 'oc_api', directory: '/wt/api-feature' },
+      { id: 'sub-web', projectID: 'oc_mono', directory: '/wt/mono-feature/packages/web/src' },
+      { id: 'sub-root', projectID: 'oc_mono', directory: '/wt/mono-feature' },
+    ] as unknown as Session[];
+    const projects = [
+      { id: 'ws_combo', normalizedPath: '/code/app', paths: ['/code/app', '/code/api'] },
+      { id: 'web', normalizedPath: '/code/mono/packages/web' },
+      { id: 'mono', normalizedPath: '/code/mono' },
+    ];
+    const roots = new Map([['oc_api', '/code/api'], ['oc_mono', '/code/mono']]);
+    const ownership = createSessionOwnershipIndex(sessions, projects, new Map(), false, [], roots);
+
+    expect(ownership.bySessionId.get('member')).toMatchObject({ projectId: 'ws_combo', scopeDirectory: '/wt/api-feature', kind: 'worktree' });
+    expect(ownership.bySessionId.get('sub-web')).toMatchObject({ projectId: 'web', scopeDirectory: '/wt/mono-feature/packages/web/src' });
+    expect(ownership.bySessionId.get('sub-root')?.projectId).toBe('mono');
+  });
+
+  test('records the owning project for single-path sessions via metadata.yuri.workspaceId', () => {
+    const sessions = [
+      { id: 'moved', directory: '/anywhere/else', metadata: { yuri: { workspaceId: 'path_tap' } } },
+    ] as unknown as Session[];
+    const ownership = createSessionOwnershipIndex(sessions, [{ id: 'path_tap', normalizedPath: '/code/taptable' }], new Map(), false);
+    expect(ownership.bySessionId.get('moved')).toMatchObject({ projectId: 'path_tap', kind: 'worktree' });
+    expect(ownership.unresolvedOpenCodeProjectIds).toEqual([]);
+  });
+
   test('binds explicit metadata.yuri.workspaceId sessions to multi-path workspaces without stealing legacy single-path sessions', () => {
     const sessions = [
       {

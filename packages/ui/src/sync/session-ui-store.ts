@@ -44,7 +44,8 @@ import { resolveProjectForSessionDirectory } from "@/lib/projectResolution"
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
 import { scopeProjectWorktrees } from "@/lib/worktrees/projectWorktreeScope"
 import { buildSessionWorktreeMetadataPatch } from "@/lib/worktrees/sessionWorktreeMetadata"
-import { buildWorkspacePromptContext, isBlankWorkspace, isMultiPathWorkspace, isWorkspaceId, readSessionWorkspaceId } from "@/lib/workspacePaths"
+import type { ProjectEntry } from "@/lib/api/types"
+import { buildWorkspacePromptContext, getWorkspacePaths, isBlankWorkspace, isMultiPathWorkspace, isWorkspaceId, readSessionWorkspaceId } from "@/lib/workspacePaths"
 import { validateWorktreeDirectory } from "@/lib/gitApi"
 import { useWorktreeOrderStore } from "@/stores/useWorktreeOrderStore"
 import { createUuid } from "@/lib/uuid"
@@ -907,6 +908,26 @@ const waitForWorktreeBootstrapIfConfigured = async (directory: string | null, pr
   }
 }
 
+/**
+ * Owning project recorded as `metadata.yuri.workspaceId` on every session Yuri
+ * creates (single-path projects included), so a later move outside the
+ * project's paths (OpenCode worktrees, sandboxes) cannot detach it. A project
+ * that was not chosen explicitly must contain the session directory.
+ */
+export const resolveNewSessionWorkspaceId = (
+  project: ProjectEntry | null | undefined,
+  directory: string | null | undefined,
+  explicit: boolean,
+): string | undefined => {
+  if (!project || project.hostId) return undefined
+  if (explicit || isWorkspaceId(project.id) || isMultiPathWorkspace(project) || isBlankWorkspace(project)) return project.id
+  const normalizedDirectory = normalizePath(directory ?? null)
+  const owned = normalizedDirectory && getWorkspacePaths(project).some((root) => (
+    normalizedDirectory === root || normalizedDirectory.startsWith(root === "/" ? "/" : `${root}/`)
+  ))
+  return owned ? project.id : undefined
+}
+
 export const promoteProjectForConversation = (
   directory: string | null,
   availableWorktreesByProject: Map<string, WorktreeMetadata[]>,
@@ -1226,11 +1247,8 @@ async function materializeClaimedDraftSession(selection: {
     const worktreeMetadataPatch = matchedWorktree
       ? buildSessionWorktreeMetadataPatch(matchedWorktree, worktreeProject)
       : undefined
-    const explicitWorkspaceId = targetProject && (
-      isWorkspaceId(targetProject.id) || isMultiPathWorkspace(targetProject) || isBlankWorkspace(targetProject)
-    )
-      ? targetProject.id
-      : undefined
+    // targetProject only comes from the draft's resolved or selected project.
+    const explicitWorkspaceId = resolveNewSessionWorkspaceId(targetProject, normalizedDir, true)
     const sessionMetadataPatch = (() => {
       const worktreeYuri = (worktreeMetadataPatch?.yuri && typeof worktreeMetadataPatch.yuri === "object")
         ? worktreeMetadataPatch.yuri as Record<string, unknown>
@@ -1372,13 +1390,12 @@ async function handleCombinedDraftSend(params: {
     const preCreateStore = dirStoreForDirectory(resolvedDir, { bootstrap: false })
     const claimRuntimeCurrent = () =>
       sameRuntimeCapture(useInputStore.getState().captureDraftRuntime(), claimed.runtime)
-    const draftWorkspaceMetadata = draftWorkspaceProject && (
-      isWorkspaceId(draftWorkspaceProject.id)
-      || isMultiPathWorkspace(draftWorkspaceProject)
-      || isBlankWorkspace(draftWorkspaceProject)
+    const draftWorkspaceId = resolveNewSessionWorkspaceId(
+      draftWorkspaceProject,
+      resolvedDir,
+      draft.selectedProjectId === draftWorkspaceProject?.id,
     )
-      ? { yuri: { workspaceId: draftWorkspaceProject.id } }
-      : undefined
+    const draftWorkspaceMetadata = draftWorkspaceId ? { yuri: { workspaceId: draftWorkspaceId } } : undefined
     let result: ConversationCreateWithPromptResult | undefined
     for (let attempt = 0; attempt <= COMBINED_RETRY_MAX; attempt++) {
       if (attempt > 0) await new Promise<void>((resolve) => setTimeout(resolve, COMBINED_RETRY_DELAY_MS))

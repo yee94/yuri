@@ -66,7 +66,7 @@ export const applySessionIndexEvent = (service, event, observedAt = Date.now(), 
   if (baseType === 'session.moved') {
     const data = payload.data ?? properties;
     return typeof data.sessionID === 'string' && typeof data.location?.directory === 'string'
-      ? service.move(data.sessionID, data.location.directory, typeof payload.created === 'number' ? payload.created : observedAt, payload.durable?.seq)
+      ? service.move(data.sessionID, data.location.directory, typeof payload.created === 'number' ? payload.created : observedAt, payload.durable?.seq, data.projectID)
       : false;
   }
 

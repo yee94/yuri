@@ -81,7 +81,10 @@ newest 20 root-session summaries per runtime and directory. It also retains the
 minimal session `model: { providerID, id, variant? }` reference (each string is
 bounded to 512 characters), optional `worktree_json` (`metadata.yuri.worktree`
 binding `{ projectId?, projectDirectory, worktreeRoot, path, branch?, name?, relativePath? }`),
-and optional `workspace_id` (`metadata.yuri.workspaceId`),
+optional `workspace_id` (`metadata.yuri.workspaceId`), and optional
+`project_id` (OpenCode `session.projectID`, also taken from native
+`session.moved`; the `model_project_ref_v2` 30-day backfill pass fills it on
+already indexed rows),
 never messages, attachments, permissions, provider
 configuration, or model catalog metadata. Missing/invalid model, worktree, or workspace fields in light
 refreshes preserve the prior reference. Model, worktree, and workspace columns are added transactionally

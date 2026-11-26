@@ -25,6 +25,18 @@ Sessions created inside a linked worktree persist `metadata.yuri.worktree`
 (isolating monorepo subdirectory projects without polling sibling checkouts),
 then directory/worktree fallbacks (preferring dedicated single-path projects
 over multi-path workspaces for legacy directory-only sessions).
+Every session Yuri creates records its owning local project as
+`metadata.yuri.workspaceId` — single-path projects included
+(`resolveNewSessionWorkspaceId`) — so moving it outside the project's paths
+(OpenCode worktrees, sandboxes) cannot detach it. Sessions without Yuri
+metadata (OpenCode TUI, imports, older sessions) fall back to OpenCode's own
+`session.projectID`: `useSessionOwnershipIndex` reads `project.list()` once for
+unclaimed IDs (`unresolvedOpenCodeProjectIds`), maps each to its canonical
+checkout, and binds the session to the Yuri directory of that repository — the
+root project, a multi-path member, or a monorepo subdirectory project whose
+relative path the session directory repeats. No `git worktree list` or
+per-directory probing is involved. Sessions that still match no project stay
+out of the project view but remain in the task view and search.
 Multi-path workspaces (`paths.length > 1`) default to the stacked `folders`
 icon when no custom icon/image is set; blank 0-path workspaces (`paths: []`)
 use a Host-managed backing directory for OpenCode while hiding Git/Worktree UI.

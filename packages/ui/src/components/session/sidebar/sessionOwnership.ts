@@ -26,6 +26,19 @@ export type SessionOwnershipIndex = {
   archivedSessionsByProject: Map<string, Session[]>;
   sessionsByScope: Map<string, Set<string>>;
   directoryResolutions: number;
+  /**
+   * OpenCode project IDs of sessions that neither metadata nor the known
+   * project/worktree directories claim. Independent of `openCodeProjectRoots`,
+   * so callers can key the project lookup on it without feedback loops.
+   */
+  unresolvedOpenCodeProjectIds: string[];
+};
+
+const EMPTY_PROJECT_ROOTS: ReadonlyMap<string, string> = new Map();
+
+const readOpenCodeProjectId = (session: Session): string | null => {
+  const projectID = (session as { projectID?: unknown }).projectID;
+  return typeof projectID === 'string' && projectID.trim() ? projectID.trim() : null;
 };
 
 const shouldReplaceOwner = (existing: DirectoryOwner | undefined, candidate: DirectoryOwner): boolean => {
@@ -70,6 +83,8 @@ export const createSessionOwnershipIndex = (
   availableWorktreesByProject: Map<string, Worktree[]>,
   isVSCode: boolean,
   archivedSessions: Session[] = [],
+  /** OpenCode project ID → normalized canonical checkout (`project.list()`). */
+  openCodeProjectRoots: ReadonlyMap<string, string> = EMPTY_PROJECT_ROOTS,
 ): SessionOwnershipIndex => {
   const ownerByDirectory = new Map<string, DirectoryOwner>();
   const projectByRoot = new Map<string, Project>();
@@ -215,15 +230,61 @@ export const createSessionOwnershipIndex = (
     };
   };
 
+  // Sessions without ownership metadata (OpenCode TUI, imports, sessions that
+  // OpenCode moved into a worktree) can live outside every project path, but
+  // OpenCode still records their repository as `session.projectID`. Its
+  // canonical checkout selects the Yuri directories of that repository:
+  // the repository root, a multi-path member, or a monorepo subdirectory
+  // project whose relative path the session directory repeats.
+  const candidatesByCanonical = new Map<string, Array<{ relative: string; owner: DirectoryOwner }>>();
+  const candidatesForCanonical = (canonical: string) => {
+    const cached = candidatesByCanonical.get(canonical);
+    if (cached) return cached;
+    const candidates: Array<{ relative: string; owner: DirectoryOwner }> = [];
+    for (const [directory, owner] of ownerByDirectory) {
+      if (owner.kind !== 'project') continue;
+      if (directory === canonical) candidates.push({ relative: '', owner });
+      else if (directory.startsWith(canonical === '/' ? '/' : `${canonical}/`)) {
+        candidates.push({ relative: directory.slice(canonical === '/' ? 1 : canonical.length + 1), owner });
+      }
+    }
+    candidates.sort((a, b) => b.relative.length - a.relative.length);
+    candidatesByCanonical.set(canonical, candidates);
+    return candidates;
+  };
+  const resolveOpenCodeProjectOwner = (session: Session, directory: string | null): DirectoryOwner | null => {
+    if (isVSCode) return null;
+    const openCodeProjectId = readOpenCodeProjectId(session);
+    const canonical = openCodeProjectId ? normalizePath(openCodeProjectRoots.get(openCodeProjectId)) : null;
+    if (!canonical) return null;
+    const match = candidatesForCanonical(canonical).find(({ relative }) => !relative
+      || (directory !== null && (directory.endsWith(`/${relative}`) || directory.includes(`/${relative}/`))));
+    if (!match) return null;
+    return {
+      ...match.owner,
+      scopeDirectory: directory ?? match.owner.scopeDirectory,
+      kind: directory && directory !== match.owner.scopeDirectory ? 'worktree' : 'project',
+    };
+  };
+
+  const unresolvedOpenCodeProjectIds = new Set<string>();
+
   const bucket = (
     input: Session[],
     target: Map<string, Session[]>,
     scopeTarget?: Map<string, Set<string>>,
   ): void => {
     for (const session of input) {
-      const owner = resolveExplicitWorkspaceOwner(session)
-        ?? resolveExplicitWorktreeOwner(session)
-        ?? resolveOwner(resolveSessionDirectory(session));
+      let owner = resolveExplicitWorkspaceOwner(session) ?? resolveExplicitWorktreeOwner(session);
+      if (!owner) {
+        const directory = resolveSessionDirectory(session);
+        owner = resolveOwner(directory);
+        if (!owner) {
+          const openCodeProjectId = readOpenCodeProjectId(session);
+          if (openCodeProjectId) unresolvedOpenCodeProjectIds.add(openCodeProjectId);
+          owner = resolveOpenCodeProjectOwner(session, directory);
+        }
+      }
       if (!owner) continue;
       bySessionId.set(session.id, owner);
       const projectSessions = target.get(owner.projectId);
@@ -251,5 +312,6 @@ export const createSessionOwnershipIndex = (
     archivedSessionsByProject,
     sessionsByScope,
     directoryResolutions: resolvedOwners.size,
+    unresolvedOpenCodeProjectIds: [...unresolvedOpenCodeProjectIds].sort(),
   };
 };

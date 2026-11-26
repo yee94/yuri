@@ -17,7 +17,9 @@ import { fetchForkBoundary, resolveNativeForkBoundary } from './session-fork-bou
 import { toast } from "sonner"
 import { formatMessage, useI18nStore } from "@/lib/i18n"
 import { clearSessionInterruptAcknowledgement, runSessionInterrupt } from "./session-interrupt"
-import { useSessionUIStore, type ForkTransitionStage, type MessageEditSnapshot } from "./session-ui-store"
+import { resolveNewSessionWorkspaceId, useSessionUIStore, type ForkTransitionStage, type MessageEditSnapshot } from "./session-ui-store"
+import { useProjectsStore } from "@/stores/useProjectsStore"
+import { resolveProjectForDirectory } from "@/lib/projectResolution"
 import { useInputStore } from "./input-store"
 import type { ChildStoreManager } from "./child-store"
 import { computeSubtreeIds } from "./scoped-blocking-requests"
@@ -985,6 +987,22 @@ function getRequestReplyClient(
 // Session CRUD
 // ---------------------------------------------------------------------------
 
+/** Adds `yuri.workspaceId` when the caller did not record ownership itself. */
+function withOwningProjectMetadata(
+  metadata: Record<string, unknown> | undefined,
+  directory: string | null | undefined,
+): Record<string, unknown> | undefined {
+  const yuri = metadata?.yuri
+  const yuriRecord = yuri && typeof yuri === "object" && !Array.isArray(yuri) ? yuri as Record<string, unknown> : undefined
+  if (yuriRecord?.workspaceId || yuriRecord?.worktree) return metadata
+  const { projects, activeProjectId } = useProjectsStore.getState()
+  const localProjects = projects.filter((project) => !project.hostId)
+  const workspaceId = resolveNewSessionWorkspaceId(localProjects.find((project) => project.id === activeProjectId), directory, false)
+    ?? resolveNewSessionWorkspaceId(resolveProjectForDirectory(localProjects, directory ?? null), directory, false)
+  if (!workspaceId) return metadata
+  return { ...metadata, yuri: { ...yuriRecord, workspaceId } }
+}
+
 export async function createSession(
   title?: string,
   directoryOverride?: string | null,
@@ -992,11 +1010,12 @@ export async function createSession(
   metadata?: Record<string, unknown>,
 ): Promise<Session | null> {
   try {
+    const directory = directoryOverride ?? dir()
     const session = await opencodeClient.createSession({
       title,
       parentID: parentID ?? undefined,
-      metadata,
-    }, directoryOverride ?? dir())
+      metadata: withOwningProjectMetadata(metadata, directory),
+    }, directory)
 
     // Point of no return: session exists server-side. Post-processing
     // failures below (routing, selection, upsert) must not be treated as
