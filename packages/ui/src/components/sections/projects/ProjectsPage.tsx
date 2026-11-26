@@ -1,4 +1,5 @@
 import React from 'react';
+import { useEvent } from '@reactuses/core';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -29,16 +30,10 @@ export const ProjectsPage: React.FC = () => {
     setSelectedId(projects[0].id);
   }, [projects, selectedId, setSelectedId]);
 
-  const handleIdentitySave = React.useCallback(async (data: ProjectIdentitySaveData) => {
+  const handleIdentitySave = useEvent((data: ProjectIdentitySaveData) => {
     if (!selectedProject) return;
-    updateProjectMeta(selectedProject.id, {
-      label: data.label,
-      icon: data.icon,
-      color: data.color,
-      iconBackground: data.iconBackground,
-      defaultModel: data.defaultModel ?? null,
-    });
-  }, [selectedProject, updateProjectMeta]);
+    return updateProjectMeta(selectedProject.id, data);
+  });
 
   if (!selectedProject) {
     return (

@@ -1,4 +1,6 @@
 import React from 'react';
+import { useEvent } from '@reactuses/core';
+import { toast } from '@/components/ui';
 import { ProjectIdentityFields } from '@/components/sections/projects/ProjectIdentityFields';
 import { WorkspacePathsSection } from '@/components/sections/projects/WorkspacePathsSection';
 import {
@@ -29,6 +31,17 @@ export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
 
   useProjectIdentityAutoSave(form, onIdentitySave, !readOnly);
 
+  const selectIcon = useEvent(async (icon: string | null) => {
+    if (!project || readOnly || form.isUploadingIcon || form.isRemovingCustomIcon || form.isDiscoveringIcon) return;
+    form.clearPendingUploadIcon();
+    form.setPendingRemoveImageIcon(false);
+    try {
+      await onIdentitySave({ icon, ...(project.iconImage ? { iconImage: null } : {}) });
+    } catch {
+      toast.error(t('settings.projects.page.toast.saveFailed'));
+    }
+  });
+
   if (!project) {
     return null;
   }
@@ -43,7 +56,7 @@ export const ProjectSettingsPanel: React.FC<ProjectSettingsPanelProps> = ({
         {project.hostId ? <p className="typography-meta text-muted-foreground truncate" title={project.path}>{project.path}</p> : null}
       </div>
 
-      <ProjectIdentityFields form={form} showDefaultModel={!project.hostId} storedIconPreview={storedIconPreview} readOnly={readOnly} />
+      <ProjectIdentityFields form={form} onSelectIcon={selectIcon} showDefaultModel={!project.hostId} storedIconPreview={storedIconPreview} readOnly={readOnly} />
       {!project.hostId && !isVSCodeRuntime() ? <WorkspacePathsSection key={project.id} project={project} readOnly={readOnly} /> : null}
     </div>
   );

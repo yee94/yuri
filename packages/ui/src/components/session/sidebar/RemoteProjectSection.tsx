@@ -111,8 +111,8 @@ export const RemoteProjectSection = React.memo(function RemoteProjectSection(pro
   React.useLayoutEffect(() => { publishTasks(); }, [publishTasks, data.rows, data.pinnedIds, snapshot, host?.name, online, pending, model.selectedSession, project, registry, props.onTaskItems, mobile]);
   const { onTaskItems } = props;
   React.useEffect(() => () => onTaskItems?.(project.id, []), [project.id, onTaskItems]);
-  const saveProject = useEvent(async ({ label, icon, color, iconBackground }: ProjectIdentitySaveData) => {
-    const updated = await remoteProjectMetadata(registry, project, { label, icon, color, iconBackground });
+  const saveProject = useEvent(async ({ label, icon, iconImage, color, iconBackground }: ProjectIdentitySaveData) => {
+    const updated = await remoteProjectMetadata(registry, project, { label, icon, iconImage, color, iconBackground });
     useProjectsStore.getState().upsertRemoteProject(updated, registry.hubId);
   });
   const projectEditor = model.projectEditOpen ? <ProjectEditDialog

@@ -26,10 +26,10 @@ export const ProjectEditDialog: React.FC<ProjectEditDialogProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         aria-label={project?.label || project?.path.split(/[\\/]/).filter(Boolean).at(-1)}
-        className="yuri-settings-workspace w-full max-w-xl gap-0 overflow-hidden p-0"
+        className="w-full max-w-xl gap-0 overflow-hidden p-0"
       >
         <ScrollableOverlay outerClassName="max-h-[min(85dvh,44rem)]" disableHorizontal>
-          <div className="w-full p-4 sm:p-6">
+          <div className="yuri-settings-workspace w-full p-4 sm:p-6">
             {open && project ? (
               <ProjectSettingsPanel project={project} onIdentitySave={onSave} storedIconPreview={storedIconPreview} readOnly={readOnly} />
             ) : null}

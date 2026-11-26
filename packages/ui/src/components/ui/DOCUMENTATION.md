@@ -629,6 +629,10 @@ Both the popup and backdrop are Electron `app-region-no-drag` regions. Portal re
 
 ### Settings picker focus verification
 
+In the project editor, scope Settings form styles to the scroll content. Nested
+model picker portals stay in the dialog for focus handling and use the shared
+desktop model search styling.
+
 Chat-hosted pickers additionally exercise the production composer pointer capture policy: only DOM-contained toolbar actions may prevent default focus. A portaled search input must keep its pointerdown uncancelled even though React capture propagates to ChatInput. Page/sheet/dialog-only hosts cannot establish this contract.
 
 `MobileWindowMotion.focus.test.tsx` mounts the real model picker, resizable sheet, and Base UI Dialog in happy-dom and checks `document.activeElement` after search activation across page, parent-sheet, and dialog hosts. Touch-order cases additionally require that `pointerup` does not focus early, before the browser's compatibility `mousedown` default action. Real Chromium touch dispatch with a focus-driven keyboard inset reproduces the pre-fix sequence `pointerup → focusin(INPUT) → mousedown(DIV) → focusout(INPUT)`; happy-dom alone does not perform geometry hit-testing or native mouse defaults.

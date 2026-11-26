@@ -1,11 +1,8 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { ProjectIdentityFields } from './ProjectIdentityFields';
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { ProjectSettingsSubsection } from './ProjectSettingsSubsection';
-import { useProjectIdentityForm } from './useProjectIdentityForm';
-import { useProjectIdentityAutoSave } from './useProjectIdentityAutoSave';
 import { WorktreeSectionContent } from '../yuri/WorktreeSectionContent';
 import { buildSettingsSearchResults } from '@/lib/settings/search';
 
@@ -49,12 +46,6 @@ vi.mock('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: false, isTabl
 vi.mock('@/lib/gitApi', () => ({ checkIsGitRepository: async () => true }));
 vi.mock('@/lib/worktrees/worktreeManager', () => ({ listProjectWorktrees: fixture.list }));
 
-function IdentityEditor() {
-  const form = useProjectIdentityForm(fixture.project);
-  useProjectIdentityAutoSave(form, fixture.save);
-  return <ProjectIdentityFields form={form} />;
-}
-
 let root: Root;
 let host: HTMLDivElement;
 
@@ -89,9 +80,9 @@ describe('project settings presentation', () => {
 
   test('groups identity fields and preserves selection auto-save without the explanatory paragraph', async () => {
     vi.useFakeTimers();
-    await act(async () => root.render(<IdentityEditor />));
-    expect(host.querySelectorAll('.yuri-settings-group-card')).toHaveLength(1);
-    expect(host.querySelectorAll('[data-settings-item]')).toHaveLength(4);
+    await act(async () => root.render(<ProjectSettingsPanel project={fixture.project} onIdentitySave={fixture.save} />));
+    expect(host.querySelectorAll('fieldset .yuri-settings-group-card')).toHaveLength(1);
+    expect(host.querySelectorAll('fieldset [data-settings-item]')).toHaveLength(4);
     expect(host.textContent).not.toContain('defaultModelDescription');
     const colors = host.querySelector('[data-settings-item="projects.accent-color"]')!;
     const icons = host.querySelector('[data-settings-item="projects.icon"]')!;
@@ -101,8 +92,24 @@ describe('project settings presentation', () => {
     await act(async () => colors.querySelector<HTMLButtonElement>('button[aria-label="Purple"]')!.click());
     await act(async () => icons.querySelector<HTMLButtonElement>('button[aria-label="Rocket"]')!.click());
     await act(async () => vi.advanceTimersByTimeAsync(500));
-    expect(fixture.save).toHaveBeenLastCalledWith(expect.objectContaining({ color: 'keyword', icon: 'rocket', label: 'Project' }));
-    expect(icons.querySelector('button[aria-label="Rocket"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(fixture.save).toHaveBeenNthCalledWith(1, { icon: 'rocket' });
+    expect(fixture.save).toHaveBeenNthCalledWith(2, expect.objectContaining({ color: 'keyword', label: 'Project' }));
+  });
+
+  test('replaces a stored image with the selected palette icon before the editor can close', async () => {
+    vi.useFakeTimers();
+    const project = { ...fixture.project, iconImage: { mime: 'image/png', updatedAt: 1, source: 'custom' as const } };
+    const render = (entry: React.ComponentProps<typeof ProjectSettingsPanel>['project']) => (
+      <ProjectSettingsPanel project={entry} onIdentitySave={fixture.save} storedIconPreview={<img data-existing-icon alt="" />} />
+    );
+    await act(async () => root.render(render(project)));
+    expect(host.querySelector('[data-existing-icon]')).not.toBeNull();
+    const rocket = host.querySelector<HTMLButtonElement>('button[aria-label="Rocket"]')!;
+    await act(async () => rocket.click());
+    expect(fixture.save).toHaveBeenCalledExactlyOnceWith({ icon: 'rocket', iconImage: null });
+    await act(async () => root.render(render({ ...project, icon: 'rocket', iconImage: null })));
+    expect(rocket.getAttribute('aria-pressed')).toBe('true');
+    expect(host.querySelector('[data-existing-icon]')).toBeNull();
   });
 
   test('collapses the dialog list without discarding its contents and aligns its trailing icon slot', async () => {

@@ -18,13 +18,14 @@ export const normalizeProjectIconBackground = (value: string | null | undefined)
   return HEX_COLOR_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
 };
 
-export type ProjectIdentitySaveData = {
+export type ProjectIdentitySaveData = Partial<{
   label: string;
   icon: string | null;
+  iconImage: null;
   color: string | null;
   iconBackground: string | null;
   defaultModel: string | null;
-};
+}>;
 
 type EditableProject = Pick<
   ProjectEntry,
@@ -41,7 +42,6 @@ export const useProjectIdentityForm = (project: EditableProject | null) => {
   );
 
   const [name, setName] = React.useState('');
-  const [icon, setIcon] = React.useState<string | null>(null);
   const [color, setColor] = React.useState<string | null>(null);
   const [iconBackground, setIconBackground] = React.useState<string | null>(null);
   const [defaultModel, setDefaultModel] = React.useState<string | undefined>(undefined);
@@ -65,25 +65,23 @@ export const useProjectIdentityForm = (project: EditableProject | null) => {
   }, []);
 
   const projectId = project?.id ?? null;
+  const savedName = project?.label ?? '';
+  const savedColor = project?.color ?? null;
+  const savedIconBackground = project?.iconBackground ?? null;
+  const savedDefaultModel = project?.defaultModel;
 
   React.useEffect(() => {
-    if (!project) {
-      setName('');
-      setIcon(null);
-      setColor(null);
-      setIconBackground(null);
-      setDefaultModel(undefined);
-      return;
-    }
-    setName(project.label ?? '');
-    setIcon(project.icon ?? null);
-    setColor(project.color ?? null);
-    setIconBackground(project.iconBackground ?? null);
-    setDefaultModel(project.defaultModel);
+    setName(savedName);
+    setColor(savedColor);
+    setIconBackground(savedIconBackground);
+    setDefaultModel(savedDefaultModel);
+  }, [projectId, savedName, savedColor, savedIconBackground, savedDefaultModel]);
+
+  React.useEffect(() => {
     setPendingRemoveImageIcon(false);
     clearPendingUploadIcon();
     setPreviewImageFailed(false);
-  }, [project, clearPendingUploadIcon]);
+  }, [projectId, clearPendingUploadIcon]);
 
   React.useEffect(() => {
     return () => {
@@ -106,7 +104,6 @@ export const useProjectIdentityForm = (project: EditableProject | null) => {
 
   const hasChanges = Boolean(project) && (
     name.trim() !== (project?.label ?? '').trim()
-    || icon !== (project?.icon ?? null)
     || color !== (project?.color ?? null)
     || iconBackground !== (project?.iconBackground ?? null)
     || (defaultModel ?? undefined) !== (project?.defaultModel ?? undefined)
@@ -228,7 +225,6 @@ export const useProjectIdentityForm = (project: EditableProject | null) => {
 
     return {
       label: trimmed,
-      icon,
       color,
       iconBackground: normalizeProjectIconBackground(willRemoveImageIcon ? null : iconBackground),
       defaultModel: defaultModel ?? null,
@@ -237,7 +233,6 @@ export const useProjectIdentityForm = (project: EditableProject | null) => {
     clearPendingUploadIcon,
     color,
     defaultModel,
-    icon,
     iconBackground,
     name,
     pendingRemoveImageIcon,
@@ -255,8 +250,6 @@ export const useProjectIdentityForm = (project: EditableProject | null) => {
   return {
     name,
     setName,
-    icon,
-    setIcon,
     color,
     setColor,
     iconBackground,

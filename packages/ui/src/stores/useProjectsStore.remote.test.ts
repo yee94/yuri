@@ -3,6 +3,7 @@ import { useProjectsStore } from './useProjectsStore';
 import { useSessionNavigationStore } from './useSessionNavigationStore';
 import { useDirectoryStore } from './useDirectoryStore';
 import { opencodeClient } from '@/lib/opencode/client';
+import { createProjectIdFromPath } from '@/lib/projectId';
 import type { RemoteProject } from '@/lib/remote-projects/types';
 
 const calls = vi.hoisted(() => ({ metadata: vi.fn(), remove: vi.fn(), settings: vi.fn(async (_settings: unknown) => {}), registry: {} }));
@@ -77,6 +78,22 @@ test('metadata writes wait for remote confirmation; failure leaves prior objects
   await useProjectsStore.getState().updateProjectMeta('remote-a', { label: 'confirmed', color: 'blue' });
   expect(calls.metadata).toHaveBeenLastCalledWith(calls.registry, remote('a'), { label: 'confirmed', color: 'blue' });
   expect(useProjectsStore.getState().projects[0].label).toBe('confirmed');
+});
+
+test('a local palette selection replaces the active image without changing other project metadata', () => {
+  const store = useProjectsStore.getState();
+  const project = {
+    id: createProjectIdFromPath('/local-icon'), path: '/local-icon', label: 'Local', defaultModel: 'provider/model',
+    iconImage: { mime: 'image/png', updatedAt: 1, source: 'custom' as const },
+  };
+  useProjectsStore.setState({ projects: [project] });
+  store.updateProjectMeta(project.id, { icon: 'rocket', iconImage: null });
+  const expected = { ...project, icon: 'rocket', iconImage: null };
+  expect(useProjectsStore.getState().projects).toEqual([expected]);
+  expect(calls.settings).toHaveBeenLastCalledWith({ projects: [expected] });
+  useProjectsStore.setState({ projects: [] });
+  store.resetForRuntimeSwitch();
+  expect(useProjectsStore.getState().projects[0]).toMatchObject(expected);
 });
 
 test('remote remove only deletes Hub reference after confirmation and never drops it on failure', async () => {

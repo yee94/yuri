@@ -43,7 +43,7 @@ import { createSessionOwnershipIndex } from '@/components/session/sidebar/sessio
 import { selectVisibleSessions } from '@/components/session/sidebar/sessionNavigationModel';
 import { buildSessionTree } from '@/components/session/sidebar/sessionTree';
 import { formatWorktreeFooterLabel, sessionWorktreeToMetadata } from '@/lib/worktrees/sessionWorktreeMetadata';
-import { isBlankWorkspace, isMultiPathWorkspace } from '@/lib/workspacePaths';
+import { isMultiPathWorkspace } from '@/lib/workspacePaths';
 import type { WorktreeMetadata } from '@/types/worktree';
 
 import type {

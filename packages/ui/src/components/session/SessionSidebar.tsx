@@ -49,6 +49,7 @@ import { useProjectRepoStatus } from './sidebar/hooks/useProjectRepoStatus';
 import { useProjectSessionLists } from './sidebar/hooks/useProjectSessionLists';
 import { createSessionOwnershipIndex } from './sidebar/sessionOwnership';
 import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
+import type { ProjectIdentitySaveData } from '@/components/sections/projects/useProjectIdentityForm';
 import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { SessionGroupSection } from './sidebar/SessionGroupSection';
 import { SidebarHeader } from './sidebar/SidebarHeader';
@@ -828,27 +829,10 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     [projects, editingProjectDialogId],
   );
 
-  const handleSaveProjectEdit = React.useCallback(
-    (data: {
-      label: string;
-      icon: string | null;
-      color: string | null;
-      iconBackground: string | null;
-      defaultModel: string | null;
-    }) => {
-      if (!editingProjectDialogId) {
-        return;
-      }
-      updateProjectMeta(editingProjectDialogId, {
-        label: data.label,
-        icon: data.icon,
-        color: data.color,
-        iconBackground: data.iconBackground,
-        defaultModel: data.defaultModel ?? null,
-      });
-    },
-    [editingProjectDialogId, updateProjectMeta],
-  );
+  const handleSaveProjectEdit = useEvent((data: ProjectIdentitySaveData) => {
+    if (!editingProjectDialogId) return;
+    return updateProjectMeta(editingProjectDialogId, data);
+  });
 
   const openNewWorktreeDialog = React.useCallback(() => {
     setNewWorktreeDialogOpen(true);

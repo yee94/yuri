@@ -17,7 +17,6 @@ export const useProjectIdentityAutoSave = (
   const {
     hasChanges,
     name,
-    icon,
     color,
     iconBackground,
     defaultModel,
@@ -64,7 +63,6 @@ export const useProjectIdentityAutoSave = (
     defaultModel,
     enabled,
     hasChanges,
-    icon,
     iconBackground,
     isRemovingCustomIcon,
     isUploadingIcon,

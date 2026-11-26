@@ -68,6 +68,7 @@ interface ProjectsStore {
   updateProjectMeta: (id: string, meta: {
     label?: string;
     icon?: string | null;
+    iconImage?: null;
     color?: string | null;
     iconBackground?: string | null;
     defaultModel?: string | null;
@@ -993,6 +994,7 @@ export const useProjectsStore = create<ProjectsStore>()(
     updateProjectMeta: (id: string, meta: {
       label?: string;
       icon?: string | null;
+      iconImage?: null;
       color?: string | null;
       iconBackground?: string | null;
       defaultModel?: string | null;
@@ -1017,6 +1019,7 @@ export const useProjectsStore = create<ProjectsStore>()(
           if (trimmed) updated.label = trimmed;
         }
         if (meta.icon !== undefined) updated.icon = meta.icon;
+        if (meta.iconImage === null) updated.iconImage = null;
         if (meta.color !== undefined) updated.color = meta.color;
         if (meta.iconBackground !== undefined) {
           updated.iconBackground = normalizeIconBackground(meta.iconBackground);

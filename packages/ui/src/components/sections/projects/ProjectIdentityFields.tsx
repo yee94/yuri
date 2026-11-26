@@ -13,19 +13,18 @@ type ProjectIdentityFormState = ReturnType<typeof useProjectIdentityForm>;
 
 type ProjectIdentityFieldsProps = {
   form: ProjectIdentityFormState;
+  onSelectIcon: (icon: string | null) => void;
   showDefaultModel?: boolean;
   storedIconPreview?: React.ReactNode;
   readOnly?: boolean;
 };
 
-export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ form, showDefaultModel = true, storedIconPreview, readOnly = false }) => {
+export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ form, onSelectIcon, showDefaultModel = true, storedIconPreview, readOnly = false }) => {
   const { t } = useI18n();
   const { currentTheme } = useThemeSystem();
   const {
     name,
     setName,
-    icon,
-    setIcon,
     color,
     setColor,
     iconBackground,
@@ -57,6 +56,8 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
   }
 
   const currentColorVar = color ? (COLOR_MAP[color] ?? null) : null;
+  const selectedIcon = effectiveHasImageIcon ? undefined : project.icon ?? null;
+  const iconOperationPending = isUploadingIcon || isRemovingCustomIcon || isDiscoveringIcon;
 
   return (
     <fieldset className="min-w-0" disabled={readOnly}>
@@ -144,8 +145,9 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
             type="button"
             variant="chip"
             size="icon"
-            onClick={() => setIcon(null)}
-            aria-pressed={icon === null}
+            onClick={() => onSelectIcon(null)}
+            disabled={iconOperationPending}
+            aria-pressed={selectedIcon === null}
             aria-label={t('settings.projects.page.field.none')}
             title={t('settings.projects.page.field.none')}
           >
@@ -159,15 +161,16 @@ export const ProjectIdentityFields: React.FC<ProjectIdentityFieldsProps> = ({ fo
                 type="button"
                 variant="chip"
                 size="icon"
-                onClick={() => setIcon(entry.key)}
-                aria-pressed={icon === entry.key}
+                 onClick={() => onSelectIcon(entry.key)}
+                 disabled={iconOperationPending}
+                 aria-pressed={selectedIcon === entry.key}
                 aria-label={entry.label}
                 title={entry.label}
               >
                 <Icon
                   name={iconName}
                   className="w-4 h-4"
-                  style={currentColorVar && icon === entry.key ? { color: currentColorVar } : undefined}
+                   style={currentColorVar && selectedIcon === entry.key ? { color: currentColorVar } : undefined}
                 />
               </Button>
             );

@@ -80,7 +80,7 @@ function registry(fetch: (path: string, init?: { method?: string; body?: BodyIni
 }
 
 test('desktop Edit uses the shared identity controls and saves on the selected Hub project reference', async () => {
-  const remote = project('a');
+  const remote = { ...project('a'), iconImage: { mime: 'image/png', updatedAt: 1, source: 'custom' as const } };
   const fetch = vi.fn(async (_path: string, init?: { method?: string; body?: BodyInit | null }) =>
     init?.method === 'PATCH' ? json({ project: { ...remote, ...JSON.parse(String(init.body)) } }) : json(snapshot('a')));
   const entry = registry(fetch);
@@ -95,8 +95,9 @@ test('desktop Edit uses the shared identity controls and saves on the selected H
   });
   await vi.waitFor(() => expect(fetch.mock.calls.find(([, init]) => init?.method === 'PATCH')).toEqual([
     expect.stringContaining(`/api/hosts/a/projects/${remote.id}`),
-    expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ label: remote.label, icon: 'rocket', color: null, iconBackground: null }) }),
+    expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ icon: 'rocket', iconImage: null }) }),
   ]));
+  expect(useProjectsStore.getState().projects.find(({ id }) => id === remote.id)).toMatchObject({ label: remote.label, icon: 'rocket', iconImage: null });
 });
 
 const renderedIds = (scope: Element = container) => [...scope.querySelectorAll('[data-remote-session]')].map((row) => row.getAttribute('data-remote-session'));

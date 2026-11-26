@@ -5,6 +5,9 @@ menu. Their Edit action opens the same `ProjectEditDialog` and identity controls
 Remote edits persist through the captured Hub's project-reference endpoint and
 render stored icons through the corresponding Host. Local default-model and
 worktree-management controls do not run against a remote directory.
+Choosing a palette icon writes its metadata immediately, independently of the
+debounced text fields. An existing image is detached from the project icon in the
+same write; the source file is not deleted. Remote rows update after Host confirmation.
 
 ## Flat worktree sessions and explicit ownership
 
