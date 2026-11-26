@@ -23,9 +23,13 @@ export const SkillToolGroup: React.FC<{
     const contentId = React.useId();
     const toolParts = activities.map((activity) => activity.part as ToolPartType);
     const isActive = toolParts.some((part) => isToolPartActive(part));
-    const { joinedVisible, hiddenCount } = summarizeSkillNames(toolParts.map(getSkillNameFromToolPart));
+    const { visibleNames, joinedVisible, hiddenCount } = summarizeSkillNames(toolParts.map(getSkillNameFromToolPart));
     const summary = hiddenCount > 0
-        ? t('chat.skillGroup.summaryOverflow', { names: joinedVisible, count: hiddenCount })
+        ? t('chat.skillGroup.summaryOverflow', {
+            names: joinedVisible,
+            count: hiddenCount,
+            total: visibleNames.length + hiddenCount,
+        })
         : joinedVisible;
 
     const handleToggle = useEvent(() => {

@@ -2246,13 +2246,13 @@ export async function ensureSentUserMessagePresence(input: {
 
 const interruptFlights = new WeakMap<DirectoryStoreApi, Map<string, { current: () => boolean; promise: Promise<void> }>>()
 
-export function abortCurrentOperation(sessionId: string): Promise<void> {
+export function abortCurrentOperation(sessionId: string, directoryHint?: string): Promise<void> {
   // The abort must carry the SESSION'S directory, not the active UI directory:
   // OpenCode routes the request to the per-directory instance, and an abort
   // sent to the wrong instance cancels nothing while still returning 200 true
   // (the "stop button does nothing" report — sessions in another project/
   // worktree than the UI's current directory could never be aborted).
-  const { store, directory } = dirStoreForSession(sessionId)
+  const { store, directory } = dirStoreForSession(sessionId, directoryHint)
   const transport = captureRuntimeTransport()
   const children = _childStores
   const executionVersion = store.getState().session_execution_version?.[sessionId] ?? 0

@@ -91,6 +91,26 @@ describe('multi-path & blank workspace registry', () => {
     expect(getState().projects).toHaveLength(2);
   });
 
+  it('prepends the new workspace into existing hubProjectLayout.order when prepend is true', async () => {
+    const { registry, dirA, dirB, getState } = await setupRegistry();
+    const single = await registry.register({ path: dirA, label: 'yuri' });
+    getState().hubProjectLayout = { hubId: 'hub-1', order: [single.project.id, 'remote-ref'], collapsed: {} };
+
+    const multi = await registry.register({
+      paths: [dirA, dirB],
+      label: 'yuri-runmark',
+      prepend: true,
+      createWorkspace: true,
+    });
+
+    expect(getState().projects.map((project) => project.id)).toEqual([multi.project.id, single.project.id]);
+    expect(getState().hubProjectLayout).toEqual({
+      hubId: 'hub-1',
+      order: [multi.project.id, single.project.id, 'remote-ref'],
+      collapsed: {},
+    });
+  });
+
   it('updates workspace paths, primary directory, and transitions cleanly to 0 paths while preserving id', async () => {
     const { registry, dirA, dirB, dirC } = await setupRegistry();
     const { project: single } = await registry.register({ path: dirA });

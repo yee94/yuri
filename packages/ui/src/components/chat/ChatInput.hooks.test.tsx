@@ -612,6 +612,7 @@ it('keeps model-control Hooks asleep through 50 draft edits and delivers the lat
         const selectionValue = { providerID: 'provider', modelID: 'model', agent: 'build' };
         const selectionChange = props.onChange;
         const surface = { active: props.active };
+        const panelModelPicker = undefined;
         ${declarations.get('handleModelControlsSelectionChange') ?? ''}
         ${declarations.get('modelControlsSelectionAdapter')}
         return ${modelControls};

@@ -730,16 +730,24 @@ export const useProjectsStore = create<ProjectsStore>()(
         lastOpenedAt: now,
       };
 
-      const { projects, manualProjectOrder } = get();
+      const { projects, manualProjectOrder, hubProjectLayout } = get();
       const nextProjects = [entry, ...projects];
       const nextManualOrder = [entry.id, ...manualProjectOrder.filter((id) => id !== entry.id)];
-      set({ projects: nextProjects, manualProjectOrder: nextManualOrder });
+      const nextHubLayout = hubProjectLayout ? frontLayout(hubProjectLayout, hubProjectLayout.hubId, [entry.id]) : null;
+      set({
+        projects: nextProjects,
+        manualProjectOrder: nextManualOrder,
+        ...(nextHubLayout ? { hubProjectLayout: nextHubLayout } : {}),
+      });
 
       if (streamDebugEnabled()) {
         console.info('[ProjectsStore] Added project', entry);
       }
 
       get().setActiveProject(entry.id);
+      if (nextHubLayout) {
+        persistHubLayout(projects, nextProjects);
+      }
       void get().discoverProjectIcon(entry.id);
       return entry;
     },
@@ -777,6 +785,14 @@ export const useProjectsStore = create<ProjectsStore>()(
         }
         if (payload.settings) {
           get().synchronizeFromSettings(payload.settings);
+        }
+        const { projects, hubProjectLayout } = get();
+        if (
+          hubProjectLayout
+          && projects[0]?.id !== payload.project.id
+          && projects.some((entry) => entry.id === payload.project!.id)
+        ) {
+          get().moveProjectToTop(payload.project.id);
         }
         if (input.activate !== false) {
           get().setActiveProject(payload.project.id);

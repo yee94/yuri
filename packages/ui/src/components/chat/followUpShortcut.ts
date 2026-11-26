@@ -17,8 +17,12 @@ export const resolveFollowUpEnterAction = (input: {
     canQueue: boolean;
     queueUsable: boolean;
     primary: boolean;
+    nativeInbox?: boolean;
     sessionIsRunning: boolean;
 }): FollowUpEnterAction => {
+    if (input.nativeInbox && input.canQueue) {
+        return { kind: 'submit', delivery: input.ctrlEnter ? 'steer' : input.followUpBehavior };
+    }
     const steerIntoQueue = input.ctrlEnter
         && input.canQueue
         && input.primary

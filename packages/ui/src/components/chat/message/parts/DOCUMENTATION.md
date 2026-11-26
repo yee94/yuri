@@ -75,7 +75,7 @@ Use this doc when you ask an agent to change tool/header/description behavior.
 - `SkillToolGroup.tsx`
   - Collapsible "Load Skill" header for consecutive skill tools.
   - Summary shows original skill names on one line, comma-separated, at most three names.
-  - More than three names append the localized overflow (`{names} and {count} more` / `{names} 等{count}个`).
+  - More than three names append the localized overflow (`{names} and {count} more` / `{names} 等 {total} 个`).
   - While any grouped call is still active, the summary uses the same `FlipUpText` upward flip as Used counts.
   - Receives `children` for the expanded list (do not import `StaticToolRow` here — that would cycle with `ProgressiveGroup`).
   - Active state uses the same 14px desktop / 12px mobile `LatticeOrb` in the 14px desktop / 16px mobile leading slot while any grouped call lacks settlement evidence; the mobile slot centers the orb, and the leading slot restores the Book icon after every grouped call settles.

@@ -29,7 +29,7 @@ export type SelectionState = {
   sessionAgentModelVariantSelections: Map<string, Map<string, Map<string, string>>>
   lastUsedProvider: LastUsedProvider | null
 
-  saveSessionModelSelection: (sessionId: string, providerId: string, modelId: string, location?: HostLocation) => void
+  saveSessionModelSelection: (sessionId: string, providerId: string, modelId: string, location?: HostLocation, options?: { rememberAsDefault?: boolean }) => void
   getSessionModelSelection: (sessionId: string, location?: HostLocation) => { providerId: string; modelId: string } | null
   saveSessionAgentSelection: (sessionId: string, agentName: string, location?: HostLocation) => void
   getSessionAgentSelection: (sessionId: string, location?: HostLocation) => string | null
@@ -96,13 +96,13 @@ export const useSelectionStore = create<SelectionState>()(
       sessionAgentModelVariantSelections: new Map(),
       lastUsedProvider: null,
 
-      saveSessionModelSelection: (sessionId, providerId, modelId, location) => {
+      saveSessionModelSelection: (sessionId, providerId, modelId, location, options) => {
         sessionId = location ? locationSessionKey(location, sessionId) : sessionId
         return set((s) => {
           const map = new Map(s.sessionModelSelections)
           map.delete(sessionId) // Delete first to ensure it moves to the end of insertion order (MRU)
           map.set(sessionId, { providerId, modelId })
-          return { sessionModelSelections: map, ...(!location?.hostId ? { lastUsedProvider: { providerID: providerId, modelID: modelId } } : {}) }
+          return { sessionModelSelections: map, ...(!location?.hostId && options?.rememberAsDefault !== false ? { lastUsedProvider: { providerID: providerId, modelID: modelId } } : {}) }
         })
       },
 

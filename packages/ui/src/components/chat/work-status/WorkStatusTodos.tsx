@@ -98,7 +98,7 @@ const WorkStatusTodoList: React.FC<{ todos: Todo[]; isWorking: boolean }> = ({ t
           expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
         )}
       >
-        <TodoList id={undefined} todos={todos} isWorking={isWorking} animate={settled} listRef={listRef} rowClassName="px-2 gap-2 [&_svg]:size-3.5 [&>span:first-child]:w-3.5" className="max-h-[15em] min-h-0 overflow-y-auto pt-[0.125em]" />
+        <TodoList id={undefined} todos={todos} isWorking={isWorking} animate={settled} listRef={listRef} clampContent={false} rowClassName="px-2 gap-2 [&_svg]:size-3.5 [&>span:first-child]:w-3.5" className="min-h-0 overflow-hidden pt-[0.125em]" />
       </div>
     </div>
   );

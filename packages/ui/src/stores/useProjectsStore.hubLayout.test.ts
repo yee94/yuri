@@ -91,3 +91,64 @@ test('late write from previous Hub cannot alter the next Hub projection', async 
   expect(useProjectsStore.getState().projects.map((project) => project.id)).toEqual(['other-local']);
   expect(fixture.error).not.toHaveBeenCalled();
 });
+
+test('createWorkspace prepends the new workspace even when Hub layout already exists', async () => {
+  const store = useProjectsStore.getState();
+  store.synchronizeFromSettings(snapshot([local.id, remote.id]));
+  store.reconcileRemoteProjects([remote], 'hub');
+
+  const workspace = {
+    id: 'ws_multi1234',
+    path: '/local',
+    paths: ['/local', '/second'],
+    label: 'Combined',
+  };
+  fixture.fetch.mockImplementationOnce(async (path, options) => {
+    expect(path).toBe('/api/yuri/workspaces');
+    expect(JSON.parse(options.body)).toMatchObject({ prepend: true, createWorkspace: true });
+    return Response.json({
+      project: workspace,
+      created: true,
+      settings: {
+        projects: [workspace, local],
+        activeProjectId: workspace.id,
+        hubProjectLayout: { hubId: 'hub', order: [workspace.id, local.id, remote.id], collapsed: {} },
+      },
+    }, { status: 201 });
+  });
+
+  const result = await store.createWorkspace({ paths: ['/local', '/second'], label: 'Combined' });
+  expect(result.ok).toBe(true);
+  expect(useProjectsStore.getState().projects.map((project) => project.id)).toEqual([workspace.id, local.id, remote.id]);
+  expect(useProjectsStore.getState().hubProjectLayout?.order).toEqual([workspace.id, local.id, remote.id]);
+});
+
+test('createWorkspace still promotes to top when server response omits hubProjectLayout', async () => {
+  const store = useProjectsStore.getState();
+  store.synchronizeFromSettings(snapshot([local.id, remote.id]));
+  store.reconcileRemoteProjects([remote], 'hub');
+
+  const workspace = {
+    id: 'ws_legacy1234',
+    path: '/local',
+    paths: ['/local', '/second'],
+    label: 'Combined',
+  };
+  fixture.fetch
+    .mockResolvedValueOnce(Response.json({
+      project: workspace,
+      created: true,
+      settings: { projects: [workspace, local], activeProjectId: workspace.id },
+    }, { status: 201 }))
+    .mockResolvedValueOnce(Response.json({
+      projects: [workspace, local],
+      hasRemoteProjects: true,
+      hubProjectLayout: { hubId: 'hub', order: [workspace.id, local.id, remote.id], collapsed: {} },
+    }));
+
+  const result = await store.createWorkspace({ paths: ['/local', '/second'], label: 'Combined' });
+  expect(result.ok).toBe(true);
+  await waitForPendingHubProjectLayoutUpdates(getRuntimeTransportIdentity());
+  expect(useProjectsStore.getState().projects.map((project) => project.id)).toEqual([workspace.id, local.id, remote.id]);
+  expect(useProjectsStore.getState().hubProjectLayout?.order).toEqual([workspace.id, local.id, remote.id]);
+});

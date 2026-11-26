@@ -2593,7 +2593,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.usedGroup.otherPlural': '{count} 次调用',
   'chat.skillGroup.expandAria': '展开已加载的技能',
   'chat.skillGroup.collapseAria': '折叠已加载的技能',
-  'chat.skillGroup.summaryOverflow': '{names} 等{count}个',
+  'chat.skillGroup.summaryOverflow': '{names} 等 {total} 个',
   'chat.tools.display.read': '读取文件',
   'chat.tools.display.write': '写入',
   'chat.tools.display.edit': '编辑',

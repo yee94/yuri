@@ -45,6 +45,18 @@ the presentation must never redirect it to the Hub's primary singleton resources
 Local `ChatContainer` also passes its foreground `active` signal to `ChatInput`,
 so a retained inactive local page cannot reclaim the process overlay.
 
+Desktop `ContextPanel` only overrides a chat tab's read-only state after its
+session is confirmed as a child. With `allowPromptingSubagentSessions` enabled,
+the child uses its own draft, model/agent selection, request cards and native
+inbox, on the session's directory or its owning Remote Host. Disabling the
+setting restores the read-only banner. The local writable composer is loaded
+and mounted only for a visible, writable child. The disabled path keeps the
+parent-presence selector and does not start composer draft, catalog, inbox, or
+request-card work. Panel pickers and timeline are local to
+the panel; it does not register as the main composer's global shortcut target
+or follow its expanded state. The panel's Enter/Send follows the queue/steer
+preference, and Ctrl/Cmd+Enter steers a running child directly.
+
 The native bridge is keyed by the complete DraftKey, not raw session/directory.
 It claims the process session only in layout commit, with an instance token.
 Native listeners, async props, delayed Web send and leave-conceal callbacks are

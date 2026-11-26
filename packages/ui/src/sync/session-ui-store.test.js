@@ -10,6 +10,7 @@ import {
   beginDraftEstablishingPaint,
   clearDraftEstablishingPaint,
   materializeOpenDraftSession,
+  promoteProjectForConversation,
   QUEUE_ABORT_BLOCK_FALLBACK_MS,
   routeMessage,
   useSessionUIStore,
@@ -1711,5 +1712,36 @@ describe('setNewSessionDraftTarget force unlock', () => {
     expect(draft.directoryOverride).toBe(projectRoot);
     expect(draft.bootstrapPendingDirectory).toBe(worktreePath);
     expect(draft.preserveDirectoryOverride).toBe(true);
+  });
+});
+
+describe('promoteProjectForConversation workspace ownership', () => {
+  test('promotes the multi-path workspace matching metadata.yuri.workspaceId even when a single-path project shares its root', () => {
+    const single = { id: 'proj-yuri', path: '/workspace/yuri', label: 'yuri' };
+    const other = { id: 'proj-other', path: '/workspace/other', label: 'other' };
+    const multi = {
+      id: 'ws_multi001',
+      path: '/workspace/yuri',
+      paths: ['/workspace/yuri', '/workspace/runmark'],
+      label: 'yuri-runmark',
+    };
+    useProjectsStore.setState({
+      projects: [single, other, multi],
+      activeProjectId: single.id,
+      manualProjectOrder: [single.id, other.id, multi.id],
+      hubProjectLayout: null,
+    });
+
+    promoteProjectForConversation('/workspace/yuri', new Map(), {
+      id: 'ses-ws-1',
+      directory: '/workspace/yuri',
+      metadata: { yuri: { workspaceId: multi.id } },
+    });
+
+    expect(useProjectsStore.getState().projects.map((project) => project.id)).toEqual([
+      multi.id,
+      single.id,
+      other.id,
+    ]);
   });
 });

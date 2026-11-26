@@ -260,6 +260,7 @@ const COMPOSER_TEXT_LAYOUT_CLASS = 'box-border w-full whitespace-pre-wrap break-
 const ToolOutputDialog = lazyWithChunkRecovery(() => import('./message/ToolOutputDialog'));
 const EMPTY_QUEUE: QueueItem[] = [];
 const EMPTY_INLINE_DRAFTS: InlineCommentDraft[] = [];
+const ignoreExpandedInput = () => {};
 const EMPTY_PROVIDERS: Array<{ id: string; name?: string; models: Array<Record<string, unknown> & { id: string; name?: string }> }> = [];
 const FILE_MENTION_TOKEN = /^@[^\s]+$/;
 const shouldEnableComposerSlashDirectoryQueries = ({
@@ -1738,6 +1739,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     // Publish the mounted composer so global shortcuts (Ctrl+X chords, etc.)
     // target the same surface as the visible session UI — including Assistant.
     React.useLayoutEffect(() => {
+        if (surface.isolatedControls) return;
         if (!surface.active) {
             clearActiveChatInputSurface(surface.surfaceID);
             return;
@@ -1756,6 +1758,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const newSessionDraftOpen = surface.kind === 'secondary' ? surface.commands!.hasNewDraft : primaryNewSessionDraftOpen;
     const surfaceHasNewDraft = newSessionDraftOpen;
     const currentDirectory = surface.directory ?? primaryDirectory;
+    const composerSessionDirectory = surface.isolatedControls ? currentDirectory : currentSessionDirectoryForSync ?? currentDirectory;
     const draftKey = surface.draftKey ?? primaryDraftKey;
     // Command availability is supplied explicitly to CommandAutocomplete via
     // the surface command context. Primary surfaces derive hasMessages and
@@ -1822,6 +1825,10 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const selectionValue = surface.selection.value;
     const selectionChange = surface.selection.change;
     const selectionCatalog = surface.selection.catalog;
+    const [panelModelOpen, setPanelModelOpen] = React.useState<boolean>(false);
+    const panelModelPicker = React.useMemo(() => surface.isolatedControls
+        ? { open: panelModelOpen, setOpen: setPanelModelOpen }
+        : undefined, [surface.isolatedControls, panelModelOpen]);
     const handleModelControlsSelectionChange = useEvent(async (selection: { providerID: string; modelID: string; agent: string | null; variant?: string }) => {
         if (!selectionChange) throw new Error('chat-input-surface-selection-readonly');
         await selectionChange({ ...selection, agent: selection.agent ?? undefined, variant: selection.variant });
@@ -1838,7 +1845,9 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         favorites: surface.selection?.favorites,
         disabled: !surface.active,
         catalog: selectionCatalog,
-    }), [selectionCatalog, handleModelControlsSelectionChange, selectionValue.agent, selectionValue.modelID, selectionValue.providerID, selectionValue.variant, surface.active, surface.selection?.requestCatalog, surface.selection?.favorites]);
+        panelModelPicker,
+        includeSubagents: surface.includeSubagents,
+    }), [selectionCatalog, handleModelControlsSelectionChange, selectionValue.agent, selectionValue.modelID, selectionValue.providerID, selectionValue.variant, surface.active, surface.selection?.requestCatalog, surface.selection?.favorites, panelModelPicker, surface.includeSubagents]);
 
     // Session switch drops a previous conversation's user-pick hold and restore key.
     React.useEffect(() => {
@@ -1998,8 +2007,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const inputBarOffset = useUIStore((state) => state.inputBarOffset);
     const persistChatDraft = useUIStore((state) => state.persistChatDraft);
     const inputSpellcheckEnabled = useUIStore((state) => state.inputSpellcheckEnabled);
-    const isExpandedInput = useUIStore((state) => state.isExpandedInput);
-    const setExpandedInput = useUIStore((state) => state.setExpandedInput);
+    const isExpandedInput = useUIStore((state) => !surface.isolatedControls && state.isExpandedInput);
+    const setExpandedInput = useUIStore((state) => surface.isolatedControls ? ignoreExpandedInput : state.setExpandedInput);
     const setTimelineDialogOpen = useUIStore((state) => state.setTimelineDialogOpen);
     const scopedSessionTitles = React.useMemo(() => hostRuntime?.entry.location.hostId ? {
         get: (id: string) => readRemoteComposerSessionTitle(remoteQueryClient, hostRuntime.registry, hostRuntime.entry, id),
@@ -2294,7 +2303,9 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         directory: hostRuntime?.entry.location.hostId ? '' : currentQueueScope?.directory ?? '',
         sessionID: hostRuntime?.entry.location.hostId ? '' : currentQueueScope?.sessionID ?? '',
     });
-    const legacyQueue = React.useMemo(() => currentSessionId && !hostRuntime?.entry.location.hostId ? legacyQueueScope(currentSessionId) : null, [currentSessionId, hostRuntime]);
+    const usesNativeInbox = surface.nativeInbox != null;
+    const legacyQueue = React.useMemo(() => currentSessionId && !hostRuntime?.entry.location.hostId && !usesNativeInbox
+        ? legacyQueueScope(currentSessionId) : null, [currentSessionId, hostRuntime, usesNativeInbox]);
     const boundQueuedMessages = useMessageQueueStore(
         React.useMemo(
             () => (state: ReturnType<typeof useMessageQueueStore.getState>) => {
@@ -2449,7 +2460,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     const hasQueuedMessages = serverQueue.mode === 'server'
         ? serverQueue.items.length > 0
         : queuedMessages.length > 0 || legacyPendingAdmissions.length > 0;
-    const queueFrozen = !hostRuntime?.entry.location.hostId && !isBtwCommand && !queueModeAllowsMutations(serverQueue.mode);
+    const queueFrozen = !hostRuntime?.entry.location.hostId && !surface.nativeInbox && !isBtwCommand && !queueModeAllowsMutations(serverQueue.mode);
     const canSend = hasContent || hasQueuedMessages;
 
     const stagedEditMessageId = useSessionUIStore(
@@ -2540,8 +2551,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     // selector mints a fresh array per read and trips "Maximum update depth".
     const inboxOverlayItems = useSessionInboxOverlayStore(
         React.useMemo(() => (state: ReturnType<typeof useSessionInboxOverlayStore.getState>) => (
-            currentSessionId ? state.bySession[currentSessionId] : undefined
-        ), [currentSessionId]),
+            currentSessionId && !usesNativeInbox ? state.bySession[currentSessionId] : undefined
+        ), [currentSessionId, usesNativeInbox]),
     );
     const inboxOverlayChips = React.useMemo(
         () => {
@@ -2661,7 +2672,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
     // Flush/runtime/scope/config/compile/admit failures unstage and restore via
     // submission capture; committed admits keep the empty composer.
     const handleQueueMessage = useEvent(async () => {
-        if (hostRuntime?.entry.location.hostId) { await handleSubmit({ delivery: 'queue' }); return; }
+        if (hostRuntime?.entry.location.hostId || surface.nativeInbox) { await handleSubmit({ delivery: 'queue' }); return; }
         if (!surface.active) return;
         if (isSubmissionInFlight()) return;
         // Sent-message replacement owns a direct submit, never queue admission.
@@ -3156,12 +3167,14 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         // Never enter primary question recovery, local commands or Hub queue staging.
         if (hostRuntime?.entry.location.hostId) {
             if (requestedCommandName === 'timeline' && inputMode !== 'shell') {
-                useUIStore.getState().setTimelineDialogOpen(true);
+                if (surface.openTimeline) surface.openTimeline();
+                else useUIStore.getState().setTimelineDialogOpen(true);
                 replacePlainDocument('');
                 return;
             }
             if (isModelCommand) {
                 if (isMobile) handleOpenMobilePanel('model');
+                else if (surface.isolatedControls) setPanelModelOpen(true);
                 else useUIStore.getState().setModelSelectorOpen(true);
                 return;
             }
@@ -3244,13 +3257,15 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
             if (isMobile) {
                 handleOpenMobilePanel('model');
+            } else if (surface.isolatedControls) {
+                setPanelModelOpen(true);
             } else {
                 useUIStore.getState().setModelSelectorOpen(true);
                 void useConfigStore.getState().refreshCatalogsOnPickerOpen({ source: 'chatInput:modelCommand' });
             }
             return;
         }
-        const routeThroughQueue = !nativeGoal && !replacingMessage && !steerAfterAdmit && shouldRouteComposerThroughQueue({
+        const routeThroughQueue = !surface.nativeInbox && !nativeGoal && !replacingMessage && !steerAfterAdmit && shouldRouteComposerThroughQueue({
             hasQueuedMessages, sessionIsRunning, queuedOnly, delivery,
         });
         if (!queuedOnly && localCommand && localCommand !== 'model') {
@@ -3974,7 +3989,8 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 return;
             }
             else if (commandName === 'timeline' && currentSessionId && sessionSurfaceActions.timeline) {
-                setTimelineDialogOpen(true);
+                if (surface.openTimeline) surface.openTimeline();
+                else setTimelineDialogOpen(true);
                 return;
             }
             else if (commandName === 'reload' && isVSCodeRuntime()) {
@@ -4376,7 +4392,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
     // Send matches Enter. Default follow-up is queue; Cmd/Ctrl+Enter is the steer shortcut.
     const handlePrimaryAction = useEvent(() => {
-        if (hostRuntime?.entry.location.hostId) { void handleSubmit(); return; }
+        if (hostRuntime?.entry.location.hostId && !surface.isolatedControls) { void handleSubmit(); return; }
         if (getLocalChatCommand(getCurrentInputSnapshot().message, inputMode) === 'btw') {
             void handleSubmit();
             return;
@@ -4398,6 +4414,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             canQueue: Boolean(canQueue),
             queueUsable: Boolean(queueUsable),
             primary: surface.kind === 'primary',
+            nativeInbox: surface.isolatedControls && Boolean(surface.nativeInbox),
             sessionIsRunning,
         });
         if (followUpAction.kind === 'queue') {
@@ -4904,6 +4921,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 canQueue: Boolean(canQueue),
                 queueUsable: Boolean(queueUsable),
                 primary: surface.kind === 'primary',
+                nativeInbox: surface.isolatedControls && Boolean(surface.nativeInbox),
                 sessionIsRunning,
             });
             if (followUpAction.kind === 'queue') {
@@ -7315,7 +7333,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                     ) : null}
                     <SessionGoalButton
                         sessionId={currentSessionId}
-                        directory={currentSessionDirectoryForSync ?? currentDirectory}
+                        directory={composerSessionDirectory}
                         draftOpen={newSessionDraftOpen}
                     />
                     <SessionGoalObjectiveCounter length={message.length} />
@@ -7388,7 +7406,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 ) : null}
                 <SessionGoalButton
                     sessionId={currentSessionId}
-                    directory={currentSessionDirectoryForSync ?? currentDirectory}
+                    directory={composerSessionDirectory}
                     draftOpen={newSessionDraftOpen}
                 />
                 <SessionGoalObjectiveCounter length={message.length} />
@@ -7471,7 +7489,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
 
     // Gate trailing so an empty SessionGoalRow (no goal / disabled) does not keep
     // the queue shell open with only the composer-overlap spacer.
-    const sessionGoalDirectory = currentSessionDirectoryForSync ?? currentDirectory;
+    const sessionGoalDirectory = composerSessionDirectory;
     const sessionRecoveryDirectory = surface.kind === 'secondary' ? surface.directory : currentSessionDirectoryForSync;
     const { goal: sessionGoal, enabled: sessionGoalEnabled } = useSessionGoal(currentSessionId ?? '', sessionGoalDirectory);
     const sessionGoalLeading = currentSessionId && sessionGoalEnabled && sessionGoal
@@ -7482,7 +7500,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             />
         )
         : null;
-    const queuedMessageSurface = hostRuntime?.entry.location.hostId ? surface.nativeInbox ?? null : (
+    const queuedMessageSurface = surface.nativeInbox ?? (hostRuntime?.entry.location.hostId ? null : (
         <QueuedMessageChips
             onEditMessage={handleQueuedMessageEdit}
             onSendMessage={handleQueuedMessageSend}
@@ -7544,7 +7562,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             }}
             trailing={sessionGoalLeading}
         />
-    );
+    ));
 
     return (
         <>
@@ -7552,6 +7570,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         {surface.kind === 'primary' && currentSessionId ? <BtwComposerSurface scope={{ sessionId: currentSessionId, directory: currentDirectory }} active={surface.active} mobile={isMobile} /> : null}
         <form
             ref={composerFormRef}
+            data-panel-composer={surface.isolatedControls || undefined}
             onSubmit={(e) => { e.preventDefault(); handlePrimaryAction(); }}
             onPointerDownCapture={(event) => {
                 if (!isMobile) return;
@@ -7775,7 +7794,7 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
                 )}
                 <RevertedMessageDock
                     sessionId={currentSessionId}
-                    directory={currentSessionDirectoryForSync ?? currentDirectory}
+                    directory={composerSessionDirectory}
                 />
                 <div className={isMobile ? 'relative yuri-mobile-composer-stack' : 'contents'}>
                 <div className={isMobile ? 'yuri-mobile-composer-expanded-layer' : 'contents'}>

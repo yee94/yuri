@@ -155,7 +155,8 @@ describe('progressive activity presentation', () => {
         expect(simplifiedChinese).toContain("'chat.usedGroup.used': '运行了'");
         expect(simplifiedChinese).toContain("'chat.usedGroup.editPlural': '{count} 次编辑'");
         expect(simplifiedChinese).toContain("'chat.usedGroup.commandPlural': '{count} 次命令'");
-        expect(simplifiedChinese).toContain("'chat.skillGroup.summaryOverflow': '{names} 等{count}个'");
+        expect(simplifiedChinese).toContain("'chat.skillGroup.summaryOverflow': '{names} 等 {total} 个'");
+        expect(traditionalChinese).toContain("'chat.skillGroup.summaryOverflow': '{names} 等 {total} 個'");
         expect(traditionalChinese).toContain("'chat.activity.title': '處理詳情'");
         expect(traditionalChinese).toContain("'chat.activity.compacting': '正在壓縮'");
         expect(traditionalChinese).toContain("'chat.assistantStatus.compacting': '正在壓縮中'");

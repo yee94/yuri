@@ -120,10 +120,11 @@ type TodoListProps = {
   rowClassName?: string;
   listRef?: React.Ref<HTMLUListElement>;
   id?: string;
+  clampContent?: boolean;
 };
 
 // Font size comes from the host: rows use `em`/inherit and never set px sizes.
-export const TodoList: React.FC<TodoListProps> = ({ todos, isWorking = false, animate = false, className, rowClassName, listRef, id }) => {
+export const TodoList: React.FC<TodoListProps> = ({ todos, isWorking = false, animate = false, className, rowClassName, listRef, id, clampContent = true }) => {
   const { t } = useI18n();
   const activeIndex = React.useMemo(() => {
     const inProgress = todos.findIndex((todo) => todo.status === 'in_progress');
@@ -147,7 +148,7 @@ export const TodoList: React.FC<TodoListProps> = ({ todos, isWorking = false, an
             <span key={status} className={cn('flex h-[1.32em] w-[1.15em] items-center justify-center', animate && 'yuri-todo-icon-pop')} title={t(statusLabelKey[status])}>
               <TodoGlyph status={status} />
             </span>
-            <span dir="auto" title={todo.content} className={cn('line-clamp-3 min-w-0 whitespace-normal text-[0.88em] break-words leading-[1.5] transition-colors duration-300', textClassName[status])}>
+            <span dir="auto" title={todo.content} className={cn(clampContent && 'line-clamp-3', 'min-w-0 whitespace-normal text-[0.88em] break-words leading-[1.5] transition-colors duration-300', textClassName[status])}>
               <span className={cn(status === 'in_progress' && 'animate-text-shimmer')}>{todo.content}</span>
             </span>
           </li>

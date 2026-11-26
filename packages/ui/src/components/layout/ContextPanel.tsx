@@ -51,6 +51,7 @@ import { getRuntimeApiBaseUrl, getRuntimeKey } from '@/lib/runtime-switch';
 import { Icon } from "@/components/icon/Icon";
 import { YuriLogo } from "@/components/ui/YuriLogo";
 import { invokeDesktopCommand } from '@/lib/desktopNative';
+import { isVSCodeRuntime } from '@/lib/desktop';
 import {
   EMBEDDED_SESSION_CHAT_CLOSE_TAB_EVENT,
   EMBEDDED_SESSION_CHAT_VISIBILITY_EVENT,
@@ -2128,6 +2129,8 @@ const ContextPanelContentView: React.FC<ContextPanelProps & { remoteSessions?: A
   const setSelectedFilePath = useFilesViewTabsStore((state) => state.setSelectedPath);
   const openContextPreview = useUIStore((state) => state.openContextPreview);
   const allowPromptingSubagentSessions = useUIStore((state) => state.allowPromptingSubagentSessions);
+  const isMobile = useUIStore((state) => state.isMobile);
+  const desktopPanel = !isMobile && !isVSCodeRuntime();
   const { themeMode, setThemeMode, lightThemeId, darkThemeId, currentTheme } = useThemeSystem();
 
   const tabs = React.useMemo(() => panelState?.tabs ?? [], [panelState?.tabs]);
@@ -2968,12 +2971,14 @@ const ContextPanelContentView: React.FC<ContextPanelProps & { remoteSessions?: A
                 location={{ ...host.entry.location, directory: parseLocationKey(view.directory, host.entry.location.hubId).directory }}
                 sessionId={view.sessionId}
                 active={visible}
-                readOnly={tabs.find((tab) => tab.id === view.tabId)?.readOnly ?? true}
+                 readOnly={tabs.find((tab) => tab.id === view.tabId)?.readOnly ?? true}
+                 contextPanel={desktopPanel ? { allowPromptingSubagentSessions } : undefined}
                 onNavigateSession={(sessionId, directory) => { handleSessionNavigate(view.tabId, sessionId, directory); }}
               /></div> : <ContextPanelSessionTranscript
                 surfaceId={view.surfaceId}
                 sessionId={view.sessionId}
-                directory={view.directory}
+                 directory={view.directory}
+                 allowPromptingSubagentSessions={desktopPanel && allowPromptingSubagentSessions}
                 active={visible}
                 canNavigateBack={visible && Boolean(navigation?.stack.length)}
                 onNavigateSession={(sessionId, directory) => handleSessionNavigate(view.tabId, sessionId, directory)}

@@ -277,6 +277,8 @@ const formatDate = (value?: string) => {
 export type ModelControlsSelection = ControlledModelSelection & { variant?: string };
 
 export type ModelControlsSelectionAdapter = {
+    panelModelPicker?: { open: boolean; setOpen: (open: boolean) => void };
+    includeSubagents?: boolean;
     requestCatalog?: (open: boolean) => void;
     favorites?: ChatInputModelFavorites;
     selection: ModelControlsSelection;
@@ -404,12 +406,16 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const addRecentModel = useUIStore((state) => state.addRecentModel);
     const addRecentAgent = useUIStore((state) => state.addRecentAgent);
     const addRecentEffort = useUIStore((state) => state.addRecentEffort);
-    const isModelSelectorOpen = useUIStore((state) => state.isModelSelectorOpen);
-    const setModelSelectorOpen = useUIStore((state) => state.setModelSelectorOpen);
-    const isAgentSelectorOpen = useUIStore((state) => state.isAgentSelectorOpen);
-    const setAgentSelectorOpen = useUIStore((state) => state.setAgentSelectorOpen);
-    const isModelSelectorInstant = useUIStore((state) => state.isModelSelectorInstant);
-    const isAgentSelectorInstant = useUIStore((state) => state.isAgentSelectorInstant);
+    const panelModelPicker = selectionAdapter?.panelModelPicker;
+    const [panelAgentOpen, setPanelAgentOpen] = React.useState(false);
+    const globalModelOpen = useUIStore((state) => !panelModelPicker && state.isModelSelectorOpen);
+    const globalAgentOpen = useUIStore((state) => !panelModelPicker && state.isAgentSelectorOpen);
+    const isModelSelectorOpen = panelModelPicker?.open ?? globalModelOpen;
+    const setModelSelectorOpen = panelModelPicker?.setOpen ?? useUIStore.getState().setModelSelectorOpen;
+    const isAgentSelectorOpen = panelModelPicker ? panelAgentOpen : globalAgentOpen;
+    const setAgentSelectorOpen = panelModelPicker ? setPanelAgentOpen : useUIStore.getState().setAgentSelectorOpen;
+    const isModelSelectorInstant = useUIStore((state) => !panelModelPicker && state.isModelSelectorInstant);
+    const isAgentSelectorInstant = useUIStore((state) => !panelModelPicker && state.isAgentSelectorInstant);
     const setSettingsDialogOpen = useUIStore((state) => state.setSettingsDialogOpen);
     const setSettingsPage = useUIStore((state) => state.setSettingsPage);
     const hiddenModels = useUIStore((state) => state.hiddenModels);
@@ -524,10 +530,14 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     // finalFocus={resolveComposerFinalFocus} hands focus to the composer during
     // unmount; onOpenChangeComplete runs a deferred backup once FloatingFocusManager
     // is fully gone (a bare microtask is too early and loses the race in WebKit).
-    const restoreComposerFocus = React.useCallback(() => {
+    const isSelectorOpen = useEvent((selector: 'model' | 'agent') => {
+        if (panelModelPicker) return selector === 'model' ? panelModelPicker.open : panelAgentOpen;
+        const state = useUIStore.getState();
+        return selector === 'model' ? state.isModelSelectorOpen : state.isAgentSelectorOpen;
+    });
+    const restoreComposerFocus = useEvent(() => {
         const focusComposer = () => {
-            const state = useUIStore.getState();
-            if (!state.isModelSelectorOpen && !state.isAgentSelectorOpen) {
+            if (!isSelectorOpen('model') && !isSelectorOpen('agent')) {
                 focusComposerTextarea(composerTextareaRef);
             }
         };
@@ -538,16 +548,14 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                 requestAnimationFrame(focusComposer);
             });
         }, 0);
-    }, [composerTextareaRef]);
+    });
 
-    const handleSelectorCloseComplete = React.useCallback((selector: 'model' | 'agent') => {
-        const state = useUIStore.getState();
-        const reopened = selector === 'model' ? state.isModelSelectorOpen : state.isAgentSelectorOpen;
-        if (reopened) {
+    const handleSelectorCloseComplete = useEvent((selector: 'model' | 'agent') => {
+        if (isSelectorOpen(selector)) {
             return;
         }
 
-        useUIStore.setState(selector === 'model'
+        if (!panelModelPicker) useUIStore.setState(selector === 'model'
             ? { isModelSelectorInstant: false }
             : { isAgentSelectorInstant: false });
 
@@ -556,17 +564,16 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         }
 
         restoreComposerFocus();
-    }, [restoreComposerFocus]);
+    });
 
     // Base UI Menu returns focus to the trigger by default; hand it the composer
     // instead so Esc/Enter leave the caret back in the chat input.
-    const resolveComposerFinalFocus = React.useCallback((): HTMLElement | null | false => {
-        const state = useUIStore.getState();
-        if (state.isModelSelectorOpen || state.isAgentSelectorOpen) {
+    const resolveComposerFinalFocus = useEvent((): HTMLElement | null | false => {
+        if (isSelectorOpen('model') || isSelectorOpen('agent')) {
             return false;
         }
         return resolveComposerTextarea(composerTextareaRef);
-    }, [composerTextareaRef]);
+    });
 
     // Handle model selector close behavior (separate from agent selector)
     const prevModelSelectorOpenRef = React.useRef(isModelSelectorOpen);
@@ -614,8 +621,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     }, [hasLocalOverlay, setActiveMobilePanel]);
 
     const selectableDesktopAgents = React.useMemo(() => {
-        return agents.filter((agent) => isPrimaryMode(agent.mode));
-    }, [agents]);
+        return selectionAdapter?.includeSubagents ? agents : agents.filter((agent) => isPrimaryMode(agent.mode));
+    }, [agents, selectionAdapter?.includeSubagents]);
 
     const sortedAndFilteredAgents = React.useMemo(() => {
         if (!agentSearchQuery.trim()) {
@@ -1415,12 +1422,15 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     ]);
 
     const handleCycleAgentFromModelPicker = React.useCallback((direction: 1 | -1) => {
-        const nextAgentName = getCycledPrimaryAgentName(agents, currentAgentName, direction);
+        const currentIndex = selectableDesktopAgents.findIndex((agent) => agent.name === currentAgentName);
+        const nextAgentName = selectionAdapter?.includeSubagents && selectableDesktopAgents.length
+            ? selectableDesktopAgents[(currentIndex + direction + selectableDesktopAgents.length) % selectableDesktopAgents.length].name
+            : getCycledPrimaryAgentName(agents, currentAgentName, direction);
         if (!nextAgentName) {
             return;
         }
         handleAgentChange(nextAgentName, { closeModelSelector: false });
-    }, [agents, currentAgentName, handleAgentChange]);
+    }, [agents, currentAgentName, handleAgentChange, selectableDesktopAgents, selectionAdapter?.includeSubagents]);
 
     const getCycleAgentDirectionFromEvent = React.useCallback((event: KeyboardEvent | React.KeyboardEvent): 1 | -1 | null => {
         const cycleAgentBackwardShortcut = cycleAgentShortcut && !cycleAgentShortcut.includes('shift')

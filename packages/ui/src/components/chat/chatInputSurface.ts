@@ -216,6 +216,10 @@ export type ChatInputQueueScope = {
 type ChatInputSurfaceBase = {
   /** Presentation role is independent of local vs explicitly scoped resource ownership. */
   composerPresentation?: 'primary' | 'panel';
+  /** A co-mounted panel does not participate in the main composer's global controls. */
+  isolatedControls?: boolean;
+  includeSubagents?: boolean;
+  openTimeline?: () => void;
   nativeInbox?: React.ReactNode;
   permissionPolicy?: { enabled: boolean; saving: boolean; change: (enabled: boolean) => Promise<void> };
   surfaceID: string;

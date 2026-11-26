@@ -104,8 +104,16 @@ export const createProjectRegistry = ({
 
       const settings = await persistSettings((current) => {
         const projects = Array.isArray(current.projects) ? current.projects : [];
+        const hubLayout = current.hubProjectLayout;
+        const prependedHubLayout = input.prepend === true && hubLayout && typeof hubLayout.hubId === 'string' && Array.isArray(hubLayout.order)
+          ? {
+              ...hubLayout,
+              order: [project.id, ...hubLayout.order.filter((entryId) => entryId !== project.id)],
+            }
+          : undefined;
         return {
           projects: input.prepend === true ? [project, ...projects] : [...projects, project],
+          ...(prependedHubLayout ? { hubProjectLayout: prependedHubLayout } : {}),
           ...(input.activate === true ? { activeProjectId: project.id, lastDirectory: primaryDirectory } : {}),
         };
       });

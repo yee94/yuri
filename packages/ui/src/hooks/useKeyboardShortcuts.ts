@@ -299,7 +299,7 @@ export const useKeyboardShortcuts = () => {
 
     const restoreChatInputFocus = () => {
       window.requestAnimationFrame(() => {
-        document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]')?.focus({ preventScroll: true });
+        document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]:not([data-panel-composer] *)')?.focus({ preventScroll: true });
       });
     };
 
@@ -887,7 +887,7 @@ export const useKeyboardShortcuts = () => {
 
       if (eventMatchesShortcut(e, combo('focus_input'))) {
         e.preventDefault();
-        const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]');
+        const textarea = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input="true"]:not([data-panel-composer] *)');
         textarea?.focus();
         return;
       }
@@ -1315,7 +1315,7 @@ export const useKeyboardShortcuts = () => {
           workStatusOverlayOpen,
         } = useUIStore.getState();
 
-        if (isInsideDialog || isInsideTerminal || hasDropdownInteraction) {
+         if (isInsideDialog || isInsideTerminal || hasDropdownInteraction || target?.closest('[data-panel-composer="true"]')) {
           resetAbortPriming();
           return;
         }

@@ -44,7 +44,7 @@ import { resolveProjectForSessionDirectory } from "@/lib/projectResolution"
 import { useSessionNavigationStore } from '@/stores/useSessionNavigationStore'
 import { scopeProjectWorktrees } from "@/lib/worktrees/projectWorktreeScope"
 import { buildSessionWorktreeMetadataPatch } from "@/lib/worktrees/sessionWorktreeMetadata"
-import { buildWorkspacePromptContext, isBlankWorkspace, isMultiPathWorkspace, isWorkspaceId } from "@/lib/workspacePaths"
+import { buildWorkspacePromptContext, isBlankWorkspace, isMultiPathWorkspace, isWorkspaceId, readSessionWorkspaceId } from "@/lib/workspacePaths"
 import { validateWorktreeDirectory } from "@/lib/gitApi"
 import { useWorktreeOrderStore } from "@/stores/useWorktreeOrderStore"
 import { createUuid } from "@/lib/uuid"
@@ -468,6 +468,8 @@ export async function routeMessage(params: {
 type SendMessageOptions = {
   sessionId?: string
   directoryHint?: string | null
+  /** Embedded session sends do not consume the main composer's goal or promote its project. */
+  preservePrimaryContext?: boolean
   delivery?: 'steer' | 'queue'
   commitStagedMessageEdit?: boolean
   messageID?: string
@@ -912,8 +914,13 @@ export const promoteProjectForConversation = (
 ): void => {
   if (!session || !isVisibleGlobalSession(session) || (session.time?.archived ?? 0) > 0) return
   const projectsState = useProjectsStore.getState()
-  const project = resolveProjectForSessionDirectory(
-    projectsState.projects.filter((project) => !project.hostId),
+  const localProjects = projectsState.projects.filter((project) => !project.hostId)
+  const workspaceId = readSessionWorkspaceId(session)
+  const explicitProject = workspaceId
+    ? localProjects.find((project) => project.id === workspaceId) ?? null
+    : null
+  const project = explicitProject ?? resolveProjectForSessionDirectory(
+    localProjects,
     availableWorktreesByProject,
     directory,
   )
@@ -2298,7 +2305,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     const draft = get().newSessionDraft
     const trimmedAgent = typeof agent === "string" && agent.trim().length > 0 ? agent.trim() : undefined
 
-    const goalArm = inputMode !== "shell" && content.trim().length > 0
+    const goalArm = !options?.preservePrimaryContext && inputMode !== "shell" && content.trim().length > 0
       ? useSessionGoalArmStore.getState()
       : { armed: false, objectiveOverride: null }
     const goalArmed = goalArm.armed
@@ -2419,14 +2426,15 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       ? useSelectionStore.getState().getSessionAgentSelection(targetSessionId)
       : null
     const configState = useConfigStore.getState()
-    const configAgentName = configState.currentAgentName
+    const configAgentName = options?.preservePrimaryContext ? undefined : configState.currentAgentName
     const effectiveAgent = resolveAgentSendIdentity(
       configState.agents,
       trimmedAgent || sessionAgentSelection || configAgentName || undefined,
     )
 
     if (targetSessionId) {
-      useSelectionStore.getState().saveSessionModelSelection(targetSessionId, providerID, modelID)
+      useSelectionStore.getState().saveSessionModelSelection(targetSessionId, providerID, modelID, undefined,
+        options?.preservePrimaryContext ? { rememberAsDefault: false } : undefined)
     }
 
     if (targetSessionId && effectiveAgent) {
@@ -2530,9 +2538,11 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       }
     }
 
-    promoteProjectForConversation(currentSessionDirectory, get().availableWorktreesByProject,
-      getSyncSessions(currentSessionDirectory ?? undefined).find((session) => session.id === targetSessionId)
-        ?? useGlobalSessionsStore.getState().sessionsByDirectory.get(currentSessionDirectory ?? '')?.find((session) => session.id === targetSessionId))
+    if (!options?.preservePrimaryContext) {
+      promoteProjectForConversation(currentSessionDirectory, get().availableWorktreesByProject,
+        getSyncSessions(currentSessionDirectory ?? undefined).find((session) => session.id === targetSessionId)
+          ?? useGlobalSessionsStore.getState().sessionsByDirectory.get(currentSessionDirectory ?? '')?.find((session) => session.id === targetSessionId))
+    }
     if (goalArmed) useSessionGoalArmStore.getState().consume()
   },
 

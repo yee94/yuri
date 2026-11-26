@@ -51,13 +51,14 @@ import type { I18nKey } from '@/lib/i18n';
 import { NativeSessionInboxChips } from './QueuedMessageChips';
 import ToolOutputDialog from './message/ToolOutputDialog';
 import { StatusRow } from './StatusRow';
+import { ReadOnlyPromptBanner } from './ReadOnlyPromptBanner';
 import { ComposerFoot, DraftComposerFoot } from './ComposerFoot';
 import type { ToolPopupContent } from './message/types';
 import { parseSlashCommandInvocation } from '@/composer/inline-visual';
 import { skillAttachmentsFromText } from '@/composer/skill-attachments';
 import { useRemoteOperationError } from '@/lib/remote-projects/operation-errors';
 
-type Props = { location: HostLocation; sessionId: string | null; active?: boolean; readOnly?: boolean; composerPresentation?: 'primary' | 'panel'; onNavigateSession?: (sessionId: string, directory: string) => void; viewport?: typeof import('./ChatContainer').ChatViewport };
+type Props = { location: HostLocation; sessionId: string | null; active?: boolean; readOnly?: boolean; composerPresentation?: 'primary' | 'panel'; contextPanel?: { allowPromptingSubagentSessions: boolean }; onNavigateSession?: (sessionId: string, directory: string) => void; viewport?: typeof import('./ChatContainer').ChatViewport };
 const EMPTY_INBOX: never[] = [];
 const EMPTY_INLINE: InlineCommentDraft[] = [];
 
@@ -93,7 +94,7 @@ function RemoteChatOwner(props: Props & { registry: HostRuntimeRegistry }) {
   return <RemoteChatContext.Provider value={state}><RemoteChatView key={JSON.stringify([runtime.entry.queryScope, props.sessionId])} {...props} state={state} /></RemoteChatContext.Provider>;
 }
 
-function RemoteChatView({ location, sessionId, active = true, readOnly = false, composerPresentation = 'panel', onNavigateSession, viewport: Viewport, state }: Props & { state: ReturnType<typeof createRemoteSessionState> }) {
+function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadOnly = false, composerPresentation = 'panel', contextPanel, onNavigateSession, viewport: Viewport, state }: Props & { state: ReturnType<typeof createRemoteSessionState> }) {
   const { t } = useI18n();
   const isMounted = useMountedState();
   const entry = state.entry;
@@ -126,6 +127,15 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   const getTranscript = React.useMemo(() => () => sessionId ? state.repository.getTranscript(state.scope(sessionId)) : null, [state, sessionId]);
   const data = React.useSyncExternalStore(subscribe, getTranscript, getTranscript);
   const snapshot = React.useSyncExternalStore(state.subscribeSnapshot, () => state.getSnapshot(sessionId ?? ''), () => state.getSnapshot(sessionId ?? ''));
+  const session = snapshot.session;
+  const panelSubagent = Boolean(contextPanel && session?.parentID);
+  const readOnly = panelSubagent ? !contextPanel?.allowPromptingSubagentSessions : tabReadOnly;
+  const globalTimelineOpen = useUIStore((store) => !contextPanel && store.isTimelineDialogOpen);
+  const setGlobalTimelineOpen = useUIStore((store) => store.setTimelineDialogOpen);
+  const [panelTimelineOpen, setPanelTimelineOpen] = React.useState(false);
+  const timelineOpen = contextPanel ? panelTimelineOpen : globalTimelineOpen;
+  const setTimelineOpen = contextPanel ? setPanelTimelineOpen : setGlobalTimelineOpen;
+  const openTimeline = useEvent(() => setTimelineOpen(true));
   const inbox = useSessionInboxOverlayStore((store) => sessionId ? store.bySession[state.sessionKey(sessionId)] ?? EMPTY_INBOX : EMPTY_INBOX);
   const sending = Boolean(snapshot.pendingSendMessageID) || inbox.some((item) => item.delivery === 'steer' && Boolean(data?.messagesByID[item.id]));
   const messages = React.useMemo(() => {
@@ -138,8 +148,9 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   const retryActionCopy = React.useMemo(() => resolveRetryActionCopy(snapshot.status, (key) => t(key as I18nKey)), [snapshot.status, t]);
   const [catalogDemand, setCatalogDemand] = React.useState(false);
   const requestCatalog = useEvent((open: boolean) => setCatalogDemand(open));
-  const modelPickerOpen = useUIStore((store) => store.isModelSelectorOpen || store.isAgentSelectorOpen);
-  const providersQuery = useQuery({ ...providerCatalogQueryOptions(location.directory, transportIdentity, entry), enabled: active && (catalogDemand || modelPickerOpen), staleTime: Infinity, gcTime: Infinity });
+  const modelPickerOpen = useUIStore((store) => !contextPanel && (store.isModelSelectorOpen || store.isAgentSelectorOpen));
+  const pickerCatalogDemand = (!contextPanel || !readOnly) && (catalogDemand || modelPickerOpen);
+  const providersQuery = useQuery({ ...providerCatalogQueryOptions(location.directory, transportIdentity, entry), enabled: active && pickerCatalogDemand, staleTime: Infinity, gcTime: Infinity });
   const client = useQueryClient();
   const policyKey = [...entry.queryScope, 'permission-policy'];
   const policy = useQuery({ queryKey: policyKey, enabled: active && Boolean(sessionId), queryFn: async ({ signal }) => {
@@ -162,7 +173,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     if (!payload.sessions || typeof payload.sessions !== 'object') throw new Error('Invalid remote permission policy');
     client.setQueryData(policyKey, payload.sessions);
   } });
-  const agentsQuery = useQuery({ ...rawAgentsQueryOptions(location.directory, transportIdentity, entry), enabled: active && (Boolean(sessionId) || catalogDemand || modelPickerOpen), staleTime: Infinity, gcTime: Infinity });
+  const agentsQuery = useQuery({ ...rawAgentsQueryOptions(location.directory, transportIdentity, entry), enabled: active && (Boolean(sessionId) || pickerCatalogDemand), staleTime: Infinity, gcTime: Infinity });
   const providers = React.useMemo(() => providersQuery.data?.providers.map((provider) => ({ ...provider, models: Object.values(provider.models) })) ?? [], [providersQuery.data]);
   const [picks, setPicks] = React.useState<Record<string, ChatInputSurface['selection']['value']>>({});
   const selectionKey = state.sessionKey(sessionId ?? 'new');
@@ -170,7 +181,6 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   const selectionSessionID = sessionId ?? REMOTE_NEW_SESSION_DRAFT_ID;
   const rememberedModel = useSelectionStore((store) => store.getSessionModelSelection(selectionSessionID, location));
   const rememberedAgent = useSelectionStore((store) => store.getSessionAgentSelection(selectionSessionID, location));
-  const session = snapshot.session;
   const catalogDefault = React.useMemo(() => {
     const catalog = providersQuery.data;
     if (!catalog) return undefined;
@@ -226,7 +236,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     await Promise.all([state.repository.refreshFromAuthority(state.scope(sessionId)), state.refreshMetadata(sessionId)])
       .then(() => { setError(null); setObservationError(null); }).catch(report);
   });
-  useRemoteOperationError(registry, location.hostId!, active && (catalogDemand || modelPickerOpen) ? providersQuery.error?.message ?? agentsQuery.error?.message : null, async () => {
+  useRemoteOperationError(registry, location.hostId!, active && pickerCatalogDemand ? providersQuery.error?.message ?? agentsQuery.error?.message : null, async () => {
     await Promise.all([providersQuery.refetch(), agentsQuery.refetch()]);
   });
   const pending = useRemotePendingComposer((store) => store.entries[remotePendingComposerKey(location, sessionId)]);
@@ -251,7 +261,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
       }
     }
     if (request.inputMode !== 'shell' && /^\/timeline\s*$/i.test(request.text ?? '')) {
-      useUIStore.getState().setTimelineDialogOpen(true);
+      openTimeline();
       return;
     }
     // Cold drafts do no background model enumeration. The explicit send action
@@ -429,6 +439,9 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
   };
   const surface: ChatInputSurface = {
     composerPresentation,
+    isolatedControls: Boolean(contextPanel),
+    includeSubagents: panelSubagent,
+    openTimeline: contextPanel ? openTimeline : undefined,
     nativeInbox: null,
     kind: 'secondary', surfaceID: state.sessionKey(sessionId ?? 'new'), active: active && !readOnly,
     sessionID: sessionId ?? 'remote-new-session', directory: location.directory, draftKey, transportIdentity, runtimeGeneration,
@@ -448,7 +461,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
         assertWritable();
         if (!selectionStillCurrent(key)) return;
         if (!catalog) throw new Error('Remote Agent catalog unavailable');
-        const agents = catalog.filter((agent) => agent.mode !== 'subagent' && !agent.hidden);
+        const agents = catalog.filter((agent) => (panelSubagent || agent.mode !== 'subagent') && !agent.hidden);
         if (!agents.length) return;
         const index = agents.findIndex((agent) => agent.name === selection.agent);
         change({ ...selection, agent: agents[(index + direction + agents.length) % agents.length].name });
@@ -465,7 +478,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
         if (!project) throw new Error('Remote Project is no longer selected');
         useSessionNavigationStore.getState().openRemoteSession(project, location, null);
       },
-      abort: () => { assertWritable(); if (sessionId) void state.interrupt(sessionId).catch(report); },
+      abort: () => { assertWritable(); if (sessionId) return state.interrupt(sessionId).catch(report); },
       submit: () => { assertWritable(); },
     },
   };
@@ -503,11 +516,9 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
     },
   };
   const isMobile = useUIStore((store) => store.isMobile);
-  const expanded = useUIStore((store) => store.isExpandedInput);
+  const expanded = useUIStore((store) => !contextPanel && store.isExpandedInput);
   const stickyUserHeader = useUIStore((store) => store.stickyUserHeader);
   const promptNavigator = useUIStore((store) => store.promptNavigatorEnabled);
-  const timelineOpen = useUIStore((store) => store.isTimelineDialogOpen);
-  const setTimelineOpen = useUIStore((store) => store.setTimelineDialogOpen);
   const listRef = React.useRef<MessageListHandle | null>(null);
   const [anchorToken, armAnchor] = React.useReducer((n: number) => n + 1, 0);
   const follow = useChatAutoFollow({ scrollControllerRef: listRef, enabled: active, currentSessionId: sessionId,
@@ -581,13 +592,14 @@ function RemoteChatView({ location, sessionId, active = true, readOnly = false, 
       </ScrollShadow>}
       </TranscriptSearch> : null}
       {session?.revert && sessionId && !readOnly && active ? <Button size="xs" onClick={() => { assertWritable(); void postSessionRevertClear({ scope: entry, sessionID: sessionId }).then(() => state.refreshMetadata(sessionId)).catch(report); }}>{t('chat.revertIndicator.redo')}</Button> : null}
-      {!sessionId ? <DraftComposerFoot isMobile={isMobile} expanded={expanded} compact={isMobile}>
+      {panelSubagent && readOnly && session ? <ReadOnlyPromptBanner agentName={session.agent} providerId={readSessionModelProviderId(session)}
+        modelId={readSessionModelId(session)} modelName={readSessionModelId(session)} /> : !sessionId ? <DraftComposerFoot isMobile={isMobile} expanded={expanded} compact={isMobile}>
         <ChatInput surface={surface} scrollToBottom={follow.scrollToBottomOnSend} showScrollToBottom={follow.showScrollButton} onScrollToBottom={() => follow.goToBottom()} />
       </DraftComposerFoot> : <ComposerFoot isMobile={isMobile} expanded={expanded}>
         <ChatInput surface={surface} scrollToBottom={follow.scrollToBottomOnSend} showScrollToBottom={follow.showScrollButton} onScrollToBottom={() => follow.goToBottom()} />
       </ComposerFoot>}
       {inboxPopup ? <ToolOutputDialog popup={inboxPopup} isMobile={isMobile} onOpenChange={(open) => { if (!open) setInboxPopup(null); }} /> : null}
-      {sessionId ? <TimelineDialog open={timelineOpen && active} onOpenChange={setTimelineOpen} sessionID={sessionId} directory={location.directory}
+      {sessionId ? <TimelineDialog open={timelineOpen && active && (!contextPanel || !readOnly)} onOpenChange={setTimelineOpen} sessionID={sessionId} directory={location.directory}
         onRevertMessage={revert} onScrollToMessage={timeline.scrollToMessage}
         canLoadEarlier={timeline.historySignals.canLoadEarlier} isLoadingEarlier={timeline.isLoadingOlder}
         onLoadEarlier={() => void timeline.loadEarlier({ userInitiated: true }).catch(report)} /> : null}

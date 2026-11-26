@@ -19,6 +19,7 @@ import { getRemoteInputStore, remoteSessionDraftKey, requestRemoteComposerInput,
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import selectionArchive from '@/composer/fixtures/candidate-final-selection.json';
 import { ChatInput } from './ChatInput';
+import { getActiveChatInputSurface } from './activeChatInputSurface';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useInputStore } from '@/sync/input-store';
 import { sessionDraftKey } from '@/sync/input-draft-types';
@@ -89,7 +90,8 @@ function wireHarness(createdID = 'created', mentions = false, permissionEffect?:
   let model: { providerID: string; id: string } | undefined;
   let failModel = false;
   const permissionSessions: Record<string, boolean> = {};
-  const session = (id: string) => ({ id, projectID: 'remote-project', title: 'Wire title', location: { directory: location.directory }, ...(permissionEffect ? { agent: 'build' } : {}), model, cost: 0, tokens: {}, time: { created: 1, updated: 2 } });
+  const session = (id: string) => ({ id, projectID: 'remote-project', title: 'Wire title', location: { directory: location.directory },
+    ...(id === 'child' ? { agent: 'agent-A-0', parentID: 'same' } : permissionEffect ? { agent: 'build' } : {}), model, cost: 0, tokens: {}, time: { created: 1, updated: 2 } });
   vi.stubGlobal('fetch', vi.fn(async (input: Request | URL | string, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
     const path = new URL(request.url).pathname;
@@ -109,14 +111,16 @@ function wireHarness(createdID = 'created', mentions = false, permissionEffect?:
     if (path.endsWith('/fs/find')) return Response.json({ data: [{ path: `src/${host}.ts`, type: 'file' }] });
     if (path.endsWith('/command') && request.method === 'POST') return new Response(null, { status: 204 });
     if (path.endsWith('/session') && request.method === 'POST') return Response.json({ data: session(createdID) });
-    if (path.endsWith(`/session/${createdID}`) || path.endsWith('/session/same')) return Response.json({ data: session(path.endsWith('/same') ? 'same' : createdID) });
+    if (path.endsWith(`/session/${createdID}`) || path.endsWith('/session/same') || path.endsWith('/session/child')) {
+      return Response.json({ data: session(path.split('/').at(-1)!) });
+    }
     if (path.endsWith('/model') && request.method === 'POST') {
       if (failModel) return Response.json({ message: 'Model unavailable' }, { status: 503 });
       model = body.model;
       return new Response(null, { status: 204 });
     }
     if (path.endsWith('/agent') && request.method === 'POST') return new Response(null, { status: 204 });
-    if (path.endsWith('/prompt')) return Response.json({ data: { id: body.id, sessionID: createdID, type: 'user', delivery: body.delivery, timeCreated: 1, payload: { text: body.text } } });
+    if (path.endsWith('/prompt')) return Response.json({ data: { id: body.id, sessionID: path.includes('/child/') ? 'child' : createdID, type: 'user', delivery: body.delivery, timeCreated: 1, payload: { text: body.text } } });
     if (path.endsWith('/subscriptions')) return Response.json({ id: 'lease' });
     if (request.method === 'DELETE') return new Response(null, { status: 204 });
     if (path.includes('session-unread')) return Response.json({ revision: 0, sessions: {} });
@@ -134,6 +138,62 @@ function wireHarness(createdID = 'created', mentions = false, permissionEffect?:
   return { location, requests, registry, failModel: () => { failModel = true; }, restoreModel: () => { failModel = false; },
     close: () => { registry.dispose(); vi.unstubAllGlobals(); setRuntimeUrlResolver(previous); } };
 }
+
+test('remote child panel keeps picker and shortcut ownership separate from primary chat', async () => {
+  fixture.wire = true;
+  const wire = wireHarness('created', true);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const runtime = { runtime: { isWeb: true, isDesktop: false, isVSCode: false, isMobile: false, platform: 'web' } } as unknown as RuntimeAPIs;
+  const node = document.createElement('div');
+  document.body.append(node);
+  const root = createRoot(node);
+  const previous = useUIStore.getState();
+  useUIStore.setState({ isMobile: false, activeMainTab: 'chat', isModelSelectorOpen: false, isAgentSelectorOpen: false, isExpandedInput: false });
+  try {
+    await act(async () => root.render(
+      <QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}>
+        <ChatInput />
+        <div data-test-panel><RemoteChatContainer location={wire.location} sessionId="child" readOnly contextPanel={{ allowPromptingSubagentSessions: true }} /></div>
+      </RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>,
+    ));
+    const panel = node.querySelector('[data-test-panel]')!;
+    await vi.waitFor(() => expect(panel.querySelector('[data-panel-composer]')).not.toBeNull());
+    expect(getActiveChatInputSurface()?.surfaceID).toBe('primary');
+    const modelTrigger = panel.querySelector<HTMLElement>('.model-controls__model-trigger')!;
+    await act(async () => {
+      useUIStore.getState().setModelSelectorOpen(true);
+      useUIStore.getState().setAgentSelectorOpen(true);
+      useUIStore.getState().setExpandedInput(true);
+    });
+    expect(modelTrigger.getAttribute('aria-expanded')).toBe('false');
+    expect(panel.querySelector('[data-panel-composer]')?.className).not.toContain('pt-4');
+    await act(async () => {
+      useUIStore.getState().setModelSelectorOpen(false);
+      useUIStore.getState().setAgentSelectorOpen(false);
+      useUIStore.getState().setExpandedInput(false);
+    });
+    await act(async () => modelTrigger.click());
+    await vi.waitFor(() => expect(modelTrigger.getAttribute('aria-expanded')).toBe('true'));
+    expect(useUIStore.getState().isModelSelectorOpen).toBe(false);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('GPT-4.1 Mini'));
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((item) => item.textContent?.includes('GPT-4.1 Mini'))!;
+    await act(async () => row.click());
+    const textarea = panel.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Child follow-up');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      panel.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    });
+    await vi.waitFor(() => expect(wire.requests.find(({ path }) => path.endsWith('/child/prompt'))?.body).toMatchObject({ text: 'Child follow-up', delivery: 'steer' }));
+    expect(wire.requests.find(({ path }) => path.endsWith('/child/model'))?.body).toMatchObject({ model: { id: 'gpt-4.1-mini' } });
+    expect(wire.requests.some(({ path }) => path.endsWith('/child/agent'))).toBe(false);
+  } finally {
+    await act(async () => root.unmount());
+    client.clear(); wire.close(); node.remove();
+    useUIStore.setState({ isMobile: previous.isMobile, activeMainTab: previous.activeMainTab,
+      isModelSelectorOpen: previous.isModelSelectorOpen, isAgentSelectorOpen: previous.isAgentSelectorOpen, isExpandedInput: previous.isExpandedInput });
+  }
+});
 
 test.each([
   { pinned: false, strict: false }, { pinned: true, strict: false },

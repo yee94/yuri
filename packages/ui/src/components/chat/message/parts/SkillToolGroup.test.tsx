@@ -4,7 +4,12 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { I18nProvider } from '@/lib/i18n';
+import { formatMessage, I18nProvider } from '@/lib/i18n';
+import { I18nContext } from '@/lib/i18n/react-context';
+import { LOCALES, type Locale } from '@/lib/i18n/runtime';
+import { dict as zhCnDict } from '@/lib/i18n/messages/zh-CN';
+import { dict as zhTwDict } from '@/lib/i18n/messages/zh-TW';
+import type { I18nDictionary } from '@/lib/i18n/store';
 import type { TurnActivityRecord } from '../../lib/turns/types';
 import { SkillToolGroup } from './SkillToolGroup';
 
@@ -29,6 +34,21 @@ const skillActivity = (
         state: { status, input: { name } },
     },
 } as unknown as TurnActivityRecord);
+
+const renderWithLocale = (locale: Locale, dictionary: I18nDictionary, element: React.ReactElement) =>
+    renderToStaticMarkup(
+        <I18nContext.Provider
+            value={{
+                locale,
+                locales: LOCALES,
+                setLocale: () => {},
+                label: () => locale,
+                t: (key, params) => formatMessage(dictionary, key, params),
+            }}
+        >
+            {element}
+        </I18nContext.Provider>,
+    );
 
 describe('SkillToolGroup', () => {
     test('renders a collapsed one-line summary with original skill names', () => {
@@ -71,6 +91,29 @@ describe('SkillToolGroup', () => {
         expect(markup).not.toContain('four');
         expect(markup).not.toContain('five');
         expect(markup).not.toContain('six');
+    });
+
+    test('shows total skill count in Chinese overflow copy', () => {
+        const activities = [
+            skillActivity('skill-1', 'one', 'completed'),
+            skillActivity('skill-2', 'two', 'completed'),
+            skillActivity('skill-3', 'three', 'completed'),
+            skillActivity('skill-4', 'four', 'completed'),
+        ];
+
+        const simplifiedMarkup = renderWithLocale(
+            'zh-CN',
+            zhCnDict,
+            <SkillToolGroup activities={activities} isMobile={false} />,
+        );
+        expect(simplifiedMarkup).toContain('one, two, three 等 4 个');
+
+        const traditionalMarkup = renderWithLocale(
+            'zh-TW',
+            zhTwDict,
+            <SkillToolGroup activities={activities} isMobile={false} />,
+        );
+        expect(traditionalMarkup).toContain('one, two, three 等 4 個');
     });
 
     test('flips the summary upward while the group is still loading', () => {

@@ -200,7 +200,8 @@ test('production remote pane observes, paints and sends to its Host, never the l
   let bodyAvailable = false;
   const sdk = {
     session: {
-      get: vi.fn(async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, agent: 'build', model: { providerID: 'remote-provider', id: 'model' } })),
+      get: vi.fn(async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, agent: sessionID === 'child' ? 'explore' : 'build',
+        parentID: sessionID === 'child' ? 'same' : undefined, model: { providerID: 'remote-provider', id: 'model' } })),
       form: { list: vi.fn(async () => []) },
       switchModel: vi.fn(), switchAgent: vi.fn(),
       command: vi.fn(),
@@ -298,6 +299,23 @@ test('production remote pane observes, paints and sends to its Host, never the l
     await expect(readonly.shortcuts!.cycle(1)).rejects.toThrow('read-only');
     expect(() => readonly.shortcuts!.abort()).toThrow('read-only');
     expect(requests).toHaveLength(requestCount);
+    const renderChild = (allowPromptingSubagentSessions: boolean) => root.render(
+      <QueryClientProvider client={client}><RemoteChatContainer location={location} sessionId="child" readOnly
+        contextPanel={{ allowPromptingSubagentSessions }} /></QueryClientProvider>,
+    );
+    await act(async () => renderChild(false));
+    await vi.waitFor(() => expect(element.textContent).toContain('chat.container.readOnlySubagentPromptBanner'));
+    const providerReads = () => requests.filter(({ path }) => path.endsWith('/config/catalog/providers')).length;
+    const readsBeforePicker = providerReads();
+    await act(async () => useUIStore.getState().setModelSelectorOpen(true));
+    expect(providerReads()).toBe(readsBeforePicker);
+    await act(async () => useUIStore.getState().setModelSelectorOpen(false));
+    await act(async () => renderChild(true));
+    expect(element.textContent).not.toContain('chat.container.readOnlySubagentPromptBanner');
+    expect(fixture.surface).toMatchObject({ active: true, selection: { value: { agent: 'explore' } } });
+    const child = fixture.surface!;
+    await act(async () => renderChild(false));
+    await expect(child.selection.flush()).rejects.toThrow('read-only');
   } finally {
     await act(async () => root.unmount()); client.clear(); registry.dispose(); element.remove();
     useUIStore.setState({ isMobile: previousUI.isMobile, promptNavigatorEnabled: previousUI.promptNavigatorEnabled });

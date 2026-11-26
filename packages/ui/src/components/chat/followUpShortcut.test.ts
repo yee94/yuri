@@ -60,4 +60,10 @@ describe('resolveFollowUpEnterAction', () => {
             queueUsable: false,
         })).toEqual({ kind: 'submit', delivery: 'steer' });
     });
+
+    test.each(['queue', 'steer'] as const)('panel inbox follows %s and Ctrl+Enter steers', (followUpBehavior) => {
+        const panel = { ...runningPrimary, primary: false, nativeInbox: true, queueUsable: false, followUpBehavior };
+        expect(resolveFollowUpEnterAction({ ...panel, ctrlEnter: false })).toEqual({ kind: 'submit', delivery: followUpBehavior });
+        expect(resolveFollowUpEnterAction({ ...panel, ctrlEnter: true })).toEqual({ kind: 'submit', delivery: 'steer' });
+    });
 });

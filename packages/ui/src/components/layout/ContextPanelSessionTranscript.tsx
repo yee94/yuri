@@ -4,15 +4,21 @@ import { useEvent } from '@reactuses/core';
 
 import MessageList, { type MessageListHandle } from '@/components/chat/MessageList';
 import { ReadOnlyPromptBanner } from '@/components/chat/ReadOnlyPromptBanner';
+import { FormCard } from '@/components/chat/FormCard';
+import { PermissionCard } from '@/components/chat/PermissionCard';
+import { QuestionCard } from '@/components/chat/QuestionCard';
+import { StatusRow } from '@/components/chat/StatusRow';
 import ScrollToBottomButton from '@/components/chat/components/ScrollToBottomButton';
 import { CHAT_TAIL_SPACER_DESKTOP_HEIGHT } from '@/components/chat/lib/scroll/chatTailSpacer';
-import { SessionSurfaceContext, STRICT_READ_ONLY_SESSION_SURFACE_CAPABILITIES } from '@/components/chat/SessionSurfaceContext';
+import { SessionSurfaceContext, PRIMARY_SESSION_SURFACE_CAPABILITIES, STRICT_READ_ONLY_SESSION_SURFACE_CAPABILITIES, type SessionSurfaceContextValue } from '@/components/chat/SessionSurfaceContext';
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { toast } from '@/components/ui';
 import { useChatAutoFollow } from '@/hooks/useChatAutoFollow';
+import { useRecoverPendingQuestions } from '@/hooks/useRecoverPendingQuestions';
 import { useI18n } from '@/lib/i18n';
+import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { getProviderModelDisplayName } from '@/lib/modelDisplay';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -24,9 +30,12 @@ import {
     useSessionMessageRecords,
     useSessionMaterializationStatus,
     useSessionStatus,
+    useScopedBlockingPermissions,
+    useScopedBlockingQuestions,
     useSessionTranscriptPagination,
     useSyncDirectory,
 } from '@/sync/sync-context';
+import { refreshSessionForms, useSessionFormStore } from '@/sync/session-form-store';
 import { useSync } from '@/sync/use-sync';
 import {
     ensureTranscriptInitial,
@@ -54,17 +63,52 @@ import {
     type ContextPanelPendingPrepend,
 } from './contextPanelSessionSurface';
 import { resolveContextPanelSessionExecution } from './contextPanelSessionExecution';
+import type { ContextPanelSessionActions } from './ContextPanelSessionComposer';
+
+const ContextPanelSessionComposer = lazyWithChunkRecovery(() => import('./ContextPanelSessionComposer')
+    .then(({ ContextPanelSessionComposer }) => ({ default: ContextPanelSessionComposer })));
 
 export type ContextPanelSessionTranscriptProps = {
     surfaceId: string;
     sessionId: string;
     directory: string;
     active: boolean;
+    allowPromptingSubagentSessions?: boolean;
     canNavigateBack: boolean;
     onNavigateSession: (sessionId: string, directory: string) => boolean | void;
     onNavigateBack: () => void;
     onEstimateBytes?: (viewportKey: string, estimatedBytes: number) => void;
 };
+
+function SessionRequests({ sessionId, directory, messages, status, agent }: {
+    sessionId: string;
+    directory: string;
+    messages: ReturnType<typeof useSessionMessageRecords>;
+    status: ReturnType<typeof useSessionStatus>;
+    agent?: string;
+}) {
+    const { t } = useI18n();
+    const permissions = useScopedBlockingPermissions(sessionId, directory);
+    const questions = useScopedBlockingQuestions(sessionId, directory);
+    const forms = useSessionFormStore((state) => state.forms[sessionId]);
+    useRecoverPendingQuestions(sessionId, directory, messages, questions.length);
+    React.useEffect(() => {
+        const abort = new AbortController();
+        void refreshSessionForms({ sessionID: sessionId, directory, signal: abort.signal }).catch(() => {});
+        return () => abort.abort();
+    }, [sessionId, directory]);
+    const working = status?.type === 'busy' || status?.type === 'retry';
+    return <>
+        {questions.map((question) => <QuestionCard key={question.id} question={question} />)}
+        {permissions.map((permission) => <PermissionCard key={permission.id} permission={permission} />)}
+        {forms?.map((form) => <FormCard key={form.id} form={form} directory={directory} />)}
+        <StatusRow isWorking={working} isGenericStatus showTodos={false}
+            statusText={working ? t('chat.assistantStatus.working') : null}
+            isWaitingForPermission={permissions.length > 0} isTurnSettled={status?.type === 'idle'}
+            retryInfo={status?.type === 'retry' ? status : null} agentName={agent}
+            showAssistantStatus={working || permissions.length > 0} />
+    </>;
+}
 
 const TranscriptState: React.FC<{ state: ContextPanelTranscriptState; error?: string; onRetry: () => void }> = ({ state, error, onRetry }) => {
     const { t } = useI18n();
@@ -122,7 +166,11 @@ const ContextPanelSessionTranscriptContent: React.FC<ContextPanelSessionTranscri
             resolveContextPanelConfirmedParentViewKey(previousViewKey, viewportKey, hasConfirmedParent)
         ));
     }, [hasConfirmedParent, viewportKey]);
-    const showReadOnlyPromptBanner = hasConfirmedParent || confirmedParentViewKey === viewportKey;
+    const isSubagent = hasConfirmedParent || confirmedParentViewKey === viewportKey;
+    const writable = isSubagent && props.allowPromptingSubagentSessions === true && active;
+    const showReadOnlyPromptBanner = isSubagent && !props.allowPromptingSubagentSessions;
+    const actionsRef = React.useRef<ContextPanelSessionActions>(null);
+    const stagedEdit = React.useRef<string | null>(null);
     // Ticket 09: request lifecycle from repository (no session-prefetch).
     const prefetch = useSessionMessageLoadState(sessionId, syncDirectory);
     const streamingMessageId = useStreamingStore(
@@ -132,7 +180,7 @@ const ContextPanelSessionTranscriptContent: React.FC<ContextPanelSessionTranscri
         (state) => streamingMessageId ? state.messageStreamStates.get(streamingMessageId)?.phase ?? null : null,
     );
     const sessionIsWorking = sessionStatus?.type === 'busy' || sessionStatus?.type === 'retry';
-    const { scrollRef, notifyContentChange, getAnimationHandlers, goToBottom, restoreSnapshot, showScrollButton } = useChatAutoFollow({
+    const { scrollRef, notifyContentChange, getAnimationHandlers, goToBottom, releaseAutoFollow, restoreSnapshot, showScrollButton } = useChatAutoFollow({
         scrollControllerRef: messageListRef,
         enabled: active,
         currentSessionId: sessionId,
@@ -247,15 +295,20 @@ const ContextPanelSessionTranscriptContent: React.FC<ContextPanelSessionTranscri
         working: sessionIsWorking,
         error: prefetch?.status === 'error' ? prefetch.error : undefined,
     });
-    const surface = React.useMemo(() => ({
+    const surface = React.useMemo<SessionSurfaceContextValue>(() => ({
         kind: 'panel' as const,
         surfaceId,
         sessionId,
         directory: normalizedDirectory,
         active,
-        capabilities: STRICT_READ_ONLY_SESSION_SURFACE_CAPABILITIES,
+        capabilities: writable ? PRIMARY_SESSION_SURFACE_CAPABILITIES : STRICT_READ_ONLY_SESSION_SURFACE_CAPABILITIES,
+        ...(writable ? {
+            onEditMessage: async (messageId, snapshot) => actionsRef.current?.onEditMessage(messageId, snapshot),
+            onRevertMessage: async (messageId) => actionsRef.current?.onRevertMessage(messageId),
+            onForkMessage: async (messageId) => actionsRef.current?.onForkMessage(messageId),
+        } : {}),
         navigateSession: onNavigateSession,
-    }), [active, normalizedDirectory, onNavigateSession, sessionId, surfaceId]);
+    }), [active, normalizedDirectory, onNavigateSession, sessionId, surfaceId, writable]);
     const retryPartialError = useEvent(() => {
         if (resolveContextPanelPartialErrorRetry(hasMore) === 'load-more') {
             loadOlder();
@@ -308,19 +361,31 @@ const ContextPanelSessionTranscriptContent: React.FC<ContextPanelSessionTranscri
             onClick={() => resumeToLatest('smooth')}
         />
     );
+    const requests = writable ? <SessionRequests sessionId={sessionId} directory={syncDirectory}
+        messages={sessionMessages} status={sessionStatus} agent={execution.agentName} /> : null;
+    const emptyTranscript = transcriptState === 'cold-loading' || transcriptState === 'working-empty'
+        || transcriptState === 'authoritative-empty' || transcriptState === 'fatal-error'
+        ? <TranscriptState state={transcriptState} error={prefetch?.error} onRetry={() => ensureSession('retry')} />
+        : null;
 
     return (
         <SessionSurfaceContext.Provider value={surface}>
             <div className="relative flex h-full min-h-0 flex-col bg-background" data-context-session-surface="true" data-session-id={sessionId} data-surface-id={surfaceId}>
                 {canNavigateBack ? <Button type="button" variant="outline" size="xs" onClick={onNavigateBack} className="absolute left-3 top-3 z-20 !font-normal bg-[var(--surface-background)]/95" aria-label={t('chat.container.returnToParent.aria')} title={t('chat.container.returnToParent.title')}><Icon name="arrow-left" className="h-4 w-4" />{t('chat.container.returnToParent.label')}</Button> : null}
                 <div className="relative min-h-0 flex-1">
-                    {transcriptState === 'cold-loading' || transcriptState === 'working-empty' || transcriptState === 'authoritative-empty' || transcriptState === 'fatal-error' ? <TranscriptState state={transcriptState} error={prefetch?.error} onRetry={() => ensureSession('retry')} /> : (
+                    {emptyTranscript ? requests ? (
+                        <div className="flex h-full flex-col">
+                            <div className="min-h-0 flex-1">{emptyTranscript}</div>
+                            {requests}
+                        </div>
+                    ) : emptyTranscript : (
                         <>
                             <ScrollShadow ref={scrollRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden chat-scroll overlay-scrollbar-target" observeMutations={false} data-scroll-shadow="true" data-scrollbar="chat">
                                 <div className="relative min-h-full">
                                     {partialErrorRow}
                                     {loadOlderRow}
                                     {transcriptList}
+                                    {requests}
                                     {tailSpacer}
                                 </div>
                             </ScrollShadow>
@@ -329,6 +394,17 @@ const ContextPanelSessionTranscriptContent: React.FC<ContextPanelSessionTranscri
                     )}
                 </div>
                 {showReadOnlyPromptBanner ? <ReadOnlyPromptBanner agentName={execution.agentName} providerId={execution.providerId} modelId={execution.modelId} modelName={executionModelName} /> : null}
+                {writable ? <React.Suspense fallback={null}>
+                    <ContextPanelSessionComposer key={viewportKey} surfaceID={viewportKey} sessionID={sessionId} directory={syncDirectory}
+                        execution={execution} status={sessionStatus?.type ?? 'unknown'} hasMessages={sessionMessageCount > 0}
+                        actionsRef={actionsRef} stagedEdit={stagedEdit} onNavigateSession={onNavigateSession}
+                        scrollToBottom={() => resumeToLatest('smooth')}
+                        onScrollToMessage={async (messageId) => {
+                            releaseAutoFollow();
+                            return messageListRef.current?.scrollToMessageId(messageId) ?? false;
+                        }}
+                        hasMore={hasMore} isLoadingOlder={isLoadingOlder} loadOlder={loadOlder} />
+                </React.Suspense> : null}
             </div>
         </SessionSurfaceContext.Provider>
     );

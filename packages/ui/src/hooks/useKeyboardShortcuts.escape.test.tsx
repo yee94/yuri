@@ -123,6 +123,24 @@ test('Escape inside the prompt rail stays with the rail', async () => {
   expect(mocks.abort).not.toHaveBeenCalled();
 });
 
+test('Escape in the panel composer does not arm or interrupt the primary session', async () => {
+  const { textarea } = await mountSwitchedConversation();
+  const panel = document.createElement('form');
+  panel.dataset.panelComposer = 'true';
+  const panelInput = document.createElement('textarea');
+  panel.append(panelInput);
+  document.body.append(panel);
+  panelInput.focus();
+  await pressEscape(panelInput);
+  await pressEscape(panelInput);
+  expect(useSessionUIStore.getState().abortPromptSessionId).toBeNull();
+  expect(mocks.abort).not.toHaveBeenCalled();
+  textarea.focus();
+  await pressEscape(textarea);
+  await pressEscape(textarea);
+  expect(mocks.abort).toHaveBeenCalledExactlyOnceWith('session-after');
+});
+
 test('Escape closes prompt navigation before a fresh double Escape can abort', async () => {
   const { textarea, rail } = await mountSwitchedConversation();
   await act(async () => useUIStore.getState().setPromptNavigatorPanelOpen(true));
