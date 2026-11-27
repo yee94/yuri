@@ -33,10 +33,16 @@ import { MobileChatScreen } from '@/mobile/chat/MobileChatScreen';
 import { getTranscriptRepository, transcriptScope } from '@/sync/transcript-repository-runtime';
 import { queryClient } from '@/lib/queryRuntime';
 
-const fixture = vi.hoisted(() => ({ registry: null as unknown as HostRuntimeRegistry, wire: false, providerReads: 0, agentReads: 0, modelEnumerations: 0, native: false,
+const fixture = vi.hoisted(() => ({ registry: null as unknown as HostRuntimeRegistry, wire: false, providerReads: 0, agentReads: 0, modelEnumerations: 0, native: false, viewport: null as null | React.ComponentType<{ renderedMessages: Array<{ parts: Array<{ text?: string }> }> }>,
   nativePresent: vi.fn(async (_state: Record<string, unknown>) => {}), nativeUpdate: vi.fn(async (_state: Record<string, unknown>) => {}), nativeHide: vi.fn(async () => {}), nativeDismiss: vi.fn(async () => {}),
   nativeListeners: new Map<string, (payload: Record<string, unknown>) => void>(), nativeListenerAdds: 0,
 }));
+vi.mock('./ChatViewport', async (original) => {
+  const actual = await original<typeof import('./ChatViewport')>();
+  const react = await import('react');
+  return { ...actual, ChatViewport: (props: React.ComponentProps<typeof actual.ChatViewport>) => fixture.viewport
+    ? react.createElement(fixture.viewport, props) : react.createElement(actual.ChatViewport, props) };
+});
 vi.mock('@/lib/iosNativeUi', () => ({ useIosNativeUiEnabled: () => fixture.native }));
 vi.mock('@/lib/native-ios-composer-leave', () => ({ attachNativeIosComposerLeaveConceal: () => () => {} }));
 vi.mock('@/lib/native-ios-composer', async (original) => ({
@@ -79,8 +85,14 @@ vi.mock('@/sync/transcript-durable-store-runtime', async () => {
   return { createRuntimeTranscriptDurableStore: () => createMemoryTranscriptDurableStore() };
 });
 vi.mock('./MessageList', () => ({ default: React.forwardRef(function List() { return <div />; }) }));
-vi.mock('./hooks/useChatTimelineController', () => ({ useChatTimelineController: ({ messages }: { messages: unknown[] }) => ({ renderedMessages: messages, historySignals: {} }) }));
-vi.mock('@/hooks/useChatAutoFollow', () => ({ useChatAutoFollow: () => ({ scrollRef: { current: null }, getAnimationHandlers: () => ({}) }) }));
+vi.mock('./hooks/useChatTimelineController', () => {
+  const stable = { historySignals: {}, turnIds: [] as string[], activeTurnId: null, showScrollToBottom: false, pendingRevealWork: false, isLoadingOlder: false, handleHistoryScroll: () => {}, handleActiveTurnChange: () => {}, handleHistoryUpwardIntent: () => {}, scrollToTurn: async () => true, scrollToMessage: async () => true, loadEarlier: async () => {} };
+  return { useChatTimelineController: ({ messages }: { messages: unknown[] }) => ({ ...stable, renderedMessages: messages }) };
+});
+vi.mock('@/hooks/useChatAutoFollow', () => {
+  const stable = { scrollRef: { current: null }, notifyContentChange: () => {}, getAnimationHandlers: () => ({}), goToBottom: () => {}, scrollToBottomOnSend: () => {}, releaseAutoFollow: () => {}, beginHistoryViewportPreservation: () => {}, endHistoryViewportPreservation: () => {}, restoreSnapshot: async () => true, isFollowingProgrammatically: false, isPinned: true, showScrollButton: false };
+  return { useChatAutoFollow: () => stable };
+});
 
 function wireHarness(createdID = 'created', mentions = false, permissionEffect?: 'allow' | 'ask' | 'deny') {
   const previous = getRuntimeUrlResolver();
@@ -238,14 +250,14 @@ test.each([
     }
     return normal(input, init);
   });
-  function ReproViewport({ renderedMessages }: React.ComponentProps<NonNullable<Parameters<typeof RemoteChatContainer>[0]['viewport']>>) {
+  function ReproViewport({ renderedMessages }: { renderedMessages: Array<{ parts: Array<{ text?: string }> }> }) {
     return <div data-cold-transcript>{renderedMessages.map((message) => message.parts.map((part) => 'text' in part ? part.text : '').join('')).join('')}</div>;
   }
-  const Viewport = React.memo<typeof ReproViewport>(ReproViewport);
+  fixture.viewport = ReproViewport;
   function Phone() {
     const scope = useRemoteMobileSession();
     return <RemoteMobileSessionBoundary scope={scope}><MobileChatScreen sessionId="same" directory="/repo" onBack={() => {}} onOpenMenu={() => {}}>
-      <RemoteChatContainer location={wire.location} sessionId="same" composerPresentation="primary" viewport={Viewport} />
+      <RemoteChatContainer location={wire.location} sessionId="same" composerPresentation="primary" />
     </MobileChatScreen></RemoteMobileSessionBoundary>;
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -269,7 +281,7 @@ test.each([
     expect(repository?.getRequestState?.(transcript).status).toBe('ready');
     await vi.waitFor(() => expect(node.querySelector('.yuri-mobile-detail-subtitle')?.textContent ?? '').not.toMatch(/syncing|同步消息/i), { timeout: 1500 });
   } finally {
-    ready(); await act(async () => root.unmount()); useProjectsStore.setState(previousProjects); useUIStore.setState({ isMobile: false });
+    fixture.viewport = null; ready(); await act(async () => root.unmount()); useProjectsStore.setState(previousProjects); useUIStore.setState({ isMobile: false });
     client.clear(); queryClient.clear(); wire.close(); node.remove();
   }
 }, 10_000);
@@ -319,16 +331,16 @@ test('a cold desktop remote session shows connection progress and recovers after
     }
     return normal(input, init);
   });
-  function RenderViewport({ renderedMessages }: React.ComponentProps<NonNullable<Parameters<typeof RemoteChatContainer>[0]['viewport']>>) {
+  function RenderViewport({ renderedMessages }: { renderedMessages: Array<{ parts: Array<{ text?: string }> }> }) {
     return <div data-cold-transcript>{renderedMessages.map((message) => message.parts.map((part) => 'text' in part ? part.text : '').join('')).join('')}</div>;
   }
-  const Viewport = React.memo<typeof RenderViewport>(RenderViewport);
+  fixture.viewport = RenderViewport;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const node = document.createElement('div'); document.body.append(node); const root = createRoot(node);
   try {
     const runtime = { runtime: { isWeb: false, isDesktop: true, isVSCode: false, isMobile: false, platform: 'desktop' } } as unknown as RuntimeAPIs;
     await act(async () => root.render(<QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}>
-      <RemoteChatContainer location={wire.location} sessionId="same" composerPresentation="primary" viewport={Viewport} />
+      <RemoteChatContainer location={wire.location} sessionId="same" composerPresentation="primary" />
     </RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>));
     await vi.waitFor(() => expect(failedAcquisition).toBe(1));
     await vi.waitFor(() => expect(failedTranscript).toBeGreaterThan(0));
@@ -341,6 +353,7 @@ test('a cold desktop remote session shows connection progress and recovers after
     expect(recoveredAcquisition).toBe(1);
     await vi.waitFor(() => expect(status()).toBeNull());
   } finally {
+    fixture.viewport = null;
     completeTranscript();
     await act(async () => root.unmount());
     useUIStore.setState({ isMobile: previousUI });
@@ -575,6 +588,33 @@ test.each([false, true].flatMap((mobile) => (['allow', 'ask', 'deny'] as const).
       await act(async () => root.render(<QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}><RemoteChatContainer location={{ ...wire.location, hostId: 'hostB' }} sessionId="same" /></RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>));
       await vi.waitFor(() => expect(shield()).toBeDefined());
       expect(wire.requests.filter((request) => request.path.startsWith('/api/hosts/hostB/') && request.path.endsWith('/agent') && request.method === 'GET')).toHaveLength(1);
+    }
+  } finally { await act(async () => root.unmount()); useUIStore.setState({ isMobile: false }); client.clear(); wire.close(); node.remove(); }
+}, 20_000);
+
+test.each([
+  { presentation: 'primary' as const, collapses: true },
+  { presentation: 'panel' as const, collapses: false },
+])('mobile remote session ($presentation) binds the scroll-collapse scope around an overlay foot only when primary', async ({ presentation, collapses }) => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  fixture.wire = true;
+  const wire = wireHarness();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const runtime = { runtime: { isWeb: false, isDesktop: false, isVSCode: false, isMobile: true, platform: 'ios' } } as unknown as RuntimeAPIs;
+  useUIStore.setState({ isMobile: true });
+  const node = document.createElement('div'); document.body.append(node); const root = createRoot(node);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}>
+      <RemoteChatContainer location={wire.location} sessionId="same" composerPresentation={presentation} />
+    </RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>));
+    // Swipe-to-collapse needs both halves: the scope, and an overlay foot as its direct child.
+    await vi.waitFor(() => expect(node.querySelector('textarea')).not.toBeNull());
+    const scope = node.querySelector('.yuri-chat-composer-swap-scope');
+    if (collapses) {
+      expect(scope).not.toBeNull();
+      expect(scope!.querySelector(':scope > .yuri-mobile-composer-foot--overlay')).not.toBeNull();
+    } else {
+      expect(scope).toBeNull();
     }
   } finally { await act(async () => root.unmount()); useUIStore.setState({ isMobile: false }); client.clear(); wire.close(); node.remove(); }
 }, 20_000);

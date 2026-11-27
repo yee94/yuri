@@ -101,9 +101,26 @@ vi.mock('./ChatInput', () => ({ ChatInput: ({ surface }: { surface: ChatInputSur
 vi.mock('./MessageList', () => ({ default: React.forwardRef(function List({ messages }: { messages: Array<{ info: { id: string }; parts: Array<{ text?: string }> }> }, _ref) {
   return <div data-transcript>{messages.map((row) => <p key={row.info.id}>{row.parts.map((part) => part.text).join('')}</p>)}</div>;
 }) }));
-vi.mock('./hooks/useChatTimelineController', () => ({ useChatTimelineController: ({ messages, loadMoreMessages }: { messages: unknown[]; loadMoreMessages: () => Promise<void> }) => ({ renderedMessages: messages, handleHistoryScroll: () => {}, isLoadingOlder: false, loadEarlier: loadMoreMessages, historySignals: { canLoadEarlier: false } }) }));
+vi.mock('./ChatViewport', async (original) => {
+  const actual = await original<typeof import('./ChatViewport')>();
+  const react = await import('react');
+  return {
+    ...actual,
+    ChatViewport: (props: React.ComponentProps<typeof actual.ChatViewport>) => react.createElement('div', { 'data-prompt-navigator': String(props.showPromptNavigator) },
+      react.createElement('div', { 'data-transcript': '' }, (props.renderedMessages as Array<{ info: { id: string }; parts: Array<{ text?: string }> }>).map((row) => react.createElement('p', { key: row.info.id }, row.parts.map((part) => part.text).join('')))),
+      props.transcriptStatusRow,
+      props.retryOverlay ? react.createElement(actual.ChatViewport, props) : null),
+  };
+});
+vi.mock('./hooks/useChatTimelineController', () => {
+  const stable = { handleHistoryScroll: () => {}, isLoadingOlder: false, historySignals: { canLoadEarlier: false }, turnIds: ['turn-1', 'turn-2'], activeTurnId: null, showScrollToBottom: false, pendingRevealWork: false, scrollToTurn: async () => true, scrollToMessage: async () => true, handleActiveTurnChange: () => {}, handleHistoryUpwardIntent: () => {} };
+  return { useChatTimelineController: ({ messages, loadMoreMessages }: { messages: unknown[]; loadMoreMessages: () => Promise<void> }) => ({ ...stable, renderedMessages: messages, loadEarlier: loadMoreMessages }) };
+});
 vi.mock('./TimelineDialog', () => ({ TimelineDialog: () => null }));
-vi.mock('@/hooks/useChatAutoFollow', () => ({ useChatAutoFollow: () => ({ scrollRef: { current: null }, notifyContentChange: () => {}, getAnimationHandlers: () => ({}), goToBottom: () => {}, scrollToBottomOnSend: () => {}, releaseAutoFollow: () => {}, beginHistoryViewportPreservation: () => {}, endHistoryViewportPreservation: () => {}, isPinned: true, showScrollButton: false }) }));
+vi.mock('@/hooks/useChatAutoFollow', () => {
+  const stable = { scrollRef: { current: null }, notifyContentChange: () => {}, getAnimationHandlers: () => ({}), goToBottom: () => {}, scrollToBottomOnSend: () => {}, releaseAutoFollow: () => {}, beginHistoryViewportPreservation: () => {}, endHistoryViewportPreservation: () => {}, restoreSnapshot: async () => true, isFollowingProgrammatically: false, isPinned: true, showScrollButton: false };
+  return { useChatAutoFollow: () => stable };
+});
 vi.mock('./PermissionCard', () => ({ PermissionCard: () => null }));
 vi.mock('./QuestionCard', () => ({ QuestionCard: () => null }));
 vi.mock('./FormCard', () => ({ FormCard: () => null }));
@@ -239,13 +256,12 @@ test('production remote pane observes, paints and sends to its Host, never the l
     await act(async () => getHostRuntimeServices(registry).demand.contentReady('remote', 'lease', 'same', 'channel', 'recovered'));
     await vi.waitFor(() => expect(element.textContent).toContain('Remote authority'));
     await vi.waitFor(() => expect(element.querySelector('[data-remote-host-error]')).toBeNull());
-    const Viewport = React.memo(({ showPromptNavigator }: { showPromptNavigator: boolean }) => <div data-prompt-navigator={String(showPromptNavigator)} />);
     for (const [isMobile, promptNavigatorEnabled, visible] of [
       [true, true, false], [false, true, true], [false, false, false], [true, false, false],
     ]) {
       await act(async () => {
         useUIStore.setState({ isMobile, promptNavigatorEnabled });
-        root.render(<QueryClientProvider client={client}><RemoteChatContainer location={location} sessionId="same" viewport={Viewport} /></QueryClientProvider>);
+        root.render(<QueryClientProvider client={client}><RemoteChatContainer location={location} sessionId="same" /></QueryClientProvider>);
       });
       expect(element.querySelector('[data-prompt-navigator]')?.getAttribute('data-prompt-navigator')).toBe(String(visible));
     }

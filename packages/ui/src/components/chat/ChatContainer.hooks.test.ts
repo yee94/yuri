@@ -7,6 +7,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 describe('ChatContainer source contracts', () => {
     const source = readFileSync(join(here, 'ChatContainer.tsx'), 'utf8');
+    // The follow/timeline/swap wiring and the transcript paint are shared with
+    // RemoteChatContainer, so they live outside the container source.
+    const shellSource = readFileSync(join(here, 'useChatSessionShell.ts'), 'utf8');
+    const viewportSource = readFileSync(join(here, 'ChatViewport.tsx'), 'utf8');
+    const frameSource = readFileSync(join(here, 'ChatSessionFrame.tsx'), 'utf8');
 
     test('handlers use useEvent; no React.useCallback', () => {
         expect(source).toContain("from '@reactuses/core'");
@@ -18,22 +23,28 @@ describe('ChatContainer source contracts', () => {
 
     test('DOM and browser listeners use @reactuses/core hooks', () => {
         expect(source).toContain('useEventListener');
-        expect(source).toContain('useResizeObserver');
         expect(source).toContain('useIsomorphicLayoutEffect');
         expect(source).toContain('useMount');
         expect(source).toContain('useUnmount');
-        expect(source).not.toContain('React.useLayoutEffect');
-        expect(source).not.toContain('addEventListener(');
-        expect(source).not.toContain('new ResizeObserver');
+        // The viewport-size observer moved into the shared shell with its listeners.
+        expect(shellSource).toContain('useEventListener');
+        expect(shellSource).toContain('useResizeObserver');
+        expect(shellSource).toContain('useIsomorphicLayoutEffect');
+        expect(shellSource).toContain('useUnmount');
+        for (const owner of [source, shellSource]) {
+            expect(owner).not.toContain('React.useLayoutEffect');
+            expect(owner).not.toContain('addEventListener(');
+            expect(owner).not.toContain('new ResizeObserver');
+        }
     });
 
     test('timeline bridge publishes via render-phase refs, not effect rebinding', () => {
-        expect(source).toContain('activeTurnChangeRef.current = timelineController.handleActiveTurnChange');
-        expect(source).toContain('historyUpwardIntentRef.current = timelineController.handleHistoryUpwardIntent');
-        expect(source).not.toMatch(
+        expect(shellSource).toContain('activeTurnChangeRef.current = timeline.handleActiveTurnChange');
+        expect(shellSource).toContain('historyUpwardIntentRef.current = timeline.handleHistoryUpwardIntent');
+        expect(shellSource).not.toMatch(
             /React\.useEffect\s*\(\s*\(\)\s*=>\s*\{\s*activeTurnChangeRef\.current\s*=/,
         );
-        expect(source).not.toMatch(
+        expect(shellSource).not.toMatch(
             /React\.useEffect\s*\(\s*\(\)\s*=>\s*\{\s*historyUpwardIntentRef\.current\s*=/,
         );
     });
@@ -42,14 +53,14 @@ describe('ChatContainer source contracts', () => {
         // Capacitor launches MobileApp directly and does not set the hosted-page
         // __YURI_SURFACE__ global. Width/pointer probing can vary while
         // the WebView viewport changes, whereas isMobile is set before mount.
-        expect(source).toContain('const showLoadOlderButton = resolveMobileLoadOlderVisibility({');
-        expect(source).toContain('isMobile,');
-        expect(source).not.toContain('const showLoadOlderButton = isMobileSurfaceRuntime()');
+        expect(shellSource).toContain('const showLoadOlderButton = resolveMobileLoadOlderVisibility({');
+        expect(shellSource).toContain('isMobile,');
+        expect(shellSource).not.toContain('const showLoadOlderButton = isMobileSurfaceRuntime()');
         // Controller auto-fill uses the same mounted flag as the status slot.
-        const timelineCallStart = source.indexOf('const timelineController = useChatTimelineController({');
-        const timelineCallEnd = source.indexOf('});', timelineCallStart);
+        const timelineCallStart = shellSource.indexOf('const timeline = useChatTimelineController({');
+        const timelineCallEnd = shellSource.indexOf('});', timelineCallStart);
         expect(timelineCallStart).toBeGreaterThan(-1);
-        const timelineCall = source.slice(timelineCallStart, timelineCallEnd);
+        const timelineCall = shellSource.slice(timelineCallStart, timelineCallEnd);
         expect(timelineCall).toContain('isMobile,');
         // Comment may mention the probe; the option value must not call it.
         expect(timelineCall).not.toMatch(/isMobile:\s*isMobileSurfaceRuntime\s*\(/);
@@ -103,22 +114,22 @@ describe('ChatContainer source contracts', () => {
         expect(source).not.toContain('isHistoryAvailabilityPending');
         // Visibility = mounted mobile surface && (canLoadEarlier || real
         // user-initiated loadEarlier mutation in flight).
-        expect(source).toContain('const showLoadOlderButton = resolveMobileLoadOlderVisibility({');
-        expect(source).toContain('canLoadEarlier: timelineController.historySignals.canLoadEarlier');
-        expect(source).toContain('isLoadingOlder: timelineController.isLoadingOlder');
+        expect(shellSource).toContain('const showLoadOlderButton = resolveMobileLoadOlderVisibility({');
+        expect(shellSource).toContain('canLoadEarlier: timeline.historySignals.canLoadEarlier');
+        expect(shellSource).toContain('isLoadingOlder: timeline.isLoadingOlder');
         // Busy is mutation-owned only — background prefetch/SWR
         // loading never drives the status.
-        expect(source).toContain('const loadOlderBusy = resolveMobileLoadOlderBusy({ isLoadingOlder });');
-        expect(source).toContain('aria-busy={loadOlderBusy}');
-        expect(source).not.toContain('data-chat-load-older="true"');
-        expect(source).toContain("{t('chat.history.loadingMore')}");
+        expect(viewportSource).toContain('const loadOlderBusy = resolveMobileLoadOlderBusy({ isLoadingOlder });');
+        expect(viewportSource).toContain('aria-busy={loadOlderBusy}');
+        expect(viewportSource).not.toContain('data-chat-load-older="true"');
+        expect(viewportSource).toContain("{t('chat.history.loadingMore')}");
         // Desktop scroll/auto-fill keeps a glass disc (icon only) while the
         // flight is unresolved. The label is the accessible name, not painted text.
-        expect(source).toContain('resolveDesktopLoadOlderStatusVisibility');
-        expect(source).toContain("aria-label={t('chat.history.loadingMore')}");
-        expect(source).toContain('yuri-mobile-glass-control');
-        expect(source).not.toContain("typography-meta text-[var(--surface-mutedForeground)]\">{t('chat.history.loadingMore')}");
-        expect(source).toContain('showDesktopLoadOlderStatus');
+        expect(viewportSource).toContain('resolveDesktopLoadOlderStatusVisibility');
+        expect(viewportSource).toContain("aria-label={t('chat.history.loadingMore')}");
+        expect(viewportSource).toContain('yuri-mobile-glass-control');
+        expect(viewportSource).not.toContain("typography-meta text-[var(--surface-mutedForeground)]\">{t('chat.history.loadingMore')}");
+        expect(viewportSource).toContain('showDesktopLoadOlderStatus');
     });
 
     test('explicit history navigation releases the initial entry-stick pin', () => {
@@ -186,9 +197,9 @@ describe('ChatContainer source contracts', () => {
         // Armed before the fetch, not after it resolves.
         expect(armIndex).toBeLessThan(controllerSource.indexOf('loadEarlierMutation.mutateAsync('));
 
-        expect(source).toContain('onWillLoadEarlier: armTimelineHistoryAnchor,');
-        expect(source).toContain('setTimelineHistoryAnchorToken((token) => token + 1);');
-        expect(source).toContain('timelineHistoryAnchorToken={timelineHistoryAnchorToken}');
+        expect(shellSource).toContain('onWillLoadEarlier: armTimelineHistoryAnchor,');
+        expect(shellSource).toContain('setTimelineHistoryAnchorToken((token) => token + 1);');
+        expect(frameSource).toContain('timelineHistoryAnchorToken={shell.timelineHistoryAnchorToken}');
     });
 
     /**
@@ -196,40 +207,40 @@ describe('ChatContainer source contracts', () => {
      * writes to the active list. The visible control must re-arm both owners.
      */
     test('resume-to-latest resumes follow through the active list controller', () => {
-        const resumeStart = source.indexOf('const resumeToLatestInstant = useEvent');
+        const resumeStart = shellSource.indexOf('const resumeToLatestInstant = useEvent');
         expect(resumeStart).toBeGreaterThan(-1);
-        const resumeBody = source.slice(resumeStart, source.indexOf('});', resumeStart));
+        const resumeBody = shellSource.slice(resumeStart, shellSource.indexOf('});', resumeStart));
         expect(resumeBody).toContain("goToBottom('instant')");
         expect(resumeBody).toContain('expandMobileComposer()');
-        expect(source).toContain('const expandMobileComposer = useMobileComposerSwap(');
+        expect(shellSource).toContain('const expandMobileComposer = useMobileComposerSwap(');
         const autoFollowSource = readFileSync(join(here, '../../hooks/useChatAutoFollow.ts'), 'utf8');
-        expect(source).toContain('scrollControllerRef: messageListRef');
+        expect(shellSource).toContain('scrollControllerRef: messageListRef');
         expect(autoFollowSource).toContain("scrollControllerRef?.current?.scrollToBottom({ behavior: mode === 'smooth' ? 'smooth' : 'auto', ...options })");
         // The visible control goes through turn navigation and auto-follow.
-        expect(source).toContain('resumeToBottom: resumeToLatestInstant,');
-        expect(source).not.toContain('resumeToBottom: timelineController.resumeToBottomInstant,');
+        expect(shellSource).toContain('resumeToBottom: resumeToLatestInstant,');
+        expect(shellSource).not.toContain('resumeToBottom: timeline.resumeToBottomInstant,');
     });
 
     test('default viewport keeps composer inset and the shell-gated live status slot', () => {
-        expect(source).toContain('style={{ height: isMobile ? CHAT_TAIL_SPACER_MOBILE_HEIGHT : CHAT_TAIL_SPACER_DESKTOP_HEIGHT }}');
-        expect(source).toContain('<StatusRowContainer />');
+        expect(viewportSource).toContain('style={{ height: isMobile ? CHAT_TAIL_SPACER_MOBILE_HEIGHT : CHAT_TAIL_SPACER_DESKTOP_HEIGHT }}');
+        expect(viewportSource).toContain('<StatusRowContainer />');
         // Classic path: shell-gated status mounts through MessageList.liveStatusSlot
         // (inside the pin-reveal root), not as a sibling after MessageList.
-        expect(source).toContain('liveStatusSlot={');
-        const statusGate = source.indexOf('liveStatusSlot={');
-        const liveStatusSlot = source.slice(statusGate, source.indexOf('/>', statusGate + 80) + 2);
+        expect(viewportSource).toContain('liveStatusSlot={');
+        const statusGate = viewportSource.indexOf('liveStatusSlot={');
+        const liveStatusSlot = viewportSource.slice(statusGate, viewportSource.indexOf('/>', statusGate + 80) + 2);
         expect(liveStatusSlot).toContain('renderedMessages.length > 0');
         expect(liveStatusSlot).toContain('<StatusRowContainer />');
-        expect(source).not.toMatch(/<\/MessageList>\s*\{\/\* No transcript shell/);
+        expect(viewportSource).not.toMatch(/<\/MessageList>\s*\{\/\* No transcript shell/);
     });
 
     test('composer send invokes the default on-send follow policy', () => {
-        expect(source).toContain('const scrollViewportOnSend = useEvent');
-        const sendStart = source.indexOf('const scrollViewportOnSend = useEvent');
-        const sendBody = source.slice(sendStart, source.indexOf('});', sendStart));
+        expect(shellSource).toContain('const scrollViewportOnSend = useEvent');
+        const sendStart = shellSource.indexOf('const scrollViewportOnSend = useEvent');
+        const sendBody = shellSource.slice(sendStart, shellSource.indexOf('});', sendStart));
         expect(sendBody).toContain('scrollToBottomOnSend()');
-        expect(source).toContain('scrollToBottom={scrollViewportOnSend}');
-        expect(source).not.toContain('scrollToBottom={scrollToBottomOnSend}');
+        expect(source).toContain('scrollToBottom={shell.scrollViewportOnSend}');
+        expect(source).not.toContain('scrollToBottom={shell.follow.scrollToBottomOnSend}');
     });
 
     test('latches confirmed subagent footer identity through temporary session identity gaps', () => {
@@ -261,12 +272,17 @@ describe('ChatContainer source contracts', () => {
             source.indexOf('if (renderedViewportMessages.length === 0 && !sessionIsWorking)'),
         );
         const transcriptShell = source.slice(
-            source.lastIndexOf("<div ref={composerSwapScopeRef} className={cn('relative flex flex-col h-full bg-background'"),
+            source.lastIndexOf('<ChatSessionFrame shell={shell}>'),
             source.indexOf('const MemoizedChatContainerContent'),
         );
-        for (const shell of [establishingDraftShell, hydratingShell, transcriptShell]) {
-            expect(shell).toContain('<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>');
+        // ChatSessionFoot forwards its `overlay` straight to ComposerFoot.
+        expect(frameSource).toContain('<ComposerFoot isMobile={isMobile} expanded={expanded} overlay={overlay} className={className}>');
+        for (const shell of [establishingDraftShell, hydratingShell]) {
+            expect(shell).toContain('<ChatSessionFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>');
         }
+        expect(transcriptShell).toContain('<ChatSessionFoot');
+        expect(transcriptShell).toContain('key="composer-foot"');
+        expect(transcriptShell).not.toContain('overlay={false}');
         expect(foot).toContain('!isMobile && !expanded && overlay');
     });
 

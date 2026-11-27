@@ -27,21 +27,12 @@ import { cancelUnpromotedInboxItem, steerSessionInbox, queueSessionInbox } from 
 import { ChatInput } from './ChatInput';
 import type { ChatInputSurface, ChatInputDeliveryRequest } from './chatInputSurface';
 import { SessionSurfaceContext, PRIMARY_SESSION_SURFACE_CAPABILITIES, STRICT_READ_ONLY_SESSION_SURFACE_CAPABILITIES } from './SessionSurfaceContext';
-import MessageList, { type MessageListHandle } from './MessageList';
-import { PermissionCard } from './PermissionCard';
-import { QuestionCard } from './QuestionCard';
-import { FormCard } from './FormCard';
-import { useChatAutoFollow } from '@/hooks/useChatAutoFollow';
-import { useChatTimelineController } from './hooks/useChatTimelineController';
-import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { ascendingId } from '@/sync/message-id';
 import { fetchForkBoundary } from '@/sync/session-fork-boundary';
 import { buildSessionMentionInstruction } from '@/composer/delivery';
 import { editSessionInboxIntoDraft } from '@/sync/session-inbox-edit';
-import { TranscriptSearch } from './TranscriptSearch';
-import { TimelineDialog } from './TimelineDialog';
 import { normalizeSessionProjectionMessage } from '@/sync/session-projection-api';
 import { buildSentMessageComposerRestoration, commitComposerRestoration } from '@/sync/message-composer-restoration';
 import { createDraftAttachmentResourceAdapter } from '@/sync/draft-attachment-resource-adapter';
@@ -52,7 +43,9 @@ import type { I18nKey } from '@/lib/i18n';
 import { NativeSessionInboxChips } from './QueuedMessageChips';
 import { StatusRow } from './StatusRow';
 import { ReadOnlyPromptBanner } from './ReadOnlyPromptBanner';
-import { ComposerFoot, DraftComposerFoot } from './ComposerFoot';
+import { DraftComposerFoot } from './ComposerFoot';
+import { ChatSessionFoot, ChatSessionFrame, ChatSessionScrollControls, ChatSessionTimelineDialog, ChatTranscript } from './ChatSessionFrame';
+import { useChatSessionShell } from './useChatSessionShell';
 import { parseSlashCommandInvocation } from '@/composer/inline-visual';
 import { skillAttachmentsFromText } from '@/composer/skill-attachments';
 import { useRemoteOperationError } from '@/lib/remote-projects/operation-errors';
@@ -68,8 +61,13 @@ const remoteWorkspaceForLocation = (location: HostLocation) => {
   return { ...project, id: remoteProjectId };
 };
 
-type Props = { location: HostLocation; sessionId: string | null; active?: boolean; readOnly?: boolean; composerPresentation?: 'primary' | 'panel'; contextPanel?: { allowPromptingSubagentSessions: boolean }; onNavigateSession?: (sessionId: string, directory: string) => void; viewport?: typeof import('./ChatContainer').ChatViewport };
+type Props = { location: HostLocation; sessionId: string | null; active?: boolean; readOnly?: boolean; composerPresentation?: 'primary' | 'panel'; contextPanel?: { allowPromptingSubagentSessions: boolean }; onNavigateSession?: (sessionId: string, directory: string) => void };
 const EMPTY_INBOX: never[] = [];
+const EMPTY_QUESTIONS: never[] = [];
+const EMPTY_PERMISSIONS: never[] = [];
+const EMPTY_FORMS: never[] = [];
+/** The new-session draft has no session ID; its (empty) mobile transcript still needs a stable viewport identity. */
+const REMOTE_DRAFT_VIEWPORT_ID = 'remote-new-session';
 const EMPTY_INLINE: InlineCommentDraft[] = [];
 
 /** Main ChatContainer's remote branch: the existing message list/editor, explicit Host authority. */
@@ -127,7 +125,7 @@ function RemoteTranscriptStatus({ state, sessionId }: { state: ReturnType<typeof
   </div>;
 }
 
-function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadOnly = false, composerPresentation = 'panel', contextPanel, onNavigateSession, viewport: Viewport, state }: Props & { state: ReturnType<typeof createRemoteSessionState> }) {
+function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadOnly = false, composerPresentation = 'panel', contextPanel, onNavigateSession, state }: Props & { state: ReturnType<typeof createRemoteSessionState> }) {
   const { t } = useI18n();
   const isMounted = useMountedState();
   const entry = state.entry;
@@ -561,20 +559,16 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
   };
   const isMobile = useUIStore((store) => store.isMobile);
   const expanded = useUIStore((store) => !contextPanel && store.isExpandedInput);
-  const stickyUserHeader = useUIStore((store) => store.stickyUserHeader);
-  const promptNavigator = useUIStore((store) => store.promptNavigatorEnabled);
-  const listRef = React.useRef<MessageListHandle | null>(null);
-  const [anchorToken, armAnchor] = React.useReducer((n: number) => n + 1, 0);
-  const follow = useChatAutoFollow({ scrollControllerRef: listRef, enabled: active, currentSessionId: sessionId,
-    viewportKey: state.sessionKey(sessionId ?? 'new'), sessionMessageCount: messages.length, sessionIsWorking: busy, isMobile });
   const loadMore = useEvent(async () => { if (sessionId) await state.repository.fetchPreviousPage(state.scope(sessionId)); });
-  const historyMeta = data ? { limit: data.boundary.loadedTurns, cursor: data.boundary.kind === 'has-more' ? data.boundary.cursor : undefined,
-    complete: data.boundary.kind === 'exhausted', loading: false, canLoadEarlier: data.boundary.kind !== 'exhausted' } : null;
-  const timeline = useChatTimelineController({ sessionId, directory: location.directory, messages, historyMeta,
-    scrollRef: follow.scrollRef, messageListRef: listRef, loadMoreMessages: loadMore,
-    goToBottom: follow.goToBottom, releaseAutoFollow: follow.releaseAutoFollow,
-    beginHistoryViewportPreservation: follow.beginHistoryViewportPreservation, endHistoryViewportPreservation: follow.endHistoryViewportPreservation,
-    isPinned: follow.isPinned, showScrollButton: follow.showScrollButton, isMobile, onWillLoadEarlier: armAnchor });
+  const boundary = data?.boundary;
+  const historyMeta = React.useMemo(() => boundary ? { limit: boundary.loadedTurns, cursor: boundary.kind === 'has-more' ? boundary.cursor : undefined,
+    complete: boundary.kind === 'exhausted', loading: false, canLoadEarlier: boundary.kind !== 'exhausted' } : null, [boundary]);
+  const questions = !readOnly && active ? snapshot.questions : EMPTY_QUESTIONS;
+  const permissions = !readOnly && active ? snapshot.permissions : EMPTY_PERMISSIONS;
+  const forms = !readOnly && active ? snapshot.forms : EMPTY_FORMS;
+  const shell = useChatSessionShell({ active, sessionId, viewKey: state.sessionKey(sessionId ?? 'new'),
+    directory: location.directory, messages, messageCount: messages.length, working: busy, hydrating: false, expandedInput: expanded,
+    historyMeta, loadMoreMessages: loadMore, questions, permissions, promptNavigator: !contextPanel, onLoadEarlierError: report });
   const inboxAction = useEvent(async (action: 'steer' | 'queue' | 'cancel', inboxID: string) => {
     assertWritable();
     if (!sessionId) return;
@@ -598,54 +592,24 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
     retryInfo={snapshot.status?.type === 'retry' ? snapshot.status : null} agentName={selection.agent}
     showAssistantStatus={busy || snapshot.permissions.length > 0} />;
   return <SessionSurfaceContext.Provider value={sessionSurface}>
-    <div className="relative flex h-full min-h-0 flex-col bg-background" data-remote-chat={locationKey(location)}>
+    <ChatSessionFrame shell={shell} swap={Boolean(sessionId) && composerPresentation === 'primary'} className="min-h-0" data-remote-chat={locationKey(location)}>
       {active && !isMobile && sessionId ? <RemoteTranscriptStatus state={state} sessionId={sessionId} /> : null}
-      {sessionId || isMobile ? <TranscriptSearch messages={messages} enabled={active && !expanded} canOpen={() => !document.querySelector('[role="dialog"]')} onNavigate={follow.releaseAutoFollow}>
-      {Viewport ? <Viewport currentSessionId={sessionId ?? 'remote-new-session'} virtualizerKey={surface.surfaceID}
-        timelineHistoryAnchorToken={anchorToken} isDesktopExpandedInput={expanded} isMobile={isMobile} stickyUserHeader={stickyUserHeader}
-        directory={location.directory} scrollRef={follow.scrollRef} messageListRef={listRef} pendingRevealWork={timeline.pendingRevealWork}
-        renderedMessages={timeline.renderedMessages} isLoadingOlder={timeline.isLoadingOlder} sessionIsWorking={busy}
-        streamingMessageId={null} activeStreamingPhase={null} retryOverlay={sessionId && snapshot.status?.type === 'retry' ? { sessionId, message: snapshot.status.message } : null}
-        handleMessageContentChange={follow.notifyContentChange} getAnimationHandlers={follow.getAnimationHandlers}
-        handleHistoryScroll={timeline.handleHistoryScroll} scrollToBottom={() => follow.goToBottom()}
-        sessionQuestions={!readOnly && active ? snapshot.questions : []} sessionPermissions={!readOnly && active ? snapshot.permissions : []}
-        sessionForms={!readOnly && active ? snapshot.forms : []} retryActionCopy={retryActionCopy} isProgrammaticFollowActive={follow.isFollowingProgrammatically}
-        showLoadOlderButton={data?.boundary.kind === 'has-more'} turnIds={timeline.turnIds} activeTurnId={timeline.activeTurnId}
-        onSelectTurn={(id) => void timeline.scrollToTurn(id)} showPromptNavigator={!isMobile && promptNavigator}
-        canLoadEarlierPrompts={timeline.historySignals.canLoadEarlier} isLoadingOlderPrompts={timeline.isLoadingOlder}
-        onLoadEarlierPrompts={() => void timeline.loadEarlier({ userInitiated: true }).catch(report)}
-        transcriptStatusRow={transcriptStatusRow} /> :
-      <ScrollShadow ref={follow.scrollRef} className="chat-scroll min-h-0 flex-1 overflow-y-auto" style={{ overflowAnchor: 'none' }} onScroll={timeline.handleHistoryScroll}>
-        {retryActionCopy ? <div className="chat-column px-3 py-2">
-          <div className="typography-ui-label text-foreground">{retryActionCopy.title}</div>
-          <div className="typography-meta text-muted-foreground mt-1">{retryActionCopy.message}</div>
-          {retryActionCopy.link ? <a href={retryActionCopy.link} target="_blank" rel="noopener noreferrer" className="typography-meta underline">{retryActionCopy.label}</a> : null}
-        </div> : null}
-        {data?.boundary.kind === 'has-more' ? <Button size="xs" onClick={() => void timeline.loadEarlier({ userInitiated: true }).catch(report)} disabled={timeline.isLoadingOlder}>{t('chat.history.loadingMore')}</Button> : null}
-        <MessageList ref={listRef} sessionKey={sessionId ?? 'remote-new-session'} virtualizerKey={surface.surfaceID} timelineHistoryAnchorToken={anchorToken}
-          messages={timeline.renderedMessages} directory={location.directory} sessionIsWorking={busy}
-          activeStreamingMessageId={null} activeStreamingPhase={null} onMessageContentChange={follow.notifyContentChange}
-          getAnimationHandlers={follow.getAnimationHandlers} isLoadingOlder={timeline.isLoadingOlder}
-          scrollToBottom={() => follow.goToBottom()} scrollRef={follow.scrollRef} />
-        {!readOnly && active ? <>
-          {snapshot.permissions.map((permission) => <PermissionCard key={permission.id} permission={permission} />)}
-          {snapshot.questions.map((question) => <QuestionCard key={question.id} question={question} />)}
-          {snapshot.forms.map((form) => <FormCard key={form.id} form={form} directory={location.directory} />)}
-        </> : null}
-        {transcriptStatusRow}
-      </ScrollShadow>}
-      </TranscriptSearch> : null}
+      {sessionId || isMobile ? <ChatTranscript shell={shell} active={active} expandedInput={expanded}
+        sessionId={sessionId ?? REMOTE_DRAFT_VIEWPORT_ID} viewKey={surface.surfaceID} directory={location.directory} searchMessages={messages}
+        working={busy} streamingMessageId={null} activeStreamingPhase={null}
+        retryOverlay={sessionId && snapshot.status?.type === 'retry' ? { sessionId, message: snapshot.status.message } : null}
+        retryActionCopy={retryActionCopy} questions={questions} permissions={permissions} forms={forms}
+        transcriptStatusRow={transcriptStatusRow} /> : null}
       {session?.revert && sessionId && !readOnly && active ? <Button size="xs" onClick={() => { assertWritable(); void postSessionRevertClear({ scope: entry, sessionID: sessionId }).then(() => state.refreshMetadata(sessionId)).catch(report); }}>{t('chat.revertIndicator.redo')}</Button> : null}
       {panelSubagent && readOnly && session ? <ReadOnlyPromptBanner agentName={session.agent} providerId={readSessionModelProviderId(session)}
         modelId={readSessionModelId(session)} modelName={readSessionModelId(session)} /> : !sessionId ? <DraftComposerFoot isMobile={isMobile} expanded={expanded} compact={isMobile}>
-        <ChatInput surface={surface} scrollToBottom={follow.scrollToBottomOnSend} showScrollToBottom={follow.showScrollButton} onScrollToBottom={() => follow.goToBottom()} />
-      </DraftComposerFoot> : <ComposerFoot isMobile={isMobile} expanded={expanded}>
-        <ChatInput surface={surface} scrollToBottom={follow.scrollToBottomOnSend} showScrollToBottom={follow.showScrollButton} onScrollToBottom={() => follow.goToBottom()} />
-      </ComposerFoot>}
-      {sessionId ? <TimelineDialog open={timelineOpen && active && (!contextPanel || !readOnly)} onOpenChange={setTimelineOpen} sessionID={sessionId} directory={location.directory}
-        onRevertMessage={revert} onScrollToMessage={timeline.scrollToMessage}
-        canLoadEarlier={timeline.historySignals.canLoadEarlier} isLoadingEarlier={timeline.isLoadingOlder}
-        onLoadEarlier={() => void timeline.loadEarlier({ userInitiated: true }).catch(report)} /> : null}
-    </div>
+        <ChatInput surface={surface} scrollToBottom={shell.scrollViewportOnSend} />
+      </DraftComposerFoot> : <ChatSessionFoot isMobile={isMobile} expanded={expanded}
+        scrollControls={<ChatSessionScrollControls shell={shell} active={active && !expanded} messageCount={messages.length} />}>
+        <ChatInput surface={surface} scrollToBottom={shell.scrollViewportOnSend} />
+      </ChatSessionFoot>}
+      {sessionId ? <ChatSessionTimelineDialog shell={shell} open={timelineOpen && active && (!contextPanel || !readOnly)} onOpenChange={setTimelineOpen}
+        sessionId={sessionId} directory={location.directory} onRevertMessage={revert} /> : null}
+    </ChatSessionFrame>
   </SessionSurfaceContext.Provider>;
 }

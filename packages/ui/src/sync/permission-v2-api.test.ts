@@ -337,8 +337,9 @@ describe("ticket 10 source contracts", () => {
 
   test("pending forms render on the current session; reply/cancel are wired", () => {
     const chat = readFileSync(join(here, "../components/chat/ChatContainer.tsx"), "utf8")
+    const viewport = readFileSync(join(here, "../components/chat/ChatViewport.tsx"), "utf8")
     const formCard = readFileSync(join(here, "../components/chat/FormCard.tsx"), "utf8")
-    expect(chat.includes("FormCard")).toBe(true)
+    expect(viewport.includes("FormCard")).toBe(true)
     expect(chat.includes("useSessionFormStore") || chat.includes("sessionForms")).toBe(true)
     expect(formCard.includes("postSessionFormReply")).toBe(true)
     expect(formCard.includes("postSessionFormCancel")).toBe(true)

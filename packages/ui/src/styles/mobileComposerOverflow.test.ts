@@ -8,6 +8,9 @@ const mobileCss = readFileSync(join(here, 'mobile.css'), 'utf-8');
 const chatInputSource = readFileSync(join(here, '../components/chat/ChatInput.tsx'), 'utf-8');
 const chatPromptComposerSource = readFileSync(join(here, '../components/chat/ChatPromptComposer.tsx'), 'utf-8');
 const chatContainerSource = readFileSync(join(here, '../components/chat/ChatContainer.tsx'), 'utf-8');
+const chatSessionFrameSource = readFileSync(join(here, '../components/chat/ChatSessionFrame.tsx'), 'utf-8');
+const chatSessionShellSource = readFileSync(join(here, '../components/chat/useChatSessionShell.ts'), 'utf-8');
+const remoteChatContainerSource = readFileSync(join(here, '../components/chat/RemoteChatContainer.tsx'), 'utf-8');
 const autoFollowSource = readFileSync(join(here, '../hooks/useChatAutoFollow.ts'), 'utf-8');
 const swapHookSource = readFileSync(join(here, '../components/chat/useMobileComposerSwap.ts'), 'utf-8');
 const queuedChipsSource = readFileSync(join(here, '../components/chat/QueuedMessageChips.tsx'), 'utf-8');
@@ -119,7 +122,8 @@ describe('mobile composer overflow and swap contract', () => {
         expect(mobileCss).not.toMatch(/\.yuri-mobile-composer-foot--overlay\s*>\s*div:first-child[^{]*\{[^}]*--yuri-mobile-composer-swap/s);
         expect(mobileCss).toMatch(/\.yuri-scroll-to-bottom--expanded\s*\{[^}]*z-index:\s*30;[^}]*bottom:\s*var\(--yuri-chat-foot-inset\)[^}]*opacity:\s*calc\(1 - min\(1, var\(--yuri-mobile-composer-swap\) \* 2\)\)/s);
         expect(mobileCss).toMatch(/\.yuri-scroll-to-bottom--compact\s*\{[^}]*opacity:\s*max\(0, calc\(var\(--yuri-mobile-composer-swap\) \* 2 - 1\)\)/s);
-        expect(chatContainerSource).toContain('<TranscriptScrollControls');
+        expect(chatSessionFrameSource).toContain('<TranscriptScrollControls');
+        expect(chatSessionFrameSource).not.toContain('<ScrollToBottomButton');
         expect(chatContainerSource).not.toContain('<ScrollToBottomButton');
         const primaryInput = chatContainerSource.match(/<ChatInput\s+key="composer-input"[\s\S]*?\/>/)?.[0];
         expect(primaryInput).toBeDefined();
@@ -160,25 +164,43 @@ describe('mobile composer overflow and swap contract', () => {
             chatContainerSource.indexOf('if (renderedViewportMessages.length === 0 && !sessionIsWorking)'),
         );
         const transcriptShell = chatContainerSource.slice(
-            chatContainerSource.lastIndexOf("<div ref={composerSwapScopeRef} className={cn('relative flex flex-col h-full bg-background'"),
+            chatContainerSource.lastIndexOf('<ChatSessionFrame shell={shell}>'),
             chatContainerSource.indexOf('const MemoizedChatContainerContent'),
         );
         // Feet are built by ComposerFoot: the overlay class comes from its `overlay` prop
         // (default on), so every swap-scope shell must render at least one overlay foot.
         const composerFootSource = readFileSync(join(here, '../components/chat/ComposerFoot.tsx'), 'utf-8');
         expect(composerFootSource).toContain("isMobile && overlay && 'yuri-mobile-composer-foot--overlay'");
+        // ChatSessionFrame is the only place the scope class is bound; a shell
+        // binds it unless it opts out with `swap={false}`.
+        expect(chatSessionFrameSource.match(/'yuri-chat-composer-swap-scope'/g)).toHaveLength(1);
         for (const shell of [establishingDraftShell, hydratingShell, transcriptShell]) {
-            expect(shell.match(/yuri-chat-composer-swap-scope/g)).toHaveLength(1);
+            expect(shell.match(/<ChatSessionFrame shell=\{shell\}>/g)).toHaveLength(1);
             const overlayFeet = (shell.match(/yuri-mobile-composer-foot--overlay/g)?.length ?? 0)
-                + (shell.match(/<ComposerFoot\b(?![^>]*overlay=\{false\})/g)?.length ?? 0);
+                + (shell.match(/<ChatSessionFoot\b(?![^>]*overlay=\{false\})/g)?.length ?? 0);
             expect(overlayFeet).toBeGreaterThanOrEqual(1);
         }
-        expect(chatContainerSource.match(/yuri-chat-composer-swap-scope/g)).toHaveLength(3);
-        for (const source of [chatContainerSource, chatInputSource, autoFollowSource]) {
+        expect(chatContainerSource.match(/<ChatSessionFrame shell=\{shell\}>/g)).toHaveLength(3);
+        expect(chatContainerSource).not.toContain('yuri-chat-composer-swap-scope');
+        for (const source of [chatContainerSource, chatSessionShellSource, chatInputSource, autoFollowSource]) {
             expect(source).not.toContain("setProperty('--yuri-mobile-composer-shrink'");
             expect(source).not.toContain("setProperty('--yuri-chat-foot-inset'");
             expect(source).not.toContain('publishMobileComposerShrink');
         }
+    });
+
+    test('remote sessions share the same scroll-collapse wiring as local ones', () => {
+        // Remote once had a parallel copy of the transcript shell that never
+        // bound the swap scope, so swipe-to-collapse silently did nothing there.
+        expect(remoteChatContainerSource).toContain('useChatSessionShell(');
+        // Only a primary presentation collapses; the rendered behavior is covered in
+        // RemoteChatContainer.composer.test.tsx.
+        expect(remoteChatContainerSource).toMatch(/<ChatSessionFrame[^>]*swap=\{Boolean\(sessionId\) && composerPresentation === 'primary'\}/);
+        expect(remoteChatContainerSource).not.toContain('yuri-chat-composer-swap-scope');
+        expect(remoteChatContainerSource).not.toContain('useMobileComposerSwap');
+        expect(remoteChatContainerSource).not.toContain('composerSwapScopeRef');
+        expect(chatSessionShellSource).toContain('const composerSwapScopeRef = React.useRef<HTMLDivElement>(null);');
+        expect(chatSessionFrameSource).toContain('ref={swap ? shell.composerSwapScopeRef : undefined}');
     });
 
     test('keeps fixed inset and pin accessibility contracts', () => {
@@ -258,7 +280,7 @@ describe('mobile composer overflow and swap contract', () => {
         expect(chatInputSource).toContain('nativeIosComposerActive ? null');
         expect(chatInputSource).not.toContain("setProperty('--yuri-chat-foot-inset'");
         expect(chatContainerSource).not.toContain('canUseNativeIosComposer');
-        expect(chatContainerSource).toMatch(
+        expect(chatSessionShellSource).toMatch(
             /useMobileComposerSwap\(\{\s*enabled:\s*isMobile,/,
         );
         expect(mobileAppSource).toContain("root.classList.contains('yuri-native-ios-composer')");
@@ -393,12 +415,12 @@ describe('mobile composer overflow and swap contract', () => {
             chatContainerSource.indexOf('if (draftSubmitting || draftEstablishing)'),
             chatContainerSource.indexOf('if (!currentSessionId)', chatContainerSource.indexOf('if (draftSubmitting || draftEstablishing)')),
         );
-        expect(establishingDraftShell).toContain('<ComposerFoot key="composer-foot"');
+        expect(establishingDraftShell).toContain('<ChatSessionFoot key="composer-foot"');
         expect(establishingDraftShell).not.toContain('overlay={false}');
         expect(establishingDraftShell).not.toContain('invisible');
-        expect(establishingDraftShell).toContain('yuri-chat-composer-swap-scope');
+        expect(establishingDraftShell).toContain('<ChatSessionFrame shell={shell}>');
         // The same keyed foot keeps the editor mounted; only its positioning changes.
-        expect(idleDraftShell).toContain('<ComposerFoot');
+        expect(idleDraftShell).toContain('<ChatSessionFoot');
         expect(idleDraftShell).toContain('key="composer-foot"');
         expect(idleDraftShell).toContain('overlay={false}');
         expect(idleDraftShell).toContain('yuri-draft-center');

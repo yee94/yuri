@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { ComposerFoot, DraftComposerFoot } from './ComposerFoot';
+import { ChatSessionFoot, ChatSessionFrame } from './ChatSessionFrame';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -72,7 +73,19 @@ const render = async (overrides: Record<string, unknown>) => {
         TimelineDialog: Empty, TranscriptScrollControls: Empty,
         TranscriptSearch: Passthrough,
         ChatEmptyState: Empty, Icon: Empty, Button: Empty,
+        MobileBackgroundWorkBar: Empty,
+        ChatSessionFrame, ChatSessionFoot, ChatTranscript: Empty, ChatSessionScrollControls: Empty, ChatSessionTimelineDialog: Empty,
         ...overrides,
+    };
+    // The shared shell owns the swap scope ref and the scroll wiring; the frame only reads these fields.
+    scope.shell = {
+        composerSwapScopeRef: React.createRef<HTMLDivElement>(), isMobile: scope.isMobile,
+        scrollRef: { current: null }, messageListRef: { current: null },
+        timeline: { historySignals: {}, handleHistoryScroll: () => undefined }, navigation: {},
+        follow: { notifyContentChange: () => undefined, getAnimationHandlers: () => ({}), isFollowingProgrammatically: false },
+        scrollViewportOnSend: () => undefined, resumeToLatestInstant: () => undefined,
+        handleLoadOlderClick: () => undefined, handlePromptNavigatorSelect: () => undefined,
+        ...(overrides.shell as object | undefined),
     };
     const RenderBranch = createRender(...Array.from(bindings, (key) => scope[key]));
     // Keep the parent component identity stable across the production branch transition.

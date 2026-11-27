@@ -453,11 +453,16 @@ describe('runtime default list engine', () => {
         expect(messageListSource).not.toMatch(/LegendTimelineHost|TimelineList|legendTimelineEnabled/);
         expect(messageListSource).toContain('<StaticHistoryList');
         expect(messageListSource).toContain('<StreamingTailContent');
-        for (const host of ['ChatContainer.tsx', '../layout/ContextPanelSessionTranscript.tsx']) {
-            const source = readFileSync(join(here, host), 'utf8');
-            expect(source).not.toMatch(/legendTimelineEnabled|timelineFollowEnabled/);
-            expect(source).toContain('enabled: active,');
-            expect(source).toContain('<ScrollShadow');
+        const hosts: Array<[string, string]> = [
+            ['useChatSessionShell.ts', 'ChatViewport.tsx'],
+            ['../layout/ContextPanelSessionTranscript.tsx', '../layout/ContextPanelSessionTranscript.tsx'],
+        ];
+        for (const [followHost, paintHost] of hosts) {
+            const followSource = readFileSync(join(here, followHost), 'utf8');
+            const paintSource = readFileSync(join(here, paintHost), 'utf8');
+            expect(followSource).not.toMatch(/legendTimelineEnabled|timelineFollowEnabled/);
+            expect(followSource).toContain('enabled: active,');
+            expect(paintSource).toContain('<ScrollShadow');
         }
     });
 });

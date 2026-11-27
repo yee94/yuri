@@ -31,10 +31,26 @@ command cache policies are unchanged.
 the local retained-view controller. Explicit mobile pages carry `explicitSession.location`;
 a remote raw session ID alone is not a local session selection. `RemoteChatContainer`
 resolves that Location's registry entry and mounts `HostRuntimeProvider` plus a shared
-`RemoteChatContext`. Primary chat passes the existing `ChatViewport` (message list,
-prompt rail, request cards and scrolling), and uses the existing `ChatInput`, timeline
-controller, search and timeline dialog. Context-panel callers may supply their own
-navigation callback without changing the main selection.
+`RemoteChatContext`. Local and remote chat render the same interaction layer; they
+differ only in data source and send actions. That layer has three owners:
+
+- `useChatSessionShell` wires auto-follow, the mobile composer/header swap
+  (`useMobileComposerSwap`), the timeline controller, turn navigation, keyboard
+  navigation, `--chat-scroll-height`, session pin and the desktop history warm-up.
+  `ChatContainer` and `RemoteChatContainer` both call it, so a new interaction is
+  added once.
+- `ChatSessionFrame` is the only place the swap scope ref and the
+  `yuri-chat-composer-swap-scope` class are bound. Shells with no scrolling
+  transcript (load error, empty, idle draft) opt out with `swap={false}`; the remote
+  new-session draft does the same. `ChatSessionFoot`, `ChatSessionScrollControls`,
+  `ChatTranscript` and `ChatSessionTimelineDialog` are its companions.
+- `ChatViewport` (message list, prompt rail, request cards, scroller) is the one
+  transcript painter. `RemoteChatContainer` has no viewport fallback or injection
+  point; a parallel copy of this layer is what once left remote sessions without
+  swipe-to-collapse on mobile.
+
+Remote still uses the existing `ChatInput`, search and timeline dialog. Context-panel
+callers may supply their own navigation callback without changing the main selection.
 
 `ChatContainer` explicitly supplies `composerPresentation="primary"` to its remote
 branch. Direct `RemoteChatContainer` consumers default to `panel`; active panel

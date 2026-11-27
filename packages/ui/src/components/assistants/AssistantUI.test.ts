@@ -484,11 +484,17 @@ describe('Assistant UI product contract', () => {
     expect(chatContainer).toContain('surface={composerSurface}');
     expect(chatContainer).toContain('resolveSessionIdentityPending');
     expect(chatContainer).toContain("composerSurfaceKind: composerSurface?.kind");
-    expect(chatContainer).toContain('<MessageList');
-    expect(chatContainer).toContain('<QuestionCard');
-    expect(chatContainer).toContain('<PermissionCard');
-    expect(chatContainer).toContain('<StatusRowContainer');
-    expect(chatContainer).toContain('<TimelineDialog');
+    // The transcript painter and timeline dialog are shared with the remote chat,
+    // so primary chat reaches them through ChatViewport / ChatSessionFrame.
+    const [chatViewport, chatFrame] = await Promise.all([read('../chat/ChatViewport.tsx'), read('../chat/ChatSessionFrame.tsx')]);
+    expect(chatContainer).toContain('<ChatTranscript');
+    expect(chatFrame).toContain('<ChatViewport');
+    expect(chatViewport).toContain('<MessageList');
+    expect(chatViewport).toContain('<QuestionCard');
+    expect(chatViewport).toContain('<PermissionCard');
+    expect(chatViewport).toContain('<StatusRowContainer');
+    expect(chatContainer).toContain('<ChatSessionTimelineDialog');
+    expect(chatFrame).toContain('<TimelineDialog');
     expect(chatContainer).toContain('onRevertMessage={onRevertMessage}');
     expect(chatContainer).toContain('hostFeatures.newSessionDraft');
     expect(chatContainer).toContain('hostFeatures.promptNavigator');
@@ -741,8 +747,9 @@ describe('Assistant UI product contract', () => {
     expect(conversation).not.toContain('assistant.effectiveWorkspacePath');
     expect(conversation).not.toContain('flattenAssistantHistoryPages');
     expect(conversation).not.toContain('onRevertMessage');
-    expect(chatContainer).toContain('sessionID={currentSessionId ?? undefined}');
+    expect(chatContainer).toContain('sessionId={currentSessionId}');
     expect(chatContainer).toContain('directory={effectiveSessionDirectory}');
+    expect(await read('../chat/ChatSessionFrame.tsx')).toContain('sessionID={sessionId}');
     expect(chatContainer).toContain('onRevertMessage={onRevertMessage}');
     expect(chatMessage).toContain('sessionSurface.onRevertMessage');
     expect(chatMessage).toContain('directory: sessionSurface.directory ?? undefined');
@@ -852,9 +859,12 @@ describe('Assistant UI product contract', () => {
     expect(view).not.toContain('ensureAssistantSession');
     expect(conversation).not.toContain('<ChatContainer');
     expect(conversation).toContain('useAssistantContactMessagesQuery');
-    expect(chatContainer).toContain('activeStreamingMessageId={streamingMessageId}');
+    const chatViewport = await read('../chat/ChatViewport.tsx');
+    expect(chatContainer).toContain('streamingMessageId={streamingMessageId}');
     expect(chatContainer).toContain('activeStreamingPhase={activeStreamingPhase}');
-    expect(chatContainer).toContain('<StatusRowContainer');
+    expect(chatViewport).toContain('activeStreamingMessageId={streamingMessageId}');
+    expect(chatViewport).toContain('activeStreamingPhase={activeStreamingPhase}');
+    expect(chatViewport).toContain('<StatusRowContainer');
     expect(statusRow).toContain('useAssistantStatus(currentSessionId, currentSessionDirectory)');
     expect(statusRow).toContain('isTurnSettled={working.isTurnSettled}');
     expect(statusRow).toContain('surface.sessionId ?? primarySessionId');

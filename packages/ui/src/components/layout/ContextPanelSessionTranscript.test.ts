@@ -14,7 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
  */
 describe('ContextPanelSessionTranscript tail occupancy', () => {
     const source = readFileSync(join(here, 'ContextPanelSessionTranscript.tsx'), 'utf8');
-    const chatContainer = readFileSync(join(here, '../chat/ChatContainer.tsx'), 'utf8');
+    const chatContainer = readFileSync(join(here, '../chat/ChatViewport.tsx'), 'utf8');
 
     test('uses the same desktop tail spacer as the primary transcript', () => {
         expect(source).toContain('CHAT_TAIL_SPACER_DESKTOP_HEIGHT');

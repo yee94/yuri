@@ -4,12 +4,9 @@ import {
     useEventListener,
     useIsomorphicLayoutEffect,
     useMount,
-    useResizeObserver,
     useUnmount,
 } from '@reactuses/core';
 import type { Message, Part } from '@/lib/opencode/v2-types';
-import type { PermissionRequest } from '@/types/permission';
-import type { QuestionRequest } from '@/types/question';
 
 import { ChatInput } from './ChatInput';
 import { RemoteChatContainer } from './RemoteChatContainer';
@@ -22,9 +19,6 @@ import {
     resolveChatHistoryPaginationLoading,
     hasChatTranscriptShell,
     resolveChatSessionTranscriptGate,
-    resolveDesktopLoadOlderStatusVisibility,
-    resolveMobileLoadOlderBusy,
-    resolveMobileLoadOlderVisibility,
     mergePendingUserMessagePresentations,
     pendingUserMessagesImplyWorking,
     resolveRetainedTranscript,
@@ -44,37 +38,24 @@ import { useUIStore } from '@/stores/useUIStore';
 import { Skeleton } from '@/components/ui/skeleton';
 import ChatEmptyState from './ChatEmptyState';
 import { useGlobalSyncStore } from '@/sync/global-sync-store';
-import MessageList, { type MessageListHandle } from './MessageList';
-import { PermissionCard } from './PermissionCard';
-import { QuestionCard } from './QuestionCard';
-import { FormCard } from './FormCard';
 import { refreshSessionForms, useSessionFormStore } from '@/sync/session-form-store';
 import { isQuestionFormMetadata } from '@/sync/v2-runtime';
 import { isSessionRetryAction, resolveRetryActionCopy } from '@/sync/session-retry-action';
-import { StatusRowContainer } from './StatusRowContainer';
-import { ComposerFoot } from './ComposerFoot';
-import { TranscriptScrollControls } from './components/TranscriptScrollControls';
-import { PromptNavigatorRail } from './components/PromptNavigatorRail';
-import { getFullText } from './lib/messagePreview';
-import { ScrollShadow } from '@/components/ui/ScrollShadow';
-import { useChatAutoFollow, type AnimationHandlers, type ContentChangeHandler } from '@/hooks/useChatAutoFollow';
-import { useMobileComposerSwap } from './useMobileComposerSwap';
-import { useChatTimelineController } from './hooks/useChatTimelineController';
-import { useDesktopHistoryWarmup } from './hooks/useDesktopHistoryWarmup';
+import { ChatViewport, type SessionMessageRecord } from './ChatViewport';
+import { CHAT_SCROLL_STYLE } from './lib/scroll/chatScrollStyle';
+import { useChatSessionShell } from './useChatSessionShell';
+import {
+    ChatSessionFoot,
+    ChatSessionFrame,
+    ChatSessionScrollControls,
+    ChatSessionTimelineDialog,
+    ChatTranscript,
+} from './ChatSessionFrame';
 import { createAssistantSessionDivider, mergeHostedCurrentSessionHistory, stitchHostedSessionHistory } from './hostedSessionHistory';
 import type { ChatMessageEntry } from './lib/turns/types';
-import {
-    CHAT_TAIL_SPACER_DESKTOP_HEIGHT,
-    CHAT_TAIL_SPACER_MOBILE_HEIGHT,
-} from './lib/scroll/chatTailSpacer';
-import { TimelineDialog } from './TimelineDialog';
-import { TranscriptSearch } from './TranscriptSearch';
-import { TranscriptSearchContext } from './TranscriptSearchContext';
-import { useChatTurnNavigation } from './hooks/useChatTurnNavigation';
 import { useChatSurfaceMode } from './useChatSurfaceMode';
 import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { Button } from '@/components/ui/button';
-import { OverlayScrollbar } from '@/components/ui/OverlayScrollbar';
 import { Icon } from "@/components/icon/Icon";
 import { cn, formatDirectoryName } from '@/lib/utils';
 import { getProviderModelDisplayName } from '@/lib/modelDisplay';
@@ -156,9 +137,6 @@ import {
     type SessionViewSelection,
 } from './sessionViewCache';
 import { getEmbeddedSessionChatOriginSessionId } from '@/components/layout/contextPanelEmbeddedChat';
-import { isFullySyntheticMessage } from '@/lib/messages/synthetic';
-import { normalizeUserDisplayParts } from './message/normalizeUserDisplayParts';
-import { findShellCommandForMessage, isUserShellMarkerMessage } from './lib/shellBridge';
 import { resolveContextPanelSessionExecution } from '@/components/layout/contextPanelSessionExecution';
 import {
     resolveChatPromptAvailability,
@@ -173,7 +151,6 @@ const EMPTY_PENDING_USER_MESSAGES: readonly PendingUserMessagePresentation[] = [
 // Stable empty snapshot for the zustand form selector (see sessionForms below).
 const EMPTY_SESSION_FORMS: import('@/sync/session-form-api').SessionFormInfo[] = [];
 const IDLE_SESSION_STATUS = { type: 'idle' as const };
-const CHAT_FORCE_SCROLL_BOTTOM_EVENT = 'yuri:chat-force-scroll-bottom';
 /** useEventListener attaches to window when target is null — pass a no-op getter instead. */
 const NO_EVENT_TARGET = () => undefined;
 const DEFAULT_RETRY_MESSAGE = 'Quota limit reached. Retrying automatically.';
@@ -193,488 +170,11 @@ const CONSTRAINED_SESSION_VIEW_CACHE_LIMITS: SessionViewCacheLimits = {
 const subscribeRuntimeKey = (notify: () => void): (() => void) => {
     return subscribeRuntimeEndpointChanged(() => notify());
 };
-const CHAT_SCROLL_STYLE = {
-    overflowAnchor: 'none',
-    overscrollBehavior: 'contain',
-    overscrollBehaviorY: 'contain',
-} as const;
-
-const CHAT_NAVIGATION_IGNORED_TARGET_SELECTOR = [
-    'a[href]',
-    'button',
-    'input',
-    'select',
-    'textarea',
-    '[contenteditable="true"]',
-    '[role="button"]',
-    '[role="combobox"]',
-    '[role="dialog"]',
-    '[role="listbox"]',
-    '[role="menu"]',
-    '[role="menuitem"]',
-    '[role="option"]',
-    '[role="textbox"]',
-    '[data-radix-popper-content-wrapper]',
-].join(',');
-type SessionMessageRecord = { info: Message; parts: Part[] };
-
-const isHTMLElement = (target: EventTarget | null): target is HTMLElement => {
-    return target instanceof HTMLElement;
-};
-
-const shouldIgnoreChatNavigationTarget = (target: EventTarget | null): boolean => {
-    if (!isHTMLElement(target)) {
-        return false;
-    }
-
-    return Boolean(target.closest(CHAT_NAVIGATION_IGNORED_TARGET_SELECTOR));
-};
-
-const shouldIgnoreChatNavigationForFocus = (activeElement: Element | null, scrollContainer: HTMLElement | null): boolean => {
-    if (typeof document === 'undefined') {
-        return true;
-    }
-
-    if (!activeElement || activeElement === document.body || activeElement === document.documentElement) {
-        return true;
-    }
-
-    if (shouldIgnoreChatNavigationTarget(activeElement)) {
-        return true;
-    }
-
-    return !scrollContainer?.contains(activeElement);
-};
-
-const hasBlockingChatOverlay = (): boolean => {
-    const {
-        isAboutDialogOpen,
-        isCommandPaletteOpen,
-        isHelpDialogOpen,
-        isImagePreviewOpen,
-        isMultiRunLauncherOpen,
-        isSessionSwitcherOpen,
-        isSettingsDialogOpen,
-    } = useUIStore.getState();
-
-    return isAboutDialogOpen
-        || isCommandPaletteOpen
-        || isHelpDialogOpen
-        || isImagePreviewOpen
-        || isMultiRunLauncherOpen
-        || isSessionSwitcherOpen
-        || isSettingsDialogOpen;
-};
-
 type HydratingToolSkeletonRow = {
     id: string;
     titleWidth: string;
     detailWidth: string;
 };
-
-type ChatViewportProps = {
-    timelineHistoryAnchorToken: number;
-    currentSessionId: string;
-    virtualizerKey: string;
-    isDesktopExpandedInput: boolean;
-    isMobile: boolean;
-    stickyUserHeader: boolean;
-    directory?: string;
-    scrollRef: React.RefObject<HTMLDivElement | null>;
-    messageListRef: React.RefObject<MessageListHandle | null>;
-    pendingRevealWork: boolean;
-    initialPinRevealComplete?: boolean;
-    renderedMessages: SessionMessageRecord[];
-    isLoadingOlder: boolean;
-    sessionIsWorking: boolean;
-    streamingMessageId: string | null;
-    activeStreamingPhase: import('./message/types').StreamPhase | null;
-    retryOverlay: {
-        sessionId: string;
-        message: string;
-        confirmedAt?: number;
-        fallbackTimestamp?: number;
-    } | null;
-    handleMessageContentChange: ContentChangeHandler;
-    getAnimationHandlers: (messageId: string) => AnimationHandlers;
-    handleHistoryScroll: () => void;
-    scrollToBottom: () => void;
-    sessionQuestions: QuestionRequest[];
-    sessionPermissions: PermissionRequest[];
-    sessionForms: import('@/sync/session-form-api').SessionFormInfo[];
-    retryActionCopy: { title: string; message: string; label: string; link?: string } | null;
-    isProgrammaticFollowActive: boolean;
-    showLoadOlderButton: boolean;
-    turnIds: string[];
-    activeTurnId: string | null;
-    onSelectTurn: (turnId: string) => void;
-    showPromptNavigator: boolean;
-    canLoadEarlierPrompts: boolean;
-    isLoadingOlderPrompts: boolean;
-    onLoadEarlierPrompts: () => void;
-    transcriptStatusRow?: React.ReactNode;
-};
-
-export const ChatViewport = React.memo(({
-    currentSessionId,
-    virtualizerKey,
-    isDesktopExpandedInput,
-    isMobile,
-    stickyUserHeader,
-    directory,
-    scrollRef,
-    messageListRef,
-    pendingRevealWork,
-    initialPinRevealComplete = false,
-    renderedMessages,
-    isLoadingOlder,
-    sessionIsWorking,
-    streamingMessageId,
-    activeStreamingPhase,
-    retryOverlay,
-    handleMessageContentChange,
-    getAnimationHandlers,
-    handleHistoryScroll,
-    scrollToBottom,
-    sessionQuestions,
-    sessionPermissions,
-    sessionForms,
-    retryActionCopy,
-    isProgrammaticFollowActive,
-    showLoadOlderButton,
-    turnIds,
-    activeTurnId,
-    onSelectTurn,
-    showPromptNavigator,
-    canLoadEarlierPrompts,
-    isLoadingOlderPrompts,
-    onLoadEarlierPrompts,
-    transcriptStatusRow,
-    timelineHistoryAnchorToken,
-}: ChatViewportProps) => {
-    const { t } = useI18n();
-    const searchTarget = React.useContext(TranscriptSearchContext);
-    const handleViewportHistoryScroll = useEvent(() => {
-        // Find navigates within the loaded snapshot, never through scroll paging.
-        if (!searchTarget) handleHistoryScroll();
-    });
-    // Loading status is mutation-owned only (isLoadingOlder); background
-    // prefetch/SWR loading never drives it.
-    const loadOlderBusy = resolveMobileLoadOlderBusy({ isLoadingOlder });
-    const [mobileHistorySlot, setMobileHistorySlot] = React.useState({
-        sessionId: currentSessionId, directory, reserved: showLoadOlderButton,
-    });
-    const sameHistorySlotScope = mobileHistorySlot.sessionId === currentSessionId && mobileHistorySlot.directory === directory;
-    const reserveMobileHistorySlot = sameHistorySlotScope
-        ? mobileHistorySlot.reserved || showLoadOlderButton
-        : showLoadOlderButton;
-    if (!sameHistorySlotScope || mobileHistorySlot.reserved !== reserveMobileHistorySlot) {
-        setMobileHistorySlot({ sessionId: currentSessionId, directory, reserved: reserveMobileHistorySlot });
-    }
-    // Desktop loads by scroll only; the loading disc is an overlay so its
-    // lifecycle cannot push the transcript.
-    const showDesktopLoadOlderStatus = resolveDesktopLoadOlderStatusVisibility({
-        isMobile,
-        isLoadingOlder: loadOlderBusy,
-    });
-    const desktopHistoryStatus = showDesktopLoadOlderStatus ? (
-        <div className="absolute inset-x-0 top-0 z-20 pointer-events-none" role="status" aria-live="polite">
-            <div className="chat-column flex items-center justify-center gap-1.5 pt-3 pb-1">
-                <span
-                    className="yuri-mobile-glass-control flex size-8 items-center justify-center rounded-full text-[var(--surface-mutedForeground)]"
-                    aria-label={t('chat.history.loadingMore')}
-                >
-                    <Icon name="loader-4" className="size-4 animate-spin" aria-hidden="true" />
-                </span>
-            </div>
-        </div>
-    ) : null;
-    // Keep the mobile status slot stable while scroll-triggered history loads.
-    const mobileLoadOlderControl = isMobile && reserveMobileHistorySlot ? (
-        <div className={cn('flex justify-center pt-3 pb-4', !loadOlderBusy && 'invisible')} aria-hidden={!loadOlderBusy}>
-            <span
-                role="status"
-                className="flex items-center gap-1.5 text-[var(--surface-mutedForeground)] opacity-60"
-                aria-busy={loadOlderBusy}
-            >
-                <Icon name="loader-4" className="size-3.5 animate-spin" aria-hidden="true" />
-                <span className="typography-meta">{t('chat.history.loadingMore')}</span>
-            </span>
-        </div>
-    ) : null;
-    const promptPreviewsByTurnIdRef = React.useRef<Map<string, Part[]>>(new Map());
-    // Cache normalized parts per source array so unchanged messages keep the
-    // same reference and the memo below can bail out to the previous map.
-    const normalizedPromptPartsCache = React.useRef(new WeakMap<Part[], Part[]>());
-    // Shell-mode prompts show their extracted command; cache by message id so
-    // the parts array reference is stable while the command is unchanged.
-    const shellPreviewCache = React.useRef(new Map<string, { command: string; parts: Part[] }>());
-    const promptPreviewsByTurnId = React.useMemo(() => {
-        const next = new Map<string, Part[]>();
-        for (let index = 0; index < renderedMessages.length; index += 1) {
-            const message = renderedMessages[index];
-            if (message.info.role !== 'user') {
-                continue;
-            }
-            if (isUserShellMarkerMessage(message)) {
-                const command = findShellCommandForMessage(renderedMessages, index) ?? '';
-                const cached = shellPreviewCache.current.get(message.info.id);
-                if (cached && cached.command === command) {
-                    next.set(message.info.id, cached.parts);
-                } else {
-                    const parts = [{ type: 'text', text: command ? `$ ${command}` : '/shell' } as Part];
-                    shellPreviewCache.current.set(message.info.id, { command, parts });
-                    next.set(message.info.id, parts);
-                }
-                continue;
-            }
-            // Other fully synthetic user messages (loop continuations,
-            // plan-mode injections) are not prompts the user typed — keep
-            // them out of the navigator entirely.
-            if (isFullySyntheticMessage(message.parts)) {
-                continue;
-            }
-            let displayParts = normalizedPromptPartsCache.current.get(message.parts);
-            if (!displayParts) {
-                displayParts = normalizeUserDisplayParts(message.parts);
-                normalizedPromptPartsCache.current.set(message.parts, displayParts);
-            }
-            if (displayParts.length === 0) {
-                continue;
-            }
-            next.set(message.info.id, displayParts);
-        }
-        const prev = promptPreviewsByTurnIdRef.current;
-        if (prev.size === next.size) {
-            let unchanged = true;
-            for (const [id, parts] of next) {
-                if (prev.get(id) !== parts) {
-                    unchanged = false;
-                    break;
-                }
-            }
-            if (unchanged) {
-                return prev;
-            }
-        }
-        promptPreviewsByTurnIdRef.current = next;
-        return next;
-    }, [renderedMessages]);
-    // Only real (non-synthetic) prompts become rail entries; selection still
-    // targets the same turn anchors as the timeline.
-    const promptTurnIds = React.useMemo(
-        () => turnIds.filter((id) => promptPreviewsByTurnId.has(id)),
-        [promptPreviewsByTurnId, turnIds],
-    );
-    const promptMessageOwnersRef = React.useRef<ReadonlyMap<string, string>>(new Map());
-    const promptConversationPreviews = React.useMemo(() => {
-        const owners = new Map<string, string>();
-        const replies = new Map<string, string>();
-        let currentPrompt: string | undefined;
-        for (const message of renderedMessages) {
-            if (message.info.role === 'user') {
-                if (promptPreviewsByTurnId.has(message.info.id)) currentPrompt = message.info.id;
-                if (currentPrompt) owners.set(message.info.id, currentPrompt);
-                continue;
-            }
-            const parentId = message.info.parentID;
-            const owner = parentId ? owners.get(parentId) : currentPrompt;
-            if (!owner) continue;
-            owners.set(message.info.id, owner);
-            const text = getFullText(message.parts).trim();
-            if (text) replies.set(owner, text.slice(0, 600));
-        }
-        const previous = promptMessageOwnersRef.current;
-        if (previous.size !== owners.size || [...owners].some(([id, owner]) => previous.get(id) !== owner)) {
-            promptMessageOwnersRef.current = owners;
-        }
-        return { owners: promptMessageOwnersRef.current, replies };
-    }, [promptPreviewsByTurnId, renderedMessages]);
-    // If the viewport sits in a filtered-out (synthetic) turn, treat the
-    // nearest preceding real prompt as active so the rail doesn't jump.
-    const railActiveTurnId = React.useMemo(() => {
-        if (!activeTurnId || promptPreviewsByTurnId.has(activeTurnId)) {
-            return activeTurnId;
-        }
-        const activeIndex = turnIds.indexOf(activeTurnId);
-        for (let index = activeIndex - 1; index >= 0; index -= 1) {
-            const turnId = turnIds[index];
-            if (promptPreviewsByTurnId.has(turnId)) {
-                return turnId;
-            }
-        }
-        return null;
-    }, [activeTurnId, promptPreviewsByTurnId, turnIds]);
-    const focusScrollContainer = useEvent((event: React.MouseEvent<HTMLElement>) => {
-        if (event.defaultPrevented || shouldIgnoreChatNavigationTarget(event.target)) {
-            return;
-        }
-
-        if (typeof window !== 'undefined' && window.getSelection()?.type === 'Range') {
-            return;
-        }
-
-        scrollRef.current?.focus({ preventScroll: true });
-    });
-
-    return (
-        <div
-            className={cn(
-                'relative min-h-0',
-                isDesktopExpandedInput
-                    ? 'absolute inset-0 opacity-0 pointer-events-none'
-                    : 'flex-1'
-            )}
-            aria-hidden={isDesktopExpandedInput}
-        >
-            <div className="absolute inset-0">
-                <ScrollShadow
-                    className={cn(
-                        'absolute inset-0 overflow-y-auto overflow-x-hidden z-0 chat-scroll overlay-scrollbar-target',
-                    )}
-                    ref={scrollRef}
-                    style={CHAT_SCROLL_STYLE}
-                    observeMutations={false}
-                    hideTopShadow={isMobile && stickyUserHeader}
-                    // Mobile: the composer is a solid page foot — a bottom scroll
-                    // mask reads as a soft full-width edge under the last messages.
-                    hideBottomShadow={isMobile}
-                    tabIndex={0}
-                    onClick={focusScrollContainer}
-                    onScroll={handleViewportHistoryScroll}
-                    data-scroll-shadow="true"
-                    data-scrollbar="chat"
-                >
-                    <div className={cn('yuri-chat-scroll-content relative z-0 min-h-full', isMobile && 'chat-scroll-foot-inset')}>
-                        {mobileLoadOlderControl}
-                        {desktopHistoryStatus}
-                        <MessageList
-                            timelineHistoryAnchorToken={timelineHistoryAnchorToken}
-                            ref={messageListRef}
-                            sessionKey={currentSessionId}
-                            virtualizerKey={virtualizerKey}
-                            disableStaging={pendingRevealWork}
-                            initialPinRevealComplete={initialPinRevealComplete}
-                            messages={renderedMessages}
-                            sessionIsWorking={sessionIsWorking}
-                            activeStreamingMessageId={streamingMessageId}
-                            activeStreamingPhase={activeStreamingPhase}
-                            retryOverlay={retryOverlay}
-                            onMessageContentChange={handleMessageContentChange}
-                            getAnimationHandlers={getAnimationHandlers}
-                            isLoadingOlder={isLoadingOlder}
-                            scrollToBottom={scrollToBottom}
-                            scrollRef={scrollRef}
-                            directory={directory}
-                            liveStatusSlot={
-                                // No shell → no status. Mount inside MessageList's pin-reveal
-                                // root so cold-open cannot orphan the label over a hidden transcript.
-                                renderedMessages.length > 0
-                                    ? (
-                                        <div className="mb-1">
-                                            {transcriptStatusRow ?? <StatusRowContainer />}
-                                        </div>
-                                    )
-                                    : null
-                            }
-                        />
-                        {(sessionQuestions.length > 0 || sessionPermissions.length > 0 || sessionForms.length > 0 || retryActionCopy) && (
-                            <div>
-                                {retryActionCopy ? (
-                                    <div className="mb-2 rounded-xl border border-border/20 bg-muted/10 px-2.5 py-2">
-                                        <div className="typography-ui-label text-foreground">{retryActionCopy.title}</div>
-                                        <div className="typography-meta text-muted-foreground mt-1">{retryActionCopy.message}</div>
-                                        {retryActionCopy.link ? (
-                                            <a
-                                                href={retryActionCopy.link}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="mt-2 inline-block typography-meta text-primary underline"
-                                            >
-                                                {retryActionCopy.label}
-                                            </a>
-                                        ) : null}
-                                    </div>
-                                ) : null}
-                                {sessionQuestions.map((question) => (
-                                    <QuestionCard key={question.id} question={question} />
-                                ))}
-                                {sessionPermissions.map((permission) => (
-                                    <PermissionCard key={permission.id} permission={permission} />
-                                ))}
-                                {sessionForms.map((form) => (
-                                    <FormCard key={form.id} form={form} directory={directory} />
-                                ))}
-                            </div>
-                        )}
-
-                        {/* The chrome reservation itself comes from
-                            `.chat-scroll-foot-inset` padding on this content
-                            wrapper, so the tail here is the breathing room only. */}
-                        <div
-                            className="flex-shrink-0"
-                            style={{ height: isMobile ? CHAT_TAIL_SPACER_MOBILE_HEIGHT : CHAT_TAIL_SPACER_DESKTOP_HEIGHT }}
-                            aria-hidden="true"
-                        />
-                    </div>
-                </ScrollShadow>
-                <OverlayScrollbar containerRef={scrollRef} suppressVisibility={isProgrammaticFollowActive} userIntentOnly observeMutations={false} />
-                {showPromptNavigator && promptTurnIds.length >= 2 ? (
-                    <PromptNavigatorRail
-                        turnIds={promptTurnIds}
-                        previewsByTurnId={promptPreviewsByTurnId}
-                        scrollRef={scrollRef}
-                        turnByMessageId={promptConversationPreviews.owners}
-                        repliesByTurnId={promptConversationPreviews.replies}
-                        activeTurnId={railActiveTurnId}
-                        onSelectTurn={onSelectTurn}
-                        canLoadEarlier={canLoadEarlierPrompts}
-                        isLoadingOlder={isLoadingOlderPrompts}
-                        onLoadEarlier={onLoadEarlierPrompts}
-                    />
-                ) : null}
-            </div>
-        </div>
-    );
-}, (prev, next) => {
-    return prev.currentSessionId === next.currentSessionId
-        && prev.virtualizerKey === next.virtualizerKey
-        && prev.isDesktopExpandedInput === next.isDesktopExpandedInput
-        && prev.isMobile === next.isMobile
-        && prev.stickyUserHeader === next.stickyUserHeader
-        && prev.directory === next.directory
-        && prev.scrollRef === next.scrollRef
-        && prev.messageListRef === next.messageListRef
-        && prev.pendingRevealWork === next.pendingRevealWork
-        && prev.initialPinRevealComplete === next.initialPinRevealComplete
-        && prev.renderedMessages === next.renderedMessages
-        && prev.timelineHistoryAnchorToken === next.timelineHistoryAnchorToken
-        && prev.isLoadingOlder === next.isLoadingOlder
-        && prev.sessionIsWorking === next.sessionIsWorking
-        && prev.streamingMessageId === next.streamingMessageId
-        && prev.activeStreamingPhase === next.activeStreamingPhase
-        && prev.retryOverlay === next.retryOverlay
-        && prev.handleMessageContentChange === next.handleMessageContentChange
-        && prev.getAnimationHandlers === next.getAnimationHandlers
-        && prev.handleHistoryScroll === next.handleHistoryScroll
-        && prev.scrollToBottom === next.scrollToBottom
-        && prev.sessionQuestions === next.sessionQuestions
-        && prev.sessionPermissions === next.sessionPermissions
-        && prev.sessionForms === next.sessionForms
-        && prev.retryActionCopy === next.retryActionCopy
-        && prev.isProgrammaticFollowActive === next.isProgrammaticFollowActive
-        && prev.showLoadOlderButton === next.showLoadOlderButton
-        && prev.turnIds === next.turnIds
-        && prev.activeTurnId === next.activeTurnId
-        && prev.onSelectTurn === next.onSelectTurn
-        && prev.showPromptNavigator === next.showPromptNavigator
-        && prev.canLoadEarlierPrompts === next.canLoadEarlierPrompts
-        && prev.isLoadingOlderPrompts === next.isLoadingOlderPrompts
-        && prev.onLoadEarlierPrompts === next.onLoadEarlierPrompts
-        && prev.transcriptStatusRow === next.transcriptStatusRow;
-});
-
-ChatViewport.displayName = 'ChatViewport';
 
 const HYDRATING_SKELETON_ITEMS: Array<{
     id: number;
@@ -800,7 +300,6 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
     // UI store
     const isExpandedInput = useUIStore((state) => state.isExpandedInput);
     const stickyUserHeader = useUIStore((state) => state.stickyUserHeader);
-    const promptNavigatorEnabled = useUIStore((state) => state.promptNavigatorEnabled);
     const allowPromptingSubagentSessions = useUIStore((state) => state.allowPromptingSubagentSessions);
     const isTimelineDialogOpen = useUIStore((s) => s.isTimelineDialogOpen);
     const setTimelineDialogOpen = useUIStore((s) => s.setTimelineDialogOpen);
@@ -1179,7 +678,6 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
     // composer enters the same fullscreen-input mode via its drag handle.
     const isDesktopExpandedInput = isExpandedInput;
     const useCompactDraftLayout = isDedicatedMobileApp || isMobile || isVSCode || chatSurfaceMode === 'mini-chat';
-    const messageListRef = React.useRef<MessageListHandle | null>(null);
     const draftProjectLabel = React.useMemo(() => {
         const selectedProject = newSessionDraft?.selectedProjectId
             ? projects.find((project) => project.id === newSessionDraft.selectedProjectId) ?? null
@@ -1315,54 +813,6 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         }
     }, [autoOpenDraft, currentSessionId, draftOpen, hostFeatures.newSessionDraft, openNewSessionDraft]);
 
-    const activeTurnChangeRef = React.useRef<(turnId: string | null) => void>(() => {});
-    const handleActiveTurnChange = useEvent((turnId: string | null) => {
-        activeTurnChangeRef.current(turnId);
-    });
-    // Bridge auto-follow upward intent → timeline handler without creating a
-    // hook order cycle (auto-follow is created before the timeline controller).
-    const historyUpwardIntentRef = React.useRef<() => void>(() => {});
-    const handleHistoryUpwardIntentBridge = useEvent(() => {
-        historyUpwardIntentRef.current();
-    });
-
-    // StaticHistoryList captures the reading position before explicit pagination.
-    const [timelineHistoryAnchorToken, setTimelineHistoryAnchorToken] = React.useState(0);
-    const armTimelineHistoryAnchor = useEvent(() => {
-        setTimelineHistoryAnchorToken((token) => token + 1);
-    });
-
-    const {
-        scrollRef,
-        notifyContentChange: handleMessageContentChange,
-        getAnimationHandlers,
-        goToBottom,
-        scrollToBottomOnSend,
-        releaseAutoFollow,
-        beginHistoryViewportPreservation,
-        endHistoryViewportPreservation,
-        restoreSnapshot,
-        isPinned,
-        isFollowingProgrammatically,
-        showScrollButton,
-    } = useChatAutoFollow({
-        scrollControllerRef: messageListRef,
-        enabled: active,
-        currentSessionId,
-        viewportKey: sessionViewKey,
-        sessionMessageCount,
-        sessionIsWorking,
-        isMobile,
-        onActiveTurnChange: handleActiveTurnChange,
-        onUpwardUserIntent: handleHistoryUpwardIntentBridge,
-    });
-    const composerSwapScopeRef = React.useRef<HTMLDivElement>(null);
-    const expandMobileComposer = useMobileComposerSwap({
-        enabled: isMobile,
-        scrollRef,
-        scopeRef: composerSwapScopeRef,
-    });
-
     const historyPrefixCacheRef = React.useRef<ChatMessageEntry[]>([]);
     const historyPrefix = React.useMemo(() => {
         const next = stitchHostedSessionHistory(
@@ -1493,209 +943,6 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         }
     }, [clearRetainedPendingUserMessages, currentSessionId, materializedPendingMessageIDs, onPendingUserMessagesMaterialized]);
 
-    const timelineController = useChatTimelineController({
-        sessionId: currentSessionId,
-        directory: effectiveSessionDirectory,
-        messages: renderedViewportMessages,
-        historyMeta,
-        scrollRef,
-        messageListRef,
-        loadMoreMessages,
-        goToBottom,
-        releaseAutoFollow,
-        beginHistoryViewportPreservation,
-        endHistoryViewportPreservation,
-        isPinned,
-        showScrollButton,
-        // Same mounted flag as showLoadOlderButton — not isMobileSurfaceRuntime().
-        isMobile,
-        onWillLoadEarlier: armTimelineHistoryAnchor,
-    });
-    const resumeToLatestInstant = useEvent(() => {
-        // goToBottom resumes follow policy and delegates to the active list.
-        goToBottom('instant');
-        expandMobileComposer();
-    });
-    const canOpenTranscriptSearch = useEvent((event: KeyboardEvent) => {
-        if (useUIStore.getState().activeMainTab !== 'chat' || hasBlockingChatOverlay()) return false;
-        const target = event.target;
-        if (!(target instanceof HTMLElement) || composerSwapScopeRef.current?.contains(target)) return true;
-        return !target.closest('input, textarea, [contenteditable="true"], .cm-editor, .monaco-editor, .terminal-viewport-container');
-    });
-    const scrollViewportOnSend = useEvent(() => {
-        scrollToBottomOnSend();
-    });
-    // Mobile scroll-load reserves a stable status slot at the history edge.
-    // Busy state is mutation-owned (timeline loadEarlierMutation.isPending) —
-    // never background historyLoading/prefetch, which can stick true on Relay.
-    // The Capacitor mobile entrypoint sets isMobile before first render. Do not
-    // use width/pointer surface inference here: native WebView viewport changes
-    // can temporarily classify as desktop and hide this mobile-only status
-    // until an unrelated scroll causes another render.
-    // Visibility is authoritative-only: canLoadEarlier from the child-store
-    // boundary, or a real user-initiated loadEarlier mutation in flight (that
-    // mutation keeps the status slot painted so its spinner has an anchor). An
-    // unresolved boundary (unknown availability) renders nothing — never a
-    // speculative placeholder.
-    const showLoadOlderButton = resolveMobileLoadOlderVisibility({
-        isMobile,
-        canLoadEarlier: timelineController.historySignals.canLoadEarlier,
-        isLoadingOlder: timelineController.isLoadingOlder,
-    });
-    const isLoadOlderBusy = timelineController.isLoadingOlder;
-    const timelineLoadEarlier = timelineController.loadEarlier;
-    const handleLoadOlderClick = useEvent(() => {
-        void timelineLoadEarlier({ userInitiated: true });
-    });
-
-    // Render-phase ref bridge: timeline is created after auto-follow, so handlers
-    // publish into stable useEvent entry points without effect rebinding.
-    activeTurnChangeRef.current = timelineController.handleActiveTurnChange;
-    historyUpwardIntentRef.current = timelineController.handleHistoryUpwardIntent;
-
-    React.useEffect(() => {
-        if (sessionPermissions.length === 0 && sessionQuestions.length === 0) {
-            return;
-        }
-        handleMessageContentChange('permission');
-    }, [handleMessageContentChange, sessionPermissions, sessionQuestions]);
-
-    const navigation = useChatTurnNavigation({
-        sessionId: currentSessionId,
-        turnIds: timelineController.turnIds,
-        activeTurnId: timelineController.activeTurnId,
-        scrollToTurn: timelineController.scrollToTurn,
-        scrollToMessage: timelineController.scrollToMessage,
-        resumeToBottom: resumeToLatestInstant,
-    });
-    // Transcript navigation stays outside the composer, including the compact pill.
-    const promptSurface = promptAvailability.showReadOnlyBanner
-        ? readOnlyPromptBanner
-        : readOnly
-            ? null
-            : (
-                <>
-                    {isMobile ? <MobileBackgroundWorkBar sessionId={currentSessionId ?? null} directory={effectiveSessionDirectory ?? null} /> : null}
-                    <ChatInput
-                        key="composer-input"
-                        foregroundActive={active}
-                        surface={composerSurface}
-                        scrollToBottom={scrollViewportOnSend}
-                        submissionBlocked={promptAvailability.blockSubmission}
-                    />
-                </>
-            );
-    const handlePromptNavigatorSelect = useEvent((turnId: string) => {
-        void navigation.scrollToTurnId(turnId, { behavior: 'smooth' });
-    });
-    const canLoadEarlierPrompts = timelineController.historySignals.canLoadEarlier;
-    const showPromptNavigator = hostFeatures.promptNavigator
-        && !isMobile
-        && !isVSCode
-        && !isDesktopExpandedInput
-        && promptNavigatorEnabled
-        && timelineController.turnIds.length >= 2;
-
-    React.useEffect(() => {
-        if (!showPromptNavigator) {
-            useUIStore.getState().setPromptNavigatorPanelOpen(false);
-        }
-    }, [showPromptNavigator]);
-
-    const handleForceScrollBottom = useEvent((event: Event) => {
-        if (!active || !currentSessionId) return;
-        const customEvent = event as CustomEvent<{ sessionId?: string }>;
-        if (customEvent.detail?.sessionId && customEvent.detail.sessionId !== currentSessionId) return;
-        goToBottom('instant');
-    });
-    useEventListener(
-        CHAT_FORCE_SCROLL_BOTTOM_EVENT,
-        handleForceScrollBottom,
-        active && currentSessionId && typeof window !== 'undefined' ? window : NO_EVENT_TARGET,
-    );
-
-    const handleChatTurnKeyDown = useEvent((event: KeyboardEvent) => {
-        if (!active || !currentSessionId || isDesktopExpandedInput) return;
-        if (event.defaultPrevented || event.isComposing) {
-            return;
-        }
-
-        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
-            return;
-        }
-
-        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
-            return;
-        }
-
-        const { activeMainTab } = useUIStore.getState();
-        if (activeMainTab !== 'chat' || hasBlockingChatOverlay()) {
-            return;
-        }
-
-        const scrollContainer = scrollRef.current;
-        if (shouldIgnoreChatNavigationForFocus(document.activeElement, scrollContainer)) {
-            return;
-        }
-
-        if (shouldIgnoreChatNavigationTarget(event.target)) {
-            return;
-        }
-
-        event.preventDefault();
-        const offset = event.key === 'ArrowUp' ? -1 : 1;
-        void navigation.scrollByTurnOffset(offset, { resumePastEnd: false });
-    });
-    useEventListener(
-        'keydown',
-        handleChatTurnKeyDown,
-        active && currentSessionId && !isDesktopExpandedInput && typeof window !== 'undefined'
-            ? window
-            : NO_EVENT_TARGET,
-    );
-
-    // --chat-scroll-height tracks the scroller viewport for sticky headers.
-    // useResizeObserver owns observe/disconnect; useEvent handlers stay latest.
-    const chatScrollHeightRafRef = React.useRef(0);
-    const updateChatScrollHeight = useEvent(() => {
-        const container = scrollRef.current;
-        if (!container) return;
-        container.style.setProperty('--chat-scroll-height', `${container.clientHeight}px`);
-    });
-    const scheduleChatScrollHeightUpdate = useEvent(() => {
-        if (chatScrollHeightRafRef.current) return;
-        chatScrollHeightRafRef.current = requestAnimationFrame(() => {
-            chatScrollHeightRafRef.current = 0;
-            updateChatScrollHeight();
-        });
-    });
-    useIsomorphicLayoutEffect(() => {
-        if (!active) return;
-        updateChatScrollHeight();
-    }, [active, currentSessionId, isDesktopExpandedInput, updateChatScrollHeight]);
-    const canObserveChatScrollResize = typeof ResizeObserver !== 'undefined';
-    useResizeObserver(
-        active && canObserveChatScrollResize ? scrollRef : null,
-        scheduleChatScrollHeightUpdate,
-    );
-    useEventListener(
-        'resize',
-        scheduleChatScrollHeightUpdate,
-        active && !canObserveChatScrollResize && typeof window !== 'undefined' ? window : NO_EVENT_TARGET,
-    );
-    useUnmount(() => {
-        if (chatScrollHeightRafRef.current) {
-            cancelAnimationFrame(chatScrollHeightRafRef.current);
-            chatScrollHeightRafRef.current = 0;
-        }
-    });
-
-    const lastScrolledSessionRef = React.useRef<string | null>(null);
-    // Tracks message count at the last pin so a cold open that pinned while the
-    // transcript was still empty can re-pin once records land (deep link /
-    // session switch). Later growth (stream, load-older) must not re-pin.
-    const lastPinnedMessageCountRef = React.useRef(0);
-
     // Cold transcript gate: prefer a stable skeleton over flashing the
     // "Unable to load this conversation" wall while imperative + reactive
     // pulls race on session switch (stale error or concurrent fail).
@@ -1720,17 +967,49 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         paintedTranscriptSessionRef.current = currentSessionId;
     }
     const isSessionHydrating = Boolean(currentSessionId) && sessionTranscriptGate === 'hydrating';
-    useDesktopHistoryWarmup({
-        scope: JSON.stringify([getRuntimeKey(), effectiveSessionDirectory, currentSessionId]),
-        enabled: active && !isMobile && !isDedicatedMobileApp && Boolean(currentSessionId)
-            && sessionTranscriptGate === 'pass' && transcriptHydration.p0Satisfied
-            && !sessionIsWorking && !historyMeta?.loading && !timelineController.isLoadingOlder,
-        cursor: historyBoundary.kind === 'has-more' ? historyBoundary.cursor : null,
-        loadedTurns: historyBoundary.loadedTurns,
+    const shell = useChatSessionShell({
+        active,
+        sessionId: currentSessionId,
+        viewKey: sessionViewKey,
+        directory: effectiveSessionDirectory,
         messages: renderedViewportMessages,
-        scrollRef,
-        loadPrevious: (pageSize) => fetchTranscriptPreviousPage(effectiveSessionDirectory, currentSessionId!, pageSize),
+        messageCount: sessionMessageCount,
+        working: sessionIsWorking,
+        hydrating: isSessionHydrating,
+        expandedInput: isDesktopExpandedInput,
+        historyMeta,
+        loadMoreMessages,
+        questions: sessionQuestions,
+        permissions: sessionPermissions,
+        promptNavigator: hostFeatures.promptNavigator,
+        warmup: {
+            scope: JSON.stringify([getRuntimeKey(), effectiveSessionDirectory, currentSessionId]),
+            enabled: active && !isMobile && !isDedicatedMobileApp && Boolean(currentSessionId)
+                && sessionTranscriptGate === 'pass' && transcriptHydration.p0Satisfied
+                && !sessionIsWorking && !historyMeta?.loading,
+            cursor: historyBoundary.kind === 'has-more' ? historyBoundary.cursor : null,
+            loadedTurns: historyBoundary.loadedTurns,
+            loadPrevious: (pageSize: number) => fetchTranscriptPreviousPage(effectiveSessionDirectory, currentSessionId!, pageSize),
+        },
     });
+    // Transcript navigation stays outside the composer, including the compact pill.
+    const promptSurface = promptAvailability.showReadOnlyBanner
+        ? readOnlyPromptBanner
+        : readOnly
+            ? null
+            : (
+                <>
+                    {isMobile ? <MobileBackgroundWorkBar sessionId={currentSessionId ?? null} directory={effectiveSessionDirectory ?? null} /> : null}
+                    <ChatInput
+                        key="composer-input"
+                        foregroundActive={active}
+                        surface={composerSurface}
+                        scrollToBottom={shell.scrollViewportOnSend}
+                        submissionBlocked={promptAvailability.blockSubmission}
+                    />
+                </>
+            );
+
     // Assistant-owned history is authoritative for prior bindings. Do not replace
     // a restorable transcript with the live-session load-failure wall.
     const hasSessionHistoryLoadError =
@@ -1760,52 +1039,6 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         hasSessionHistoryLoadError,
         sessionPrefetchInfo,
         transcriptHydration,
-    ]);
-
-    React.useEffect(() => {
-        if (!active || !currentSessionId) return;
-        // Skeleton has no ChatViewport/scrollRef. Pinning here only records
-        // lastScrolled and fires restore against a null container — then the
-        // real transcript commits later without a session-level re-pin
-        // (trace: one programmatic ScrollLayer before ChatMessage paint → blank).
-        if (isSessionHydrating) return;
-
-        const messageCount = renderedViewportMessages.length;
-        const sessionChanged = lastScrolledSessionRef.current !== currentSessionId;
-        const firstContentLanded = !sessionChanged
-            && lastPinnedMessageCountRef.current === 0
-            && messageCount > 0;
-        if (!sessionChanged && !firstContentLanded) {
-            if (lastScrolledSessionRef.current === currentSessionId) {
-                lastPinnedMessageCountRef.current = messageCount;
-            }
-            return;
-        }
-
-        const hasHashTarget = typeof window !== 'undefined' && window.location.hash.length > 0;
-        lastScrolledSessionRef.current = currentSessionId;
-        lastPinnedMessageCountRef.current = messageCount;
-        if (hasHashTarget) {
-            // Hash navigation handler will scroll to target; we just release auto-follow.
-            releaseAutoFollow();
-            return;
-        }
-
-        const run = () => {
-            void restoreSnapshot();
-        };
-        if (typeof window === 'undefined') {
-            run();
-        } else {
-            window.requestAnimationFrame(run);
-        }
-    }, [
-        active,
-        currentSessionId,
-        isSessionHydrating,
-        releaseAutoFollow,
-        restoreSnapshot,
-        renderedViewportMessages.length,
     ]);
 
     React.useEffect(() => {
@@ -1914,9 +1147,9 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 		if ((draftSubmitting || draftEstablishing) && draftPendingMessage) {
 			const draftViewportKey = `draft:${newSessionDraft.draftID ?? 'pending'}`;
 			return (
-				<div ref={composerSwapScopeRef} className={cn('relative flex h-full flex-col bg-background', isMobile && 'yuri-chat-composer-swap-scope')}>
+				<ChatSessionFrame shell={shell}>
 					<ChatViewport
-						timelineHistoryAnchorToken={timelineHistoryAnchorToken}
+						timelineHistoryAnchorToken={shell.timelineHistoryAnchorToken}
 						key={draftViewportKey}
 						currentSessionId={draftViewportKey}
 						virtualizerKey={draftViewportKey}
@@ -1924,8 +1157,8 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						isMobile={isMobile}
 						stickyUserHeader={stickyUserHeader}
 						directory={effectiveSessionDirectory}
-						scrollRef={scrollRef}
-						messageListRef={messageListRef}
+						scrollRef={shell.scrollRef}
+						messageListRef={shell.messageListRef}
 						pendingRevealWork={false}
 						initialPinRevealComplete
 						renderedMessages={[draftPendingMessage]}
@@ -1934,23 +1167,23 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						streamingMessageId={null}
 						activeStreamingPhase={null}
 						retryOverlay={null}
-						handleMessageContentChange={handleMessageContentChange}
-						getAnimationHandlers={getAnimationHandlers}
-						handleHistoryScroll={timelineController.handleHistoryScroll}
-						scrollToBottom={resumeToLatestInstant}
+						handleMessageContentChange={shell.follow.notifyContentChange}
+						getAnimationHandlers={shell.follow.getAnimationHandlers}
+						handleHistoryScroll={shell.timeline.handleHistoryScroll}
+						scrollToBottom={shell.resumeToLatestInstant}
 						sessionQuestions={[]}
 						sessionPermissions={[]}
 						sessionForms={[]}
 						retryActionCopy={null}
-						isProgrammaticFollowActive={isFollowingProgrammatically}
+						isProgrammaticFollowActive={shell.follow.isFollowingProgrammatically}
 						showLoadOlderButton={false}
 						turnIds={[]}
 						activeTurnId={null}
-						onSelectTurn={handlePromptNavigatorSelect}
+						onSelectTurn={shell.handlePromptNavigatorSelect}
 						showPromptNavigator={false}
 						canLoadEarlierPrompts={false}
 						isLoadingOlderPrompts={false}
-						onLoadEarlierPrompts={handleLoadOlderClick}
+						onLoadEarlierPrompts={shell.handleLoadOlderClick}
 						transcriptStatusRow={(
 							<div className="chat-column" role="status" aria-live="polite">
 								<div className="flex h-[1.2rem] items-center py-0.5 typography-meta text-muted-foreground">
@@ -1960,16 +1193,16 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 							</div>
 						)}
 					/>
-					<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
+					<ChatSessionFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
 						{promptSurface}
-					</ComposerFoot>
-				</div>
+					</ChatSessionFoot>
+				</ChatSessionFrame>
 			);
 		}
 
 		if (draftSubmitting || draftEstablishing) {
 			return (
-				<div className="relative flex h-full flex-col bg-background">
+				<ChatSessionFrame shell={shell} swap={false}>
 					<div
 						className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center"
 						role="status"
@@ -1981,15 +1214,15 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 							<BusyDots />
 						</span>
 					</div>
-					<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
+					<ChatSessionFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
 						{promptSurface}
-					</ComposerFoot>
-				</div>
+					</ChatSessionFoot>
+				</ChatSessionFrame>
 			);
 		}
 
 		return (
-			<div className="relative flex h-full flex-col bg-background">
+			<ChatSessionFrame shell={shell} swap={false}>
 				{useCompactDraftLayout && !isDesktopExpandedInput ? (
 					<div className="yuri-draft-center flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
 						<h1 className="text-balance text-3xl font-normal tracking-tight text-foreground">
@@ -2006,7 +1239,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						/>
 					</div>
 				) : null}
-				<ComposerFoot
+				<ChatSessionFoot
 					key="composer-foot"
 					isMobile={isMobile}
 					expanded={isDesktopExpandedInput}
@@ -2016,8 +1249,8 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 					))}
 				>
                         {promptSurface}
-				</ComposerFoot>
-			</div>
+				</ChatSessionFoot>
+			</ChatSessionFrame>
         );
     }
 
@@ -2027,7 +1260,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 
 	if (hasSessionHistoryLoadError) {
 		return (
-			<div className="relative flex h-full flex-col bg-background">
+			<ChatSessionFrame shell={shell} swap={false}>
 				{returnToParentButton}
 				<div
 					className={cn(
@@ -2066,16 +1299,16 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 						</div>
 					) : null}
 				</div>
-				<ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
+				<ChatSessionFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
 					{promptSurface}
-				</ComposerFoot>
-			</div>
+				</ChatSessionFoot>
+			</ChatSessionFrame>
 		);
 	}
 
 	if (isSessionHydrating) {
 		return (
-			<div ref={composerSwapScopeRef} className={cn('relative flex flex-col h-full bg-background', isMobile && 'yuri-chat-composer-swap-scope')}>
+			<ChatSessionFrame shell={shell}>
 				{returnToParentButton}
 				<div
 					className={cn(
@@ -2086,7 +1319,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                     )}
                     aria-hidden={isDesktopExpandedInput}
                 >
-                    <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden bg-background pt-6 chat-scroll" style={CHAT_SCROLL_STYLE}>
+                    <div ref={shell.scrollRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden bg-background pt-6 chat-scroll" style={CHAT_SCROLL_STYLE}>
                         <div className="space-y-4 chat-scroll-foot-inset">
                             {HYDRATING_SKELETON_ITEMS.map((item) => (
                                 <div key={item.id} className="group w-full">
@@ -2115,10 +1348,10 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                         </div>
                     </div>
                 </div>
-                <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
+                <ChatSessionFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
                     {promptSurface}
-				</ComposerFoot>
-            </div>
+				</ChatSessionFoot>
+            </ChatSessionFrame>
         );
     }
 
@@ -2126,7 +1359,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
 		return (
 			// No transform here either — same fixed-positioning constraint as the
 			// draft branch above.
-			<div className="relative flex flex-col h-full bg-background">
+			<ChatSessionFrame shell={shell} swap={false}>
 				{returnToParentButton}
 				<div
 					className={cn(
@@ -2143,85 +1376,64 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
                         </div>
                     ) : null}
                 </div>
-                <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
+                <ChatSessionFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput} overlay={false}>
                     {promptSurface}
-				</ComposerFoot>
-            </div>
+				</ChatSessionFoot>
+            </ChatSessionFrame>
         );
     }
 
 	return (
-		<div ref={composerSwapScopeRef} className={cn('relative flex flex-col h-full bg-background', isMobile && 'yuri-chat-composer-swap-scope')}>
+		<ChatSessionFrame shell={shell}>
 			{warning ? (
 				<div className="shrink-0 border-b border-border bg-[var(--status-warning-background)] px-4 py-2.5 typography-meta text-[var(--status-warning-foreground)]">
 					{warning}
 				</div>
 			) : null}
 			{returnToParentButton}
-            <TranscriptSearch key={`find:${sessionViewKey ?? currentSessionId}`} messages={renderedViewportMessages}
-                enabled={active && !isDesktopExpandedInput} canOpen={canOpenTranscriptSearch} onNavigate={releaseAutoFollow}>
-			<ChatViewport
-                timelineHistoryAnchorToken={timelineHistoryAnchorToken}
-				key={currentSessionId}
-				currentSessionId={currentSessionId}
-                virtualizerKey={sessionViewKey ?? currentSessionId}
-                isDesktopExpandedInput={isDesktopExpandedInput}
-                isMobile={isMobile}
-                stickyUserHeader={stickyUserHeader}
-                directory={effectiveSessionDirectory}
-                scrollRef={scrollRef}
-                messageListRef={messageListRef}
-                pendingRevealWork={timelineController.pendingRevealWork}
-                initialPinRevealComplete={initialPinRevealComplete}
-                renderedMessages={timelineController.renderedMessages}
-                isLoadingOlder={isLoadOlderBusy}
-                sessionIsWorking={sessionIsWorking}
-                streamingMessageId={streamingMessageId}
-                activeStreamingPhase={activeStreamingPhase}
-                retryOverlay={retryOverlay}
-                handleMessageContentChange={handleMessageContentChange}
-                getAnimationHandlers={getAnimationHandlers}
-                handleHistoryScroll={timelineController.handleHistoryScroll}
-                scrollToBottom={resumeToLatestInstant}
-                sessionQuestions={sessionQuestions}
-                sessionPermissions={sessionPermissions}
-                sessionForms={sessionForms}
-                retryActionCopy={retryActionCopy}
-                isProgrammaticFollowActive={isFollowingProgrammatically}
-                showLoadOlderButton={showLoadOlderButton}
-                turnIds={timelineController.turnIds}
-                activeTurnId={timelineController.activeTurnId}
-                onSelectTurn={handlePromptNavigatorSelect}
-                showPromptNavigator={showPromptNavigator}
-                canLoadEarlierPrompts={canLoadEarlierPrompts}
-                isLoadingOlderPrompts={isLoadOlderBusy}
-                onLoadEarlierPrompts={handleLoadOlderClick}
-            />
-            </TranscriptSearch>
+			<ChatTranscript
+				shell={shell}
+				active={active}
+				expandedInput={isDesktopExpandedInput}
+				sessionId={currentSessionId}
+				viewKey={sessionViewKey ?? currentSessionId}
+				directory={effectiveSessionDirectory}
+				searchMessages={renderedViewportMessages}
+				working={sessionIsWorking}
+				streamingMessageId={streamingMessageId}
+				activeStreamingPhase={activeStreamingPhase}
+				retryOverlay={retryOverlay}
+				retryActionCopy={retryActionCopy}
+				questions={sessionQuestions}
+				permissions={sessionPermissions}
+				forms={sessionForms}
+				initialPinRevealComplete={initialPinRevealComplete}
+			/>
 
-            <ComposerFoot key="composer-foot" isMobile={isMobile} expanded={isDesktopExpandedInput}>
-                <TranscriptScrollControls
-                    scrollRef={scrollRef}
-                    active={active && !isDesktopExpandedInput}
-                    showScrollToBottom={renderedViewportMessages.length > 0 && timelineController.showScrollToBottom}
-                    onScrollToBottom={navigation.resumeToLatest}
-                />
-                {promptSurface}
-            </ComposerFoot>
+			<ChatSessionFoot
+				key="composer-foot"
+				isMobile={isMobile}
+				expanded={isDesktopExpandedInput}
+				scrollControls={(
+					<ChatSessionScrollControls
+						shell={shell}
+						active={active && !isDesktopExpandedInput}
+						messageCount={renderedViewportMessages.length}
+					/>
+				)}
+			>
+				{promptSurface}
+			</ChatSessionFoot>
 
-
-            <TimelineDialog
-                open={isTimelineDialogOpen}
-                onOpenChange={setTimelineDialogOpen}
-                sessionID={currentSessionId ?? undefined}
-                directory={effectiveSessionDirectory}
-                onRevertMessage={onRevertMessage}
-                onScrollToMessage={timelineController.scrollToMessage}
-                canLoadEarlier={timelineController.historySignals.canLoadEarlier}
-                isLoadingEarlier={isLoadOlderBusy}
-                onLoadEarlier={handleLoadOlderClick}
-            />
-        </div>
+			<ChatSessionTimelineDialog
+				shell={shell}
+				open={isTimelineDialogOpen}
+				onOpenChange={setTimelineDialogOpen}
+				sessionId={currentSessionId}
+				directory={effectiveSessionDirectory}
+				onRevertMessage={onRevertMessage}
+			/>
+		</ChatSessionFrame>
 	);
 };
 
@@ -2560,7 +1772,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = (props) => {
     if (remoteLocation?.hostId) {
         const sessionId = props.explicitSession?.location ? props.explicitSession.sessionId : remoteSession?.sessionId ?? null;
         return <RemoteChatContainer key={`${runtimeKey}:${remoteLocation.hubId}:${remoteLocation.hostId}:${remoteLocation.directory}`}
-            location={remoteLocation} sessionId={sessionId} active={props.explicitSession?.active ?? props.active} readOnly={props.readOnly} composerPresentation="primary" viewport={ChatViewport} />;
+            location={remoteLocation} sessionId={sessionId} active={props.explicitSession?.active ?? props.active} readOnly={props.readOnly} composerPresentation="primary" />;
     }
 
     if (props.explicitSession) {
