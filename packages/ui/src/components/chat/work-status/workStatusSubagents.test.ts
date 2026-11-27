@@ -116,12 +116,37 @@ it('treats a linked session as working when its status is busy and the catalog r
 it('orders working faces ahead of completed ones', () => {
   const merged = mergeWorkStatusSubagents(
     [
-      { id: 'done', label: 'Done agent', description: '', running: false },
-      { id: 'live', label: 'Live agent', description: '', running: true },
+      { id: 'done', sessionID: 'child-done', label: 'Done agent', description: '', running: false },
+      { id: 'live', sessionID: 'child-live', label: 'Live agent', description: '', running: false },
     ],
     [],
+    new Set(['child-live']),
   );
-  expect(merged.map((face) => face.key)).toEqual(['live', 'done']);
+  expect(merged.map((face) => face.key)).toEqual(['child-live', 'child-done']);
+});
+
+it('leaves out a subagent whose task call is still running, since it blocks the turn', () => {
+  const merged = mergeWorkStatusSubagents(
+    [{ id: 'live', sessionID: 'child-1', label: 'Live agent', description: '', running: true }],
+    [{ id: 'child-1', title: 'Live', busy: true }],
+    new Set(['child-1']),
+  );
+  expect(merged).toEqual([]);
+});
+
+it('does not count a busy child as background while a task call has not published its session yet', () => {
+  const tasks = [{ id: 'creating', label: 'General', description: '', running: true }];
+  const children = [{ id: 'child-new', title: 'New', busy: true }];
+  expect(mergeWorkStatusSubagents(tasks, children)).toEqual([]);
+  expect(mergeWorkStatusSubagents([{ ...tasks[0]!, running: false }], children).map((face) => face.phase))
+    .toEqual(['working', 'done']);
+});
+
+it('promotes a settled task call to working once its child session keeps running', () => {
+  const task = { id: 'task-1', sessionID: 'child-1', label: 'General', description: '', running: true };
+  const children = [{ id: 'child-1', title: 'Job', busy: true }];
+  expect(mergeWorkStatusSubagents([task], children)).toEqual([]);
+  expect(mergeWorkStatusSubagents([{ ...task, running: false }], children).map((face) => face.phase)).toEqual(['working']);
 });
 
 it('shows the task description instead of the agent name when OpenCode published one', () => {
@@ -149,7 +174,7 @@ it('shows the task description instead of the agent name when OpenCode published
     },
   });
   expect(faces.map((face) => face.description)).toEqual(['查同步层调用链', '核对标题来源']);
-  expect(mergeWorkStatusSubagents(faces, []).map((face) => face.label)).toEqual([
+  expect(mergeWorkStatusSubagents(faces.map((face) => ({ ...face, running: false })), []).map((face) => face.label)).toEqual([
     '查同步层调用链',
     '核对标题来源',
   ]);
@@ -159,9 +184,9 @@ it('keeps one row per session id and prefers the live title after a rename', () 
   const merged = mergeWorkStatusSubagents(
     [
       { id: 'task-old', sessionID: 'child-1', label: 'General', description: '旧标题', running: false },
-      { id: 'task-continued', sessionID: 'child-1', label: 'General', description: '续聊描述', running: true },
+      { id: 'task-continued', sessionID: 'child-1', label: 'General', description: '续聊描述', running: false },
     ],
-    [{ id: 'child-1', title: '改过的标题', busy: false }],
+    [{ id: 'child-1', title: '改过的标题', busy: true }],
   );
   expect(merged).toEqual([
     { key: 'child-1', sessionID: 'child-1', seed: 'child-1', label: '改过的标题', phase: 'working' },

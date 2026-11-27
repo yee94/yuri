@@ -127,6 +127,8 @@ type SubagentDraft = {
   agent: string;
   childTitle: string;
   working: boolean;
+  /** Its task call is still pending or running, so the parent turn is blocked on it. */
+  blocking: boolean;
 };
 
 const displayLabel = (draft: SubagentDraft): string => draft.childTitle || draft.description || draft.agent;
@@ -145,7 +147,9 @@ const toFace = (draft: SubagentDraft): WorkStatusSubagent => ({
  * A part that has not published a session id yet stays on its own row.
  * Label prefers the live session title, then the task description OpenCode
  * uses as that title, then the agent name. Working faces stay ahead of
- * completed ones.
+ * completed ones. A subagent whose task call is still running blocks its
+ * turn and is foreground work: it is left out until the call settles, and
+ * only then counts as working (background) if its session is still busy.
  */
 export const mergeWorkStatusSubagents = (
   tasks: readonly TranscriptSubagentFace[],
@@ -178,6 +182,7 @@ export const mergeWorkStatusSubagents = (
       agent: current.agent || draft.agent,
       childTitle: draft.childTitle || current.childTitle,
       working: current.working || draft.working,
+      blocking: current.blocking || draft.blocking,
     };
   };
 
@@ -189,9 +194,12 @@ export const mergeWorkStatusSubagents = (
       description: task.description,
       agent: task.label,
       childTitle: child?.title?.trim() || '',
-      working: task.running || Boolean(child?.busy) || Boolean(task.sessionID && busyIds?.has(task.sessionID)),
+      working: Boolean(child?.busy) || Boolean(task.sessionID && busyIds?.has(task.sessionID)),
+      blocking: task.running,
     });
   }
+  // A task call that has not published its child session id yet may own any unlinked child.
+  const unlinkedBlocking = tasks.some((task) => task.running && !task.sessionID);
   for (const child of children) {
     if (linked.has(child.id)) continue;
     absorb({
@@ -201,9 +209,10 @@ export const mergeWorkStatusSubagents = (
       agent: '',
       childTitle: child.title?.trim() || '',
       working: child.busy,
+      blocking: unlinkedBlocking,
     });
   }
-  const faces = drafts.map(toFace);
+  const faces = drafts.filter((draft) => !draft.blocking).map(toFace);
   const working = faces.filter((face) => face.phase === 'working');
   const done = faces.filter((face) => face.phase === 'done');
   return working.length === 0 ? done : done.length === 0 ? working : [...working, ...done];

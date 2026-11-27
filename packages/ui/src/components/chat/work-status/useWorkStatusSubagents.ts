@@ -4,6 +4,7 @@ import { useStore, type StoreApi } from 'zustand';
 import { useDirectoryStore } from '@/sync/sync-context';
 import type { DirectoryStore } from '@/sync/child-store';
 import { useTranscriptProjection } from '@/sync/transcript-repository-observers';
+import { useSettledKeys } from './useSettledKeys';
 import { workStatusChildrenQueryOptions, type WorkStatusChildTitle } from './workStatusChildrenQuery';
 import {
   mergeWorkStatusSubagents,
@@ -94,7 +95,7 @@ export const useWorkStatusSubagents = (sessionId: string | null, directory: stri
     { enabled },
   );
   const busyIds = useBusySessionIds(store, enabled);
-  return React.useMemo(() => {
+  const faces = React.useMemo(() => {
     if (!sessionId) return [];
     return mergeWorkStatusSubagents(
       taskFaces,
@@ -102,4 +103,15 @@ export const useWorkStatusSubagents = (sessionId: string | null, directory: stri
       busyIds,
     );
   }, [busyIds, catalogKey, listed.data, sessionId, taskFaces]);
+  const workingKeys = React.useMemo(
+    () => faces.filter((face) => face.phase === 'working').map((face) => face.key),
+    [faces],
+  );
+  const settledKeys = useSettledKeys(workingKeys);
+  // A brief busy/idle flip must not bounce a face between groups or flash it in and out.
+  return React.useMemo(() => faces.flatMap((face): WorkStatusSubagent[] => {
+    const settled = settledKeys.has(face.key);
+    if (face.phase === 'working') return settled ? [face] : [];
+    return settled ? [{ ...face, phase: 'working' }] : [face];
+  }), [faces, settledKeys]);
 };
