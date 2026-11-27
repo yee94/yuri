@@ -9,7 +9,7 @@ import {
   type WorkStatusShell,
 } from './workStatusShells';
 
-function useShellCommand(shell: WorkStatusShell): string | undefined {
+export function useShellCommand(shell: WorkStatusShell): string | undefined {
   return useQuery(workStatusShellInfoQueryOptions(shell.directory, shell.id)).data?.command;
 }
 

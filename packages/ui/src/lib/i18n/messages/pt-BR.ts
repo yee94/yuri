@@ -3392,6 +3392,7 @@ export const dict: Record<I18nKey, string> = {
   "chat.workStatus.subagent.workingCount": "{count} trabalhando",
   "chat.workStatus.subagent.doneCount": "{count} concluídos",
   "chat.workStatus.section.background": "Tarefas em segundo plano",
+  "chat.workStatus.section.shells": "Comandos em segundo plano",
   "chat.workStatus.shell.untitled": "Comando de shell",
   "chat.workStatus.shell.back": "Voltar",
   "chat.workStatus.shell.readOnly": "Agent Shell · Controlado por IA, somente leitura",

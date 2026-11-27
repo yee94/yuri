@@ -3396,6 +3396,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.workStatus.subagent.workingCount': '{count} 件作業中',
   'chat.workStatus.subagent.doneCount': '{count} 件完了',
   'chat.workStatus.section.background': 'バックグラウンドタスク',
+  'chat.workStatus.section.shells': 'バックグラウンドコマンド',
   'chat.workStatus.shell.untitled': 'シェルコマンド',
   'chat.workStatus.shell.back': '戻る',
   'chat.workStatus.shell.readOnly': 'Agent Shell · AI が操作、閲覧のみ',

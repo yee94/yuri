@@ -135,6 +135,7 @@ import {
 
 import { useRecoverPendingQuestions } from '@/hooks/useRecoverPendingQuestions';
 import { useI18n, type I18nKey } from '@/lib/i18n';
+import { MobileBackgroundWorkBar } from '@/mobile/chat/MobileBackgroundWorkBar';
 import { BusyDots } from './message/parts/BusyDots';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { isVSCodeRuntime } from '@/lib/desktop';
@@ -1573,13 +1574,16 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
         : readOnly
             ? null
             : (
-                <ChatInput
-                    key="composer-input"
-                    foregroundActive={active}
-                    surface={composerSurface}
-                    scrollToBottom={scrollViewportOnSend}
-                    submissionBlocked={promptAvailability.blockSubmission}
-                />
+                <>
+                    {isMobile ? <MobileBackgroundWorkBar sessionId={currentSessionId ?? null} directory={effectiveSessionDirectory ?? null} /> : null}
+                    <ChatInput
+                        key="composer-input"
+                        foregroundActive={active}
+                        surface={composerSurface}
+                        scrollToBottom={scrollViewportOnSend}
+                        submissionBlocked={promptAvailability.blockSubmission}
+                    />
+                </>
             );
     const handlePromptNavigatorSelect = useEvent((turnId: string) => {
         void navigation.scrollToTurnId(turnId, { behavior: 'smooth' });

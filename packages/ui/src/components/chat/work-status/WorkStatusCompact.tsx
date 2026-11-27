@@ -15,7 +15,7 @@ import { normalizePath } from '@/lib/pathNormalization';
 import { resolveProjectForSessionDirectory } from '@/lib/projectResolution';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useWorkStatusSubagents } from './useWorkStatusSubagents';
-import { useBlockingShellIds } from './useBlockingShellIds';
+import { useWorkStatusShells } from './useWorkStatusShells';
 import { WorkStatusTodos } from './WorkStatusTodos';
 import { GuiPluginWorkStatus } from '@/components/gui-plugins/GuiPluginWorkStatus';
 import type { GuiWorkStatusInput } from '@/lib/gui-plugins/work-status';
@@ -25,7 +25,6 @@ import type { ProjectEntry } from '@/lib/api/types';
 import type { WorkStatusSubagent } from './workStatusSubagents';
 import { useRemoteWorkStatus } from './useRemoteWorkStatus';
 import type { Todo } from '@/lib/opencode/v2-types';
-import { useRunningSessionShells } from '@/sync/sync-context';
 import { WorkStatusShellRow } from './WorkStatusShellView';
 import { useTerminalStore } from '@/stores/useTerminalStore';
 import { getRuntimeTransportIdentity } from '@/lib/runtime-switch';
@@ -81,15 +80,7 @@ const LocalWorkStatusCompact: React.FC<Props> = (props) => {
     return { project, worktree };
   }, [availableWorktrees, directory, projects, sessionWorktree]);
   const subagents = useWorkStatusSubagents(sessionId, directory);
-  const runningShells = useRunningSessionShells();
-  const blockingShellIds = useBlockingShellIds(sessionId, directory);
-  const shells = React.useMemo<WorkStatusShell[]>(() => {
-    if (!sessionId) return [];
-    return [...runningShells]
-      .filter(([id, owner]) => owner.sessionID === sessionId && !blockingShellIds.includes(id))
-      .map(([id, owner]) => ({ id, directory: owner.directory, startedAt: owner.startedAt }))
-      .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
-  }, [blockingShellIds, runningShells, sessionId]);
+  const shells = useWorkStatusShells(sessionId, directory);
   return <WorkStatusCompactContent {...props} project={project ?? undefined} worktree={worktree} subagents={subagents} shells={shells} />;
 };
 

@@ -3395,6 +3395,7 @@ export const dict = {
   'chat.workStatus.subagent.workingCount': '{count} en cours',
   'chat.workStatus.subagent.doneCount': '{count} terminés',
   'chat.workStatus.section.background': 'Tâches en arrière-plan',
+  'chat.workStatus.section.shells': 'Commandes en arrière-plan',
   'chat.workStatus.shell.untitled': 'Commande shell',
   'chat.workStatus.shell.back': 'Retour',
   'chat.workStatus.shell.readOnly': 'Agent Shell · Piloté par l’IA, lecture seule',

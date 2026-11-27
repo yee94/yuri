@@ -3398,6 +3398,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.workStatus.subagent.workingCount': '{count} 个工作中',
   'chat.workStatus.subagent.doneCount': '{count} 个已完成',
   'chat.workStatus.section.background': '后台任务',
+  'chat.workStatus.section.shells': '后台命令',
   'chat.workStatus.shell.untitled': 'Shell 命令',
   'chat.workStatus.shell.back': '返回',
   'chat.workStatus.shell.readOnly': 'Agent Shell · 由 AI 操作，仅可查看',

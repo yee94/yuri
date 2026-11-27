@@ -3398,6 +3398,7 @@ export const dict = {
   'chat.workStatus.subagent.workingCount': '{count} working',
   'chat.workStatus.subagent.doneCount': '{count} done',
   'chat.workStatus.section.background': 'Background tasks',
+  'chat.workStatus.section.shells': 'Background commands',
   'chat.workStatus.shell.untitled': 'Shell command',
   'chat.workStatus.shell.back': 'Back',
   'chat.workStatus.shell.readOnly': 'Agent Shell · AI-controlled, view only',

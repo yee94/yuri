@@ -73,7 +73,7 @@ const TurnChangesCardFileButton = React.memo(({
                 'flex w-full min-w-0 items-center justify-between gap-3 rounded-[var(--radius-md)] text-left transition-colors',
                 'hover:bg-interactive-hover focus-visible:bg-interactive-hover active:bg-interactive-active',
                 'focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
-                isMobile ? 'px-2 py-1 text-xs' : 'px-2.5 py-1.5 text-[13px]',
+                isMobile ? 'px-2 py-1.5 text-xs' : 'px-2.5 py-1.5 text-[13px]',
             )}
         >
             <span className="flex min-w-0 flex-1 items-baseline leading-snug">
@@ -400,7 +400,7 @@ export const TurnChangesCard = React.memo(({
             <div
                 className={cn(
                     'flex min-w-0 items-center justify-between',
-                    isMobile ? 'gap-2 px-2.5 py-1.5' : 'gap-2.5 px-3.5 py-2.5',
+                    isMobile ? 'gap-2 px-2.5 py-2.5' : 'gap-2.5 px-3.5 py-2.5',
                 )}
             >
                 <div className={cn('flex min-w-0 items-center', isMobile ? 'gap-2' : 'gap-2.5')}>
@@ -487,7 +487,7 @@ export const TurnChangesCard = React.memo(({
                 <div
                     className={cn(
                         'flex min-w-0 flex-col rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--surface-foreground)_2%,var(--surface-background))]',
-                        isMobile ? 'mx-1 gap-0 p-0.5' : 'mx-1.5 gap-0.5 p-1',
+                        isMobile ? 'mx-1 gap-0 p-1' : 'mx-1.5 gap-0.5 p-1',
                         hiddenCount === 0 && (isMobile ? 'mb-1' : 'mb-1.5'),
                     )}
                 >

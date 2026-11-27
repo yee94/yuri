@@ -3392,6 +3392,7 @@ export const dict: Record<I18nKey, string> = {
   "chat.workStatus.subagent.workingCount": "{count} працюють",
   "chat.workStatus.subagent.doneCount": "{count} завершено",
   "chat.workStatus.section.background": "Фонові завдання",
+  "chat.workStatus.section.shells": "Фонові команди",
   "chat.workStatus.shell.untitled": "Команда оболонки",
   "chat.workStatus.shell.back": "Назад",
   "chat.workStatus.shell.readOnly": "Agent Shell · Керується ШІ, лише перегляд",
