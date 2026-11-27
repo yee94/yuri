@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "channel": "beta",
-  "generation": 247,
+  "generation": 248,
   "activeBundle": {
     "applicationId": "com.yee94.yuri",
-    "bundleId": "cd96913a3d1e69c9",
-    "releaseVersion": "0.3.9-beta.42",
-    "url": "/ota/bundles/cd96913a3d1e69c9.zip",
-    "size": 10872814,
-    "checksum": "cd96913a3d1e69c9bb4ae1e7de54f8319205b9f683b88a70f4537d1abeea4a66",
+    "bundleId": "cd2ee564af660553",
+    "releaseVersion": "0.3.9-beta.43",
+    "url": "/ota/bundles/cd2ee564af660553.zip",
+    "size": 10872807,
+    "checksum": "cd2ee564af660553f23c252d9fedd32345381be3cf208bc5f5b65382e4cd8b35",
     "rolloutPercent": 100,
-    "rolloutSalt": "beta-247",
+    "rolloutSalt": "beta-248",
     "minShellApiVersion": 4,
     "minShellReleaseVersion": "0.3.9-beta.27",
     "platforms": {
@@ -22,10 +22,10 @@
       }
     },
     "desktop": {
-      "bundleId": "5d90f014ffcca6ed",
-      "url": "/ota/bundles/5d90f014ffcca6ed.zip",
-      "checksum": "5d90f014ffcca6edbe45dc25e82bda608ea9334d9b0dde3ec75fcc559a5b51b2",
-      "size": 12655139,
+      "bundleId": "4b7dbb2ca9b650ca",
+      "url": "/ota/bundles/4b7dbb2ca9b650ca.zip",
+      "checksum": "4b7dbb2ca9b650ca67e8eb05ec1a4f614e705324390d1d2225d1f2d6d6be47ec",
+      "size": 12655125,
       "shellFingerprint": "42acf8346db9c87435bb17858bab4d2076dd8617fbe28fd51e0670bd8dd2ead6",
       "minShellReleaseVersion": "0.3.9-beta.27",
       "applicationId": "dev.yuri.desktop",
@@ -46,17 +46,47 @@
       "installUrl": "https://github.com/yee94/yuri/releases/tag/v0.3.9-beta.27"
     },
     "desktop": {
-      "version": "0.3.9-beta.42",
-      "build": 1069,
+      "version": "0.3.9-beta.43",
+      "build": 1070,
       "status": "published",
-      "installUrl": "https://github.com/yee94/yuri/releases/tag/v0.3.9-beta.42"
+      "installUrl": "https://github.com/yee94/yuri/releases/tag/v0.3.9-beta.43"
     }
   },
   "rollbackBundleIds": [
-    "d57a0d121e8affb5",
-    "4c371513b174eab0"
+    "cd96913a3d1e69c9",
+    "d57a0d121e8affb5"
   ],
   "rollbackBundles": {
+    "cd96913a3d1e69c9": {
+      "applicationId": "com.yee94.yuri",
+      "bundleId": "cd96913a3d1e69c9",
+      "releaseVersion": "0.3.9-beta.42",
+      "url": "/ota/bundles/cd96913a3d1e69c9.zip",
+      "size": 10872814,
+      "checksum": "cd96913a3d1e69c9bb4ae1e7de54f8319205b9f683b88a70f4537d1abeea4a66",
+      "rolloutPercent": 100,
+      "rolloutSalt": "beta-247",
+      "minShellApiVersion": 4,
+      "minShellReleaseVersion": "0.3.9-beta.27",
+      "platforms": {
+        "ios": {
+          "minNativeBuild": 1
+        },
+        "android": {
+          "minNativeBuild": 1
+        }
+      },
+      "desktop": {
+        "bundleId": "5d90f014ffcca6ed",
+        "url": "/ota/bundles/5d90f014ffcca6ed.zip",
+        "checksum": "5d90f014ffcca6edbe45dc25e82bda608ea9334d9b0dde3ec75fcc559a5b51b2",
+        "size": 12655139,
+        "shellFingerprint": "42acf8346db9c87435bb17858bab4d2076dd8617fbe28fd51e0670bd8dd2ead6",
+        "minShellReleaseVersion": "0.3.9-beta.27",
+        "applicationId": "dev.yuri.desktop",
+        "minShellApiVersion": 2
+      }
+    },
     "d57a0d121e8affb5": {
       "applicationId": "com.yee94.yuri",
       "bundleId": "d57a0d121e8affb5",
@@ -81,36 +111,6 @@
         "url": "/ota/bundles/7eebeed555776854.zip",
         "checksum": "7eebeed5557768547a6fbe1d37f16278eb3f96a71b0aa7bb9da9d47558e01fd9",
         "size": 12655021,
-        "shellFingerprint": "42acf8346db9c87435bb17858bab4d2076dd8617fbe28fd51e0670bd8dd2ead6",
-        "minShellReleaseVersion": "0.3.9-beta.27",
-        "applicationId": "dev.yuri.desktop",
-        "minShellApiVersion": 2
-      }
-    },
-    "4c371513b174eab0": {
-      "applicationId": "com.yee94.yuri",
-      "bundleId": "4c371513b174eab0",
-      "releaseVersion": "0.3.9-beta.40",
-      "url": "/ota/bundles/4c371513b174eab0.zip",
-      "size": 10872648,
-      "checksum": "4c371513b174eab015b2521bac08a4281a9096dead12c75bbf9ca5bd5d9e6359",
-      "rolloutPercent": 100,
-      "rolloutSalt": "beta-245",
-      "minShellApiVersion": 4,
-      "minShellReleaseVersion": "0.3.9-beta.27",
-      "platforms": {
-        "ios": {
-          "minNativeBuild": 1
-        },
-        "android": {
-          "minNativeBuild": 1
-        }
-      },
-      "desktop": {
-        "bundleId": "f955917513a2c6b3",
-        "url": "/ota/bundles/f955917513a2c6b3.zip",
-        "checksum": "f955917513a2c6b3a5cff37f3cfe408741d186d36174fb7132229d9333ef1b5a",
-        "size": 12654990,
         "shellFingerprint": "42acf8346db9c87435bb17858bab4d2076dd8617fbe28fd51e0670bd8dd2ead6",
         "minShellReleaseVersion": "0.3.9-beta.27",
         "applicationId": "dev.yuri.desktop",
