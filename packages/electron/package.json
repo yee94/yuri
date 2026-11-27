@@ -1,6 +1,6 @@
 {
   "name": "@yuriai/electron",
-  "version": "0.3.9-beta.49",
+  "version": "0.3.9-beta.50",
   "private": true,
   "description": "Electron desktop runtime for Yuri",
   "author": "Yuri",

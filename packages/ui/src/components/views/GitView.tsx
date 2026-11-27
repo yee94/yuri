@@ -17,7 +17,7 @@ import {
   useGitLoadingLog,
   useWorkspaceGitSummary,
 } from '@/lib/api/useProjectGitStore';
-import { Button } from '@/components/ui/button';
+import { SortableTabsStrip, type SortableTabsStripItem } from '@/components/ui/sortable-tabs-strip';
 import { useGitmojiList } from '@/hooks/useGitmojiList';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
@@ -233,6 +233,24 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     }
     return workspaceDirectories[0] ?? effectiveDirectory;
   }, [effectiveDirectory, isMultiPathWorkspace, multiRepoGitDirectories, selectedWorkspaceRepoDir, workspaceDirectories]);
+  const workspaceRepoTabItems = React.useMemo<SortableTabsStripItem[]>(
+    () => (isMultiRepoWorkspace
+      ? workspaceGitSummary.gitEntries.map((entry) => {
+        const repoName = entry.directory.split('/').filter(Boolean).at(-1) || entry.directory;
+        const label = [
+          repoName,
+          entry.branch ? `· ${entry.branch}` : null,
+          entry.fileCount > 0 ? `(${entry.fileCount})` : null,
+        ].filter(Boolean).join(' ');
+        return {
+          id: entry.directory,
+          label,
+          title: `${entry.directory}${entry.branch ? ` (${entry.branch})` : ''}`,
+        };
+      })
+      : []),
+    [isMultiRepoWorkspace, workspaceGitSummary.gitEntries],
+  );
   const ensureWorkspaceGitStatus = useGitStore((s) => s.ensureStatus);
   React.useEffect(() => {
     if (!isMultiPathWorkspace || !git) return;
@@ -2018,32 +2036,17 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
         <div className="h-full min-h-0 flex flex-col">
           {isMultiRepoWorkspace ? (
             <div
-              className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border/50 px-2 py-1.5"
+              className="flex h-8 shrink-0 items-center border-b border-border/50 px-2"
               data-testid="workspace-git-repo-strip"
             >
-              {workspaceGitSummary.gitEntries.map((entry) => {
-                const selected = entry.directory === currentDirectory;
-                const repoName = entry.directory.split('/').filter(Boolean).at(-1) || entry.directory;
-                return (
-                  <Button
-                    key={entry.directory}
-                    variant="chip"
-                    size="xs"
-                    aria-pressed={selected}
-                    onClick={() => setSelectedWorkspaceRepoDir(entry.directory)}
-                    className="max-w-full gap-1 px-2"
-                    title={`${entry.directory}${entry.branch ? ` (${entry.branch})` : ''}`}
-                  >
-                    <span className="truncate font-medium">{repoName}</span>
-                    {entry.branch ? (
-                      <span className="truncate text-muted-foreground">· {entry.branch}</span>
-                    ) : null}
-                    {entry.fileCount > 0 ? (
-                      <span className="tabular-nums text-[var(--status-info)]">({entry.fileCount})</span>
-                    ) : null}
-                  </Button>
-                );
-              })}
+              <SortableTabsStrip
+                items={workspaceRepoTabItems}
+                activeId={currentDirectory ?? null}
+                onSelect={setSelectedWorkspaceRepoDir}
+                layoutMode="scrollable"
+                variant="compact"
+                className="h-6 [&_[role=tab]]:text-[11px] [&_[role=tab]]:leading-4"
+              />
             </div>
           ) : null}
           <div className={cn('min-w-0 min-h-0 flex-1 flex flex-col')}>
