@@ -1,5 +1,3 @@
-import { cubicBezier } from 'motion/react'
-
 /**
  * Send transition after Telegram-iOS `ChatMessageTransitionNode` (text input →
  * bubble, default bezier parameters): the bubble starts with its text over the
@@ -11,14 +9,11 @@ import { cubicBezier } from 'motion/react'
  * or writes size, so a busy main thread cannot drop flight frames, and the
  * landing frame is the real bubble at its integer layout position.
  */
-export const CONTACT_SEND_FLIGHT_DURATION_S = 0.3
+export const CONTACT_SEND_FLIGHT_DURATION_S = 0.4
 export const CONTACT_SEND_FLIGHT_VERTICAL_EASE = [0.19919472913616398, 0.010644531250000006, 0.27920937042459737, 0.91025390625] as const
-const HORIZONTAL_EASE = [0.23, 1, 0.32, 1] as const
-const verticalCurve = cubicBezier(...CONTACT_SEND_FLIGHT_VERTICAL_EASE)
-const horizontalCurve = cubicBezier(...HORIZONTAL_EASE)
-// Split-axis curves cannot share one CSS easing; sampled keyframes with linear
-// interpolation reproduce both on the compositor.
-const KEYFRAME_SAMPLES = 20
+const HORIZONTAL_EASE = 'cubic-bezier(0.23, 1, 0.32, 1)'
+const VERTICAL_EASE = `cubic-bezier(${CONTACT_SEND_FLIGHT_VERTICAL_EASE.join(', ')})`
+const LANDING_WAIT_MS = 600
 
 type Box = { left: number; top: number; width: number; height: number }
 
@@ -29,8 +24,7 @@ export type ContactSendFlightSource = {
 }
 
 const px = (value: string) => Number.parseFloat(value) || 0
-const contentBox = (element: HTMLElement): Box => {
-  const rect = element.getBoundingClientRect()
+const contentBox = (element: HTMLElement, rect = element.getBoundingClientRect()): Box => {
   const style = window.getComputedStyle(element)
   const left = rect.left + px(style.borderLeftWidth) + px(style.paddingLeft)
   const top = rect.top + px(style.borderTopWidth) + px(style.paddingTop)
@@ -108,15 +102,12 @@ const proxy = (bubble: HTMLElement, rect: DOMRect, text: string): HTMLElement =>
   return clone
 }
 
-const flightKeyframes = (dx: number, dy: number): Keyframe[] => Array.from({ length: KEYFRAME_SAMPLES + 1 }, (_, index) => {
-  const progress = index / KEYFRAME_SAMPLES
-  const x = dx * (1 - horizontalCurve(progress))
-  const y = dy * (1 - verticalCurve(progress))
-  return {
-    offset: progress,
-    transform: `translate3d(${x}px, ${y}px, 0)`,
-  }
-})
+// Separate transform properties let the browser ease each axis on one shared clock.
+const flightKeyframes = (dx: number, dy: number, landingY = 0): Keyframe[] => [
+  { offset: 0, translate: `${dx}px 0px`, easing: HORIZONTAL_EASE },
+  { offset: 0, transform: `translateY(${dy}px)`, easing: VERTICAL_EASE },
+  { offset: 1, translate: '0px 0px', transform: `translateY(${landingY}px)` },
+]
 
 /**
  * Flies `bubble` out of the captured composer text. The real bubble keeps its
@@ -124,7 +115,7 @@ const flightKeyframes = (dx: number, dy: number): Keyframe[] => Array.from({ len
  * owner remains the only scroll writer. The opaque snapshot covers the typed
  * text in the mount frame; the clock starts on the next frame, after re-aiming
  * at wherever the scroll owner settled the bubble. Later transcript scrolls
- * move the snapshot's landing slot with the bubble.
+ * retarget the destination without shifting the whole flight path.
  * Returns an idempotent stop that removes the snapshot and reveals the bubble.
  */
 export const startContactSendFlight = (
@@ -136,12 +127,16 @@ export const startContactSendFlight = (
   let stopped = false
   let playing = false
   let startFrame = 0
+  let landingWait: ReturnType<typeof setTimeout> | undefined
   let clone: HTMLElement | null = null
   let animation: Animation | null = null
+  let origin: { top: number; dx: number; dy: number } | null = null
+  let landingY = 0
   const stop = () => {
     if (stopped) return
     stopped = true
     cancelAnimationFrame(startFrame)
+    clearTimeout(landingWait)
     window.removeEventListener('scroll', follow, true)
     animation?.cancel()
     clone?.remove()
@@ -152,10 +147,11 @@ export const startContactSendFlight = (
   // composer text. Returns false when there is nowhere to fly.
   const aim = (): boolean => {
     const rect = bubble.getBoundingClientRect()
-    const target = contentBox(bubble)
+    const target = contentBox(bubble, rect)
     const dx = source.textBox.left - target.left
     const dy = source.textBox.top - target.top
     if (!dx && !dy) return false
+    origin = { top: rect.top, dx, dy }
     clone!.style.left = `${rect.left}px`
     clone!.style.top = `${rect.top}px`
     const keyframes = flightKeyframes(dx, dy)
@@ -172,11 +168,42 @@ export const startContactSendFlight = (
     }
     return true
   }
-  // Before the clock starts the clone must stay on the typed text, so a scroll
-  // re-aims the whole path; once flying, it only moves the landing slot.
-  function follow() {
-    if (!playing) { aim(); return }
-    clone!.style.top = `${bubble.getBoundingClientRect().top}px`
+
+  const startWhenReachable = () => {
+    if (stopped) return
+    if (!bubble.isConnected || !aim()) { stop(); return }
+    // A send from history can mount the destination below the composer.
+    // Hold at the source until scrolling can carry the flight upward.
+    if (source.textBox.top >= 0 && origin!.dy < 0) {
+      landingWait ??= setTimeout(stop, LANDING_WAIT_MS)
+      return
+    }
+    clearTimeout(landingWait)
+    landingWait = undefined
+    playing = true
+    const flight = animation!
+    flight.play()
+    // Scroll can update keyframes again before a deferred play task commits.
+    // Start on the timeline now so those updates cannot postpone lift-off.
+    const time = flight.timeline?.currentTime
+    if (typeof time === 'number') flight.startTime = time
+  }
+
+  // A moving destination contributes only in proportion to the flight's progress.
+  // Moving the fixed layer itself would apply the entire scroll delta even at t=0.
+  function follow(event: Event) {
+    if (event.target instanceof Node && !event.target.contains(bubble)) return
+    if (!playing) {
+      if (landingWait === undefined) aim()
+      else startWhenReachable()
+      return
+    }
+    const effect = animation?.effect as KeyframeEffect | null | undefined
+    if (!origin || !effect?.setKeyframes) return
+    const nextLandingY = bubble.getBoundingClientRect().top - origin.top
+    if (nextLandingY === landingY) return
+    landingY = nextLandingY
+    effect.setKeyframes(flightKeyframes(origin.dx, origin.dy, landingY))
   }
 
   hidden.style.visibility = 'hidden'
@@ -197,11 +224,6 @@ export const startContactSendFlight = (
   // The send commit that mounted the bubble usually stalls the next frame; start
   // the clock there so the stall cannot consume progress. Re-aim first: the
   // send-park scroll may have moved the landing slot since mount.
-  startFrame = requestAnimationFrame(() => {
-    if (stopped) return
-    if (!aim()) { stop(); return }
-    playing = true
-    animation!.play()
-  })
+  startFrame = requestAnimationFrame(startWhenReachable)
   return stop
 }

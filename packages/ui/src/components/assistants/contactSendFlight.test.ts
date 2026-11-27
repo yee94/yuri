@@ -6,7 +6,7 @@ const rect = (left: number, top: number, width: number, height: number) => () =>
 
 const frames: Array<FrameRequestCallback | null> = []
 const flushFrame = () => frames.splice(0).forEach((callback) => callback?.(performance.now()))
-type FakeAnimation = { keyframes: Keyframe[]; options: KeyframeAnimationOptions; cancel: ReturnType<typeof vi.fn>; finish: () => void; playing: boolean }
+type FakeAnimation = { keyframes: Keyframe[]; options: KeyframeAnimationOptions; cancel: ReturnType<typeof vi.fn>; finish: () => void; playing: boolean; startTime?: number }
 let animations: FakeAnimation[] = []
 
 beforeEach(() => {
@@ -21,6 +21,8 @@ beforeEach(() => {
     return {
       finished,
       cancel: animation.cancel,
+      timeline: { currentTime: 123 },
+      set startTime(time: number) { animation.startTime = time },
       pause: () => { animation.playing = false },
       play: () => { animation.playing = true },
       effect: { setKeyframes: (next: Keyframe[]) => { animation.keyframes = next } },
@@ -48,10 +50,6 @@ const mount = () => {
 }
 
 const overlay = () => document.querySelector<HTMLElement>('[data-assistant-contact-send-flight]')
-const translate = (keyframe: Keyframe) => {
-  const [, x, y] = /translate3d\(([-\d.]+)px, ([-\d.]+)px/.exec(String(keyframe.transform)) ?? []
-  return { x: Number(x), y: Number(y) }
-}
 const settle = async () => { await Promise.resolve(); await Promise.resolve() }
 
 test('flies a fixed snapshot from the composer text to the bubble on split compositor curves', async () => {
@@ -70,17 +68,13 @@ test('flies a fixed snapshot from the composer text to the bubble on split compo
   expect(clone.style.position).toBe('fixed')
   expect([clone.style.left, clone.style.top, clone.style.width, clone.style.height]).toEqual(['290px', '600px', '90px', '44px'])
   const [{ keyframes, options }] = animations
-  expect(options).toMatchObject({ duration: 300, easing: 'linear' })
+  expect(options).toMatchObject({ duration: 400, easing: 'linear' })
   // Bubble text origin (306, 610) starts on the field text origin (68, 912).
-  expect(translate(keyframes[0])).toEqual({ x: 68 - 306, y: 912 - 610 })
-  expect(translate(keyframes.at(-1)!)).toEqual({ x: 0, y: 0 })
-  // No fade: every frame is fully visible, including the first.
-  expect(keyframes.every((frame) => frame.opacity === undefined)).toBe(true)
-  // Horizontal motion leads on the fast ease-out; vertical trails on the slow curve.
-  const mid = translate(keyframes[keyframes.length >> 1])
-  expect(1 - mid.x / (68 - 306)).toBeGreaterThan(1 - mid.y / (912 - 610))
-  // Only compositor properties animate.
-  expect(keyframes.every((frame) => Object.keys(frame).every((key) => ['offset', 'transform'].includes(key)))).toBe(true)
+  expect(keyframes).toEqual([
+    { offset: 0, translate: '-238px 0px', easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },
+    { offset: 0, transform: 'translateY(302px)', easing: expect.stringContaining('cubic-bezier(') },
+    { offset: 1, translate: '0px 0px', transform: 'translateY(0px)' },
+  ])
 
   animations[0].finish()
   await settle()
@@ -89,13 +83,46 @@ test('flies a fixed snapshot from the composer text to the bubble on split compo
   expect(settled).toHaveBeenCalledTimes(1)
 })
 
-test('the landing slot follows a transcript scroll during the flight', () => {
+test('transcript scroll moves only the destination, not the flight origin', () => {
   const { field, bubble } = mount()
   startContactSendFlight(captureContactSendFlightSource(field)!, bubble)
   flushFrame()
   bubble.getBoundingClientRect = rect(290, 576, 90, 44)
   document.body.dispatchEvent(new Event('scroll'))
-  expect(overlay()!.style.top).toBe('576px')
+  expect(overlay()!.style.top).toBe('600px')
+  expect(animations[0].keyframes[1].transform).toBe('translateY(302px)')
+  expect(animations[0].keyframes.at(-1)?.transform).toBe('translateY(-24px)')
+})
+
+test('waits at the composer when the transcript has to bring the row up into reach', () => {
+  const { field, bubble } = mount()
+  bubble.getBoundingClientRect = rect(290, 1020, 90, 44)
+  const stop = startContactSendFlight(captureContactSendFlightSource(field)!, bubble)
+  flushFrame()
+  expect(animations[0].playing).toBe(false)
+  expect(animations[0].startTime).toBeUndefined()
+
+  bubble.getBoundingClientRect = rect(290, 850, 90, 44)
+  document.body.dispatchEvent(new Event('scroll'))
+  expect(animations[0].playing).toBe(true)
+  expect(animations[0].startTime).toBe(123)
+  expect(animations[0].keyframes[1].transform).toBe('translateY(52px)')
+  stop()
+})
+
+test('reveals the real row if the transcript never brings the destination into reach', () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const { field, bubble } = mount()
+    bubble.getBoundingClientRect = rect(290, 1020, 90, 44)
+    startContactSendFlight(captureContactSendFlightSource(field)!, bubble)
+    flushFrame()
+    vi.runOnlyPendingTimers()
+    expect(overlay()).toBeNull()
+    expect(bubble.style.visibility).toBe('')
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 test('stop before the first frame cancels the start; stop is idempotent', () => {
@@ -147,9 +174,9 @@ test('re-aims before the clock starts so the start stays on the typed text after
   bubble.getBoundingClientRect = rect(290, 500, 90, 44)
   document.body.dispatchEvent(new Event('scroll'))
   expect(overlay()!.style.top).toBe('500px')
-  expect(translate(animations[0].keyframes[0])).toEqual({ x: 68 - 306, y: 912 - 510 })
+  expect(animations[0].keyframes[1].transform).toBe('translateY(402px)')
   flushFrame()
-  expect(translate(animations[0].keyframes[0])).toEqual({ x: 68 - 306, y: 912 - 510 })
+  expect(animations[0].keyframes[1].transform).toBe('translateY(402px)')
 })
 
 test('the flight element is a plain-text stand-in, never the rendered bubble DOM', () => {
