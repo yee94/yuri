@@ -3234,52 +3234,62 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
             })) return;
             if (!inputSnapshot.hasContent || !draftKey || submissionBlocked || queuedOnly) return;
             if (!beginSubmissionFlight('send')) return;
+            const remoteInputStore = surfaceResources.inputStore ?? useInputStore;
+            const remoteCapture = submissionCapture
+                ?? (getCurrentInputSnapshot().message === inputSnapshot.message ? captureSubmission() : null);
+            let recoveryKey = draftKey;
+            let restoreBody = false;
             try {
-            const entry = hostRuntime.entry;
-            const sendSelection = { ...surface.selection.value };
-            const quotes = composerQuoteScope ? (useComposerQuoteStore.getState().quotesByKey[composerQuoteScope] ?? []) : [];
-            const remoteInlineDrafts = [...surfaceResources.inlineDrafts].sort((a, b) => a.createdAt - b.createdAt);
-            const syntheticAtSubmit = surfaceResources.getDraft(draftKey)?.syntheticParts ?? [];
-            const syntheticIDs = new Set(syntheticAtSubmit.map((part) => part.partID));
-            const syntheticViews = (surfaceResources.inputStore ?? useInputStore).getState().getDraftAttachmentViews(draftKey);
-            entry.sdk();
-            const [sendAgents, sendSkills, sendSessions] = await Promise.all([
-                logicalInputMessage.includes('@') ? remoteQueryClient.ensureQueryData(rawAgentsQueryOptions(entry.location.directory, undefined, entry)) : Promise.resolve([]),
-                remoteQueryClient.ensureQueryData(installedSkillsQueryOptions(entry.location.directory, undefined, entry)),
-                logicalInputMessage.includes('@') ? ensureRemoteComposerSessions(remoteQueryClient, hostRuntime.registry, entry) : Promise.resolve([]),
-            ]);
-            entry.sdk();
-            const compiled = compileChatComposerDelivery({ plan: directPlan, agents: sendAgents, installedSkillNames: new Set(sendSkills.map((skill) => skill.name)), sessions: sendSessions,
-                directory: hostRuntime.entry.location.directory, root: hostRuntime.entry.location.directory,
-                confirmedFilePaths: confirmedFileMentions.map((mention) => mention.path),
-                confirmedDirectoryPaths: confirmedFileMentions.filter((mention) => mention.kind === 'directory').map((mention) => mention.path),
-                citationAttachments: sendableAttachedFiles });
-            const attachments = dedupeDeliveryAttachments([...sanitizeAttachmentsForSend(sendableAttachedFiles), ...compiled.attachments]);
-            const text = appendInlineComments(messageWithComposerQuotes(quotes, compiled.text), remoteInlineDrafts);
-            const parts = buildSyntheticDeliveryParts(syntheticAtSubmit.map((part) => ({
-                ...part, attachments: part.attachments.flatMap((attachment) => {
-                    const view = syntheticViews.find((file) => file.id === attachment.attachmentID);
-                    if (!view) throw new Error('Remote synthetic attachment bytes unavailable');
-                    return [view];
-                }),
-            })));
+                const entry = hostRuntime.entry;
+                const sendSelection = { ...surface.selection.value };
+                const quotes = composerQuoteScope ? (useComposerQuoteStore.getState().quotesByKey[composerQuoteScope] ?? []) : [];
+                const remoteInlineDrafts = [...surfaceResources.inlineDrafts].sort((a, b) => a.createdAt - b.createdAt);
+                const syntheticAtSubmit = surfaceResources.getDraft(draftKey)?.syntheticParts ?? [];
+                const syntheticIDs = new Set(syntheticAtSubmit.map((part) => part.partID));
+                const syntheticViews = remoteInputStore.getState().getDraftAttachmentViews(draftKey);
+                restoreBody = Boolean(remoteCapture && replacePlainDocument(''));
+                entry.sdk();
+                const [sendAgents, sendSkills, sendSessions] = await Promise.all([
+                    logicalInputMessage.includes('@') ? remoteQueryClient.ensureQueryData(rawAgentsQueryOptions(entry.location.directory, undefined, entry)) : Promise.resolve([]),
+                    remoteQueryClient.ensureQueryData(installedSkillsQueryOptions(entry.location.directory, undefined, entry)),
+                    logicalInputMessage.includes('@') ? ensureRemoteComposerSessions(remoteQueryClient, hostRuntime.registry, entry) : Promise.resolve([]),
+                ]);
+                entry.sdk();
+                const compiled = compileChatComposerDelivery({ plan: directPlan, agents: sendAgents, installedSkillNames: new Set(sendSkills.map((skill) => skill.name)), sessions: sendSessions,
+                    directory: hostRuntime.entry.location.directory, root: hostRuntime.entry.location.directory,
+                    confirmedFilePaths: confirmedFileMentions.map((mention) => mention.path),
+                    confirmedDirectoryPaths: confirmedFileMentions.filter((mention) => mention.kind === 'directory').map((mention) => mention.path),
+                    citationAttachments: sendableAttachedFiles });
+                const attachments = dedupeDeliveryAttachments([...sanitizeAttachmentsForSend(sendableAttachedFiles), ...compiled.attachments]);
+                const text = appendInlineComments(messageWithComposerQuotes(quotes, compiled.text), remoteInlineDrafts);
+                const parts = buildSyntheticDeliveryParts(syntheticAtSubmit.map((part) => ({
+                    ...part, attachments: part.attachments.flatMap((attachment) => {
+                        const view = syntheticViews.find((file) => file.id === attachment.attachmentID);
+                        if (!view) throw new Error('Remote synthetic attachment bytes unavailable');
+                        return [view];
+                    }),
+                })));
                 await surface.selection.flush();
                 await surface.backend.send({
                     operation: 'send', surfaceID: surface.surfaceID,
                     sessionID: surface.commands?.hasNewDraft ? null : surface.sessionID,
                     directory: hostRuntime.entry.location.directory, draftKey,
+                    onDraftMoved: (destination) => { recoveryKey = destination; },
                     transportIdentity: surface.transportIdentity, runtimeGeneration: surface.runtimeGeneration,
                     deliveryTarget: surface.deliveryTarget, ...sendSelection,
                     text, attachments, parts, inputMode, references: compiled.semantics, agentMention: compiled.agent,
                     options: { delivery: options?.delivery ?? (sessionIsRunning ? 'queue' : 'steer'), messageID: ascendingId('msg') },
                 });
-                if (getCurrentInputSnapshot().message === inputSnapshot.message) replacePlainDocument('');
+                restoreBody = false;
                 for (const attachment of attachments) await surfaceResources.removeAttachment(attachment.id);
                 for (const draft of remoteInlineDrafts) surfaceResources.removeInlineDraft(draft.id);
-                (surfaceResources.inputStore ?? useInputStore).getState().consumeDraftSyntheticParts(draftKey, (part) => !syntheticIDs.has(part.partID));
+                remoteInputStore.getState().consumeDraftSyntheticParts(draftKey, (part) => !syntheticIDs.has(part.partID));
                 if (composerQuoteScope) useComposerQuoteStore.getState().clear(composerQuoteScope);
                 scrollToBottom?.();
             } catch (error) {
+                if (restoreBody && remoteCapture && isQueueAdmissionRuntimeCurrent(remoteCapture.runtime, remoteInputStore.getState().captureDraftRuntime())) {
+                    recoverSubmission({ ...remoteCapture, key: recoveryKey, keyID: draftKeyString(recoveryKey) });
+                }
                 toast.error(t('chat.chatInput.toast.messageSendFailed'), { description: error instanceof Error ? error.message : String(error) });
             } finally {
                 endSubmissionFlight();

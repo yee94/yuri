@@ -88,6 +88,8 @@ const mergeRecoveryMentions = (failed: readonly DraftMention[], current: readonl
 
 export const planComposerRecovery = (capture: Pick<ComposerSubmissionCapture, "document" | "mentions">, current: Pick<DraftRecord, "text" | "composerReferences" | "mentions"> | undefined): { document: ComposerDocument; mentions: DraftMention[] } => {
   const currentDocument = documentFromRecord(current)
+  if (!currentDocument.text) return { document: capture.document, mentions: capture.mentions }
+  if (!capture.document.text) return { document: currentDocument, mentions: current?.mentions ?? [] }
   const document = mergeComposerRecovery(capture.document, currentDocument)
   const offset = capture.document.text === currentDocument.text && JSON.stringify(capture.document.references) === JSON.stringify(currentDocument.references) ? 0 : capture.document.text.length + 2
   return { document, mentions: mergeRecoveryMentions(capture.mentions, current?.mentions ?? [], document, offset) }

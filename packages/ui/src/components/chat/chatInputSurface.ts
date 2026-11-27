@@ -129,6 +129,8 @@ export type ChatInputDeliveryRequest = {
   sessionID: string | null;
   directory: string;
   draftKey: DraftKey;
+  /** Transfer failed-send body recovery when a new session takes ownership of the draft. */
+  onDraftMoved?: (destination: DraftKey) => void;
   deliveryTarget: ChatInputDeliveryTarget;
   providerID?: string;
   modelID?: string;

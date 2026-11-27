@@ -173,11 +173,11 @@ test('live repository overlays retain earlier conclusions in the real chat list'
     expect(container.querySelector('[data-message-id="assistant-1"] [data-message-text-export-source]')?.textContent).toContain('FIRST_CONCLUSION');
 });
 
-async function render(messages: ChatMessageEntry[], activeID: string | null) {
+async function render(messages: ChatMessageEntry[], activeID: string | null, sessionIsWorking = Boolean(activeID)) {
     await act(async () => root.render(
         <RuntimeAPIProvider apis={apis}><QueryClientProvider client={client}><I18nProvider><SyncProvider sdk={opencodeClient.getSdkClient()} directory="/workspace" bootstrapDirectory={false}>
             <MessageList messages={messages} sessionKey={sessionID} directory="/workspace"
-                sessionIsWorking={Boolean(activeID)} activeStreamingMessageId={activeID}
+                sessionIsWorking={sessionIsWorking} activeStreamingMessageId={activeID}
                 activeStreamingPhase={activeID ? 'streaming' : null} isLoadingOlder={false}
                 onMessageContentChange={() => undefined}
                 getAnimationHandlers={() => ({ onChunk: () => undefined, onComplete: () => undefined })}
@@ -268,6 +268,34 @@ test('a cold idle continuation retains settled presentation instead of inventing
     expect(container.textContent).toContain('Worked for');
     expect(container.textContent).toContain('Interrupted investigation.');
     expect(container.querySelector('.relative.ml-2.pl-3')).toBeNull();
+});
+
+test.each(['sorted', 'live'] as const)('remote work without a streaming pointer publishes the footer only after settlement (%s)', async (chatRenderMode) => {
+    useUIStore.setState({ chatRenderMode, showAssistantTps: true });
+    const step = assistant('running-step', 'Running a command in the second repository.', 'tool-calls');
+    step.info = { ...step.info, time: { created: 1000, streamed: 2000 }, tokens: {
+        input: 100, output: 100, reasoning: 0, cache: { read: 0, write: 0 },
+    } } as Message;
+    const command = {
+        id: 'running-command', messageID: step.info.id, sessionID, type: 'tool', tool: 'bash', callID: 'running-command',
+    } as const;
+    const input = { command: 'pwd', workdir: '/second-repo' };
+    step.parts.push({ ...command, state: { status: 'running', input, time: { start: 2200 } } } as Part);
+    const pending: ChatMessageEntry = { info: { ...user.info, id: 'pending-user', time: { created: 3000 } }, parts: [] };
+    await render([user, step], null);
+    expect(container.querySelector('[data-message-footer]')).toBeNull();
+    await render([user, step, pending], null, true);
+    expect(container.textContent).toContain('Running a command in the second repository.');
+    expect(container.querySelector('[data-message-footer]')).toBeNull();
+
+    const final = assistant('final-remote-step', 'Command finished.', 'stop');
+    final.info = { ...final.info, time: { created: 4000, streamed: 5000, completed: 5100 }, tokens: step.info.tokens } as Message;
+    const completedStep = { ...step, parts: [step.parts[0], {
+        ...command, state: { status: 'completed', input, output: input.workdir, time: { start: 2200, end: 3500 } },
+    } as Part] };
+    await render([user, completedStep, final], null);
+    expect(container.querySelectorAll('[data-message-footer]')).toHaveLength(1);
+    expect(container.querySelector('[data-message-footer]')?.textContent).toContain('100.0 tok/s');
 });
 
 test('an interrupted live turn releases reasoning presentation', async () => {

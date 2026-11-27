@@ -364,8 +364,11 @@ action as soon as TPS is publishable, even before `time.completed` arrives. Ther
 is no separate TPS-only row or alternate spacing: later completion metadata and
 copy availability update the mounted footer in place. Footer copy availability
 uses the original parts' trailing body (`getSortedBodyPartIndex`), not process
-narration or the arrival of `time.completed`. Active continuations still
-publish neither footer nor TPS. This is normal-flow spacing, not a delayed
+narration or the arrival of `time.completed`. TPS can precede message completion
+but still requires the same turn-level settlement as the footer. The Activity
+header's idle or non-latest fallback to `abnormal` cannot publish TPS or a footer
+for an active continuation, including Remote Project transcripts with no local
+streaming pointer. This is normal-flow spacing, not a delayed
 status removal, retained empty placeholder or extra scroll compensation. Verify
 the whole pin-reveal root and reading position at completion, not just Markdown
 height. Wrapped metadata/Changes controls can still legitimately add another row.
@@ -1576,6 +1579,8 @@ Forced live user-bubble reveals use a CSS mount animation, never an `opacity-0` 
 Primary sends reuse the Assistant send flight (`assistants/contactSendFlight.ts`). ChatInput captures the visible composer text before clearing the draft; queue chips can also supply a source. `registerUserSendFlight` in `lib/userSendAnimation.ts` waits for the matching message bubble, finishes its ordinary entrance animation, and flies a fixed-size plain-text stand-in. The real bubble keeps its layout while hidden. The flight starts on the frame after mount so the send commit does not consume its clock. The transcript retains scroll ownership: while it moves, the flight keeps its source fixed and updates the vertical destination on its existing easing curve, rather than adding the entire scroll displacement to the visible bubble. The wait expires after 1.5s; a late row uses its ordinary entrance and an already-flown message does not replay on remount.
 
 When sending away from the bottom, the new row can first mount below the Composer. The stand-in holds at the visible source until the row comes up into reach, then starts the 400ms flight on the browser timeline while follow-scroll continues. If scrolling never brings it into reach within 600ms, the stand-in is removed and the real row is revealed.
+
+Remote Project sends clear the submitted Composer body before remote preparation or optimistic transcript insertion. An acknowledgement does not clear text again. On failure, the captured body is restored ahead of any newer edits; if a first send moved the draft to a newly created remote session, recovery follows that draft to its destination.
 
 Desktop draft titles and preset chips are welcome-only chrome: they leave when `draftEstablishing` or `draftSubmitting` starts, not when the real session ID arrives. Keeping preset chips under the establishing editor reserves an extra 40px and makes the editor jump again at claim. `ChatInput.hooks.test.tsx` guards both production welcome conditions, including their return after submission failure.
 

@@ -285,8 +285,8 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
       if (!configured) throw new Error('Remote default model unavailable; select a model');
       sendSelection = { providerID: configured[0], modelID: configured[1], agent: request.agent, variant: request.variant };
     }
-    const draftTextAtStart = useInputStore.getState().getDraft(draftKey)?.text;
-    const submittedSynthetic = new Set(useInputStore.getState().getDraft(draftKey)?.syntheticParts.map((part) => part.partID) ?? []);
+    const submittedDraft = useInputStore.getState().getDraft(draftKey);
+    const submittedSynthetic = new Set(submittedDraft?.syntheticParts.map((part) => part.partID) ?? []);
     let id = request.sessionID;
     let workspaceContext: string | null = null;
     if (!id) {
@@ -302,7 +302,11 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
       // Keep a failed first prompt on its created session rather than creating duplicates.
       const input = useInputStore.getState();
       const destination = remoteSessionDraftKey(location, id);
-      await input.moveDraftWithAttachments(draftKey, destination);
+      const sourceDraft = input.getDraft(draftKey);
+      const moved = input.moveDraftWithAttachments(draftKey, destination);
+      // The store changes ownership in memory before persistence settles.
+      if (sourceDraft && !useInputStore.getState().getDraft(draftKey)) request.onDraftMoved?.(destination);
+      await moved;
       if (sendSelection) {
         setPicks((previous) => ({ ...previous, [state.sessionKey(id!)]: sendSelection }));
         state.selectModel(id, sendSelection.providerID, sendSelection.modelID);
@@ -396,7 +400,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
     if (request.sessionID === null) {
       const destination = remoteSessionDraftKey(location, id);
       const input = useInputStore.getState();
-      if (input.getDraft(destination)?.text === draftTextAtStart) input.setDraftText(destination, '');
+      if (!request.onDraftMoved && input.getDraft(destination)?.text === submittedDraft?.text) input.setDraftText(destination, '');
       const destinationAdapter = createDraftAttachmentResourceAdapter(destination, () => useInputStore.getState());
       for (const file of outboundAttachments) await destinationAdapter.removeByAttachmentID(file.id);
       // The source draft has moved; only consume the parts captured before creation.

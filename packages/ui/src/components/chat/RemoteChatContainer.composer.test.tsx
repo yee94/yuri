@@ -89,6 +89,7 @@ function wireHarness(createdID = 'created', mentions = false, permissionEffect?:
   const requests: Array<{ path: string; method: string; body: Record<string, unknown> | null }> = [];
   let model: { providerID: string; id: string } | undefined;
   let failModel = false;
+  let promptGate: Promise<void> | undefined;
   const permissionSessions: Record<string, boolean> = {};
   const session = (id: string) => ({ id, projectID: 'remote-project', title: 'Wire title', location: { directory: location.directory },
     ...(id === 'child' ? { agent: 'agent-A-0', parentID: 'same' } : permissionEffect ? { agent: 'build' } : {}), model, cost: 0, tokens: {}, time: { created: 1, updated: 2 } });
@@ -120,7 +121,10 @@ function wireHarness(createdID = 'created', mentions = false, permissionEffect?:
       return new Response(null, { status: 204 });
     }
     if (path.endsWith('/agent') && request.method === 'POST') return new Response(null, { status: 204 });
-    if (path.endsWith('/prompt')) return Response.json({ data: { id: body.id, sessionID: path.includes('/child/') ? 'child' : createdID, type: 'user', delivery: body.delivery, timeCreated: 1, payload: { text: body.text } } });
+    if (path.endsWith('/prompt')) {
+      await promptGate;
+      return Response.json({ data: { id: body.id, sessionID: path.includes('/child/') ? 'child' : createdID, type: 'user', delivery: body.delivery, timeCreated: 1, payload: { text: body.text } } });
+    }
     if (path.endsWith('/subscriptions')) return Response.json({ id: 'lease' });
     if (request.method === 'DELETE') return new Response(null, { status: 204 });
     if (path.includes('session-unread')) return Response.json({ revision: 0, sessions: {} });
@@ -136,6 +140,11 @@ function wireHarness(createdID = 'created', mentions = false, permissionEffect?:
   registry.applyCatalog({ hubId: 'hub', supported: true, hosts: [{ id: 'host', name: 'Host', source: 'direct', state: 'connected' }, { id: 'hostB', name: 'Host B', source: 'direct', state: 'connected' }], projects: [] });
   fixture.registry = registry;
   return { location, requests, registry, failModel: () => { failModel = true; }, restoreModel: () => { failModel = false; },
+    holdPrompt: () => {
+      let release!: () => void;
+      promptGate = new Promise<void>((resolve) => { release = resolve; });
+      return release;
+    },
     close: () => { registry.dispose(); vi.unstubAllGlobals(); setRuntimeUrlResolver(previous); } };
 }
 
@@ -582,8 +591,16 @@ test.each([false, true])('raw catalog default → real picker (%s) → create �
       wire.restoreModel();
       failedDelivery.mockRestore();
     }
-    await act(async () => node.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
-    await vi.waitFor(() => expect(wire.requests.some((request) => request.path.endsWith('/prompt'))).toBe(true));
+    const releasePrompt = wire.holdPrompt();
+    try {
+      await act(async () => node.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+      await vi.waitFor(() => expect(wire.requests.some((request) => request.path.endsWith('/prompt'))).toBe(true));
+      expect(node.querySelector('textarea')?.value).toBe('');
+      expect(getRemoteInputStore(wire.location).getState().getDraft(remoteSessionDraftKey(wire.location, createdID))?.text).toBe('');
+      if (!pickModel) await act(async () => requestRemoteComposerInput(wire.location, createdID, { text: 'Wire first message', mode: 'replace' }));
+    } finally {
+      await act(async () => releasePrompt());
+    }
     const create = wire.requests.findIndex((request) => request.path.endsWith('/session') && request.method === 'POST');
     const model = wire.requests.findIndex((request) => request.path.endsWith('/model') && request.method === 'POST');
     const prompt = wire.requests.findIndex((request) => request.path.endsWith('/prompt'));
@@ -593,7 +610,12 @@ test.each([false, true])('raw catalog default → real picker (%s) → create �
     if (pickModel) expect(wire.requests[prompt].body).toMatchObject({ files: [{ uri: 'file:///context.txt', name: 'context.txt' }] });
     expect(wire.requests.filter((request) => request.path.endsWith('/session') && request.method === 'POST')).toHaveLength(1);
     expect(wire.requests.some((request) => request.path.includes('remote-new-session') || request.path.endsWith('/session/status'))).toBe(false);
-    expect(getRemoteInputStore(wire.location).getState().getDraft(remoteSessionDraftKey(wire.location, createdID))?.text).toBe('');
+    expect(getRemoteInputStore(wire.location).getState().getDraft(remoteSessionDraftKey(wire.location, createdID))?.text).toBe(pickModel ? '' : 'Wire first message');
+    if (!pickModel) await act(async () => {
+      const nextDraft = node.querySelector('textarea')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(nextDraft, '');
+      nextDraft.dispatchEvent(new Event('input', { bubbles: true }));
+    });
     await act(async () => requestRemoteComposerInput({ ...wire.location, hostId: 'other' }, createdID, { text: 'wrong Host', mode: 'replace' }));
     expect(node.querySelector('textarea')?.value).toBe('');
     await act(async () => requestRemoteComposerInput(wire.location, createdID, { text: 'inserted remotely', mode: 'replace' }));

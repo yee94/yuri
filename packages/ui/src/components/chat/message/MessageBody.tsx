@@ -973,7 +973,8 @@ const AssistantMessageBody = React.memo(({
     // alone published the completed-turn footer (duration, TPS, actions) in the
     // middle of a running loop, then withdrew it. Grouped rows defer to the turn;
     // a standalone assistant row has no turn to ask.
-    const isTurnSettled = isMessageSettled && (turnGroupingContext?.isTurnSettled ?? true);
+    const isTurnSettledForPresentation = turnGroupingContext?.isTurnSettled ?? true;
+    const isTurnSettled = isMessageSettled && isTurnSettledForPresentation;
     const effectiveStreamPhase: StreamPhase = hasStopFinish ? 'completed' : streamPhase;
 
     const hasTools = toolParts.length > 0;
@@ -1224,7 +1225,7 @@ const AssistantMessageBody = React.memo(({
         && !canRevealSortedBody
         && !(isCompactionTurn && isActivityExpanded);
     const assistantTpsText = React.useMemo(() => {
-        if (!showAssistantTps || !isLastAssistantInTurn || errorPresentation?.variant === 'error') return null;
+        if (!showAssistantTps || !isLastAssistantInTurn || !isTurnSettledForPresentation || errorPresentation?.variant === 'error') return null;
         const tps = turnGroupingContext?.assistantTps;
         // Interrupted and aborted turns stay visible once the streamed clocks
         // can produce a rate. An active continuation must not flash one.
@@ -1238,6 +1239,7 @@ const AssistantMessageBody = React.memo(({
         showAssistantTps,
         errorPresentation?.variant,
         isLastAssistantInTurn,
+        isTurnSettledForPresentation,
         turnGroupingContext?.assistantTps,
         turnGroupingContext?.completionDisposition,
     ]);
