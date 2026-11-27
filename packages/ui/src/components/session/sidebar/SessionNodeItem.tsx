@@ -40,6 +40,7 @@ import type { SessionNodeChildRenderExtras, SessionNodeRenderExtras } from './se
 import type { SessionNode } from './types';
 import { formatSessionCompactDateLabel, formatSessionDateLabel, normalizePath, renderHighlightedText, SIDEBAR_ROW_ACTIVE_CLASS, SIDEBAR_ROW_HOVER_CLASS, getSidebarRowPaddingLeft } from './utils';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
+import { useGitBranchLabel } from '@/stores/useGitStore';
 import { markSessionUnread, markSessionViewed, useSessionUnseenCount } from '@/sync/notification-store';
 import { useSessionMultiSelectStore } from '@/stores/useSessionMultiSelectStore';
 import { useI18n } from '@/lib/i18n';
@@ -390,7 +391,6 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     setSessionSettled,
   } = props;
   const hasSecondaryProjectLabel = Boolean(secondaryMeta?.projectLabel);
-  const hasSecondaryBranchLabel = Boolean(secondaryMeta?.branchLabel);
 
   const displayMode = useSessionDisplayStore((state) => state.displayMode);
   const isVSCode = React.useMemo(() => isVSCodeRuntime(), []);
@@ -455,9 +455,23 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
   const resolvedSession = liveSessionById.get(session.id) ?? session;
   const isAssistantSession = Boolean((resolvedSession as Session & { metadata?: { yuri?: { assistant?: unknown } } }).metadata?.yuri?.assistant);
 
-  const sessionDirectory =
-    normalizePath((session as Session & { directory?: string | null }).directory ?? null)
-    ?? normalizePath(groupDirectory ?? null);
+  const checkoutDirectory = normalizePath(session.directory ?? null);
+  const normalizedGroupDirectory = normalizePath(groupDirectory ?? null);
+  const sessionDirectory = checkoutDirectory ?? normalizedGroupDirectory;
+  const worktreePath = normalizePath(node.worktree?.path ?? null);
+  const worktree = !checkoutDirectory || !worktreePath
+    || checkoutDirectory === worktreePath || checkoutDirectory.startsWith(`${worktreePath}/`)
+    ? node.worktree
+    : null;
+  const checkoutBranch = useGitBranchLabel(isVSCode ? null : (checkoutDirectory ?? worktreePath));
+  const liveBranch = checkoutBranch === 'HEAD' ? null : checkoutBranch || null;
+  const worktreeFooterLabel = checkoutBranch === 'HEAD'
+    ? null
+    : formatWorktreeFooterLabel(worktree, { liveBranch })
+      ?? (checkoutDirectory !== normalizedGroupDirectory ? liveBranch : null);
+  const secondaryBranchLabel = checkoutBranch === 'HEAD'
+    ? null
+    : worktreeFooterLabel ?? liveBranch ?? (worktree === node.worktree ? secondaryMeta?.branchLabel : null);
   // A sidebar row is a lightweight consumer. Creating/subscribing to the child
   // store lets routed live events update status and permissions, but must not
   // start the directory's full config/path/session bootstrap. The active chat
@@ -993,7 +1007,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                 {hasChildren && !isPinnedContext && !isSubtaskSession ? <span className="inline-flex items-center justify-center flex-shrink-0">{isExpanded ? <Icon name="arrow-down-s" className="h-3 w-3" /> : <Icon name="arrow-right-s" className="h-3 w-3" />}</span> : null}
                 <span className="flex-shrink-0">{sessionUpdatedLabel}</span>
                 {hasSecondaryProjectLabel ? <span className="truncate">{secondaryMeta?.projectLabel}</span> : null}
-                {hasSecondaryBranchLabel ? <span className="inline-flex min-w-0 items-center gap-0.5"><Icon name="git-branch" className="h-3 w-3 flex-shrink-0" /><span className="truncate">{secondaryMeta?.branchLabel}</span></span> : null}
+                {secondaryBranchLabel ? <span className="inline-flex min-w-0 items-center gap-0.5"><Icon name="git-branch" className="h-3 w-3 flex-shrink-0" /><span className="truncate">{secondaryBranchLabel}</span></span> : null}
               </div>
             </div>
           ) : null}
@@ -1455,10 +1469,9 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       {shortcutNumber ? <SessionShortcutHint number={shortcutNumber} /> : null}
                     </div>
                     {!isCardRow && !isSlimRow && !isVSCode ? (() => {
-                      const worktreeFooterLabel = formatWorktreeFooterLabel(node.worktree);
-                      if (isPinnedContext) {
-                        const pinnedProjectLabel = secondaryMeta?.projectLabel?.trim() || null;
-                        const pinnedBranchLabel = worktreeFooterLabel || secondaryMeta?.branchLabel?.trim() || null;
+                       if (isPinnedContext) {
+                         const pinnedProjectLabel = secondaryMeta?.projectLabel?.trim() || null;
+                         const pinnedBranchLabel = secondaryBranchLabel?.trim() || null;
                         if (!pinnedProjectLabel && !pinnedBranchLabel) return null;
                         const pinnedMetaTitle = [pinnedProjectLabel, pinnedBranchLabel].filter(Boolean).join(' · ');
                         return (
@@ -1502,14 +1515,14 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                     })() : null}
                     {isCardRow ? (
                       <div className={cn('flex h-4 w-full min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-4', rowIsEmphasized ? 'text-foreground/60' : 'text-muted-foreground/60')}>
-                        {hasSecondaryBranchLabel ? (
+                         {secondaryBranchLabel ? (
                           <>
                             <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
                               <Icon name="git-branch" className="size-2.5" />
                             </span>
-                            <span className="min-w-0 flex-1 truncate">{secondaryMeta?.branchLabel}</span>
+                             <span className="min-w-0 flex-1 truncate">{secondaryBranchLabel}</span>
                           </>
-                        ) : secondaryMeta?.branchState === 'loading' ? (
+                         ) : !checkoutBranch && secondaryMeta?.branchState === 'loading' ? (
                           <>
                             <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
                               <Icon name="git-branch" className="size-2.5" />
@@ -1550,8 +1563,8 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       project={secondaryMeta?.project}
                       projectId={projectId}
                       indexedWorkspaceId={readSessionWorkspaceId(session)}
-                      branch={node.worktree?.branch ?? secondaryMeta?.branchLabel}
-                      worktree={node.worktree}
+                       branch={checkoutBranch ?? worktree?.branch ?? secondaryBranchLabel}
+                       worktree={worktree}
                       directory={sessionDirectory}
                     />
                   ) : null}

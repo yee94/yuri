@@ -43,6 +43,7 @@ import { toast } from '@/components/ui';
 import { applySessionUnreadSnapshot, resetSessionUnreadProjection, useNotificationStore } from '@/sync/notification-store';
 import { getSessionFocusKey } from '@/stores/useSessionFocusStore';
 import { createSidebarShortcutNumberStore, SidebarShortcutNumberContext } from './sidebarShortcutNumbers';
+import { useGitStore } from '@/stores/useGitStore';
 
 const noop = () => {};
 const session = { id: 'ses_title', title: 'Original title', directory: '/repo', time: { created: 1, updated: 2 } } as Session;
@@ -131,6 +132,35 @@ function Harness({ live = session, editing = true, indexed = session, children =
     <div data-test-section="project">{row}</div>
   </> : row}</TooltipProvider>;
 }
+
+test.each([false, true])('sidebar shows the destination branch after a session move (task card: %s)', async (card) => {
+  const git = useGitStore.getState();
+  const destination = '/worktrees/feature';
+  const moved = { ...session, directory: destination };
+  const setBranch = (directory: string, current: string) => {
+    git.setActiveDirectory(directory);
+    git.restoreStatus(directory, { current, tracking: null, ahead: 0, behind: 0, files: [], isClean: true });
+  };
+  root = createRoot(container);
+  try {
+    await act(async () => {
+      setBranch('/repo', 'main');
+      root.render(<Harness editing={false} card={card} />);
+    });
+    expect(container.textContent).not.toContain('feat/destination');
+    await act(async () => root.render(<Harness editing={false} card={card} indexed={moved} live={moved} />));
+    await act(async () => setBranch(destination, 'feat/destination'));
+    expect(container.querySelector('[data-session-title]')?.textContent).toContain('feat/destination');
+    expect(container.querySelector('[data-session-title]')?.textContent).not.toContain('main');
+    await act(async () => setBranch('/repo', 'feat/unrelated'));
+    expect(container.querySelector('[data-session-title]')?.textContent).toContain('feat/destination');
+    await act(async () => root.render(<Harness editing={false} card={card} />));
+    expect(container.querySelector('[data-session-title]')?.textContent).not.toContain('feat/destination');
+    expect(container.querySelector('[data-session-worktree-footer]')).toBeNull();
+  } finally {
+    await act(async () => useGitStore.setState({ directories: git.directories, activeDirectory: git.activeDirectory }));
+  }
+});
 
 test.each([false, true])('task card puts its unread dot inline before project text when selected=%s', async (active) => {
   sessionActivity.mockReturnValue(false);

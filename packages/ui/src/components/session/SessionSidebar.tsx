@@ -1979,6 +1979,16 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   // branch placeholder; ensureStatus dedups in-flight and fresh fetches.
   const { git: gitApi } = useRuntimeAPIs();
   const ensureGitStatus = useGitStore((state) => state.ensureStatus);
+  const activeCheckoutDirectory = currentSessionId
+    ? normalizePath(liveSessionById.get(currentSessionId)?.directory
+      ?? sessionSidebarMetaById.get(currentSessionId)?.node.session.directory ?? null)
+    : null;
+  const activeProjectRoot = currentSessionId ? sessionOwnership.bySessionId.get(currentSessionId)?.projectRoot : null;
+  React.useEffect(() => {
+    if (!isVisible || isVSCode || !gitApi || !activeProjectRoot || !activeCheckoutDirectory
+      || activeCheckoutDirectory === activeProjectRoot) return;
+    void ensureGitStatus(activeCheckoutDirectory, gitApi);
+  }, [activeCheckoutDirectory, activeProjectRoot, ensureGitStatus, gitApi, isVSCode, isVisible]);
   const loadingBranchProjectPaths = React.useMemo(() => {
     if (!taskItems) return EMPTY_PATH_LIST;
     const pathById = new Map(sortedProjects.map((project) => [project.id, project.normalizedPath]));

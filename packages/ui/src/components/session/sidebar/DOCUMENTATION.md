@@ -55,8 +55,12 @@ Linked-worktree rows render a compact footer (`[data-session-worktree-footer]`)
 showing the branch icon, branch name, and distinct worktree name.
 Task cards reuse the project row's resolved worktree when available, falling
 back to the session's indexed worktree metadata when the project row is absent.
-The task footer and both hover cards use the worktree branch and name before
-falling back to the project branch.
+Desktop task cards, pinned rows and project-tree rows read the cached branch
+for the session's current checkout and retain the worktree name when matching
+metadata is available. A worktree footer can show the branch even when an
+external move did not create Yuri worktree metadata. Worktree labels from an
+earlier checkout are ignored. The visible sidebar ensures Git status for the
+selected session's checkout when it differs from its project root.
 
 ## Task navigation icons and hover details
 
