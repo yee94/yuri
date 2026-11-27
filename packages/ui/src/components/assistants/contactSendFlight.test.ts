@@ -68,7 +68,7 @@ test('flies a fixed snapshot from the composer text to the bubble on split compo
   expect(clone.style.position).toBe('fixed')
   expect([clone.style.left, clone.style.top, clone.style.width, clone.style.height]).toEqual(['290px', '600px', '90px', '44px'])
   const [{ keyframes, options }] = animations
-  expect(options).toMatchObject({ duration: 400, easing: 'linear' })
+  expect(options).toMatchObject({ duration: 350, easing: 'linear' })
   // Bubble text origin (306, 610) starts on the field text origin (68, 912).
   expect(keyframes).toEqual([
     { offset: 0, translate: '-238px 0px', easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },

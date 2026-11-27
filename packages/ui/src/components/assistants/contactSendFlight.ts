@@ -9,7 +9,7 @@
  * or writes size, so a busy main thread cannot drop flight frames, and the
  * landing frame is the real bubble at its integer layout position.
  */
-export const CONTACT_SEND_FLIGHT_DURATION_S = 0.4
+export const CONTACT_SEND_FLIGHT_DURATION_S = 0.35
 export const CONTACT_SEND_FLIGHT_VERTICAL_EASE = [0.19919472913616398, 0.010644531250000006, 0.27920937042459737, 0.91025390625] as const
 const HORIZONTAL_EASE = 'cubic-bezier(0.23, 1, 0.32, 1)'
 const VERTICAL_EASE = `cubic-bezier(${CONTACT_SEND_FLIGHT_VERTICAL_EASE.join(', ')})`
