@@ -1,5 +1,5 @@
 import { useEvent } from '@reactuses/core';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { getModelBrandLogoCandidates, resolveModelBrand } from '@/lib/modelBrand';
 
 interface UseModelLogoReturn {
@@ -152,16 +152,16 @@ export function useModelLogo(
     [modelId, providerId],
   );
 
-  const [index, setIndex] = useState(0);
-
-  useEffect(() => {
-    setIndex(0);
-  }, [modelId, providerId]);
+  // The fallback index belongs to the model/provider pair it was recorded for,
+  // so a reused instance starts again at the first candidate without an effect.
+  const logoKey = `${modelId ?? ''}\u0000${providerId ?? ''}`;
+  const [indexState, setIndexState] = useState({ key: logoKey, index: 0 });
+  const index = indexState.key === logoKey ? indexState.index : 0;
 
   const handleError = useEvent(() => {
-    setIndex((current) => {
-      const next = current + 1;
-      return next < chain.length ? next : chain.length;
+    setIndexState((current) => {
+      const next = (current.key === logoKey ? current.index : 0) + 1;
+      return { key: logoKey, index: next < chain.length ? next : chain.length };
     });
   });
 

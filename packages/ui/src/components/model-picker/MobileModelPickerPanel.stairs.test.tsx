@@ -132,6 +132,22 @@ describe('MobileModelPickerPanel stairs layout', () => {
     expect(rowNames()[0]).toBe('Claude Haiku');
   });
 
+  test('search mounts one page of ranked rows and pages more in near the bottom', async () => {
+    const bulk: ModelPickerProvider[] = [{
+      id: 'bulk',
+      name: 'Bulk',
+      models: Array.from({ length: 150 }, (_, index) => ({ id: `claude-${index}`, name: `Claude ${index}` })),
+    }];
+    await renderPanel({ providers: bulk });
+    await search('claude');
+    expect(rowNames()).toHaveLength(40);
+    const scroller = container.querySelector<HTMLElement>('[data-testid="scroller"]')!;
+    await act(async () => scroller.dispatchEvent(new Event('scroll', { bubbles: true })));
+    expect(rowNames()).toHaveLength(80);
+    await search('claude 1');
+    expect(rowNames()).toHaveLength(40);
+  });
+
   test('rail highlight changes do not re-render model rows', async () => {
     await renderPanel();
     const before = rowRenders.count;

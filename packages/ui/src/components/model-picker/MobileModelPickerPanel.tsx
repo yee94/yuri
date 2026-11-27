@@ -27,6 +27,8 @@ type MetadataIcon = { key: string; icon: IconName; label: string };
 
 const MAX_INLINE_VARIANT_OPTIONS = 8;
 const INITIAL_ROW_BUDGET = 40;
+const SEARCH_ROW_PAGE = 40;
+const SEARCH_LOAD_MORE_DISTANCE = 600;
 // Measured row (name + metadata line) and sticky label heights; placeholders for
 // off-screen groups use them so rail jumps land where the rendered group will be.
 const ESTIMATED_ROW_HEIGHT = 57;
@@ -528,9 +530,13 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
     React.useEffect(() => {
         if (!mountAllRows) React.startTransition(() => setMountAllRows(true));
     }, [mountAllRows]);
-    const visibleSearchResults = searchResults && !mountAllRows
-        ? searchResults.slice(0, INITIAL_ROW_BUDGET)
-        : searchResults;
+    // Short queries match hundreds of models; mount one page of ranked rows and
+    // grow it near the bottom. The limit belongs to its query, so a new query
+    // starts from the first page without an effect.
+    const [searchRowLimit, setSearchRowLimit] = React.useState({ query: '', limit: SEARCH_ROW_PAGE });
+    const searchLimit = searchRowLimit.query === query ? searchRowLimit.limit : SEARCH_ROW_PAGE;
+    const visibleSearchResults = searchResults ? searchResults.slice(0, searchLimit) : null;
+    const hasMoreSearchRows = searchResults !== null && searchResults.length > searchLimit;
     const visibleProviders = (() => {
         if (mountAllRows) return filteredProviders;
         let budget = INITIAL_ROW_BUDGET - filteredFavorites.length - filteredRecents.length;
@@ -577,6 +583,17 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
             railSyncFrameRef.current = null;
             syncRailActive();
         });
+    };
+    // Search results are one flat list with a disabled rail: scrolling only pages more rows in.
+    const handleScroll = () => {
+        if (!searchResults) {
+            scheduleRailSync();
+            return;
+        }
+        if (!hasMoreSearchRows) return;
+        const container = scrollRef.current;
+        if (!container || container.scrollHeight - container.scrollTop - container.clientHeight > SEARCH_LOAD_MORE_DISTANCE) return;
+        setSearchRowLimit({ query, limit: searchLimit + SEARCH_ROW_PAGE });
     };
     React.useEffect(() => () => {
         if (railSyncFrameRef.current !== null) cancelAnimationFrame(railSyncFrameRef.current);
@@ -709,7 +726,7 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                     <Icon name="search" className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                     <Input
                         type="text"
-                        value={query}
+                        value={liveQuery}
                         onChange={(event) => {
                             onQueryChange(event.target.value);
                             onExpandedModelKeyChange(null);
@@ -722,7 +739,7 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                         enterKeyHint="search"
                         inputMode="search"
                     />
-                    {query ? (
+                    {liveQuery ? (
                         <button
                             type="button"
                             onClick={() => {
@@ -778,7 +795,7 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
             ) : null}
             <ScrollableOverlay
                 ref={scrollRef}
-                onScroll={scheduleRailSync}
+                onScroll={handleScroll}
                 disableHorizontal
                 preventOverscroll
                 outerClassName="min-h-0 flex-1"
@@ -816,7 +833,7 @@ const MobileModelPickerPanelBody: React.FC<MobileModelPickerPanelBodyProps> = ({
                             {hasResults ? (
                                 <div className="rounded-xl border border-border/40 bg-[var(--surface-elevated)]">
                                     {searchResults ? (
-                                        <div className="flex flex-col">{(visibleSearchResults ?? searchResults).map((entry) => renderModelRow(entry, { showProvider: true, preferRememberedVariant: true }))}</div>
+                                        <div className="flex flex-col">{visibleSearchResults?.map((entry) => renderModelRow(entry, { showProvider: true, preferRememberedVariant: true }))}</div>
                                     ) : (
                                         <>
                                             <div data-rail-section="all">

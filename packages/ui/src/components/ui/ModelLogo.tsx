@@ -12,6 +12,26 @@ interface ModelLogoProps {
   fallback?: React.ReactNode;
 }
 
+// One probe per logo URL: lists mount hundreds of rows that share a few dozen marks.
+const logoProbes = new Map<string, Promise<boolean>>();
+
+const probeLogoSrc = (src: string): Promise<boolean> => {
+  let probe = logoProbes.get(src);
+  if (!probe) {
+    probe = new Promise<boolean>((resolve) => {
+      const image = new Image();
+      image.onload = () => resolve(true);
+      image.onerror = () => {
+        logoProbes.delete(src);
+        resolve(false);
+      };
+      image.src = src;
+    });
+    logoProbes.set(src, probe);
+  }
+  return probe;
+};
+
 /**
  * 按模型品牌显示 logo（聚合渠道下优先模型名匹配，Provider 仅作兜底）
  */
@@ -24,23 +44,18 @@ export const ModelLogo: React.FC<ModelLogoProps> = ({
   fallback,
 }) => {
   const { src, onError: handleInternalError, hasLogo, brand } = useModelLogo(modelId, providerId);
-  const [failed, setFailed] = React.useState(false);
-
-  React.useEffect(() => {
-    setFailed(false);
-  }, [src]);
+  const [failedSrc, setFailedSrc] = React.useState<string | null>(null);
+  const failed = failedSrc !== null && failedSrc === src;
 
   React.useEffect(() => {
     if (!src || typeof Image === 'undefined') return;
     let cancelled = false;
-    const image = new Image();
-    image.onerror = () => {
-      if (cancelled) return;
-      setFailed(true);
+    void probeLogoSrc(src).then((loaded) => {
+      if (cancelled || loaded) return;
+      setFailedSrc(src);
       handleInternalError();
       externalOnError?.();
-    };
-    image.src = src;
+    });
     return () => {
       cancelled = true;
     };

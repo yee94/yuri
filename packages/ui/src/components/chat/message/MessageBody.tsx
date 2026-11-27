@@ -1264,10 +1264,13 @@ const AssistantMessageBody = React.memo(({
     const hasLegacyTurnDiff = turnGroupingContext?.diffStats?.hasDiffs === true && !hasV2TurnDiff;
     const hasAuthoritativeChangesMarker = hasV2TurnDiff || hasLegacyTurnDiff;
     const showBackgroundActivity = Boolean(turnGroupingContext?.activityParts?.length) && sessionId && sessionSurface.active && !isMiniChatSurface;
-    const isV2TurnReadyForChanges = hasV2TurnDiff && (
-        Boolean(turnGroupingContext?.turnIdleOutcome)
-        || isTurnSettled
-    );
+    // An idle marker is persisted history: it stays on an earlier assistant when the
+    // turn resumes (steer, compaction, multi-step loop). It may stand in for the
+    // message-level terminal signal, but never for the turn-level liveness
+    // authority, or Changes would show while the turn is still running.
+    const isV2TurnReadyForChanges = hasV2TurnDiff
+        && isTurnSettledForPresentation
+        && (Boolean(turnGroupingContext?.turnIdleOutcome) || isMessageSettled);
     const isLegacyTurnReadyForChanges = hasLegacyTurnDiff
         && hasConfirmedStopFinish
         && isTurnSettled;

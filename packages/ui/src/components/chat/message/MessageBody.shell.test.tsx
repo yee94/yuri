@@ -23,6 +23,7 @@ vi.hoisted(() => {
   })));
 });
 vi.mock('../FileAttachment', () => ({ MessageFilesDisplay: () => null }));
+vi.mock('./TurnChangesCard', () => ({ TurnChangesCard: () => <div data-turn-changes-card /> }));
 vi.mock('../MarkdownRenderer', () => ({
   MarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p>,
   SimpleMarkdownRenderer: ({ content }: { content: string }) => <p>{content}</p>,
@@ -91,6 +92,29 @@ describe('user shell results', () => {
     } finally {
       await act(async () => useUIStore.setState(previousUI));
     }
+  });
+  test.each([false, true])('Changes card needs a settled turn even when a stale idle marker is present (mobile=%s)', async (isMobile) => {
+    const renderCard = (isTurnSettled: boolean, messageSettled = true) => root.render(<MessageBody
+      sessionId="session" messageId="resumed-step" parts={[{ id: 'answer', type: 'text', text: 'Step done.' } as Part]}
+      isUser={false} isMessageCompleted={messageSettled} messageFinish={messageSettled ? 'stop' : 'tool-calls'}
+      isMobile={isMobile} copiedCode={null} onCopyCode={() => {}}
+      expandedTools={new Set()} onToggleTool={() => {}} onShowPopup={() => {}}
+      streamPhase="completed" allowAnimation={false} hasTextContent
+      turnGroupingContext={{ turnId: 'turn', isFirstAssistantInTurn: false, isLastAssistantInTurn: true,
+        isLatestTurn: true, hasTools: true, hasReasoning: false, isWorking: !isTurnSettled, isTurnSettled,
+        completionDisposition: isTurnSettled ? 'normal' : 'active',
+        turnDiffFromMessageId: 'user-1', turnDiffFiles: ['src/a.ts'], turnIdleOutcome: 'succeeded',
+        diffStats: { additions: 0, deletions: 0, files: 1, hasDiffs: true } }}
+    />);
+    await act(async () => renderCard(false));
+    expect(container.querySelector('[data-turn-changes-card]')).toBeNull();
+    await act(async () => renderCard(true));
+    expect(container.querySelector('[data-turn-changes-card]')).not.toBeNull();
+    // The idle marker still stands in for a missing message-level terminal signal once the turn is settled.
+    await act(async () => renderCard(true, false));
+    expect(container.querySelector('[data-turn-changes-card]')).not.toBeNull();
+    await act(async () => renderCard(false, false));
+    expect(container.querySelector('[data-turn-changes-card]')).toBeNull();
   });
   test.each(['live', 'sorted'] as const)('footer copy follows the final body, not process text or completion metadata (%s)', async (chatRenderMode) => {
     const previousUI = useUIStore.getState();
