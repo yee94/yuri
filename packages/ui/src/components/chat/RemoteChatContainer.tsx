@@ -50,11 +50,9 @@ import { useRemoteSessionViewed } from '@/sync/useRemoteSessionViewed';
 import { resolveRetryActionCopy } from '@/sync/session-retry-action';
 import type { I18nKey } from '@/lib/i18n';
 import { NativeSessionInboxChips } from './QueuedMessageChips';
-import ToolOutputDialog from './message/ToolOutputDialog';
 import { StatusRow } from './StatusRow';
 import { ReadOnlyPromptBanner } from './ReadOnlyPromptBanner';
 import { ComposerFoot, DraftComposerFoot } from './ComposerFoot';
-import type { ToolPopupContent } from './message/types';
 import { parseSlashCommandInvocation } from '@/composer/inline-visual';
 import { skillAttachmentsFromText } from '@/composer/skill-attachments';
 import { useRemoteOperationError } from '@/lib/remote-projects/operation-errors';
@@ -577,7 +575,6 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
     goToBottom: follow.goToBottom, releaseAutoFollow: follow.releaseAutoFollow,
     beginHistoryViewportPreservation: follow.beginHistoryViewportPreservation, endHistoryViewportPreservation: follow.endHistoryViewportPreservation,
     isPinned: follow.isPinned, showScrollButton: follow.showScrollButton, isMobile, onWillLoadEarlier: armAnchor });
-  const [inboxPopup, setInboxPopup] = React.useState<ToolPopupContent | null>(null);
   const inboxAction = useEvent(async (action: 'steer' | 'queue' | 'cancel', inboxID: string) => {
     assertWritable();
     if (!sessionId) return;
@@ -594,7 +591,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
     if (!restored) throw new Error('Remote inbox draft changed');
   });
   const nativeInboxAction = useEvent((action: 'edit' | 'steer' | 'queue' | 'cancel', id: string) => action === 'edit' ? editInbox(id) : inboxAction(action, id));
-  surface.nativeInbox = <NativeSessionInboxChips items={inbox.filter((item) => !data?.messagesByID[item.id])} readOnly={readOnly || !active} onAction={nativeInboxAction} onShowPopup={setInboxPopup} />;
+  surface.nativeInbox = <NativeSessionInboxChips items={inbox.filter((item) => !data?.messagesByID[item.id])} readOnly={readOnly || !active} onAction={nativeInboxAction} />;
   const transcriptStatusRow = <StatusRow isWorking={busy} isGenericStatus={!sending} showTodos={false}
     statusText={busy ? t(sending ? 'chat.assistantStatus.sendingMessage' : 'chat.assistantStatus.working') : null}
     isWaitingForPermission={snapshot.permissions.length > 0} isTurnSettled={!sending && snapshot.status?.type === 'idle'}
@@ -645,7 +642,6 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
       </DraftComposerFoot> : <ComposerFoot isMobile={isMobile} expanded={expanded}>
         <ChatInput surface={surface} scrollToBottom={follow.scrollToBottomOnSend} showScrollToBottom={follow.showScrollButton} onScrollToBottom={() => follow.goToBottom()} />
       </ComposerFoot>}
-      {inboxPopup ? <ToolOutputDialog popup={inboxPopup} isMobile={isMobile} onOpenChange={(open) => { if (!open) setInboxPopup(null); }} /> : null}
       {sessionId ? <TimelineDialog open={timelineOpen && active && (!contextPanel || !readOnly)} onOpenChange={setTimelineOpen} sessionID={sessionId} directory={location.directory}
         onRevertMessage={revert} onScrollToMessage={timeline.scrollToMessage}
         canLoadEarlier={timeline.historySignals.canLoadEarlier} isLoadingEarlier={timeline.isLoadingOlder}

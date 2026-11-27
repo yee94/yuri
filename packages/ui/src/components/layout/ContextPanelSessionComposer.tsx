@@ -10,8 +10,6 @@ import { NativeSessionInboxChips } from '@/components/chat/QueuedMessageChips';
 import type { SessionSurfaceContextValue, SessionSurfaceMessageEditSnapshot } from '@/components/chat/SessionSurfaceContext';
 import { TimelineDialog } from '@/components/chat/TimelineDialog';
 import { Button } from '@/components/ui/button';
-import ToolOutputDialog from '@/components/chat/message/ToolOutputDialog';
-import type { ToolPopupContent } from '@/components/chat/message/types';
 import { opencodeClient } from '@/lib/opencode/client';
 import { useI18n } from '@/lib/i18n';
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from '@/lib/runtime-switch';
@@ -158,7 +156,6 @@ export function ContextPanelSessionComposer({
         const messageIDs = new Set(messages.map(({ id }) => id));
         return inbox.filter((item) => !messageIDs.has(item.id));
     }, [inbox, messages]);
-    const [popup, setPopup] = React.useState<ToolPopupContent | null>(null);
     const inboxAction = useEvent(async (action: 'edit' | 'steer' | 'queue' | 'cancel', inboxID: string) => {
         assertWritable();
         const target = { sessionID, directory, inboxID };
@@ -187,7 +184,7 @@ export function ContextPanelSessionComposer({
         commandPolicy: ({ source, name }) => source !== 'yuri' || !['new', 'fork', 'undo', 'redo', 'reload', 'craft-goal', 'btw'].includes(name),
         openTimeline,
         deliveryTarget: { kind: 'primary' }, queue: { scope: null },
-        nativeInbox: <NativeSessionInboxChips items={visibleInbox} onAction={inboxAction} onShowPopup={setPopup} />,
+        nativeInbox: <NativeSessionInboxChips items={visibleInbox} onAction={inboxAction} />,
         resources: {
             inputStore: useInputStore, busy: false, attachments: rootAttachments,
             addAttachment: adapter.addLocal, removeAttachment: adapter.removeByAttachmentID,
@@ -269,7 +266,6 @@ export function ContextPanelSessionComposer({
         }}>{t('chat.revertIndicator.redo')}</Button> : null}
         <ComposerFoot isMobile={false} expanded={false} overlay={false}>
             <ChatInput surface={surface} scrollToBottom={scrollToBottom} />
-            {popup ? <ToolOutputDialog popup={popup} isMobile={false} onOpenChange={(open) => { if (!open) setPopup(null); }} /> : null}
         </ComposerFoot>
         <TimelineDialog open={timelineOpen} onOpenChange={setTimelineOpen} sessionID={sessionID} directory={directory}
             onRevertMessage={onRevertMessage} onScrollToMessage={onScrollToMessage}

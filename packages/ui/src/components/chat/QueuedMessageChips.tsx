@@ -51,9 +51,6 @@ import { canEditQueuedMessage, canRemoveQueuedMessage, canSendQueuedMessage, can
 import { isQueueItemSendPendingByAbortOptimistic, subscribeQueueAbortOptimistic, getQueueAbortOptimisticRevision } from '@/sync/queue-abort-optimistic';
 import { enqueueServerQueueScopeMutation, type ServerQueueScopeMutationFlights } from './queueAdmission';
 import { toChip, type SessionInboxOverlayItem } from '@/sync/session-inbox-overlay';
-import { MessageFilesDisplay } from './FileAttachment';
-import type { FilePart } from '@/lib/opencode/v2-types';
-import type { ToolPopupContent } from './message/types';
 
 type BoundQueueScope = Extract<QueueScope, { state: 'bound' }> & {
     deliveryTarget: QueueDeliveryTarget;
@@ -374,38 +371,27 @@ function QueueCard({ isMobile, children }: { isMobile: boolean; children: React.
 }
 
 /** Native Host inbox uses the mature queue row without mounting any Hub queue owner. */
-export const NativeSessionInboxChips = memo(({ items, readOnly = false, onAction, onShowPopup }: {
+export const NativeSessionInboxChips = memo(({ items, readOnly = false, onAction }: {
     items: readonly SessionInboxOverlayItem[];
     readOnly?: boolean;
     onAction: (action: 'edit' | 'steer' | 'queue' | 'cancel', id: string) => Promise<unknown>;
-    onShowPopup?: (content: ToolPopupContent) => void;
 }) => {
     const isMobile = useUIStore((state) => state.isMobile);
     if (!items.length) return null;
     return <QueueCard isMobile={isMobile}>
                 <DndContext><SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-                    {items.map((item) => <NativeInboxRow key={item.id} item={item} readOnly={readOnly} isMobile={isMobile} onAction={onAction} onShowPopup={onShowPopup} />)}
+                    {items.map((item) => <NativeInboxRow key={item.id} item={item} readOnly={readOnly} isMobile={isMobile} onAction={onAction} />)}
                 </SortableContext></DndContext>
     </QueueCard>;
 });
 
-function NativeInboxRow({ item, readOnly, isMobile, onAction, onShowPopup }: {
+function NativeInboxRow({ item, readOnly, isMobile, onAction }: {
     item: SessionInboxOverlayItem; readOnly: boolean; isMobile: boolean;
     onAction: (action: 'edit' | 'steer' | 'queue' | 'cancel', id: string) => Promise<unknown>;
-    onShowPopup?: (content: ToolPopupContent) => void;
 }) {
     const { t } = useI18n();
     const operation = useMutation({ mutationFn: (action: 'edit' | 'steer' | 'queue' | 'cancel') => onAction(action, item.id),
         onError: (error) => toast.error(t('chat.chatInput.toast.messageSendFailed'), { description: error instanceof Error ? error.message : String(error) }) });
-    const files = React.useMemo<FilePart[]>(() => !Array.isArray(item.payload.files) ? [] : item.payload.files.flatMap((file, index) => {
-        if (!file || typeof file !== 'object') return [];
-        const value = file as Record<string, unknown>;
-        const mime = typeof value.mime === 'string' ? value.mime : 'application/octet-stream';
-        const source = value.source && typeof value.source === 'object' ? value.source as Record<string, unknown> : undefined;
-        const url = typeof value.data === 'string' ? `data:${mime};base64,${value.data}` : typeof value.uri === 'string' ? value.uri : typeof source?.uri === 'string' ? source.uri : undefined;
-        return url ? [{ id: `${item.id}:file:${index}`, type: 'file' as const, sessionID: item.sessionID, messageID: item.id, mime, url,
-            ...(typeof value.name === 'string' ? { filename: value.name } : {}) }] : [];
-    }), [item]);
     const references = React.useMemo(() => [
         ...(Array.isArray(item.payload.agents) ? item.payload.agents.flatMap((agent) => agent && typeof agent.name === 'string' ? [`@${agent.name}`] : []) : []),
         ...(Array.isArray(item.payload.skills) ? item.payload.skills.flatMap((skill) => skill && typeof skill.id === 'string' ? [`[skill:${skill.id}]`] : []) : []),
@@ -416,7 +402,6 @@ function NativeInboxRow({ item, readOnly, isMobile, onAction, onShowPopup }: {
             isMobile={isMobile} inboxEditable={!readOnly} onEdit={async () => { await operation.mutateAsync('edit'); }} onSend={async () => { await operation.mutateAsync('steer'); }}
             onRemove={() => operation.mutate('cancel')} />
         {references.length ? <div className="px-6 typography-meta text-muted-foreground">{references.join(' ')}</div> : null}
-        {files.length ? <div className="px-6 pb-1"><MessageFilesDisplay files={files} messageID={item.id} sessionID={item.sessionID} compact onShowPopup={onShowPopup} /></div> : null}
     </div>;
 }
 
