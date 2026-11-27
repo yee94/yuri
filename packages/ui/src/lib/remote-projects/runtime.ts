@@ -46,10 +46,13 @@ export const getHostRuntimeServices = (registry: HostRuntimeRegistry): RuntimeSe
                   demand.contentReady(hostId, ready.id, typeof ready.sessionId === 'string' ? ready.sessionId : undefined, ready.channelId, ready.readyGeneration);
                 }
               }
-              if (typeof payload?.type === 'string' && (payload.type === 'yuri:worktree-topology-changed' || /^yuri:session-(?:index-changed|unread-changed|order-changed|folders-changed|metadata)$/.test(payload.type))) {
+              const type = typeof payload?.type === 'string' ? payload.type : '';
+              if (type === 'yuri:worktree-topology-changed'
+                || /^yuri:session-(?:index-changed|unread-changed|order-changed|folders-changed|metadata)$/.test(type)
+                || /^session\.(?:status|idle|error|execution\.(?:started|succeeded|failed|interrupted)|retry\.scheduled)(?:\.\d+)?$/.test(type)) {
                 void queryClient.invalidateQueries({ queryKey: remoteHostSummariesKey(getRuntimeTransportIdentity(), registry.hubId, hostId) });
               }
-              if (typeof payload?.type === 'string' && /^yuri:projects?-/.test(payload.type)) {
+              if (/^yuri:projects?-/.test(type)) {
                 void queryClient.invalidateQueries({ queryKey: [getRuntimeTransportIdentity(), 'remote-projects', 'catalog'] });
               }
             }

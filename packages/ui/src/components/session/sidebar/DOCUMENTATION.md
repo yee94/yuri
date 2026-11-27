@@ -276,7 +276,10 @@ host's leaf subscription, and token events do not invalidate structural lists.
    their original Host directories remain intact for navigation and commands.
    The section publishes its busy/retry and unread roots through the shared
    `listInProgressHomeSessions` projection. Desktop and mobile merge these with
-   local attention rows by activity time in the existing leading list. Host row
+    local attention rows by activity time in the existing leading list. The flat
+    Tasks view also uses the Host index's activity time, not the remote session's
+    metadata update time. Execution and legacy status events refresh only the
+    owning Host's summary so the running badge follows live state. Host row
    actions remain bound to the section model; clearing unread removes settled
    rows from the leading list. Accepted remote sends and real busy/idle
    transitions also call the shared `moveProjectToTop`, promoting the entire

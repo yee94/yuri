@@ -64,6 +64,7 @@ export const parseRemoteHostSummaries = (input: unknown, hubId: string, hostId: 
           const yuri = metadata?.yuri ? object(metadata.yuri) : undefined;
            const status = yuri?.sessionStatus ? object(yuri.sessionStatus) : undefined;
            const workspaceId = typeof yuri?.workspaceId === 'string' && yuri.workspaceId.length <= 512 ? yuri.workspaceId : undefined;
+           const activityUpdatedAt = number((yuri?.titleRefresh as { activityUpdatedAt?: unknown } | undefined)?.activityUpdatedAt);
            const sessionStatus = status && typeof status.type === 'string' ? {
              type: value.stale ? 'unknown' : status.type,
              ...(number(status.changedAt) > 0 && !value.stale ? { changedAt: number(status.changedAt) } : {}),
@@ -80,9 +81,10 @@ export const parseRemoteHostSummaries = (input: unknown, hubId: string, hostId: 
               ...(typeof time.archived === 'number' ? { archived: time.archived } : {}),
               ...(typeof time.pinned === 'string' || typeof time.pinned === 'number' ? { pinned: time.pinned } : {}),
             },
-             ...(sessionStatus || workspaceId ? { metadata: { yuri: {
+             ...(sessionStatus || workspaceId || activityUpdatedAt > 0 ? { metadata: { yuri: {
                ...(sessionStatus ? { sessionStatus } : {}),
                ...(workspaceId ? { workspaceId } : {}),
+               ...(activityUpdatedAt > 0 ? { titleRefresh: { activityUpdatedAt } } : {}),
              } } } : {}),
           } as SessionIndexSession;
         }),

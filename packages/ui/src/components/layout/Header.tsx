@@ -1749,7 +1749,7 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
 
   const desktopSidebarActions = (
     <>
-      {!isRemoteProject && !isMobile && !isVSCode && activeMainTab === 'chat' ? (
+      {!isMobile && !isVSCode && activeMainTab === 'chat' && (!isRemoteProject || remoteSession?.sessionId) ? (
         <WorkStatusToggle />
       ) : null}
       {!isRemoteProject ? <OpenInAppButton directory={actionDirectory} /> : null}

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { Session } from '@/lib/opencode/v2-types';
+import { parseRemoteHostSummaries } from '@/lib/remote-projects/summaries';
 
 import {
   SETTLED_SHELF_PAGE_SIZE,
@@ -66,6 +67,30 @@ describe('task view partition', () => {
     });
     expect(buckets.active.map((item) => item.id)).toEqual(['remote-unread', 'remote-new', 'local']);
     expect(buckets.settled).toEqual([]);
+  });
+
+  test('new remote activity reorders an existing task even when the session update time is old', () => {
+    const local = session('local', { time: { created: 1, updated: 20 } });
+    const remote = session('remote', { time: { created: 1, updated: 10 } });
+    const order = (activityUpdatedAt: number, type: 'idle' | 'busy') => {
+      const { directories } = parseRemoteHostSummaries({
+        hubId: 'hub', hostId: 'host', stale: false, directories: [{ directory: '/work', sessions: [{
+          ...remote, metadata: { yuri: { titleRefresh: { activityUpdatedAt }, sessionStatus: { type } } },
+        }] }],
+      }, 'hub', 'host');
+      return deriveTaskBuckets({
+        sessions: [local],
+        remoteSessions: directories[0].sessions,
+        pinnedSessionIds: none,
+        settledSessionIds: none,
+        runningSessionIds: type === 'busy' ? new Set([remote.id]) : none,
+        pendingRequestSessionIds: none,
+        unseenBySession: {},
+      }).active.map(({ id }) => id);
+    };
+    expect(order(10, 'idle')).toEqual(['local', 'remote']);
+    expect(order(30, 'busy')).toEqual(['remote', 'local']);
+    expect(order(30, 'idle')).toEqual(['remote', 'local']);
   });
 
   test('sessions the Host index does not hold stay out unless they are live', () => {

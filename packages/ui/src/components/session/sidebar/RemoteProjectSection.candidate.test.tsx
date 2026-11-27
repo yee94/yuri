@@ -148,10 +148,12 @@ it('mounted production sidebar refreshes the archived global WS index tip withou
   queryClient.clear(); queryClient.setDefaultOptions({ queries: { retry: false } });
   useProjectsStore.setState({ projects: [project], activeProjectId: null, hubProjectLayout: null });
   let indexed = false;
+  let running = false;
   const fetch = vi.fn(async (path: string) => {
     expect(path).toBe(`/api/hosts/${hostId}/summaries`);
     return Response.json({ hubId, hostId, stale: false, directories: indexed ? [{ directory: project.path,
-      sessions: [{ id: 'ses_e33caa6b5ffeu1gmXLDI2yoNE2', title: 'Performance baseline session', time: { created: 1794427410770, updated: 1794427410782 } }], hasMore: false }] : [] });
+      sessions: [{ id: 'ses_e33caa6b5ffeu1gmXLDI2yoNE2', title: 'Performance baseline session', time: { created: 1794427410770, updated: 1794427410782 },
+        metadata: { yuri: { sessionStatus: { type: running ? 'busy' : 'idle' } } } }], hasMore: false }] : [] });
   });
   const registry = new HostRuntimeRegistry(hubId, { transportIdentity: getRuntimeTransportIdentity(), isCurrent: () => true, fetch,
     sdk: () => { throw new Error('Sidebar must not read transcript'); } });
@@ -171,6 +173,18 @@ it('mounted production sidebar refreshes the archived global WS index tip withou
       for (const envelope of [status, tip]) socket.onmessage!({ data: JSON.stringify({ type: 'event', payload: envelope, directory: 'global' }) });
     });
     await vi.waitFor(() => expect(container.querySelector('[data-remote-session]')?.textContent ?? '').toContain('Performance baseline session'));
+    const publishExecution = (type: string) => socket.onmessage!({ data: JSON.stringify({
+      type: 'event', directory: 'global', payload: { ...tip, properties: { ...tip.properties, directory: project.path,
+        payload: { type, data: { sessionID: 'ses_e33caa6b5ffeu1gmXLDI2yoNE2' } } } },
+    }) });
+    const runningIndicator = () => container.querySelector('[data-remote-session] [aria-label="sessions.sidebar.session.status.active"]');
+    expect(runningIndicator()).toBeNull();
+    running = true;
+    await act(async () => publishExecution('session.execution.started.1'));
+    await vi.waitFor(() => expect(runningIndicator()).not.toBeNull());
+    running = false;
+    await act(async () => publishExecution('session.execution.succeeded.1'));
+    await vi.waitFor(() => expect(runningIndicator()).toBeNull());
     expect(localEvent).not.toHaveBeenCalled();
     expect(wire.sockets).toHaveLength(1);
     expect(wire.ssePaths).toEqual(['/api/yuri/events']);

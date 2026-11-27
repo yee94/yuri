@@ -74,7 +74,6 @@ vi.mock('@/hooks/useDesktopWindowControlsLayout', () => ({ useDesktopWindowContr
 vi.mock('@/hooks/useDesktopWindowFullscreen', () => ({ useDesktopWindowFullscreen: () => false }));
 vi.mock('@/lib/desktop', () => ({ isDesktopShell: () => true, isVSCodeRuntime: () => false, isWebRuntime: () => false, canUseElectronDesktopIPC: () => true, getElectronPlatform: () => 'darwin', isDesktopLocalOriginActive: () => true, invokeDesktop: vi.fn(), startDesktopWindowDrag: vi.fn() }));
 vi.mock('@/components/gui-plugins/GuiPluginTitlebarItems', () => ({ GuiPluginTitlebarItems: () => null }));
-vi.mock('@/components/chat/work-status/WorkStatusToggle', () => ({ WorkStatusToggle: () => <div data-local-work-status /> }));
 vi.mock('@/components/desktop/WindowsWindowControls', () => ({ WindowsWindowControls: () => null }));
 vi.mock('@/components/desktop/DesktopHostSwitcher', () => ({ DesktopHostSwitcherDialog: () => null }));
 vi.mock('@/components/desktop/DesktopCurrentHostButton', () => ({ DesktopCurrentHostButton: () => null }));
@@ -234,6 +233,27 @@ it('keeps the remote context ring available before the transcript baseline arriv
   await act(async () => pendingRing!.click());
   expect(useUIStore.getState().contextPanelByDirectory[locationKey(location)]?.tabs[0].mode).toBe('context');
   expect(entry.sdk).not.toHaveBeenCalled();
+});
+
+it.each([true, false])('toggles the remote work-status sidebar from the desktop header (inline=%s)', async (fits) => {
+  const previous = useUIStore.getState();
+  useUIStore.setState({ workStatusPanelFits: fits, workStatusPanelEnabled: false, workStatusOverlayOpen: false });
+  try {
+    await act(async () => root.render(<Header />));
+    const toggle = node.querySelector<HTMLButtonElement>('[data-work-status-toggle]');
+    expect(toggle?.getAttribute('aria-pressed')).toBe('false');
+    await act(async () => toggle!.click());
+    expect(toggle?.getAttribute('aria-pressed')).toBe('true');
+    expect(useUIStore.getState().workStatusOverlayOpen).toBe(!fits);
+    await act(async () => toggle!.click());
+    expect(toggle?.getAttribute('aria-pressed')).toBe('false');
+  } finally {
+    await act(async () => useUIStore.setState({
+      workStatusPanelFits: previous.workStatusPanelFits,
+      workStatusPanelEnabled: previous.workStatusPanelEnabled,
+      workStatusOverlayOpen: previous.workStatusOverlayOpen,
+    }));
+  }
 });
 
 it('loads only the remote model limits for the context ring on a cold catalog without reading local usage', async () => {

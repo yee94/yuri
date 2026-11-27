@@ -133,7 +133,8 @@ the same shared frosted popup material, fine outline and compact shadow as the
 Changed files popup. The `yuri-popup-surface` modifier keeps elevation below the
 larger picker dialog; reduced transparency restores an opaque elevated fill.
 Inline mode stays transparent and borderless.
-The header uses `WorkStatusToggle` with `settings-2`. In popup mode, a single click
+The desktop chat header uses `WorkStatusToggle` with `settings-2`, including for a
+selected Remote Project session. In popup mode, a single click
 both enables a previously disabled preference and opens the popup; subsequent
 clicks close/reopen it. Inline mode keeps its preference toggle behavior.
 The global Escape capture closes this popup before either preview dismissal or

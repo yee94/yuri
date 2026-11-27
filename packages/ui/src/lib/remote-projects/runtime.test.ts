@@ -46,9 +46,16 @@ it('multiplexes five Hosts and five token streams without refetching unrelated H
     expect(fetches[0]).toHaveBeenCalledTimes(2);
     emit('host-0', 'yuri:worktree-topology-changed');
     await vi.waitFor(() => expect(fetches[0]).toHaveBeenCalledTimes(3));
-    for (let token = 0; token < 100; token += 1) for (const host of hosts) emit(host.id, 'message.part.delta');
+    emit('host-0', 'session.execution.started.1', 'other-hub');
     await Promise.resolve();
     expect(fetches[0]).toHaveBeenCalledTimes(3);
+    emit('host-0', 'session.execution.started.1');
+    await vi.waitFor(() => expect(fetches[0]).toHaveBeenCalledTimes(4));
+    emit('host-0', 'session.execution.succeeded.1');
+    await vi.waitFor(() => expect(fetches[0]).toHaveBeenCalledTimes(5));
+    for (let token = 0; token < 100; token += 1) for (const host of hosts) emit(host.id, 'message.part.delta');
+    await Promise.resolve();
+    expect(fetches[0]).toHaveBeenCalledTimes(5);
     fetches.slice(1).forEach((fetch, index) => {
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(observers[index + 1].getCurrentResult().data).toBe(unaffected[index]);
