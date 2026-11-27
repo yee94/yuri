@@ -18,6 +18,7 @@ type Demand = {
   notFound?: boolean;
   topologyKey?: string;
   attemptedTopologyKey?: string;
+  unsubscribeHost?: () => void;
 };
 
 /** Client demand only. The Hub owns cross-window deduplication and the global cap. */
@@ -35,7 +36,18 @@ export class HostContentDemand {
     const key = locationSessionKey(location, sessionId);
     let demand = this.demands.get(key);
     if (!demand) {
-      demand = { location: { ...location }, sessionId, observers: new Set(), epoch: 0, readyIds: new Map(), readyGenerations: new Set(), readyRevision: 0 };
+      const created: Demand = { location: { ...location }, sessionId, observers: new Set(), epoch: 0, readyIds: new Map(), readyGenerations: new Set(), readyRevision: 0 };
+      const hostId = location.hostId;
+      let previous = this.registry.getHost(hostId);
+      created.unsubscribeHost = this.registry.subscribeHost(hostId, () => {
+        const host = this.registry.getHost(hostId);
+        const sameAuthority = !previous || (previous.scopeGeneration === host?.scopeGeneration && previous.instanceId === host?.instanceId);
+        const connected = sameAuthority && host?.state === 'connected' && host.available !== false
+          && (previous?.state !== 'connected' || previous.lastConnectedAt !== host.lastConnectedAt);
+        previous = host;
+        if (connected && this.foreground) this.restart(created);
+      });
+      demand = created;
       this.demands.set(key, demand);
     }
     demand.observers.add(observer);
@@ -56,6 +68,7 @@ export class HostContentDemand {
       if (demand.observers.size) return;
       demand.epoch += 1;
       this.demands.delete(key);
+      demand.unsubscribeHost?.();
       this.release(demand);
     };
   }
@@ -70,15 +83,16 @@ export class HostContentDemand {
     }
   }
 
-  recover(hostId?: string): void {
+  recover(): void {
     if (this.disposed || !this.foreground) return;
-    for (const demand of this.demands.values()) {
-      if (hostId && demand.location.hostId !== hostId) continue;
-      demand.epoch += 1;
-      demand.notFound = false;
-      this.release(demand);
-      this.activate(demand);
-    }
+    for (const demand of this.demands.values()) this.restart(demand);
+  }
+
+  private restart(demand: Demand): void {
+    demand.epoch += 1;
+    demand.notFound = false;
+    this.release(demand);
+    this.activate(demand);
   }
 
   /** Retry only a rejected visible lease whose directory now has a new authority mapping. */
@@ -205,6 +219,7 @@ export class HostContentDemand {
     this.disposed = true;
     for (const demand of this.demands.values()) {
       demand.epoch += 1;
+      demand.unsubscribeHost?.();
       demand.observers.clear();
       this.release(demand);
     }

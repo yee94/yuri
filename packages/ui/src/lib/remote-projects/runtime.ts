@@ -35,7 +35,6 @@ export const getHostRuntimeServices = (registry: HostRuntimeRegistry): RuntimeSe
           if (event.type === 'remote-host-status' || event.type === 'remote-host-event') {
             const properties = event.envelope.properties as { hostId?: unknown };
             const hostId = typeof properties.hostId === 'string' ? properties.hostId : undefined;
-            const previous = hostId ? registry.getHost(hostId) : undefined;
             if (!registry.ingest(event.envelope)) return;
             if (event.type === 'remote-host-event' && hostId) {
               const value = event.envelope.properties as { payload?: unknown };
@@ -58,10 +57,6 @@ export const getHostRuntimeServices = (registry: HostRuntimeRegistry): RuntimeSe
             }
             if (event.type === 'remote-host-status' && hostId) {
               void queryClient.invalidateQueries({ queryKey: remoteHostSummariesKey(getRuntimeTransportIdentity(), registry.hubId, hostId) });
-              const current = registry.getHost(hostId);
-              if (current?.state === 'connected' && (previous?.state !== 'connected' || previous.lastConnectedAt !== current.lastConnectedAt)) {
-                demand.recover(hostId);
-              }
             }
           }
         });

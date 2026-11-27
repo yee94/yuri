@@ -274,6 +274,81 @@ test.each([
   }
 }, 10_000);
 
+test('a cold desktop remote session shows connection progress and recovers after the catalog reports connected', async () => {
+  fixture.wire = true;
+  const wire = wireHarness();
+  const previousUI = useUIStore.getState().isMobile;
+  const previousQueryOptions = queryClient.getDefaultOptions();
+  useUIStore.setState({ isMobile: false });
+  queryClient.clear();
+  queryClient.setDefaultOptions({ queries: { retry: false } });
+  const host = { id: 'host', name: 'Host', source: 'ssh' as const, state: 'connecting' as const,
+    scopeGeneration: 'desktop-scope', generation: 'desktop-wire', instanceId: 'remote-instance' };
+  const applyHost = (state: 'connecting' | 'connected') => wire.registry.applyCatalog({
+    hubId: 'hub', supported: true, projects: [], hosts: [{ ...host, state }],
+  });
+  applyHost('connecting');
+  let connected = false;
+  let completeTranscript!: () => void;
+  const transcriptGate = new Promise<void>((resolve) => { completeTranscript = resolve; });
+  let failedAcquisition = 0;
+  let recoveredAcquisition = 0;
+  let failedTranscript = 0;
+  const network = vi.mocked(globalThis.fetch);
+  const normal = network.getMockImplementation()!;
+  network.mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/subscriptions') && request.method === 'POST') {
+      if (!connected) {
+        failedAcquisition++;
+        return new Response(null, { status: 503 });
+      }
+      recoveredAcquisition++;
+      return Response.json({ id: 'desktop-lease', channelId: 'desktop-channel', readyGeneration: 'desktop-ready' });
+    }
+    if (path.endsWith('/session/same/message')) {
+      if (!connected) {
+        failedTranscript++;
+        return new Response(null, { status: 503 });
+      }
+      await transcriptGate;
+      return Response.json({ data: [
+        { id: 'msg_desktop_remote', sessionID: 'same', type: 'user', text: 'Recovered remote conversation', time: { created: 1 } },
+      ] });
+    }
+    return normal(input, init);
+  });
+  function RenderViewport({ renderedMessages }: React.ComponentProps<NonNullable<Parameters<typeof RemoteChatContainer>[0]['viewport']>>) {
+    return <div data-cold-transcript>{renderedMessages.map((message) => message.parts.map((part) => 'text' in part ? part.text : '').join('')).join('')}</div>;
+  }
+  const Viewport = React.memo<typeof RenderViewport>(RenderViewport);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const node = document.createElement('div'); document.body.append(node); const root = createRoot(node);
+  try {
+    const runtime = { runtime: { isWeb: false, isDesktop: true, isVSCode: false, isMobile: false, platform: 'desktop' } } as unknown as RuntimeAPIs;
+    await act(async () => root.render(<QueryClientProvider client={client}><I18nProvider><ThemeSystemProvider><RuntimeAPIContext.Provider value={runtime}>
+      <RemoteChatContainer location={wire.location} sessionId="same" composerPresentation="primary" viewport={Viewport} />
+    </RuntimeAPIContext.Provider></ThemeSystemProvider></I18nProvider></QueryClientProvider>));
+    await vi.waitFor(() => expect(failedAcquisition).toBe(1));
+    await vi.waitFor(() => expect(failedTranscript).toBeGreaterThan(0));
+    const status = () => node.querySelector('[data-remote-transcript-status]');
+    expect(status()?.textContent).toMatch(/connecting|连接/i);
+    await act(async () => { connected = true; applyHost('connected'); });
+    await vi.waitFor(() => expect(status()?.textContent).toMatch(/syncing|同步/i));
+    await act(async () => completeTranscript());
+    await vi.waitFor(() => expect(node.querySelector('[data-cold-transcript]')?.textContent).toContain('Recovered remote conversation'));
+    expect(recoveredAcquisition).toBe(1);
+    await vi.waitFor(() => expect(status()).toBeNull());
+  } finally {
+    completeTranscript();
+    await act(async () => root.unmount());
+    useUIStore.setState({ isMobile: previousUI });
+    queryClient.setDefaultOptions(previousQueryOptions);
+    client.clear(); queryClient.clear(); wire.close(); node.remove();
+  }
+});
+
 test('foreground remote primary claims the real native bridge while panel and background cannot', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   fixture.native = true; fixture.wire = true;

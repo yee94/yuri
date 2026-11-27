@@ -4,7 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { HostLocation } from '@/lib/remote-projects/location';
 import { locationKey, REMOTE_NEW_SESSION_DRAFT_ID } from '@/lib/remote-projects/location';
 import type { HostRuntimeRegistry } from '@/lib/remote-projects/registry';
-import { HostRuntimeProvider, useHostRuntime } from '@/contexts/HostRuntimeProvider';
+import { HostRuntimeProvider, useHostRuntime, useRemoteHost } from '@/contexts/HostRuntimeProvider';
+import { remoteConnectionHint } from '@/lib/remote-projects/connection-hint';
 import { useRemoteHostCatalog, getHostRuntimeRegistry, type RemoteHostSummaries } from '@/queries/remoteProjectQueries';
 import { useRemoteModelFavorites } from '@/queries/remoteModelFavoriteQueries';
 import { providerCatalogQueryOptions, rawAgentsQueryOptions } from '@/queries/configCatalogQueries';
@@ -103,6 +104,29 @@ function RemoteChatOwner(props: Props & { registry: HostRuntimeRegistry }) {
   const state = owner.state;
   useRemoteSessionViewed(props.registry, state.entry, props.sessionId, props.active !== false);
   return <RemoteChatContext.Provider value={state}><RemoteChatView key={JSON.stringify([runtime.entry.queryScope, props.sessionId])} {...props} state={state} /></RemoteChatContext.Provider>;
+}
+
+function RemoteTranscriptStatus({ state, sessionId }: { state: ReturnType<typeof createRemoteSessionState>; sessionId: string }) {
+  const { t } = useI18n();
+  const { registry } = useHostRuntime()!;
+  const host = useRemoteHost(registry, state.entry.location.hostId!);
+  const scope = React.useMemo(() => state.scope(sessionId), [state, sessionId]);
+  const subscribe = React.useMemo(() => (notify: () => void) => state.repository.subscribe(scope, notify), [scope, state]);
+  const read = () => {
+    const request = state.repository.getRequestState?.(scope).status;
+    if (request === 'ready') return request;
+    const transcript = state.repository.getTranscript(scope);
+    if (transcript.boundary.kind === 'exhausted'
+      || transcript.messageOrder.some((id) => (transcript.partsByMessageID[id]?.length ?? 0) > 0)) return 'ready';
+    return request;
+  };
+  const transcriptStatus = React.useSyncExternalStore(subscribe, read, read);
+  const connection = remoteConnectionHint(host);
+  if (transcriptStatus === 'ready' || (transcriptStatus === 'error' && !connection?.pending)) return null;
+  return <div role="status" data-remote-transcript-status
+    className="pointer-events-none absolute inset-x-0 top-4 z-10 text-center typography-meta text-muted-foreground">
+    {t(connection?.key ?? 'mobile.chat.syncingMessages')}
+  </div>;
 }
 
 function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadOnly = false, composerPresentation = 'panel', contextPanel, onNavigateSession, viewport: Viewport, state }: Props & { state: ReturnType<typeof createRemoteSessionState> }) {
@@ -578,6 +602,7 @@ function RemoteChatView({ location, sessionId, active = true, readOnly: tabReadO
     showAssistantStatus={busy || snapshot.permissions.length > 0} />;
   return <SessionSurfaceContext.Provider value={sessionSurface}>
     <div className="relative flex h-full min-h-0 flex-col bg-background" data-remote-chat={locationKey(location)}>
+      {active && !isMobile && sessionId ? <RemoteTranscriptStatus state={state} sessionId={sessionId} /> : null}
       {sessionId || isMobile ? <TranscriptSearch messages={messages} enabled={active && !expanded} canOpen={() => !document.querySelector('[role="dialog"]')} onNavigate={follow.releaseAutoFollow}>
       {Viewport ? <Viewport currentSessionId={sessionId ?? 'remote-new-session'} virtualizerKey={surface.surfaceID}
         timelineHistoryAnchorToken={anchorToken} isDesktopExpandedInput={expanded} isMobile={isMobile} stickyUserHeader={stickyUserHeader}

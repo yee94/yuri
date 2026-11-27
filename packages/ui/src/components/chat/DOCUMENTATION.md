@@ -91,8 +91,11 @@ the machine name on hover; existing sessions do not add a Project row above the
 composer. Local and remote conversations share `ComposerFoot`, `StatusRow` and
 the queue card layout, including the mobile overlap and desktop edge fade.
 Remote status inputs come from the bound Host snapshot, never Hub activity.
-On desktop, remote connection preparation does not add a status row to the
-composer. Sending remains gated by the existing Host readiness check, and draft
+On desktop, a remote transcript without visible content shows the Host's connection
+phase in the viewport and shows message synchronization once connected. The hint
+clears when content can paint, an authoritative empty transcript arrives, or the
+load fails. Existing Host error and retry presentation remains beside the machine
+label. Sending remains gated by the existing Host readiness check, and draft
 editing is preserved.
 Ordinary remote sends add an optimistic user row through the shared transcript
 repository. Its optimistic parts survive stale history reads until authority

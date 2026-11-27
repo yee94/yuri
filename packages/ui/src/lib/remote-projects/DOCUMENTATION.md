@@ -179,7 +179,9 @@ lease with raw directory/session identity, refreshes authority at content readin
 and DELETEs after the final observer leaves. It never evicts a live consumer to
 work around the Hub's content cap. A late acquisition is released rather than
 refreshed. Backgrounding releases leases; foregrounding and stream-ready/host
-recovery reacquire and revalidate. Capacitor uses `App.appStateChange` in addition
+recovery reacquire and revalidate. Visible leases observe their Host in the
+registry, so connection completion from a catalog or connect response recovers a
+cold failed acquisition just like a live status frame. Capacitor uses `App.appStateChange` in addition
 to WebView visibility; there is one native lifecycle listener per demanded Hub.
 The Hub remains responsible for cross-window sharing, global limits and reconnect.
 Readiness is deduplicated by lease and `readyGeneration`, not permanently by lease.
