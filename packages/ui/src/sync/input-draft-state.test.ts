@@ -105,6 +105,42 @@ describe("keyed input draft state", () => {
     expect(await stale).toBe(false)
   })
 
+  test("retry restores a remote draft when the runtime changed during attachment reconciliation", async () => {
+    const sink = createInputDraftMetadataStorageSink(new MemoryStorage() as unknown as Storage)
+    const location = { hubId: "hub", hostId: "ssh", directory: "/remote/repo" }
+    const draft = remoteSessionDraftKey(location, "session")
+    const attachments = blobStore()
+    const initial = createRemoteInputStore(location.hubId, { sink, blobStore: attachments })
+    expect(await initial.getState().hydrateDraftMetadata(draft.transportIdentity)).toBe(true)
+    initial.getState().setDraftText(draft, "unsent text")
+    await initial.getState().flushDraftPersistence()
+
+    const started = deferred<void>()
+    const resume = deferred<void>()
+    let generation = 1
+    const reopened = createRemoteInputStore(location.hubId, {
+      sink,
+      runtimeCapture: () => ({ transportIdentity: draft.transportIdentity, generation }),
+      blobStore: {
+        ...attachments,
+        reconcileReferences: async (...args) => {
+          started.resolve()
+          await resume.promise
+          return attachments.reconcileReferences(...args)
+        },
+      },
+    })
+    const input = reopened.getState()
+    const stale = input.hydrateDraftMetadata(draft.transportIdentity)
+    await started.promise
+    generation += 1
+    resume.resolve()
+    expect(await stale).toBe(false)
+    expect(input.getDraft(draft)).toBeUndefined()
+    expect(await input.hydrateDraftMetadata(draft.transportIdentity)).toBe(true)
+    expect(input.getDraft(draft)?.text).toBe("unsent text")
+  })
+
   test("preserves memory edits across slow hydration and keeps metadata for moves", async () => {
     const storage = new MemoryStorage()
     const sink = createInputDraftMetadataStorageSink(storage as unknown as Storage)

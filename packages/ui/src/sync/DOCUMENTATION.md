@@ -94,6 +94,9 @@ explicit store is injected into the real composer and inbox edit CAS; native
 seed/pending-input/preset entrypoints must use this owner, never the Hub singleton.
 Each blob coordinator reconciles only its Hub database, not local or other-Hub
 references. Network operations retain the current logical authorization scope fence.
+If the runtime changes while attachment reconciliation initializes the draft
+store, that hydration cannot publish its snapshot. A retry reuses the committed
+durable baseline and re-reads metadata for the current runtime.
 
 Production primary chat now mounts this entry through `RemoteChatContainer` and
 `RemoteChatContext`; concurrent primary/context-panel views share one state per

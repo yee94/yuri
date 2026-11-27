@@ -1176,7 +1176,11 @@ export const createInputStore = (services: InputDraftServices = {}) => {
     }
     const snapshot = migrated.value
     if (!seeded) {
-      seedPromise ??= durability.seed(snapshot).finally(() => { seedPromise = undefined })
+      seedPromise ??= durability.seed(snapshot).then((result) => {
+        // The coordinator's durable baseline survives a stale hydration caller.
+        if (result.status === "committed") seeded = true
+        return result
+      }).finally(() => { seedPromise = undefined })
       let result: InputDraftDurabilityResult
       try {
         result = await seedPromise
@@ -1188,7 +1192,6 @@ export const createInputStore = (services: InputDraftServices = {}) => {
         set((state) => ({ draftHydration: { ...state.draftHydration, ...Object.fromEntries(knownIDs.map((id) => [id, "degraded" as const])) } }))
         return false
       }
-      if (result.status === "committed") seeded = true
     }
     const state = get()
     const drafts = { ...state.drafts }
