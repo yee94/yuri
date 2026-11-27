@@ -1575,7 +1575,7 @@ const ChatContainerContent: React.FC<ChatContainerContentProps> = ({
             ? null
             : (
                 <>
-                    {isMobile ? <MobileBackgroundWorkBar sessionId={currentSessionId ?? null} directory={effectiveSessionDirectory ?? null} /> : null}
+                    {isMobile && isExpandedInput ? <MobileBackgroundWorkBar sessionId={currentSessionId ?? null} directory={effectiveSessionDirectory ?? null} /> : null}
                     <ChatInput
                         key="composer-input"
                         foregroundActive={active}
