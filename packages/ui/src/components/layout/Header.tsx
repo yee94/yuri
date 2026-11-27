@@ -667,8 +667,7 @@ const RemoteHeaderContextUsage = React.memo(({ entry, sessionId, onClick, presse
   const subscribe = React.useMemo(() => (notify: () => void) => repository && scope ? repository.subscribe(scope, notify) : () => {}, [repository, scope]);
   const read = React.useMemo(() => () => repository && scope ? repository.getTranscript(scope) : null, [repository, scope]);
   const transcript = React.useSyncExternalStore(subscribe, read, read);
-  const providerOptions = React.useMemo(() => ({ ...providerCatalogQueryOptions(location.directory, getRuntimeTransportIdentity(), entry), enabled: false, staleTime: Infinity, gcTime: Infinity }), [entry, location.directory]);
-  const providers = useQuery(providerOptions, queryClient);
+  const providerOptions = React.useMemo(() => ({ ...providerCatalogQueryOptions(location.directory, getRuntimeTransportIdentity(), entry), staleTime: Infinity, gcTime: Infinity }), [entry, location.directory]);
   const selection = useSelectionStore((state) => state.getSessionModelSelection(sessionId, location));
   const baseline = React.useMemo(() => {
     if (!transcript) return null;
@@ -681,10 +680,25 @@ const RemoteHeaderContextUsage = React.memo(({ entry, sessionId, onClick, presse
     return null;
   }, [transcript]);
   const info = baseline && 'messageId' in baseline && transcript ? transcript.messagesByID[baseline.messageId] as { providerID?: string; modelID?: string } : undefined;
-  const model = providers.data?.providers.find((provider) => provider.id === (selection?.providerId ?? info?.providerID))?.models[selection?.modelId ?? info?.modelID ?? ''];
+  const providerID = selection?.providerId ?? info?.providerID;
+  const modelID = selection?.modelId ?? info?.modelID;
+  const providers = useQuery({ ...providerOptions, enabled: Boolean(baseline && 'messageId' in baseline && providerID && modelID) }, queryClient);
+  const model = providers.data?.providers.find((provider) => provider.id === providerID)?.models[modelID ?? ''];
   const usage = buildSessionContextUsage(baseline, model?.limit?.context ?? 0, model?.limit?.output ?? 0);
-  if (!usage) return null;
-  return <ContextUsageDisplay pending={usage.pending} totalTokens={usage.totalTokens} percentage={usage.contextLimit > 0 ? Math.min(999, usage.totalTokens / usage.contextLimit * 100) : 0} colorPercentage={usage.percentage} contextLimit={usage.contextLimit} outputLimit={usage.outputLimit ?? 0} size="compact" appearance="subtle" onClick={onClick} pressed={pressed} />;
+  const contextLimit = usage?.contextLimit ?? 0;
+  const totalTokens = usage?.totalTokens ?? 0;
+  return <ContextUsageDisplay
+    pending={!usage || usage.pending || contextLimit <= 0}
+    totalTokens={totalTokens}
+    percentage={contextLimit > 0 ? Math.min(999, totalTokens / contextLimit * 100) : 0}
+    colorPercentage={usage?.percentage}
+    contextLimit={contextLimit}
+    outputLimit={usage?.outputLimit ?? 0}
+    size="compact"
+    appearance="subtle"
+    onClick={onClick}
+    pressed={pressed}
+  />;
 });
 
 const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummaries; remoteHostName?: string; remoteRegistry?: HostRuntimeRegistry }> = ({
@@ -866,7 +880,7 @@ const HeaderContent: React.FC<HeaderProps & { remoteSummaries?: RemoteHostSummar
   }, [desktopServicesTab, isDesktopApp]);
 
   const isVSCode = React.useMemo(() => isVSCodeRuntime(), []);
-  const showDesktopHeaderContextUsage = !isVSCode
+  const showDesktopHeaderContextUsage = !isRemoteProject && !isVSCode
     && activeMainTab === 'chat'
     && !!stableDesktopContextUsage;
   const desktopHeaderDisplayPercentage = stableDesktopContextUsage && stableDesktopContextUsage.contextLimit > 0

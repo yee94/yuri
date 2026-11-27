@@ -18,7 +18,7 @@ const fixture = vi.hoisted(() => ({
   isRemote: true, mobile: false, discovery: vi.fn(),
   registry: undefined as unknown,
   transcript: null as null | { messageOrder: string[]; messagesByID: Record<string, unknown>; partsByMessageID: Record<string, unknown[]> },
-  modelScope: vi.fn(),
+  modelScope: vi.fn(), modelReads: vi.fn(),
   localSwitcher: vi.fn(), remoteNavigate: vi.fn(), activeProject: vi.fn(), runProps: vi.fn(),
   localNew: vi.fn(), localSelect: vi.fn(), localItems: [] as unknown[],
   branchRead: vi.fn(),
@@ -55,9 +55,14 @@ vi.mock('@/sync/transcript-repository-runtime', () => ({
 }));
 vi.mock('@/queries/configCatalogQueries', () => ({ providerCatalogQueryOptions: (directory: string, _transport: string, entry: unknown) => {
   fixture.modelScope(directory, entry);
-  return { queryKey: ['remote-header-models'], staleTime: Infinity, queryFn: async () => ({ providers: [{ id: 'remote-provider', models: { remoteModel: { limit: { context: 1000, output: 100 } } } }] }) };
+  return { queryKey: ['remote-header-models'], staleTime: Infinity, queryFn: async () => {
+    fixture.modelReads();
+    return { providers: [{ id: 'remote-provider', models: { remoteModel: { limit: { context: 1000, output: 100 } } } }] };
+  } };
 } }));
-vi.mock('@/components/ui/ContextUsageDisplay', () => ({ ContextUsageDisplay: (props: { totalTokens: number; onClick: () => void }) => <button data-context-tokens={props.totalTokens} onClick={props.onClick}>Usage</button> }));
+vi.mock('@/components/ui/ContextUsageDisplay', () => ({ ContextUsageDisplay: (props: { totalTokens: number; percentage: number; pending?: boolean; onClick: () => void }) => (
+  <button data-context-tokens={props.totalTokens} data-context-percent={props.percentage} data-context-pending={Boolean(props.pending)} onClick={props.onClick}>Usage</button>
+) }));
 vi.mock('@/stores/useConfigStore', () => ({ useConfigStore: (select: (state: unknown) => unknown) => select({ getCurrentModel: () => null }) }));
 vi.mock('@/stores/useQuotaStore', () => ({ useQuotaStore: (select: (state: unknown) => unknown) => select(fixture.quota), useQuotaAutoRefresh: () => {} }));
 vi.mock('@/stores/useGitHubAuthStore', () => ({ useGitHubAuthStore: (select: (state: unknown) => unknown) => select({ setStatus: fixture.noop }) }));
@@ -218,7 +223,20 @@ it('isolates metadata titles for the same raw session ID across Hosts and ignore
   expect(fixture.localRead.mock.calls.every(([id]) => id === null)).toBe(true);
 });
 
-it('keeps the real context usage action from an already-bound remote transcript without reading local usage', async () => {
+it('keeps the remote context ring available before the transcript baseline arrives', async () => {
+  const location = fixture.remote.location;
+  const entry = { location, key: locationKey(location), queryScope: ['remote'], sdk: vi.fn() };
+  fixture.registry = { resolve: () => entry };
+  await act(async () => root.render(<Header />));
+  const pendingRing = node.querySelector<HTMLButtonElement>('[data-context-pending="true"]');
+  expect(pendingRing).not.toBeNull();
+  expect(fixture.modelReads).not.toHaveBeenCalled();
+  await act(async () => pendingRing!.click());
+  expect(useUIStore.getState().contextPanelByDirectory[locationKey(location)]?.tabs[0].mode).toBe('context');
+  expect(entry.sdk).not.toHaveBeenCalled();
+});
+
+it('loads only the remote model limits for the context ring on a cold catalog without reading local usage', async () => {
   const location = fixture.remote.location;
   const entry = { location, key: locationKey(location), queryScope: ['remote'], sdk: () => ({}) };
   fixture.registry = { resolve: () => entry };
@@ -226,10 +244,10 @@ it('keeps the real context usage action from an already-bound remote transcript 
   const messages: Record<string, unknown> = { message: { id: 'message', role: 'assistant', providerID: 'remote-provider', modelID: 'remoteModel', tokens: { input: 120, output: 30 } } };
   const records = new Proxy(messages, { get(target, key) { recordReads++; return typeof key === 'string' ? target[key] : undefined; } });
   fixture.transcript = { messageOrder: [...Array.from({ length: 10_000 }, (_, index) => `older-${index}`), 'message'], messagesByID: records, partsByMessageID: { message: [] } };
-  queryClient.setQueryData(['remote-header-models'], { providers: [{ id: 'remote-provider', models: { remoteModel: { limit: { context: 1000, output: 100 } } } }] });
   await act(async () => root.render(<Header />));
+  await act(async () => { await vi.waitFor(() => expect(node.querySelector('[data-context-tokens="150"][data-context-percent="15"][data-context-pending="false"]')).not.toBeNull()); });
   const usage = node.querySelector<HTMLButtonElement>('[data-context-tokens="150"]')!;
-  expect(usage).not.toBeNull();
+  expect(fixture.modelReads).toHaveBeenCalledOnce();
   expect(fixture.modelScope).toHaveBeenCalledWith('/workspace', entry);
   expect(fixture.modelScope).toHaveBeenCalledTimes(1);
   const calls = fixture.modelScope.mock.calls.length;

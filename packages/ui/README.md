@@ -65,7 +65,9 @@ paths. Remote browser panes always use the Host preview proxy, never the client'
 Electron webview or a direct localhost fallback after proxy failure. Header usage
 and context overview observe the already-bound remote transcript and scoped model
 catalogs, preserving the existing statistics and raw-message tools without reading
-the same-ID Hub session. Context overview retains the shared content demand while
+the same-ID Hub session. The desktop Header keeps the remote context ring available
+while usage is pending and loads the Host model catalog once a token baseline and
+model identity are available. Context overview retains the shared content demand while
 visible. Local-only surfaces do not mount remote discovery or summary Queries.
 The Header session switcher uses separate local/remote data leaves and the same
 row presentation. Remote roots come from Host summaries, child expansion reads
