@@ -247,6 +247,33 @@ describe('createSessionOwnershipIndex', () => {
     expect(ownership.unresolvedOpenCodeProjectIds).toEqual([]);
   });
 
+  test('re-homes a tagged session moved into another registered project directory', () => {
+    const sessions = [
+      { id: 'moved', directory: '/code/flclash', metadata: { yuri: { workspaceId: 'path_yuri' } } },
+      { id: 'moved-sub', directory: '/code/flclash/src', metadata: { yuri: { workspaceId: 'ws_combo' } } },
+      { id: 'sandbox', directory: '/tmp/sandbox', metadata: { yuri: { workspaceId: 'path_yuri' } } },
+      { id: 'nested', directory: '/code/yuri/packages/ui', metadata: { yuri: { workspaceId: 'path_yuri' } } },
+      {
+        id: 'worktree-moved',
+        directory: '/code/flclash',
+        metadata: { yuri: { worktree: { projectId: 'path_yuri', projectDirectory: '/code/yuri', path: '/wt/yuri-a' } } },
+      },
+    ] as unknown as Session[];
+    const projects = [
+      { id: 'path_yuri', normalizedPath: '/code/yuri' },
+      { id: 'path_ui', normalizedPath: '/code/yuri/packages/ui' },
+      { id: 'path_flclash', normalizedPath: '/code/flclash' },
+      { id: 'ws_combo', normalizedPath: '/code/yuri', paths: ['/code/yuri', '/code/agent-tracker'] },
+    ];
+    const ownership = createSessionOwnershipIndex(sessions, projects, new Map(), false);
+
+    expect(ownership.bySessionId.get('moved')).toMatchObject({ projectId: 'path_flclash', kind: 'project' });
+    expect(ownership.bySessionId.get('moved-sub')?.projectId).toBe('path_flclash');
+    expect(ownership.bySessionId.get('worktree-moved')?.projectId).toBe('path_flclash');
+    expect(ownership.bySessionId.get('sandbox')).toMatchObject({ projectId: 'path_yuri', kind: 'worktree' });
+    expect(ownership.bySessionId.get('nested')?.projectId).toBe('path_yuri');
+  });
+
   test('binds explicit metadata.yuri.workspaceId sessions to multi-path workspaces without stealing legacy single-path sessions', () => {
     const sessions = [
       {

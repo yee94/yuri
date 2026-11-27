@@ -28,7 +28,11 @@ over multi-path workspaces for legacy directory-only sessions).
 Every session Yuri creates records its owning local project as
 `metadata.yuri.workspaceId` — single-path projects included
 (`resolveNewSessionWorkspaceId`) — so moving it outside the project's paths
-(OpenCode worktrees, sandboxes) cannot detach it. Sessions without Yuri
+(OpenCode worktrees, sandboxes) cannot detach it. The exception is a move into
+another registered project's directory (`session_move` to a different project):
+when the session directory lies outside the tagged project's roots and another
+project root claims it, that project owns the session, matching
+`resolveRemoteProjectOwner`; metadata does not need rewriting. Sessions without Yuri
 metadata (OpenCode TUI, imports, older sessions) fall back to OpenCode's own
 `session.projectID`: `useSessionOwnershipIndex` reads `project.list()` once for
 unclaimed IDs (`unresolvedOpenCodeProjectIds`), maps each to its canonical

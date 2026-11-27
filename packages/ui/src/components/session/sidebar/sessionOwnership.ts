@@ -194,6 +194,16 @@ export const createSessionOwnershipIndex = (
     return owner;
   };
 
+  // Ownership metadata survives moves into worktrees/sandboxes, but a session
+  // moved into another registered project's directory belongs to that project.
+  const isWithin = (directory: string, root: string): boolean => directory === root
+    || directory.startsWith(root === '/' || root.endsWith(':/') ? root : `${root}/`);
+  const isClaimedByOtherProject = (directory: string | null, projectId: string, roots: string[]): boolean => {
+    if (!directory || roots.some((root) => isWithin(directory, root))) return false;
+    const owner = resolveOwner(directory);
+    return Boolean(owner && owner.kind === 'project' && owner.projectId !== projectId);
+  };
+
   const resolveExplicitWorkspaceOwner = (session: Session): DirectoryOwner | null => {
     const workspaceId = readSessionWorkspaceId(session);
     if (!workspaceId) return null;
@@ -203,6 +213,7 @@ export const createSessionOwnershipIndex = (
     if (!projectRoot) return null;
     const sessionDir = resolveSessionDirectory(session);
     const attached = getWorkspacePaths({ path: projectRoot, paths: project.paths });
+    if (isClaimedByOtherProject(sessionDir, project.id, [projectRoot, ...attached])) return null;
     const isMemberDir = Boolean(sessionDir && (sessionDir === projectRoot || attached.includes(sessionDir)));
     return {
       projectId: project.id,
@@ -221,7 +232,9 @@ export const createSessionOwnershipIndex = (
     if (!project) return null;
     const projectRoot = normalizePath(project.normalizedPath);
     if (!projectRoot) return null;
-    const scopeDirectory = resolveSessionDirectory(session) ?? worktreeMeta.path;
+    const sessionDir = resolveSessionDirectory(session);
+    if (isClaimedByOtherProject(sessionDir, project.id, [projectRoot, worktreeMeta.worktreeRoot, worktreeMeta.path])) return null;
+    const scopeDirectory = sessionDir ?? worktreeMeta.path;
     return {
       projectId: project.id,
       projectRoot,
