@@ -58,7 +58,6 @@ export const openTurnChangedFilePreview = (args: {
   mobile?: boolean;
 }): void => {
   const store = useUIStore.getState();
-  args.scope?.sdk();
   const stateKey = args.scope?.key ?? args.directory;
   const target = resolveTurnChangedFileOpenTarget(args.directory, args.filePath, args.workspaceDirectories);
 

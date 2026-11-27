@@ -27,6 +27,7 @@ const safeRoute = (route, method) => {
     || /^\/api\/yuri\/(transcript-cache|config-sync|relay|realtime-proxy)(\/|$)/.test(pathname)) return false;
   if (method !== 'GET' && method !== 'HEAD' && /^\/api\/(config|provider|plugin|mcp|global|agent|command|skill|settings|opencode|push)(\/|$)/.test(pathname)) return false;
   if (/^\/api\/yuri\/sessions\/[^/]+\/(archive|metadata)$/.test(pathname)) return method === 'PUT';
+  if (/^\/api\/yuri\/sessions\/[^/]+\/changes$/.test(pathname)) return method === 'GET' || method === 'HEAD';
   return /^\/api\/(info|fs|git|terminal|preview|session|sessions|session-folders|session-order|permission|permission-auto-accept|question|question-auto-delegate|form|command|agent|provider|config|plugin|skill|mcp|find|file|vcs|path|project|projects|experimental|location|session-activity)(\/|$)/.test(pathname)
     || /^\/api\/yuri\/(session|session-index|session-unread|session-folders|session-order|message-queue|content-search|events)(\/|$)/.test(pathname);
 };

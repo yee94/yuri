@@ -29,6 +29,7 @@ export type SessionTurnChangeRequest = {
    * a new count invalidates stale L3 file caches for that turn.
    */
   diffCount?: number;
+  scope?: HostRuntimeEntry;
 };
 
 /** L3 single-file diff — may include patch / snapshot bodies. */
@@ -90,7 +91,7 @@ const fetchYuriChanges = async (
   if (typeof input.file === 'string' && input.file.length > 0) {
     query.file = input.file;
   }
-  return runtimeFetch(CHANGES_PATH(input.sessionID), {
+  const init = {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -98,7 +99,10 @@ const fetchYuriChanges = async (
     },
     query,
     signal,
-  });
+  };
+  return input.scope
+    ? input.scope.fetch(CHANGES_PATH(input.sessionID), init)
+    : runtimeFetch(CHANGES_PATH(input.sessionID), init);
 };
 
 const fallbackLegacySessionDiff = async (
@@ -108,6 +112,12 @@ const fallbackLegacySessionDiff = async (
   // Honor TanStack query cancellation on legacy Host 404/405/501 fallback too.
   if (signal.aborted) {
     throw new DOMException('Aborted', 'AbortError');
+  }
+  if (input.scope) {
+    return input.scope.sdk().session.diff(
+      { sessionID: input.sessionID, from: input.messageID },
+      { signal },
+    );
   }
   return opencodeClient.getSessionDiff(
     {
@@ -192,7 +202,7 @@ export const useSessionTurnDiffQuery = (
 
 export const sessionTurnChangeFileQueryKey = (
   input: SessionTurnChangeRequest & { file: string },
-  transport = getRuntimeTransportIdentity(),
+  transport = input.scope?.key ?? getRuntimeTransportIdentity(),
 ) => queryKeys.sessionTurnChanges.file(
   input.directory,
   input.sessionID,
@@ -204,7 +214,7 @@ export const sessionTurnChangeFileQueryKey = (
 
 export const sessionTurnChangeFileQueryOptions = (
   input: SessionTurnChangeRequest & { file: string },
-  transport = getRuntimeTransportIdentity(),
+  transport = input.scope?.key ?? getRuntimeTransportIdentity(),
 ) => ({
   queryKey: sessionTurnChangeFileQueryKey(input, transport),
   queryFn: async ({ signal }: { signal: AbortSignal }): Promise<SessionTurnChangeFileResponse> => {
@@ -235,7 +245,7 @@ export const useSessionTurnChangeFileQuery = (
   input: (SessionTurnChangeRequest & { file: string }) | null,
   options: { enabled?: boolean } = {},
 ) => {
-  const transport = getRuntimeTransportIdentity();
+  const transport = input?.scope?.key ?? getRuntimeTransportIdentity();
   const enabled = Boolean(input)
     && Boolean(input?.sessionID?.trim())
     && Boolean(input?.directory?.trim())

@@ -121,6 +121,7 @@ type TurnChangesRequest = {
     directory: string;
     messageID: string;
     diffCount?: number;
+    scope?: import('@/lib/remote-projects/registry').HostRuntimeEntry;
 };
 
 const BinaryDiffPlaceholder = React.memo(() => {
@@ -690,6 +691,7 @@ const MultiFileDiffEntry = React.memo<MultiFileDiffEntryProps>(({
         directory: turnChangesRequest?.directory ?? '',
         messageID: turnChangesRequest?.messageID ?? '',
         diffCount: turnChangesRequest?.diffCount,
+        scope: turnChangesRequest?.scope,
         file: gitFilePath,
     }, {
         enabled: loadTurnChangeFile && Boolean(turnChangesRequest) && isExpanded && isMounted,
@@ -1414,8 +1416,9 @@ export const DiffView: React.FC<DiffViewProps> = ({
             directory: effectiveDirectory,
             messageID: turnChangesMarker.messageID,
             diffCount: turnChangesMarker.count,
+            scope: hostScope,
         };
-    }, [effectiveDirectory, resolvedSessionId, turnChangesMarker.count, turnChangesMarker.messageID]);
+    }, [effectiveDirectory, hostScope, resolvedSessionId, turnChangesMarker.count, turnChangesMarker.messageID]);
 
     // L1 carries the thin file list on legacy V1 user messages; OpenCode V2
     // resolves full per-file patches via GET /api/session/:id/diff?from= (sharing
