@@ -498,9 +498,11 @@ const RemoteMobileContextProgressButton = React.memo(function RemoteMobileContex
   });
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const revision = React.useSyncExternalStore(subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision, getTranscriptRepositoryBindingRevision);
-  const repository = getTranscriptRepository(entry.location);
-  const binding = React.useMemo(() => ({ revision, scope: repository && sessionId ? transcriptScope(entry.location, sessionId) : null }), [repository, entry, sessionId, revision]);
-  const scope = binding.scope;
+  const binding = React.useMemo(() => {
+    const bound = getTranscriptRepository(entry.location);
+    return { revision, repository: bound, scope: bound && sessionId ? transcriptScope(entry.location, sessionId) : null };
+  }, [entry, sessionId, revision]);
+  const { repository, scope } = binding;
   const subscribe = React.useMemo(() => (notify: () => void) => repository && scope ? repository.subscribe(scope, notify) : () => {}, [repository, scope]);
   const read = React.useMemo(() => () => repository && scope ? repository.getTranscript(scope) : null, [repository, scope]);
   const transcript = React.useSyncExternalStore(subscribe, read, read);

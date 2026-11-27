@@ -155,9 +155,11 @@ export function useRemoteMobileTranscriptSyncHint(host: HostRuntimeContextValue,
   const { t } = useI18n();
   const status = useRemoteHost(host.registry, host.entry.location.hostId!);
   const revision = useSyncExternalStore(subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision, getTranscriptRepositoryBindingRevision);
-  const repository = getTranscriptRepository(host.entry.location);
-  const binding = useMemo(() => ({ revision, scope: repository && sessionId ? transcriptScope(host.entry.location, sessionId) : null }), [repository, host.entry, sessionId, revision]);
-  const scope = binding.scope;
+  const binding = useMemo(() => {
+    const bound = getTranscriptRepository(host.entry.location);
+    return { revision, repository: bound, scope: bound && sessionId ? transcriptScope(host.entry.location, sessionId) : null };
+  }, [host.entry, sessionId, revision]);
+  const { repository, scope } = binding;
   const subscribe = useMemo(() => (notify: () => void) => repository && scope ? repository.subscribe(scope, notify) : () => {}, [repository, scope]);
   const read = () => {
     if (!repository || !scope) return sessionId ? 'loading' : 'idle';

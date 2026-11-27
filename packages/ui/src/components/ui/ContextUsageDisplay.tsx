@@ -141,7 +141,7 @@ export const ContextUsageDisplay: React.FC<ContextUsageDisplayProps> = ({
     <span
       className={cn(
         'inline-flex items-center gap-1.5 overflow-hidden whitespace-nowrap typography-micro font-medium text-foreground transition-[max-width,opacity,margin] duration-200',
-        pressed || pending
+        pressed
           ? 'ml-1 max-w-[14rem] opacity-100'
           : 'ml-0 max-w-0 opacity-0 group-hover:ml-1 group-hover:max-w-[14rem] group-hover:opacity-100 group-focus-visible:ml-1 group-focus-visible:max-w-[14rem] group-focus-visible:opacity-100',
       )}

@@ -170,9 +170,11 @@ const RemoteContextPanelContent: React.FC<{ active: boolean }> = ({ active }) =>
   const selected = useSessionNavigationStore((state) => state.remoteSession);
   const currentSessionId = selected && locationKey(selected.location) === entry.key ? selected.sessionId : null;
   const revision = React.useSyncExternalStore(subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision, getTranscriptRepositoryBindingRevision);
-  const repository = getTranscriptRepository(entry.location);
-  const binding = React.useMemo(() => ({ revision, scope: repository && currentSessionId ? transcriptScope(entry.location, currentSessionId) : null }), [repository, entry.location, currentSessionId, revision]);
-  const scope = binding.scope;
+  const binding = React.useMemo(() => {
+    const bound = getTranscriptRepository(entry.location);
+    return { revision, repository: bound, scope: bound && currentSessionId ? transcriptScope(entry.location, currentSessionId) : null };
+  }, [entry.location, currentSessionId, revision]);
+  const { repository, scope } = binding;
   const subscribe = React.useMemo(() => (notify: () => void) => active && repository && scope ? repository.subscribe(scope, notify) : () => {}, [active, repository, scope]);
   const read = React.useMemo(() => () => active && repository && scope ? repository.getTranscript(scope) : null, [active, repository, scope]);
   const transcript = React.useSyncExternalStore(subscribe, read, read);

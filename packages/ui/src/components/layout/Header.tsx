@@ -661,9 +661,11 @@ const RemoteHeaderSessionTitle = React.memo(({ entry, sessionId, fallback }: { e
 const RemoteHeaderContextUsage = React.memo(({ entry, sessionId, onClick, pressed }: { entry: HostRuntimeEntry; sessionId: string; onClick: () => void; pressed: boolean }) => {
   const location = entry.location;
   const revision = React.useSyncExternalStore(subscribeTranscriptRepositoryBinding, getTranscriptRepositoryBindingRevision, getTranscriptRepositoryBindingRevision);
-  const repository = getTranscriptRepository(location);
-  const binding = React.useMemo(() => ({ revision, scope: repository ? transcriptScope(location, sessionId) : null }), [repository, location, sessionId, revision]);
-  const scope = binding.scope;
+  const binding = React.useMemo(() => {
+    const bound = getTranscriptRepository(location);
+    return { revision, repository: bound, scope: bound ? transcriptScope(location, sessionId) : null };
+  }, [location, sessionId, revision]);
+  const { repository, scope } = binding;
   const subscribe = React.useMemo(() => (notify: () => void) => repository && scope ? repository.subscribe(scope, notify) : () => {}, [repository, scope]);
   const read = React.useMemo(() => () => repository && scope ? repository.getTranscript(scope) : null, [repository, scope]);
   const transcript = React.useSyncExternalStore(subscribe, read, read);
