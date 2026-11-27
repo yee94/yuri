@@ -4,6 +4,7 @@ import type { Agent } from '@/lib/opencode/v2-types';
 
 const DIRECTORY = '/workspace/project';
 const OTHER_DIRECTORY = '/workspace/other';
+let missingProviderDirectory: string | undefined;
 const STORAGE_KEY = 'config-store';
 type TestAgent = {
   id?: string;
@@ -233,6 +234,9 @@ mock.module('@/lib/runtime-fetch', () => ({
     if (path === '/api/config/catalog/providers') {
       getProvidersCalls += 1;
       const directory = new Headers(options?.headers).get('x-opencode-directory') ?? '';
+      if (directory === missingProviderDirectory) {
+        return Response.json({ error: 'Directory not found' }, { status: 400 });
+      }
       if (getProvidersForConfigImpl) {
         const result = await getProvidersForConfigImpl(directory);
         return new Response(JSON.stringify({ schemaVersion: 1, ...result, partial: false }));
@@ -298,6 +302,7 @@ describe('useConfigStore provider persistence', () => {
     liveProviderIdsByDirectory = new Map<string, string>();
     liveProviderVariants = undefined;
     getProvidersForConfigImpl = null;
+    missingProviderDirectory = undefined;
     getProvidersCalls = 0;
     getConfigCalls = 0;
     listAgentsCalls = 0;
@@ -1904,6 +1909,31 @@ describe('useConfigStore provider persistence', () => {
     await useConfigStore.getState().initializeApp();
     expect(getProvidersCalls).toBe(2);
     expect(useConfigStore.getState().providers.map((entry) => entry.id)).toEqual(['new']);
+  });
+
+  test('startup recovery stops retrying a missing directory and loads both catalogs in the next directory', async () => {
+    missingProviderDirectory = DIRECTORY;
+    liveProviderId = 'available';
+    liveAgents = [testAgent('build')];
+    useConfigStore.setState({ isConnected: true });
+
+    await useConfigStore.getState().refreshMissingCatalogs();
+    await useConfigStore.getState().refreshMissingCatalogs();
+    expect(getProvidersCalls).toBe(1);
+    expect(listAgentsCalls).toBe(0);
+    expect(useConfigStore.getState().providerConfigLoadingByDirectory[DIRECTORY]).toBe(false);
+
+    await useConfigStore.getState().activateDirectory(OTHER_DIRECTORY);
+    expect(getProvidersCalls).toBe(2);
+    expect(listAgentsCalls).toBe(1);
+    expect(useConfigStore.getState().providers.map(({ id }) => id)).toEqual(['available']);
+    expect(useConfigStore.getState().agents.map(({ name }) => name)).toEqual(['build']);
+
+    missingProviderDirectory = undefined;
+    await useConfigStore.getState().activateDirectory(DIRECTORY);
+    expect(getProvidersCalls).toBe(3);
+    expect(listAgentsCalls).toBe(2);
+    expect(useConfigStore.getState().providers.map(({ id }) => id)).toEqual(['available']);
   });
 
   test('refreshMissingCatalogs force-refreshes empty provider and agent Infinity caches after a successful empty warm load', async () => {

@@ -533,7 +533,9 @@ valid success response but uses `staleTime: 0` so the next `ensure`/`fetchQuery`
 refetches instead of treating the empty list as infinitely fresh. Cold-start
   recovery still uses `refreshMissingCatalogs`, which re-reads the authoritative
   store and force-refreshes only missing catalogs over the network so a temporary
-  empty warm response cannot stick until a page restart. Opening a model or agent
+  empty warm response cannot stick until a page restart. A Host-confirmed missing
+  directory stops automatic catalog requests for that directory and transport;
+  directory activation and picker-open refresh can check again. Opening a model or agent
   picker always force-refreshes both catalogs in the background via
   `refreshCatalogsOnPickerOpen`. Concurrent recovery and picker-open calls each
    share one in-flight promise per transport, generation and directory. App shells own the poll via `useStartupCatalogRecovery`

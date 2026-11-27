@@ -26,6 +26,8 @@ const isProviderCatalogPopulated = (data: unknown): boolean => {
   return Boolean(catalog && !catalog.partial && catalog.providers.length > 0);
 };
 
+class ProviderCatalogDirectoryMissingError extends Error {}
+
 export const normalizeConfigCatalogDirectory = (directory: string | null | undefined): string | null => {
   if (typeof directory !== 'string') return null;
   const normalized = directory.trim().replace(/\\/g, '/');
@@ -138,6 +140,12 @@ export const providerCatalogQueryOptions = (
         catalog = parseProviderCatalog(await response.json());
       } else {
         if (response.status !== 404 && response.status !== 501) {
+          if (normalizedDirectory && response.status === 400) {
+            const body = await response.json().catch(() => null);
+            if (body?.error === 'Directory not found') {
+              throw new ProviderCatalogDirectoryMissingError('Provider catalog directory not found');
+            }
+          }
           throw new Error(`Provider catalog request failed (${response.status})`);
         }
         catalog = parseProviderCatalog(await loadProviderCatalogFromV2(normalizedDirectory, signal, entry));
@@ -151,7 +159,7 @@ export const providerCatalogQueryOptions = (
     }),
     staleTime: catalogStaleTime(isProviderCatalogPopulated),
     gcTime: Infinity,
-    retry: 2,
+    retry: (failureCount: number, error: Error) => !(error instanceof ProviderCatalogDirectoryMissingError) && failureCount < 2,
     retryDelay: 100,
   };
 };
@@ -182,6 +190,9 @@ export const rawAgentsQueryOptions = (
 
 export const readProviderCatalogSnapshot = (directory: string | null, transport = getRuntimeTransportIdentity()): ProviderCatalog | undefined =>
   queryClient.getQueryData<ProviderCatalog>(providerCatalogQueryOptions(directory, transport).queryKey);
+
+export const isProviderCatalogDirectoryMissing = (directory: string | null, transport = getRuntimeTransportIdentity()): boolean =>
+  queryClient.getQueryState(providerCatalogQueryOptions(directory, transport).queryKey)?.error instanceof ProviderCatalogDirectoryMissingError;
 
 export const readRawAgentsSnapshot = (directory: string | null, transport = getRuntimeTransportIdentity()): Agent[] | undefined =>
   queryClient.getQueryData<Agent[]>(rawAgentsQueryOptions(directory, transport).queryKey);

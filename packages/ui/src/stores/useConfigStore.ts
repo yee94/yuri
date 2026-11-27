@@ -27,7 +27,7 @@ import { rememberResponseStyleSettings } from "@/lib/responseStyle";
 import { markStartupTrace, measureStartupTrace } from "@/lib/startupTrace";
 import { normalizePath } from "@/lib/pathNormalization";
 import { getSyncConfig, subscribeToSyncConfigChanges } from "@/sync/sync-refs";
-import { ensureProviderCatalogQuery, ensureRawAgentsQuery, invalidateProviderCatalogQuery, refreshProviderCatalogQuery, refreshRawAgentsQuery } from "@/queries/configCatalogQueries";
+import { ensureProviderCatalogQuery, ensureRawAgentsQuery, invalidateProviderCatalogQuery, isProviderCatalogDirectoryMissing, refreshProviderCatalogQuery, refreshRawAgentsQuery } from "@/queries/configCatalogQueries";
 import { getRuntimeGeneration, getRuntimeTransportIdentity } from "@/lib/runtime-switch";
 import { parseProviderCatalog } from "@/lib/configCatalogParser";
 import type { ConfigCatalogModel, ConfigCatalogProvider } from "@/types/configCatalog";
@@ -1384,9 +1384,11 @@ export const useConfigStore = create<ConfigStore>()(
                 refreshMissingCatalogs: (options) => {
                     const directory = fromDirectoryKey(get().activeDirectoryKey);
                     const generation = getRuntimeGeneration();
-                    const key = JSON.stringify([getRuntimeTransportIdentity(), generation, directory]);
+                    const transport = getRuntimeTransportIdentity();
+                    const key = JSON.stringify([transport, generation, directory]);
                     const existing = _refreshMissingCatalogsInFlight.get(key);
                     if (existing) return existing;
+                    if (isProviderCatalogDirectoryMissing(directory, transport)) return Promise.resolve();
 
                     const source = options?.source ?? 'refreshMissingCatalogs';
                     const run = (async () => {
@@ -1399,7 +1401,7 @@ export const useConfigStore = create<ConfigStore>()(
                         // Re-read after providers: agent selection cascade depends on the
                         // latest provider snapshot, and agents may have been filled meanwhile.
                         if (getRuntimeGeneration() !== generation || fromDirectoryKey(get().activeDirectoryKey) !== directory) return;
-                        if (get().agents.length === 0) {
+                        if (get().agents.length === 0 && !isProviderCatalogDirectoryMissing(directory, transport)) {
                             await get().loadAgents({ directory, source, forceRefresh: true });
                         }
                     })().finally(() => {
