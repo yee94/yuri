@@ -36,7 +36,18 @@ checkout, and binds the session to the Yuri directory of that repository — the
 root project, a multi-path member, or a monorepo subdirectory project whose
 relative path the session directory repeats. No `git worktree list` or
 per-directory probing is involved. Sessions that still match no project stay
-out of the project view but remain in the task view and search.
+out of the project view.
+
+Desktop/Web scope active sessions by this ownership index, not by a
+`projects[].path` + `yuri.worktreeMap` allowlist, so a worktree created outside
+Yuri (terminal `git worktree add`, `session_move`) shows under its registered
+project in the project view, pinned group and task view without being in the
+cached worktree map. `sidebarSessionScope.ts` owns both scopes: the project
+view reads the index buckets directly, while pinned/task rows (not bucketed by
+the index) use `filterOwnedSessions`, which hides active sessions no project
+owns once projects exist and never drops archived or directory-less rows.
+VS Code keeps the strict opened-workspace-path filter
+(`filterVSCodeWorkspaceSessions`).
 Multi-path workspaces (`paths.length > 1`) default to the stacked `folders`
 icon when no custom icon/image is set; blank 0-path workspaces (`paths: []`)
 use a Host-managed backing directory for OpenCode while hiding Git/Worktree UI.
