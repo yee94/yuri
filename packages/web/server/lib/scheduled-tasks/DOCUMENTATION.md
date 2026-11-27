@@ -481,7 +481,9 @@ that same history session. `observeSessionEvent` corrects **only task state**
 - later `session.idle` (or idle `session.status`) with a success snapshot from
   `session.active` + latest-side `message.list` → `lastStatus` `success`
 - do not change `lastRunAt` / `lastDurationMs` / `nextRunAt`
-- history rows are never rewritten; `finishRun` is not called again
+- when the task state settles, `runHistoryStore.syncSessionOutcome` mirrors the
+  terminal status/error onto that session's newest finalized history row only
+  (timing, `result_pending` and `finishRun` are untouched, so no re-delivery)
 
 A live run (`runningTaskKeys`) owns settlement; the observer only captures its
 execution error detail while the task is in `runningTaskKeys`, without changing

@@ -1889,7 +1889,18 @@ export const createScheduledTasksRuntime = (deps) => {
       updateInMemoryTask(projectID, stateResult.task);
     }
 
-    if (stateResult.task) emitContinuationStatus(projectID, taskID, sessionID, snapshot.outcome);
+    if (stateResult.task) {
+      try {
+        runHistoryStore?.syncSessionOutcome?.(sessionID, { status: snapshot.outcome, error: snapshot.error });
+      } catch (error) {
+        logger.warn?.('[ScheduledTasks] failed to sync continuation history', {
+          projectID,
+          taskID,
+          error: safeErrorMessage(error),
+        });
+      }
+      emitContinuationStatus(projectID, taskID, sessionID, snapshot.outcome);
+    }
   };
 
   const observeSessionEvent = (event) => {

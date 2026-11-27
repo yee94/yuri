@@ -238,6 +238,26 @@ export const createScheduledTaskRunHistoryStore = ({ dbPath, clock = () => Date.
     return rowToDto(db.prepare('SELECT * FROM scheduled_task_run WHERE run_id = ?').get(id));
   };
 
+  // Chat continuation in an already-finalized run's session: mirror the
+  // session's new terminal outcome onto that session's newest history row.
+  // Only status/error change; timing and result delivery stay untouched.
+  const syncSessionOutcome = (sessionID, result = {}) => {
+    assertOpen();
+    const sessionId = asNonEmptyString(sessionID);
+    if (!sessionId) return null;
+    const status = result.status === 'success' ? 'success' : 'error';
+    const error = status === 'error' ? (asNonEmptyString(result.error) || 'Unknown error') : null;
+    const row = db.prepare(`
+      SELECT run_id FROM scheduled_task_run
+      WHERE session_id = ? AND status IN ('success', 'error')
+      ORDER BY started_at DESC, run_id DESC
+      LIMIT 1
+    `).get(sessionId);
+    if (!row) return null;
+    db.prepare('UPDATE scheduled_task_run SET status = ?, error = ? WHERE run_id = ?').run(status, error, row.run_id);
+    return rowToDto(db.prepare('SELECT * FROM scheduled_task_run WHERE run_id = ?').get(row.run_id));
+  };
+
   const listRuns = ({ before, limit, projectID, taskID, projectId, taskId } = {}, runningOnly = false, pendingOnly = false) => {
     assertOpen();
     const cursor = decodeCursor(before);
@@ -306,6 +326,7 @@ export const createScheduledTaskRunHistoryStore = ({ dbPath, clock = () => Date.
     startRun,
     attachSession,
     finishRun,
+    syncSessionOutcome,
     listRuns,
     listRunningRuns: (options) => listRuns(options, true),
     listPendingResults: (options) => listRuns(options, false, true),
