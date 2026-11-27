@@ -49,6 +49,7 @@ import { useSidebarPersistence } from './sidebar/hooks/useSidebarPersistence';
 import { useProjectRepoStatus } from './sidebar/hooks/useProjectRepoStatus';
 import { useProjectSessionLists } from './sidebar/hooks/useProjectSessionLists';
 import { useSessionOwnershipIndex } from './sidebar/hooks/useSessionOwnershipIndex';
+import { filterOwnedSessions, filterVSCodeWorkspaceSessions } from './sidebar/sidebarSessionScope';
 import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
 import type { ProjectIdentitySaveData } from '@/components/sections/projects/useProjectIdentityForm';
 import { UpdateDialog } from '@/components/ui/UpdateDialog';
@@ -70,7 +71,6 @@ import { SessionNodeItem } from './sidebar/SessionNodeItem';
 import type { SessionNodeRenderExtras } from './sidebar/sessionNodeItemUtils';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 import { useShallow } from 'zustand/react/shallow';
-import type { WorktreeMetadata } from '@/types/worktree';
 import type { SortableDragHandleProps } from './sidebar/sortableItems';
 import {
   BulkSessionDeleteConfirmDialog,
@@ -234,47 +234,6 @@ const readStoredStringArrayMap = (key: string): Map<string, string[]> => {
     return new Map();
   }
 };
-
-const buildKnownSessionDirectories = (
-  projects: Array<{ path: string }>,
-  availableWorktreesByProject: Map<string, WorktreeMetadata[]>,
-  options?: { includeWorktrees?: boolean },
-): Set<string> => {
-  const directories = new Set<string>();
-  for (const project of projects) {
-    const normalized = normalizePath(project.path)?.toLowerCase();
-    if (normalized) directories.add(normalized);
-  }
-  if (options?.includeWorktrees === false) {
-    return directories;
-  }
-  for (const worktrees of availableWorktreesByProject.values()) {
-    for (const worktree of worktrees) {
-      const normalized = normalizePath(worktree.path)?.toLowerCase();
-      if (normalized) directories.add(normalized);
-    }
-  }
-  return directories;
-};
-
-const isKnownActiveSessionDirectory = (
-  session: Session,
-  knownDirectories: Set<string>,
-  options?: {
-    allowUnknownDirectory?: boolean;
-    allowEmptyDirectorySet?: boolean;
-  },
-): boolean => {
-  if (session.time?.archived) return true;
-  const directory = normalizePath(
-    resolveGlobalSessionDirectory(session),
-  )?.toLowerCase();
-  if (!directory) return options?.allowUnknownDirectory ?? true;
-  if (knownDirectories.size === 0)
-    return options?.allowEmptyDirectorySet ?? true;
-  return knownDirectories.has(directory);
-};
-
 
 const EMPTY_SUBTREE_SET: Set<string> = new Set();
 const EMPTY_PATH_LIST: string[] = [];
@@ -637,14 +596,6 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       }
     },
   );
-  const knownSessionDirectories = React.useMemo(
-    () =>
-      buildKnownSessionDirectories(projects, availableWorktreesByProject, {
-        includeWorktrees: !isVSCode,
-      }),
-    [availableWorktreesByProject, isVSCode, projects],
-  );
-
   const sessions = React.useMemo(() => {
     const liveById = new Map(
       liveSessions.map((session) => [session.id, session]),
@@ -664,17 +615,12 @@ export const SessionSidebar = React.memo(function SessionSidebar({
       merged.push(session);
     });
 
-    return merged.filter((session) =>
-      isKnownActiveSessionDirectory(session, knownSessionDirectories, {
-        allowUnknownDirectory: !isVSCode,
-        allowEmptyDirectorySet: !isVSCode,
-      }),
-    );
+    return isVSCode ? filterVSCodeWorkspaceSessions(merged, projects) : merged;
   }, [
     deferredGlobalActiveSessions,
     isVSCode,
-    knownSessionDirectories,
     liveSessions,
+    projects,
   ]);
 
 
@@ -1509,6 +1455,13 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     sessions, normalizedProjects, availableWorktreesByProject, isVSCode, archivedSessions,
   );
 
+  // Pinned and task rows are not bucketed by the ownership index, so scope them
+  // here: sessions no registered project, worktree or workspace member owns stay out.
+  const ownedSessions = React.useMemo(
+    () => isVSCode ? sessions : filterOwnedSessions(sessions, sessionOwnership, normalizedProjects.length > 0),
+    [isVSCode, normalizedProjects.length, sessionOwnership, sessions],
+  );
+
   const { getSessionsForProject, getArchivedSessionsForProject } = useProjectSessionLists({
     ownership: sessionOwnership,
   });
@@ -1692,8 +1645,8 @@ export const SessionSidebar = React.memo(function SessionSidebar({
     if (isVSCode) {
       return [];
     }
-    return derivePinnedSessions(sessions, pinnedSessionIds, sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]);
-  }, [isVSCode, pinnedSessionIds, sessions, sessionOrderByScope]);
+    return derivePinnedSessions(ownedSessions, pinnedSessionIds, sessionOrderByScope[PINNED_SESSION_ORDER_SCOPE]);
+  }, [isVSCode, pinnedSessionIds, ownedSessions, sessionOrderByScope]);
 
   const handlePinnedSessionsReordered = useEvent((activeSessionId: string, overSessionId: string) => {
     if (editingId) return;
@@ -1829,7 +1782,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
   const rankedTaskBuckets = React.useMemo(
     () => taskViewActive
       ? deriveTaskBuckets({
-          sessions,
+          sessions: ownedSessions,
           pinnedSessionIds,
           settledSessionIds,
           indexedSessionIds: taskIndexMembership?.indexedIds ?? null,
@@ -1840,7 +1793,7 @@ export const SessionSidebar = React.memo(function SessionSidebar({
           remoteSessions: remoteTaskState.sessions,
         })
       : null,
-    [pendingRequestSessionIds, pinnedSessionIds, remoteTaskState.sessions, sessions, settledSessionIds, taskIndexMembership, taskRunningSessionIds, taskUnseenBySession, taskViewActive],
+    [pendingRequestSessionIds, pinnedSessionIds, remoteTaskState.sessions, ownedSessions, settledSessionIds, taskIndexMembership, taskRunningSessionIds, taskUnseenBySession, taskViewActive],
   );
   // Archived-shelf rows offer "move back"; project-view archives count as shelf rows too.
   const rowSettledSessionIds = React.useMemo(() => {
