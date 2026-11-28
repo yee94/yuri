@@ -326,7 +326,7 @@ describe('AssistantConversationSurface scroll ownership', () => {
     await act(async () => host.querySelector<HTMLButtonElement>('[data-send]')!.click());
     const bubble = host.querySelector<HTMLElement>('[data-assistant-contact-turn-status="sending"] [data-assistant-contact-text]')!;
     expect(top).toBe(120);
-    expect(bubble.style.visibility).toBe('hidden');
+    expect(bubble.style.opacity).toBe('0');
     expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
     const scroll = sendMotion.numbers.find(animation => animation.from === 120 && animation.to === 8760)!;
     expect(scroll).toBeTruthy();
@@ -336,7 +336,7 @@ describe('AssistantConversationSurface scroll ownership', () => {
       await act(async () => scroller.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -80 })));
       await act(async () => scroll.onComplete());
       expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
-      expect(bubble.style.visibility).toBe('');
+      expect(bubble.style.opacity).toBe('');
     } else {
       let finish!: () => void;
       // happy-dom has no Web Animations; the flight needs only `finished` and `cancel`.
@@ -356,7 +356,7 @@ describe('AssistantConversationSurface scroll ownership', () => {
         expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeTruthy();
         expect(animate).toHaveBeenCalledTimes(1);
         await act(async () => { finish(); await Promise.resolve(); });
-        expect(bubble.style.visibility).toBe('');
+        expect(bubble.style.opacity).toBe('');
         expect(document.querySelector('[data-assistant-contact-send-flight]')).toBeNull();
       } finally {
         delete (HTMLElement.prototype as Partial<HTMLElement>).animate;

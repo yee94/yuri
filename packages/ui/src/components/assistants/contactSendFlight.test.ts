@@ -56,7 +56,7 @@ test('flies a fixed snapshot from the composer text to the bubble on split compo
   const { field, bubble } = mount()
   const settled = vi.fn()
   startContactSendFlight(captureContactSendFlightSource(field)!, bubble, bubble, settled)
-  expect(bubble.style.visibility).toBe('hidden')
+  expect(bubble.style.opacity).toBe('0')
   // The opaque clone covers the typed text in the mount frame, paused at the start.
   expect(overlay()).toBeTruthy()
   expect(animations[0].playing).toBe(false)
@@ -79,7 +79,7 @@ test('flies a fixed snapshot from the composer text to the bubble on split compo
   animations[0].finish()
   await settle()
   expect(overlay()).toBeNull()
-  expect(bubble.style.visibility).toBe('')
+  expect(bubble.style.opacity).toBe('')
   expect(settled).toHaveBeenCalledTimes(1)
 })
 
@@ -119,7 +119,7 @@ test('reveals the real row if the transcript never brings the destination into r
     flushFrame()
     vi.runOnlyPendingTimers()
     expect(overlay()).toBeNull()
-    expect(bubble.style.visibility).toBe('')
+    expect(bubble.style.opacity).toBe('')
   } finally {
     vi.useRealTimers()
   }
@@ -135,7 +135,7 @@ test('stop before the first frame cancels the start; stop is idempotent', () => 
   expect(animations[0].playing).toBe(false)
   expect(animations[0].cancel).toHaveBeenCalled()
   expect(overlay()).toBeNull()
-  expect(bubble.style.visibility).toBe('')
+  expect(bubble.style.opacity).toBe('')
   expect(settled).toHaveBeenCalledTimes(1)
 })
 
@@ -146,7 +146,7 @@ test('stop mid-flight cancels the animation and reveals the bubble', () => {
   stop()
   expect(animations[0].cancel).toHaveBeenCalled()
   expect(overlay()).toBeNull()
-  expect(bubble.style.visibility).toBe('')
+  expect(bubble.style.opacity).toBe('')
 })
 
 test('a queued chip text element is a flight source; hidden or empty text is not', () => {

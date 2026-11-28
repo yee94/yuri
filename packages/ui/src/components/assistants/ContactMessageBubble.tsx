@@ -60,7 +60,7 @@ export function ContactMessageBubble({ children, outgoing, joinedBefore, joinedA
       data-contact-bubble-joined-before={joinedBefore || undefined}
       data-contact-bubble-joined-after={joinedAfter || undefined}
       className={cn('yuri-contact-bubble min-w-0 max-w-full [overflow-wrap:anywhere]', mobile && !media && 'touch-manipulation [-webkit-user-select:all] [user-select:all]')}
-      style={{ '--contact-bubble-fill': colors?.background, color: colors?.foreground, visibility: hidden ? 'hidden' : undefined } as React.CSSProperties}
+      style={{ '--contact-bubble-fill': colors?.background, color: colors?.foreground, opacity: hidden ? 0 : undefined } as React.CSSProperties}
     >
       {!media ? <svg ref={outlineRef} className="yuri-contact-bubble-outline" aria-hidden="true" preserveAspectRatio="none"><path ref={pathRef} /></svg> : null}
       <div className="yuri-contact-bubble-body" data-assistant-contact-body="">{children}</div>

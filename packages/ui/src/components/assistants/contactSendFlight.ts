@@ -140,7 +140,7 @@ export const startContactSendFlight = (
     window.removeEventListener('scroll', follow, true)
     animation?.cancel()
     clone?.remove()
-    hidden.style.visibility = ''
+    hidden.style.opacity = ''
     onSettled?.()
   }
   // Anchor the clone on the bubble's current slot and start the path on the
@@ -206,7 +206,9 @@ export const startContactSendFlight = (
     effect.setKeyframes(flightKeyframes(origin.dx, origin.dy, landingY))
   }
 
-  hidden.style.visibility = 'hidden'
+  // Not `visibility`: iOS WebKit repaints a bubble revealed that way as an unpadded,
+  // square box for about a second after landing.
+  hidden.style.opacity = '0'
   if (!bubble.isConnected || typeof bubble.animate !== 'function') {
     stop()
     return stop
