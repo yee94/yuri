@@ -185,8 +185,7 @@ test.each([
     const runningStatus = main.querySelector('.yuri-mobile-task-meta[title]');
     expect(Boolean(runningStatus)).toBe(running);
     if (runningStatus) {
-      expect(runningStatus.classList.contains('text-foreground')).toBe(true);
-      expect(runningStatus.classList.contains('text-status-info')).toBe(false);
+      expect(runningStatus.classList.contains('text-status-info')).toBe(true);
     }
   } finally {
     fixtures.running.delete(id);
@@ -473,7 +472,7 @@ test.each([false, true])('task unread dot remains visible when selected=%s and y
       <MobileTaskCard task={{ ...task }} runStartedAt={Date.now()} onSelect={noop} onOpenActions={noop} onPin={noop} onArchive={noop} />
     </I18nProvider>));
     expect(host.querySelector('.yuri-task-unread-dot')).toBeNull();
-    expect(host.querySelector('.yuri-mobile-task-meta[title].text-foreground')).not.toBeNull();
+    expect(host.querySelector('.yuri-mobile-task-meta[title].text-status-info')).not.toBeNull();
   } finally {
     await act(async () => root.unmount());
     fixtures.running.delete(task.id);

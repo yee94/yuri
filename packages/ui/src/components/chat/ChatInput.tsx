@@ -6172,6 +6172,25 @@ const ChatInputRuntime: React.FC<ChatInputProps> = ({
         };
         focusAtEnd();
         window.requestAnimationFrame(focusAtEnd);
+        if (!placeCaretAtEnd || !isMobile) return;
+        // The picker hand-off is not a user gesture, so focus({ preventScroll })
+        // alone leaves the expanded composer parked behind the rising keyboard.
+        // Reveal it once the keyboard has mostly risen, and again after it settles.
+        const reveal = () => {
+            const textarea = resolveComposerTextarea(textareaRef);
+            if (!textarea || document.activeElement !== textarea) return;
+            (textarea.closest('form') ?? textarea).scrollIntoView({ block: 'end' });
+        };
+        if (mobileOverlayRevealEarlyTimerRef.current !== null) window.clearTimeout(mobileOverlayRevealEarlyTimerRef.current);
+        if (mobileOverlayRevealLateTimerRef.current !== null) window.clearTimeout(mobileOverlayRevealLateTimerRef.current);
+        mobileOverlayRevealEarlyTimerRef.current = window.setTimeout(() => {
+            mobileOverlayRevealEarlyTimerRef.current = null;
+            reveal();
+        }, 300);
+        mobileOverlayRevealLateTimerRef.current = window.setTimeout(() => {
+            mobileOverlayRevealLateTimerRef.current = null;
+            reveal();
+        }, 650);
     });
 
     const attachFiles = useEvent(async (files: FileList | File[]) => {
